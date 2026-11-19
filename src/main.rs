@@ -3,6 +3,7 @@
 mod cache;
 mod cmregex;
 mod commands;
+mod configure;
 mod condition;
 mod flow;
 mod fsutil;
