@@ -1,0 +1,46 @@
+{
+  "oracle": {
+    "version": "4.1.0",
+    "commit": "2a2c2e0b2658f7c07e00fcf649882fd5578c2fc1"
+  },
+  "integration": {
+    "zlib": {
+      "version": "1.3.1",
+      "commit": "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf",
+      "stages": ["configure", "compile_commands", "build", "ctest", "install", "symbols", "gzip_interop", "no_op_rebuild"]
+    },
+    "llvm-clang": {
+      "version": "20.1.8",
+      "commit": "87f0227cb60147a26a1eeb4fb06e3b505e9c7261",
+      "options": ["-DCMAKE_BUILD_TYPE=Release", "-DLLVM_ENABLE_PROJECTS=clang", "-DLLVM_TARGETS_TO_BUILD=X86", "-DLLVM_INCLUDE_BENCHMARKS=OFF"],
+      "stages": ["configure", "generate", "target_inventory", "compile_commands", "link_commands", "build_clang", "check-clang", "no_op_rebuild"]
+    },
+    "kitware-cmake": {
+      "version": "4.1.0",
+      "commit": "2a2c2e0b2658f7c07e00fcf649882fd5578c2fc1",
+      "options": ["-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=ON"],
+      "stages": ["configure", "generate", "target_inventory", "compile_commands", "link_commands", "build", "ctest", "no_op_rebuild"]
+    }
+  },
+  "linux_ninja_run_cmake": {
+    "initial_suites": [
+      "RunCMake.CommandLine",
+      "RunCMake.set",
+      "RunCMake.get_property",
+      "RunCMake.find_package",
+      "RunCMake.ToolchainFile",
+      "RunCMake.Ninja",
+      "RunCMake.install",
+      "RunCMake.try_compile",
+      "RunCMake.try_run"
+    ],
+    "case_filters": {
+      "RunCMake.CommandLine": "^(NoArgs|InvalidArg[12]|G_no-arg|G_bad-arg|P_no-arg|P_no-file|P_args|P_arbitrary_args|P_fresh|build-no-dir[2]?|build-no-cache|build-bad-dir|install-no-dir|install-bad-dir|E_echo_append|E_true(-extraargs)?|E_false(-extraargs)?|E_compare_files-(different-eol|ignore-eol-same)|EnvToolchainNone|EnvToolchainRelative|EnvToolchainAbsolute)$"
+    },
+    "standalone_tool_suite_prefixes": [
+      "RunCMake.CPack",
+      "RunCMake.ctest_",
+      "RunCMake.CTestCommandLine"
+    ]
+  }
+}
