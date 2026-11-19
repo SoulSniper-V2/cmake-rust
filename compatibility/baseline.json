@@ -23,24 +23,17 @@
     }
   },
   "linux_ninja_run_cmake": {
-    "initial_suites": [
-      "RunCMake.CommandLine",
-      "RunCMake.set",
-      "RunCMake.get_property",
-      "RunCMake.find_package",
-      "RunCMake.ToolchainFile",
-      "RunCMake.Ninja",
-      "RunCMake.install",
-      "RunCMake.try_compile",
-      "RunCMake.try_run"
-    ],
-    "case_filters": {
-      "RunCMake.CommandLine": "^(NoArgs|InvalidArg[12]|G_no-arg|G_bad-arg|P_no-arg|P_no-file|P_args|P_arbitrary_args|P_fresh|build-no-dir[2]?|build-no-cache|build-bad-dir|install-no-dir|install-bad-dir|E_echo_append|E_true(-extraargs)?|E_false(-extraargs)?|E_compare_files-(different-eol|ignore-eol-same)|EnvToolchainNone|EnvToolchainRelative|EnvToolchainAbsolute)$"
+    "standalone_tool_suite_prefixes": {
+      "RunCMake.CPack": "Exercises package creation, CPack CLI, or package configuration for CPack.",
+      "RunCMake.ctest_": "Exercises CTest dashboard commands, script execution, or test selection and scheduling.",
+      "RunCMake.CTest": "Exercises CTest CLI, execution, resource scheduling, or test discovery semantics.",
+      "RunCMake.cmake-gui": "Exercises the standalone GUI.",
+      "RunCMake.CMakeGUI": "Exercises the standalone GUI."
     },
-    "standalone_tool_suite_prefixes": [
-      "RunCMake.CPack",
-      "RunCMake.ctest_",
-      "RunCMake.CTestCommandLine"
-    ]
+    "standalone_tool_suites": {
+      "RunCMake.CMakePresetsPackage": "Exercises CPack package presets via cpack --preset.",
+      "RunCMake.CMakePresetsTest": "Exercises CTest test presets via ctest --preset.",
+      "RunCMake.WorkingDirectory": "Exercises directory handling in ctest and ctest --build-and-test."
+    }
   }
 }
