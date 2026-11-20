@@ -222,6 +222,8 @@ pub struct Interp {
     pub root_check_cmp0000: bool,
     /// Language-enablement state (cmGlobalGenerator language maps).
     pub langs: crate::languages::LangState,
+    /// Recursion depth inherited from an outer try_compile.
+    pub recursion_depth_base: usize,
 }
 
 impl Interp {
@@ -260,6 +262,7 @@ impl Interp {
             in_try_compile: false,
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
+            recursion_depth_base: 0,
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -1088,11 +1091,12 @@ impl Interp {
 
     fn execute_inner(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         self.recursion_depth += 1;
+        let depth = self.recursion_depth + self.recursion_depth_base;
         let limit = self
             .get_def("CMAKE_MAXIMUM_RECURSION_DEPTH")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(1000);
-        if self.recursion_depth > limit {
+        if depth > limit {
             self.recursion_depth -= 1;
             self.issue(
                 MessageType::FatalError,
@@ -1937,6 +1941,10 @@ impl Interp {
                 self.run_flow_command(&parsed, &command, None).0
             }
         }
+    }
+
+    pub fn recursion_depth_now(&self) -> usize {
+        self.recursion_depth + self.recursion_depth_base
     }
 
     pub fn has_command(&self, name: &str) -> bool {

@@ -510,3 +510,184 @@ fn configure_root(interp: &mut Interp, list_file: &str) {
         CacheType::Internal,
     );
 }
+
+/// Parses try_compile CMAKE_FLAGS-style `-D` arguments into definitions.
+fn parse_cache_args(args: &[String]) -> Vec<CacheDefinition> {
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if let Some(rest) = arg.strip_prefix("-D") {
+            let entry = if rest.is_empty() {
+                index += 1;
+                args.get(index).cloned().unwrap_or_default()
+            } else {
+                rest.to_owned()
+            };
+            if let Some((name, value, kind)) = crate::cache::parse_entry(&entry) {
+                out.push(CacheDefinition {
+                    name,
+                    value,
+                    kind: (kind != CacheType::Uninitialized).then_some(kind),
+                });
+            }
+        }
+        index += 1;
+    }
+    out
+}
+
+/// `cmMakefile::TryCompile` + `cmGlobalGenerator::TryCompile`: configures,
+/// generates and builds a test project in-process. Returns the build tool's
+/// exit code (or 1 on configure/generate failure) and the captured output.
+pub fn try_compile_project(
+    outer: &mut Interp,
+    srcdir: &str,
+    bindir: &str,
+    target_name: &str,
+    fast: bool,
+    cmake_args: Option<&[String]>,
+) -> (i32, String) {
+    let _ = fast;
+    let _ = std::fs::create_dir_all(bindir);
+    let previous_cwd = std::env::current_dir().ok();
+    if std::env::set_current_dir(bindir).is_err() {
+        let text = format!("Failed to change working directory to {bindir}");
+        outer.issue(MessageType::FatalError, &text);
+        outer.set_fatal();
+        return (1, String::new());
+    }
+    let options = ConfigureOptions {
+        source_dir: srcdir.to_owned(),
+        binary_dir: bindir.to_owned(),
+        in_try_compile: true,
+        definitions: cmake_args.map(parse_cache_args).unwrap_or_default(),
+        ..ConfigureOptions::default()
+    };
+    let root = outer.cmake_root.clone();
+    let mut inner = new_project_interp(&options, &root);
+    inner.recursion_depth_base = outer.recursion_depth_now();
+    let _ = inner.cache.load(std::path::Path::new(bindir));
+    add_cmake_paths(&mut inner);
+    if let Some(config) = outer.get_def("CMAKE_TRY_COMPILE_CONFIGURATION").map(str::to_owned) {
+        inner.cache.add("CMAKE_BUILD_TYPE", Some(&config), Some("Build configuration"), CacheType::String);
+    }
+    if let Some(depth) = outer.get_def("CMAKE_MAXIMUM_RECURSION_DEPTH").map(str::to_owned) {
+        inner.cache.add("CMAKE_MAXIMUM_RECURSION_DEPTH", Some(&depth), Some("Maximum recursion depth"), CacheType::String);
+    }
+    for definition in &options.definitions {
+        inner.cache.add(
+            &definition.name,
+            Some(&definition.value),
+            Some("No help, variable specified on the command line."),
+            definition.kind.unwrap_or(CacheType::Uninitialized),
+        );
+    }
+    // EnableLanguagesFromGenerator.
+    let configured = outer
+        .langs
+        .configured_files_path
+        .clone()
+        .unwrap_or_else(|| format!("{}/CMakeFiles", outer.home_binary));
+    inner.langs = outer.langs.clone();
+    inner.langs.configured_files_path = Some(configured);
+    inner.langs.in_progress.clear();
+    if let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned) {
+        inner.cache.add("CMAKE_MAKE_PROGRAM", Some(&make), Some("make program"), CacheType::Filepath);
+    }
+    let suppress = if outer.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") { "TRUE" } else { "FALSE" };
+    inner.cache.add("CMAKE_SUPPRESS_DEVELOPER_WARNINGS", Some(suppress), Some(""), CacheType::Internal);
+    inner.suppress_dev_warnings = outer.suppress_dev_warnings;
+    let restore = |previous: &Option<std::path::PathBuf>| {
+        if let Some(previous) = previous {
+            let _ = std::env::set_current_dir(previous);
+        }
+    };
+    if actual_configure(&mut inner, &options) != 0 {
+        outer.issue(MessageType::FatalError, "Failed to configure test project build system.");
+        outer.set_fatal();
+        restore(&previous_cwd);
+        return (1, String::new());
+    }
+    if crate::generate::generate(&mut inner, &options) != 0 {
+        outer.issue(MessageType::FatalError, "Failed to generate test project build system.");
+        outer.set_fatal();
+        restore(&previous_cwd);
+        return (1, String::new());
+    }
+    // cmGlobalGenerator::Build
+    let mut output = format!("Change Dir: '{bindir}'\n");
+    let make = inner.get_safe("CMAKE_MAKE_PROGRAM");
+    let mut command = vec![make, "-v".to_owned()];
+    if !target_name.is_empty() {
+        command.push(target_name.to_owned());
+    }
+    let printable: Vec<String> = command
+        .iter()
+        .map(|arg| crate::outconv::escape_for_shell(arg, crate::outconv::FLAG_IS_UNIX))
+        .collect();
+    output.push_str(&format!("\nRun Build Command(s): {}\n", printable.join(" ")));
+    let result = run_merged(&command, bindir);
+    let code = match result {
+        Ok((code, text)) => {
+            output.push_str(&text);
+            code
+        }
+        Err(error) => {
+            let message = format!(
+                "Generator: build tool execution failed, command was: {}",
+                command.join(" ")
+            );
+            system_error(Some(outer), &message);
+            output.push_str(&format!("{error}\nGenerator: build tool execution failed, command was: {}\n", printable.join(" ")));
+            restore(&previous_cwd);
+            return (1, output);
+        }
+    };
+    output.push('\n');
+    restore(&previous_cwd);
+    (code, output)
+}
+
+/// Runs a command with stdout and stderr merged in order
+/// (`cmSystemTools::RunSingleCommand` with both outputs to one buffer).
+pub fn run_merged(command: &[String], cwd: &str) -> std::io::Result<(i32, String)> {
+    use std::os::unix::io::FromRawFd;
+    let (reader, writer) = os_pipe()?;
+    // SAFETY: duplicating a valid fd.
+    let writer_dup = unsafe { libc::dup(writer) };
+    if writer_dup < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fds come from pipe()/dup() above and are owned here.
+    let (stdout, stderr) = unsafe {
+        (
+            std::process::Stdio::from_raw_fd(writer),
+            std::process::Stdio::from_raw_fd(writer_dup),
+        )
+    };
+    let mut child = std::process::Command::new(&command[0])
+        .args(&command[1..])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()?;
+    // SAFETY: reader fd from pipe().
+    let mut file = unsafe { std::fs::File::from_raw_fd(reader) };
+    let mut buffer = Vec::new();
+    use std::io::Read;
+    file.read_to_end(&mut buffer)?;
+    let status = child.wait()?;
+    let code = status.code().unwrap_or(1);
+    Ok((code, String::from_utf8_lossy(&buffer).into_owned()))
+}
+
+fn os_pipe() -> std::io::Result<(i32, i32)> {
+    let mut fds = [0i32; 2];
+    // SAFETY: valid out-pointer for two fds.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((fds[0], fds[1]))
+}

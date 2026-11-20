@@ -12,6 +12,7 @@ mod fsutil;
 mod interp;
 mod lexer;
 mod messages;
+mod outconv;
 mod policy;
 mod policy_table;
 mod props;
