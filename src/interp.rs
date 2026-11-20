@@ -737,7 +737,14 @@ impl Interp {
             }
             other => other,
         };
-        let rendered = messages::render(kind, text, backtrace, self.top_source());
+        let mut rendered = messages::render(kind, text, backtrace, self.top_source());
+        // A deferred execution placeholder denotes a location, even though it
+        // has no numeric line. Other contexts without a line use "in".
+        if backtrace.last().is_some_and(|frame| frame.deferred)
+            && let Some(index) = rendered.find(" in ")
+        {
+            rendered.replace_range(index..index + 4, " at ");
+        }
         if messages::is_error(kind) {
             self.error = true;
         }
@@ -1034,6 +1041,7 @@ impl Interp {
                 deferred: true,
             });
             self.ext.execution_files.push(deferred.file.to_string());
+            let depth = self.mf().policies.len();
             let parsed = Rc::new(ParsedFile::new(deferred.file.clone(), vec![deferred.command]));
             self.ext.defer_current_id = Some(deferred.id);
             self.loop_depth.push(0);
@@ -1041,6 +1049,12 @@ impl Interp {
             self.loop_depth.pop();
             self.ext.defer_current_id = None;
             self.ext.execution_files.pop();
+            if self.mf().policies.len() > depth {
+                if !self.fatal {
+                    self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+                }
+                self.mf_mut().policies.truncate(depth);
+            }
             self.backtrace.pop();
         }
     }

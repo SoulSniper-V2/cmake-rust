@@ -186,7 +186,9 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                     languages.sort_unstable();
                     return Some(languages.join(";"));
                 }
-                "IN_TRY_COMPILE" => return Some("0".into()),
+                "IN_TRY_COMPILE" => {
+                    return Some(if interp.in_try_compile { "1" } else { "0" }.into());
+                }
                 "GENERATOR_IS_MULTI_CONFIG" => {
                     return Some(
                         if interp.get_def("CMAKE_GENERATOR") == Some("Ninja Multi-Config") {
@@ -620,7 +622,44 @@ fn storage<'a>(interp: &'a mut Interp, object: Object<'_>) -> Option<&'a mut Pro
     })
 }
 
+/// The target properties represented as entries with origin backtraces.
+fn target_entries(name: &str) -> bool {
+    matches!(
+        name,
+        "INCLUDE_DIRECTORIES"
+            | "COMPILE_OPTIONS"
+            | "COMPILE_FEATURES"
+            | "COMPILE_DEFINITIONS"
+            | "PRECOMPILE_HEADERS"
+            | "SOURCES"
+            | "LINK_OPTIONS"
+            | "LINK_DIRECTORIES"
+            | "LINK_LIBRARIES"
+            | "INTERFACE_LINK_LIBRARIES"
+            | "INTERFACE_LINK_LIBRARIES_DIRECT"
+            | "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE"
+            | "IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES"
+            | "IMPORTED_CXX_MODULES_COMPILE_DEFINITIONS"
+            | "IMPORTED_CXX_MODULES_COMPILE_FEATURES"
+            | "IMPORTED_CXX_MODULES_COMPILE_OPTIONS"
+            | "IMPORTED_CXX_MODULES_LINK_LIBRARIES"
+    )
+}
+
 pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&str>) {
+    if let Object::Target(target) = object
+        && target_entries(name)
+        && let Some(target) = interp.ext.targets.get_mut(target)
+    {
+        if let Some(value) = value {
+            target.provenance.insert(
+                name.to_owned(),
+                vec![(value.to_owned(), interp.backtrace.clone())],
+            );
+        } else {
+            target.provenance.remove(name);
+        }
+    }
     if let Object::Cache(key) = object {
         if let Some(entry) = interp.cache.entries.get_mut(key) {
             match (name, value) {
@@ -644,7 +683,24 @@ pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&s
 }
 
 pub fn append(interp: &mut Interp, object: Object<'_>, name: &str, value: &str, as_string: bool) {
-    if matches!(object, Object::Install(_)) {
+    if let Object::Target(target) = object
+        && target_entries(name)
+    {
+        if (name == "SOURCES" || !value.is_empty())
+            && let Some(target) = interp.ext.targets.get_mut(target)
+        {
+            let combined = target
+                .props
+                .get(name)
+                .map_or_else(|| value.to_owned(), |old| format!("{old};{value}"));
+            target.props.set(name, combined);
+            target
+                .provenance
+                .entry(name.to_owned())
+                .or_default()
+                .push((value.to_owned(), interp.backtrace.clone()));
+        }
+    } else if matches!(object, Object::Install(_)) {
         if let Some(props) = storage(interp, object) {
             let combined = props
                 .get(name)
@@ -835,4 +891,59 @@ fn known_features(name: &str) -> Option<&'static str> {
         ),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::TargetKind;
+
+    #[test]
+    fn inherited_target_properties_initialize_and_track_local_entries() {
+        let mut interp = Interp::new(Mode::Project, "/src", "/build", "");
+        assert!(interp.run_string(
+            r#"
+define_property(TARGET PROPERTY example_flag INHERITED INITIALIZE_FROM_VARIABLE default_example_flag)
+set(default_example_flag initialized)
+set_property(DIRECTORY PROPERTY example_flag inherited)
+"#,
+            "/src/probe.cmake",
+        ));
+
+        let mut target = Target {
+            name: "example".into(),
+            kind: TargetKind::StaticLibrary,
+            makefile: 0,
+            imported: false,
+            imported_global: false,
+            alias_of: None,
+            props: Props::default(),
+            provenance: BTreeMap::new(),
+            backtrace: Vec::new(),
+        };
+        initialize_target(&interp, &mut target);
+        interp.ext.targets.insert(target.name.clone(), target);
+
+        let target = Object::Target("example");
+        assert_eq!(
+            get(&interp, target, "example_flag").as_deref(),
+            Some("initialized")
+        );
+        set(&mut interp, target, "example_flag", None);
+        assert_eq!(
+            get(&interp, target, "example_flag").as_deref(),
+            Some("inherited")
+        );
+
+        set(&mut interp, target, "COMPILE_OPTIONS", Some(""));
+        append(&mut interp, target, "COMPILE_OPTIONS", "-Wall", true);
+        assert_eq!(
+            get(&interp, target, "COMPILE_OPTIONS").as_deref(),
+            Some(";-Wall")
+        );
+        assert_eq!(
+            interp.ext.targets["example"].provenance["COMPILE_OPTIONS"].len(),
+            2
+        );
+    }
 }

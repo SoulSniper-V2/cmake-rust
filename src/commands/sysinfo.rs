@@ -89,7 +89,7 @@ fn site_name(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let command = interp
         .read_definition("HOSTNAME")
-        .unwrap_or_else(|| "hostname".into());
+        .unwrap_or_else(find_hostname_program);
     let name = if is_off(&command) {
         None
     } else {
@@ -115,6 +115,32 @@ fn site_name(interp: &mut Interp, args: &[String]) -> CmdResult {
         false,
     );
     Ok(())
+}
+
+fn find_hostname_program() -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let search = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&search)
+        .chain(
+            [
+                "/usr/bsd",
+                "/usr/sbin",
+                "/usr/bin",
+                "/bin",
+                "/sbin",
+                "/usr/local/bin",
+            ]
+            .into_iter()
+            .map(std::path::PathBuf::from),
+        )
+        .map(|dir| dir.join("hostname"))
+        .find(|path| {
+            path.metadata()
+                .is_ok_and(|info| info.is_file() && info.permissions().mode() & 0o111 != 0)
+        })
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn load_cache(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -481,7 +507,9 @@ impl HostInformation {
         };
         let boolean = |value: bool| if value { "1" } else { "0" }.to_owned();
         Some(match key {
-            "FQDN" => fully_qualified_name(self.os.get("HOSTNAME").map_or("localhost", String::as_str)),
+            "FQDN" => {
+                fully_qualified_name(self.os.get("HOSTNAME").map_or("localhost", String::as_str))
+            }
             "NUMBER_OF_LOGICAL_CORES" => self.logical.to_string(),
             "NUMBER_OF_PHYSICAL_CORES" => self.physical.to_string(),
             "TOTAL_VIRTUAL_MEMORY" => (memory("SwapTotal") / 1024).to_string(),
