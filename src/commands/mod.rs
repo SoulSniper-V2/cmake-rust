@@ -9,6 +9,7 @@ pub mod list;
 pub mod math;
 pub mod parse_arguments;
 pub mod separate_arguments;
+pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -24,4 +25,5 @@ pub fn register_all(interp: &mut Interp) {
     math::register(interp);
     separate_arguments::register(interp);
     parse_arguments::register(interp);
+    try_compile::register(interp);
 }

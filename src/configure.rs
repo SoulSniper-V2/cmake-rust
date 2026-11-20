@@ -219,6 +219,7 @@ fn glob_to_regex(pattern: &str) -> crate::cmregex::Regex {
 pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
     let mut interp = Interp::new(Mode::Project, &options.source_dir, &options.binary_dir, root);
     interp.in_try_compile = options.in_try_compile;
+    interp.debug_trycompile = options.debug_trycompile;
     add_default_definitions(&mut interp);
     if let Some(level) = &options.log_level {
         interp.ext.misc.insert("log-level".into(), level.clone());
@@ -562,6 +563,7 @@ pub fn try_compile_project(
         source_dir: srcdir.to_owned(),
         binary_dir: bindir.to_owned(),
         in_try_compile: true,
+        debug_trycompile: outer.debug_trycompile,
         definitions: cmake_args.map(parse_cache_args).unwrap_or_default(),
         ..ConfigureOptions::default()
     };
