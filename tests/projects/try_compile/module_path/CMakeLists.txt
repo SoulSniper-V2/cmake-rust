@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C)
+list(APPEND CMAKE_MODULE_PATH /my/mod /other)
+try_compile(OK SOURCE_FROM_CONTENT ok.c "int main(void){return 0;}\n")
+message(STATUS "result=${OK}")

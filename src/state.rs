@@ -75,10 +75,14 @@ pub struct Ext {
     pub aliases: HashMap<String, String>,
     pub tests: Vec<Test>,
     pub defer_current_id: Option<String>,
+    pub dependency_provider: Option<(String, Vec<String>)>,
+    pub find_package: HashMap<usize, crate::commands::find::package::PackageState>,
     /// Enabled languages.
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
+    /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
+    pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
 }
 
 /// `cmMakefile::FindTargetToUse`: aliases, then targets visible from the

@@ -80,7 +80,19 @@ impl<'a> GenCtx<'a> {
 
     /// Runs the whole generate step.
     pub fn check_and_generate(&self) -> Result<(), Vec<Diagnostic>> {
-        // Generation is assembled in ninja::generate (lead).
+        let mut ninja = super::ninja::NinjaGenerator::new(self);
+        if let Err(error) = ninja.generate() {
+            self.error(Vec::new(), format!("Unable to write build files: {error}"));
+        }
+        for result in [
+            super::install::write_install_scripts(self),
+            super::tests::write_test_files(self),
+            super::export::write_build_exports(self),
+        ] {
+            if let Err(error) = result {
+                self.error(Vec::new(), format!("Unable to write build files: {error}"));
+            }
+        }
         let errors = self.errors.borrow().clone();
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }

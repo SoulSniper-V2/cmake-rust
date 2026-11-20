@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+cmake_policy(SET CMP0074 OLD)
+set(Acme_ROOT "data/root")
+find_package(Acme CONFIG)
+message("found=${Acme_FOUND}|dir=${Acme_DIR}|config=${Acme_CONFIG}|considered=${Acme_CONSIDERED_CONFIGS}|versions=${Acme_CONSIDERED_VERSIONS}|origin=${origin}")

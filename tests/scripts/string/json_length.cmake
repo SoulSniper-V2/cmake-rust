@@ -1,0 +1,8 @@
+string(JSON a LENGTH "{\"a\":1,\"b\":2}")
+message("a=${a}")
+string(JSON b LENGTH "[1,2,3]")
+message("b=${b}")
+string(JSON c LENGTH "{}")
+message("c=${c}")
+string(JSON d LENGTH "{\"x\":[0,0]}" x)
+message("d=${d}")

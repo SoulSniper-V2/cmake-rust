@@ -232,6 +232,12 @@ fn add(interp: &mut Interp, options: InstallOptions, action: InstallAction) {
     let index = interp.mf_index();
     let preceding_children = interp.mf().children.len();
     let backtrace = interp.backtrace.clone();
+    interp.ext.misc.insert("install-target-enabled".into(), "1".into());
+    if !options.component.is_empty() {
+        let components = interp.ext.misc.entry("install-components".into()).or_default();
+        if !components.is_empty() { components.push(';'); }
+        components.push_str(&options.component);
+    }
     interp.ext.install.rules.entry(index).or_default().push(InstallRule {
         options, action, preceding_children, backtrace,
     });

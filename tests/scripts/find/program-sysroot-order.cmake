@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_SYSROOT_COMPILE "${CMAKE_CURRENT_SOURCE_DIR}/data/compile")
+set(CMAKE_SYSROOT_LINK "${CMAKE_CURRENT_SOURCE_DIR}/data/link")
+set(CMAKE_SYSROOT "${CMAKE_CURRENT_SOURCE_DIR}/data/base")
+find_program(result NAMES needle.tool HINTS /find-test-root NO_DEFAULT_PATH ONLY_CMAKE_FIND_ROOT_PATH)
+message("picked=[${result}], cache=[$CACHE{result}]")

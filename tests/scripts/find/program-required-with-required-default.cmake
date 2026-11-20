@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_REQUIRED ON)
+find_program(result NAMES needle.tool NO_DEFAULT_PATH)
+message("unreachable")
+message("picked=[${result}], cache=[$CACHE{result}]")

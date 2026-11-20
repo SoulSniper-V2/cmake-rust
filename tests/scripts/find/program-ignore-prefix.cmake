@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_PREFIX_PATH "data/prefix")
+set(CMAKE_IGNORE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data/prefix")
+find_program(result NAMES needle.tool HINTS data/hint NO_SYSTEM_ENVIRONMENT_PATH)
+message("picked=[${result}], cache=[$CACHE{result}]")

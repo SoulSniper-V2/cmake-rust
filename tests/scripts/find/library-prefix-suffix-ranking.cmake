@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_LIBRARY_PREFIXES base;lib)
+set(CMAKE_FIND_LIBRARY_SUFFIXES .a;.so)
+find_library(result NAMES trial PATHS data/dir NO_DEFAULT_PATH)
+message("${result}")
