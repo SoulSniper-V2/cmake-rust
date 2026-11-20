@@ -3,6 +3,7 @@
 mod copy;
 mod glob;
 mod lock;
+mod rpath;
 mod strings;
 
 pub use glob::GlobDependency;
@@ -56,18 +57,14 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "LOCK" => lock::run(interp, args),
         "CONFIGURE" => configure(interp, args),
         "DIFFERENT" => different(interp, &args[1..]),
+        "RPATH_CHANGE" | "CHRPATH" | "RPATH_SET" | "RPATH_CHECK" | "RPATH_REMOVE"
+        | "READ_ELF" => rpath::run(interp, args),
         "GENERATE"
         | "DOWNLOAD"
         | "UPLOAD"
         | "ARCHIVE_CREATE"
         | "ARCHIVE_EXTRACT"
         | "GET_RUNTIME_DEPENDENCIES"
-        | "RPATH_CHANGE"
-        | "CHRPATH"
-        | "RPATH_SET"
-        | "RPATH_CHECK"
-        | "RPATH_REMOVE"
-        | "READ_ELF"
         | "READ_MACHO" => {
             // SetError prefixes the command name. The unsupported command is
             // named explicitly in the diagnostic.
@@ -423,7 +420,7 @@ fn copy_file(source: &str, dest: &str) -> Result<(), (io::Error, &'static str)> 
                 .truncate(true)
                 .open(path)
         };
-        let file = open()
+        open()
             .or_else(|error| {
                 if error.kind() == io::ErrorKind::PermissionDenied {
                     fs::remove_file(path)?;
@@ -432,8 +429,7 @@ fn copy_file(source: &str, dest: &str) -> Result<(), (io::Error, &'static str)> 
                     Err(error)
                 }
             })
-            .map_err(|error| (error, "output"))?;
-        file
+            .map_err(|error| (error, "output"))?
     };
     io::copy(&mut source, &mut dest).map_err(|error| (error, "output"))?;
     if let Some(permissions) = permissions {

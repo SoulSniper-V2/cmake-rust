@@ -257,6 +257,9 @@ fn configure_file(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
     };
     interp.ext.configure_dependencies.insert(input.clone());
+    // cmMakefile::AddCMakeDependFile appends the input to ListFiles, which
+    // generators consume for the cmake re-run rule.
+    interp.mf_mut().list_files.push(input.clone());
     interp.ext.configure_outputs.insert(output.clone());
     if bits == 0 {
         bits = fs::metadata(&input).map_or(0o644, |meta| meta.permissions().mode());

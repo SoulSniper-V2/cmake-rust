@@ -1,0 +1,7 @@
+file(COPY_FILE data/prog prog)
+file(RPATH_CHANGE FILE prog OLD_RPATH "/first/lib:/second/lib" NEW_RPATH "")
+file(READ_ELF prog RPATH out)
+if(EXISTS prog)
+  message(STATUS "exists")
+endif()
+message(STATUS "rpath=[${out}]")
