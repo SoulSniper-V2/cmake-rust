@@ -20,42 +20,98 @@ use super::target::{
 };
 
 pub fn register(interp: &mut Interp) {
-    let commands: &[(&str, Builtin, bool)] = &[
-        ("add_executable", add_executable, true),
-        ("add_library", add_library, true),
-        ("add_custom_target", add_custom_target, true),
-        ("add_custom_command", add_custom_command, true),
-        ("add_dependencies", add_dependencies, true),
-        ("target_link_libraries", target_link_libraries, true),
+    let commands: &[(&str, Builtin)] = &[
+        ("add_executable", add_executable),
+        ("add_library", add_library),
+        ("add_custom_target", add_custom_target),
+        ("add_custom_command", add_custom_command),
+        ("add_dependencies", add_dependencies),
+        ("target_link_libraries", target_link_libraries),
         (
             "target_include_directories",
-            target_include_directories,
-            true,
-        ),
+            target_include_directories),
         (
             "target_compile_definitions",
-            target_compile_definitions,
-            true,
-        ),
-        ("target_compile_options", target_compile_options, true),
-        ("target_compile_features", target_compile_features, true),
-        ("target_link_options", target_link_options, false),
-        ("target_link_directories", target_link_directories, false),
-        ("target_sources", target_sources, true),
+            target_compile_definitions),
+        ("target_compile_options", target_compile_options),
+        ("target_compile_features", target_compile_features),
+        ("target_link_options", target_link_options),
+        ("target_link_directories", target_link_directories),
+        ("target_sources", target_sources),
         (
             "target_precompile_headers",
-            target_precompile_headers,
-            false,
-        ),
-        ("enable_testing", enable_testing, true),
-        ("add_test", add_test, true),
+            target_precompile_headers),
+        ("enable_testing", enable_testing),
+        ("add_test", add_test),
     ];
-    for &(name, command, script_error) in commands {
-        if interp.mode == Mode::Project {
+    if interp.mode == Mode::Project {
+        for &(name, command) in commands {
             interp.register(name, command);
-        } else if script_error {
-            interp.register_unexpected(name, "command is not scriptable");
         }
+    }
+}
+
+/// `GetProjectCommandsInScriptMode` (cmCommands.cxx): in script mode every
+/// project command is replaced by one that fails, before its arguments are
+/// expanded, with "command is not scriptable".  Called after all families
+/// have registered so it overrides them.
+pub fn register_script_mode_unexpected(interp: &mut Interp) {
+    if interp.mode == Mode::Project {
+        return;
+    }
+    for name in [
+        "add_compile_options",
+        "add_custom_command",
+        "add_custom_target",
+        "add_definitions",
+        "add_dependencies",
+        "add_executable",
+        "add_library",
+        "add_subdirectory",
+        "add_test",
+        "aux_source_directory",
+        "build_command",
+        "cmake_file_api",
+        "create_test_sourcelist",
+        "define_property",
+        "enable_language",
+        "enable_testing",
+        "export",
+        "fltk_wrap_ui",
+        "get_source_file_property",
+        "get_target_property",
+        "get_test_property",
+        "include_directories",
+        "include_external_msproject",
+        "include_regular_expression",
+        "install",
+        "link_directories",
+        "link_libraries",
+        "project",
+        "qt_wrap_cpp",
+        "qt_wrap_ui",
+        "remove_definitions",
+        "set_source_files_properties",
+        "set_target_properties",
+        "set_tests_properties",
+        "source_group",
+        "target_compile_definitions",
+        "target_compile_features",
+        "target_compile_options",
+        "target_include_directories",
+        "target_link_libraries",
+        "target_sources",
+        "try_compile",
+        "try_run",
+        // deprecated commands
+        "export_library_dependencies",
+        "load_command",
+        "output_required_files",
+        "subdir_depends",
+        "utility_source",
+        "variable_requires",
+    ] {
+        interp.register_unexpected(name, "command is not scriptable");
     }
 }
 

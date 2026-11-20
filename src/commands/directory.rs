@@ -14,24 +14,22 @@ use super::target::{
 };
 
 pub fn register(interp: &mut Interp) {
-    let commands: &[(&str, Builtin, bool)] = &[
-        ("add_subdirectory", add_subdirectory, true),
-        ("subdirs", subdirs, false),
-        ("include_directories", include_directories, true),
-        ("add_definitions", add_definitions, true),
-        ("remove_definitions", remove_definitions, true),
-        ("add_compile_definitions", add_compile_definitions, false),
-        ("add_compile_options", add_compile_options, true),
-        ("add_link_options", add_link_options, false),
-        ("link_directories", link_directories, true),
-        ("link_libraries", link_libraries, true),
-        ("source_group", source_group, true),
+    let commands: &[(&str, Builtin)] = &[
+        ("add_subdirectory", add_subdirectory),
+        ("subdirs", subdirs),
+        ("include_directories", include_directories),
+        ("add_definitions", add_definitions),
+        ("remove_definitions", remove_definitions),
+        ("add_compile_definitions", add_compile_definitions),
+        ("add_compile_options", add_compile_options),
+        ("add_link_options", add_link_options),
+        ("link_directories", link_directories),
+        ("link_libraries", link_libraries),
+        ("source_group", source_group),
     ];
-    for &(name, command, script_error) in commands {
-        if interp.mode == Mode::Project {
+    if interp.mode == Mode::Project {
+        for &(name, command) in commands {
             interp.register(name, command);
-        } else if script_error {
-            interp.register_unexpected(name, "command is not scriptable");
         }
     }
 }

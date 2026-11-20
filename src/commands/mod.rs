@@ -32,4 +32,6 @@ pub fn register_all(interp: &mut Interp) {
     separate_arguments::register(interp);
     parse_arguments::register(interp);
     try_compile::register(interp);
+    // Must stay last: overrides project commands in script mode.
+    targets::register_script_mode_unexpected(interp);
 }

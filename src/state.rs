@@ -60,7 +60,34 @@ pub struct Target {
     pub dependencies: BTreeMap<String, Vec<Frame>>,
     pub custom_commands: Vec<CustomCommand>,
     pub file_sets: BTreeMap<String, FileSet>,
-    pub(super) link_signatures: Vec<(bool, Frame)>,
+    /// `target_link_libraries` signature uses (keyword?, call site) for the
+    /// plain/keyword signature mixing check.
+    pub link_signatures: Vec<(bool, Frame)>,
+}
+
+impl Target {
+    /// A bare target with no properties.  Commands create targets through
+    /// `commands::target::create_target`, which also runs the cmTarget
+    /// constructor initialization; this is for tests and synthetic targets.
+    pub fn new(name: &str, kind: TargetKind, makefile: usize) -> Self {
+        Target {
+            name: name.to_owned(),
+            kind,
+            makefile,
+            imported: false,
+            imported_global: false,
+            alias_of: None,
+            props: Props::default(),
+            provenance: BTreeMap::new(),
+            backtrace: Vec::new(),
+            policies: PolicyMap::default(),
+            system_include_directories: BTreeSet::new(),
+            dependencies: BTreeMap::new(),
+            custom_commands: Vec::new(),
+            file_sets: BTreeMap::new(),
+            link_signatures: Vec::new(),
+        }
+    }
 }
 
 pub type PropertyEntry = (String, Vec<Frame>);
@@ -267,6 +294,18 @@ pub fn find_global_target_key(interp: &Interp, name: &str) -> Option<String> {
         .cloned()
 }
 
+/// `cmMakefile::FindTargetToUse`, also returning the target's key in
+/// `interp.ext.targets` (which differs from `Target::name` for
+/// directory-scoped imported targets).
+pub fn find_target_entry<'a>(interp: &'a Interp, name: &str) -> Option<(&'a str, &'a Target)> {
+    let key = find_target_key(interp, name)?;
+    interp
+        .ext
+        .targets
+        .get_key_value(&key)
+        .map(|(key, target)| (key.as_str(), target))
+}
+
 /// `cmMakefile::FindTargetToUse`.
 pub fn find_target_to_use<'a>(interp: &'a Interp, name: &str) -> Option<&'a Target> {
     interp.ext.targets.get(&find_target_key(interp, name)?)
@@ -275,7 +314,7 @@ pub fn find_target_to_use<'a>(interp: &'a Interp, name: &str) -> Option<&'a Targ
 #[allow(unused_imports, reason = "shared API for property command integration")]
 pub use crate::commands::target::{
     PropertyWrite, find_source, get_or_create_source, mark_generated, read_target_property,
-    target_property, write_target_property,
+    register_target, source_prop, target_property, write_target_property,
 };
 
 pub fn has_test(interp: &Interp, name: &str) -> bool {

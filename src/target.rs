@@ -620,18 +620,31 @@ pub fn create_target(
             target.set_entry(prop, Some(value), &interp.backtrace);
         }
     }
-    let key = if imported && !global || interp.ext.targets.contains_key(name) {
+    register_target(interp, target)
+}
+
+/// Stores a target in `interp.ext` and returns its key.  Global targets are
+/// keyed by name.  Directory-scoped ones (non-global IMPORTED targets, and
+/// duplicates allowed by ALLOW_DUPLICATE_CUSTOM_TARGETS) get the key
+/// `[<dir>]<name>` and are reachable through `scoped_targets` from their
+/// directory and the subdirectories created after them.
+pub fn register_target(interp: &mut Interp, target: Target) -> String {
+    let dir = target.makefile;
+    let name = target.name.clone();
+    let key = if target.imported && !target.imported_global
+        || interp.ext.targets.contains_key(&name)
+    {
         let key = format!("[{dir}]{name}");
         interp
             .ext
             .scoped_targets
-            .insert((dir, name.to_owned()), key.clone());
+            .insert((dir, name), key.clone());
         key
     } else {
-        name.to_owned()
+        name
     };
-    if !imported {
-        interp.mf_mut().targets.push(key.clone());
+    if !target.imported {
+        interp.makefiles[dir].targets.push(key.clone());
     }
     interp.ext.target_order.push(key.clone());
     interp.ext.targets.insert(key.clone(), target);
@@ -1401,6 +1414,18 @@ pub fn find_source<'a>(interp: &'a Interp, dir: usize, path: &str) -> Option<&'a
             .location
             .matches(&location, &mf.source_dir, &mf.binary_dir)
     })
+}
+
+/// A source file's stored property (`cmSourceFile::GetProperty` for plain
+/// properties), looked up with `cmSourceFileLocation` matching in directory
+/// `dir_index`.  `None` when the source is unknown or the property is unset.
+pub fn source_prop<'a>(
+    interp: &'a Interp,
+    dir_index: usize,
+    path: &str,
+    name: &str,
+) -> Option<&'a str> {
+    find_source(interp, dir_index, path)?.props.get(name)
 }
 
 pub fn mark_generated(interp: &mut Interp, dir: usize, path: &str) {
