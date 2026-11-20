@@ -13,6 +13,7 @@ mod flow;
 mod fsutil;
 mod generator;
 mod install_model;
+#[allow(dead_code)] mod genex;
 mod interp;
 mod languages;
 mod lexer;

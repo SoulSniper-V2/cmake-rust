@@ -1,0 +1,2966 @@
+{
+ "variables": {
+  "CMAKE_C_LINKER_WRAPPER_FLAG": "-Wl,",
+  "CMAKE_C_LINKER_WRAPPER_FLAG_SEP": ",",
+  "CMAKE_C_COMPILER_ID": "GNU",
+  "CMAKE_C_COMPILER_VERSION": "13.3.0",
+  "CMAKE_C_COMPILE_FEATURES": "c_std_90;c_function_prototypes;c_std_99;c_restrict;c_variadic_macros;c_std_11;c_static_assert;c_std_17;c_std_23",
+  "CMAKE_C_COMPILER_LOADED": "1",
+  "CMAKE_C_STANDARD_DEFAULT": "17",
+  "CMAKE_SYSTEM_NAME": "Linux"
+ },
+ "missing_path": "/cmake-rust-genex/does/not/exist",
+ "cases": [
+  {
+   "name": "own_includes_dedup",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INCLUDE_DIRECTORIES": [
+       [
+        5,
+        "/usr/share;/usr/lib"
+       ],
+       [
+        6,
+        "/usr/lib;/usr/local//"
+       ],
+       [
+        7,
+        "/usr/share/"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      5,
+      "/usr/share"
+     ],
+     [
+      5,
+      "/usr/lib"
+     ],
+     [
+      6,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -I/usr/lib -I/usr/local",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "interface_chain_attributed_to_direct_item",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INCLUDE_DIRECTORIES": [
+       [
+        8,
+        "/usr/share"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/lib"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        11,
+        "c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        12,
+        "/usr/local"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        13,
+        "imp"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        14,
+        "/usr/bin;/cmake-rust-genex/does/not/exist"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      8,
+      "/usr/share"
+     ],
+     [
+      9,
+      "/usr/lib"
+     ],
+     [
+      9,
+      "/usr/local"
+     ],
+     [
+      9,
+      "/usr/bin"
+     ],
+     [
+      9,
+      "/cmake-rust-genex/does/not/exist"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -I/usr/lib -I/usr/local -isystem /usr/bin -isystem /cmake-rust-genex/does/not/exist",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "imported_direct_missing_path",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "imp"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        7,
+        "/usr/share;/cmake-rust-genex/does/not/exist"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Imported target \"imp\" includes non-existent path\n\n    \"/cmake-rust-genex/does/not/exist\"\n\n  in its INTERFACE_INCLUDE_DIRECTORIES.  Possible reasons include:\n\n  * The path was deleted, renamed, or moved to another location.\n\n  * An install or uninstall procedure did not complete successfully.\n\n  * The installation package was faulty and references files it does not\n  provide.\n"
+  },
+  {
+   "name": "imported_direct_existing_is_system",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INCLUDE_DIRECTORIES": [
+       [
+        7,
+        "/usr/lib"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "imp;b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "/usr/share;/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/local"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/lib"
+     ],
+     [
+      8,
+      "/usr/share"
+     ],
+     [
+      8,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/local -isystem /usr/lib -isystem /usr/share",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "no_system_from_imported",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "NO_SYSTEM_FROM_IMPORTED": [
+       [
+        6,
+        "ON"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "imp"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        8,
+        "/usr/share"
+       ]
+      ],
+      "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/share"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "imported_no_system",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "imp"
+       ],
+       [
+        8,
+        "imp2"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "IMPORTED_NO_SYSTEM": [
+       [
+        9,
+        "ON"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp2": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "SYSTEM": [
+       [
+        11,
+        "OFF"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        12,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/share"
+     ],
+     [
+      8,
+      "/usr/lib"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -I/usr/lib",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "system_property_on_normal_dep",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b;c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "SYSTEM": [
+       [
+        8,
+        "ON"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/lib"
+       ]
+      ],
+      "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES": [
+       [
+        11,
+        "/usr/lib;/usr/bin"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/share"
+     ],
+     [
+      7,
+      "/usr/lib"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-isystem /usr/share -isystem /usr/lib",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "system_via_transitive_closure",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        8,
+        "imp"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "INTERFACE",
+     "imported": true,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/share"
+     ],
+     [
+      7,
+      "/usr/lib"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -isystem /usr/lib",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "own_system_include",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INCLUDE_DIRECTORIES": [
+       [
+        5,
+        "/usr/share"
+       ],
+       [
+        6,
+        "/usr/lib"
+       ],
+       [
+        7,
+        "/usr/local"
+       ]
+      ]
+     },
+     "system": [
+      "/usr/lib",
+      "/usr/local"
+     ]
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      5,
+      "/usr/share"
+     ],
+     [
+      6,
+      "/usr/lib"
+     ],
+     [
+      7,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -isystem /usr/lib -isystem /usr/local",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "relative_own_include",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INCLUDE_DIRECTORIES": [
+       [
+        5,
+        "/usr/share;rel/dir"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Found relative path while evaluating include directories of \"main\":\n\n    \"rel/dir\"\n"
+  },
+  {
+   "name": "relative_interface_include",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        7,
+        "rel"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Target \"b\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n\n    \"rel\"\n"
+  },
+  {
+   "name": "relative_include_through_chain",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        8,
+        "c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "rel"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Target \"b\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n\n    \"rel\"\n"
+  },
+  {
+   "name": "diamond_already_seen",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "b;c;d"
+       ]
+      ],
+      "COMPILE_DEFINITIONS": [
+       [
+        9,
+        "M"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        10,
+        "d"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        11,
+        "B"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        12,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        13,
+        "d"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        14,
+        "C;D"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        15,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "d": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        16,
+        "D"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        17,
+        "/usr/local"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      9,
+      "M"
+     ],
+     [
+      8,
+      "B"
+     ],
+     [
+      8,
+      "D"
+     ],
+     [
+      8,
+      "C"
+     ]
+    ],
+    "includes": [
+     [
+      8,
+      "/usr/share"
+     ],
+     [
+      8,
+      "/usr/local"
+     ],
+     [
+      8,
+      "/usr/lib"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DC -DD -DM",
+    "INCLUDES": "-I/usr/share -I/usr/local -I/usr/lib",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "interface_cycle",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        8,
+        "c"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "B"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        10,
+        "b;main"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        11,
+        "C"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "B"
+     ],
+     [
+      7,
+      "C"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DC",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "alias_and_duplicate_links",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "alias_b"
+       ],
+       [
+        7,
+        "b;b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        8,
+        "B;B2"
+       ]
+      ],
+      "INTERFACE_COMPILE_OPTIONS": [
+       [
+        9,
+        "-Ob"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {
+    "alias_b": "b"
+   },
+   "logs": {
+    "compile options": [
+     [
+      6,
+      "-Ob"
+     ]
+    ],
+    "compile definitions": [
+     [
+      6,
+      "B"
+     ],
+     [
+      6,
+      "B2"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DB2",
+    "INCLUDES": "",
+    "FLAGS": "-Ob",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "head_sensitive_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LABEL": [
+       [
+        6,
+        "mainlabel"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "LABEL": [
+       [
+        8,
+        "blabel"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "L=$<TARGET_PROPERTY:LABEL>;C=$<COMPILE_LANGUAGE>;$<$<COMPILE_LANGUAGE:C>:ISC>;$<$<CONFIG:Debug>:DBG>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "L=mainlabel"
+     ],
+     [
+      7,
+      "C=C"
+     ],
+     [
+      7,
+      "ISC"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DC=C -DISC -DL=mainlabel",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "build_install_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "b"
+       ]
+      ],
+      "INCLUDE_DIRECTORIES": [
+       [
+        7,
+        "$<BUILD_INTERFACE:/usr/share>;$<INSTALL_INTERFACE:inc>"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        8,
+        "$<BUILD_INTERFACE:/usr/lib>;$<INSTALL_INTERFACE:include>;$<BUILD_LOCAL_INTERFACE:/usr/local>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      7,
+      "/usr/share"
+     ],
+     [
+      6,
+      "/usr/lib"
+     ],
+     [
+      6,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -I/usr/lib -I/usr/local",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "link_only_in_static_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "s"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "s": {
+     "type": "STATIC",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "p"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        10,
+        "$<LINK_ONLY:p>;q"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "p": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        11,
+        "P"
+       ]
+      ],
+      "INTERFACE_LINK_OPTIONS": [
+       [
+        12,
+        "-p-link"
+       ]
+      ],
+      "INTERFACE_LINK_DIRECTORIES": [
+       [
+        13,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "q": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        14,
+        "Q"
+       ]
+      ],
+      "INTERFACE_LINK_OPTIONS": [
+       [
+        15,
+        "-q-link"
+       ]
+      ],
+      "INTERFACE_LINK_DIRECTORIES": [
+       [
+        16,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      8,
+      "Q"
+     ]
+    ],
+    "link directories": [
+     [
+      8,
+      "/usr/share"
+     ],
+     [
+      8,
+      "/usr/lib"
+     ]
+    ],
+    "link options": [
+     [
+      8,
+      "-p-link"
+     ],
+     [
+      8,
+      "-q-link"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DQ",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-p-link -q-link -Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "direct_overrides_follow_dependencies_before_injection",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "b;excluded"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "B"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES_DIRECT": [
+       [
+        11,
+        "c"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE": [
+       [
+        12,
+        "excluded"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        13,
+        "C"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES_DIRECT": [
+       [
+        14,
+        "d"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "d": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        15,
+        "D"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "excluded": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        16,
+        "EXCLUDED"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      14,
+      "D"
+     ],
+     [
+      11,
+      "C"
+     ],
+     [
+      9,
+      "B"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DC -DD",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "imported_legacy_link_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "imp"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "UNKNOWN",
+     "imported": true,
+     "entries": {
+      "IMPORTED_LOCATION": [
+       [
+        8,
+        "/usr/lib/libfake.a"
+       ]
+      ],
+      "IMPORTED_LINK_INTERFACE_LIBRARIES": [
+       [
+        9,
+        "b"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "IMP"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        11,
+        "B"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "IMP"
+     ],
+     [
+      7,
+      "B"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DIMP",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "compile_only",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "$<COMPILE_ONLY:b>;c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        8,
+        "B"
+       ]
+      ],
+      "INTERFACE_LINK_OPTIONS": [
+       [
+        9,
+        "-b-link"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "C"
+       ]
+      ],
+      "INTERFACE_LINK_OPTIONS": [
+       [
+        11,
+        "-c-link"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "B"
+     ],
+     [
+      7,
+      "C"
+     ]
+    ],
+    "link options": [
+     [
+      7,
+      "-c-link"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DC",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-c-link -Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "definitions_genex_and_empties",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "COMPILE_DEFINITIONS": [
+       [
+        6,
+        "A;;B=1"
+       ],
+       [
+        7,
+        "$<0:X>;$<1:Y>;A"
+       ],
+       [
+        8,
+        "Z=a b"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "A;$<$<BOOL:1>:B=1>;W"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      6,
+      "A"
+     ],
+     [
+      6,
+      "B=1"
+     ],
+     [
+      7,
+      "Y"
+     ],
+     [
+      8,
+      "Z=a b"
+     ],
+     [
+      9,
+      "W"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DA -DB=1 -DW -DY -DZ=\"a b\"",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "options_shell_and_dedup",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "COMPILE_OPTIONS": [
+       [
+        6,
+        "-Wall;SHELL:-x 'a b';-Wall"
+       ],
+       [
+        7,
+        "SHELL:-x 'a b';-x;SHELL:-f \"q r\" -g"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_OPTIONS": [
+       [
+        9,
+        "SHELL:-x 'a b';-O2;SHELL:-x\\ c"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile options": [
+     [
+      6,
+      "-Wall"
+     ],
+     [
+      6,
+      "SHELL:-x 'a b'"
+     ],
+     [
+      7,
+      "-x"
+     ],
+     [
+      7,
+      "SHELL:-f \"q r\" -g"
+     ],
+     [
+      8,
+      "-O2"
+     ],
+     [
+      8,
+      "SHELL:-x\\ c"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "",
+    "FLAGS": "-Wall -x \"a b\" -x -f \"q r\" -g -O2 \"-x c\"",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "compile_features",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "COMPILE_FEATURES": [
+       [
+        6,
+        "c_std_99;c_restrict"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_FEATURES": [
+       [
+        8,
+        "c_std_11;c_restrict;$<$<COMPILE_LANGUAGE:C>:c_static_assert>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile features": [
+     [
+      6,
+      "c_std_99"
+     ],
+     [
+      6,
+      "c_restrict"
+     ]
+    ]
+   },
+   "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANGUAGE:C>\n\n  $<COMPILE_LANGUAGE:...> may only be used to specify include directories,\n  compile definitions, compile options, and to evaluate components of the\n  file(GENERATE) command.\n"
+  },
+  {
+   "name": "compile_features_plain",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "COMPILE_FEATURES": [
+       [
+        6,
+        "c_std_99;c_restrict"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_FEATURES": [
+       [
+        8,
+        "c_std_11;c_restrict;$<1:c_static_assert>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile features": [
+     [
+      6,
+      "c_std_99"
+     ],
+     [
+      6,
+      "c_restrict"
+     ],
+     [
+      7,
+      "c_std_11"
+     ],
+     [
+      7,
+      "c_static_assert"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "link_options_wrappers",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_OPTIONS": [
+       [
+        6,
+        "LINKER:-z,defs;LINKER:SHELL:-a 'b c';-Wl,raw"
+       ],
+       [
+        7,
+        "$<HOST_LINK:-h>;$<DEVICE_LINK:-dev>;LINKER:,"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_OPTIONS": [
+       [
+        9,
+        "SHELL:-x 'y z';LINKER:--as-needed;-Wl,raw"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "link options": [
+     [
+      6,
+      "LINKER:-z,defs"
+     ],
+     [
+      6,
+      "LINKER:SHELL:-a 'b c'"
+     ],
+     [
+      6,
+      "-Wl,raw"
+     ],
+     [
+      7,
+      "-h"
+     ],
+     [
+      7,
+      "LINKER:,"
+     ],
+     [
+      8,
+      "SHELL:-x 'y z'"
+     ],
+     [
+      8,
+      "LINKER:--as-needed"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,-z,defs \"-Wl,-a,b c\" -Wl,raw -h -x \"y z\" -Wl,--as-needed -Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "linker_shell_in_arguments",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_OPTIONS": [
+       [
+        5,
+        "LINKER:a,SHELL:b"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "link options": [
+     [
+      5,
+      "LINKER:a,SHELL:b"
+     ]
+    ]
+   },
+   "error": "  'SHELL:' prefix is not supported as part of 'LINKER:' arguments.\n"
+  },
+  {
+   "name": "link_directories",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_DIRECTORIES": [
+       [
+        7,
+        "/usr/share;/usr/lib//x/"
+       ],
+       [
+        8,
+        "/usr/share"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_DIRECTORIES": [
+       [
+        10,
+        "/usr/local;/usr/share"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        11,
+        "c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_DIRECTORIES": [
+       [
+        12,
+        "/usr/bin"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "link directories": [
+     [
+      7,
+      "/usr/share"
+     ],
+     [
+      7,
+      "/usr/lib/x"
+     ],
+     [
+      9,
+      "/usr/local"
+     ],
+     [
+      9,
+      "/usr/bin"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "relative_own_link_directory",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_DIRECTORIES": [
+       [
+        5,
+        "rel"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Found relative path while evaluating link directories of \"main\":\n\n    \"rel\"\n"
+  },
+  {
+   "name": "relative_interface_link_directory",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_DIRECTORIES": [
+       [
+        7,
+        "rel"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Target \"b\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n\n    \"rel\"\n"
+  },
+  {
+   "name": "self_link",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        5,
+        "main"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Target \"main\" links to itself.\n"
+  },
+  {
+   "name": "unknown_imported_with_location",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "imp"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "imp": {
+     "type": "UNKNOWN",
+     "imported": true,
+     "entries": {
+      "IMPORTED_LOCATION": [
+       [
+        7,
+        "/usr/lib/libcmake-rust-genex.a"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        8,
+        "/usr/share"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "IMP"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      6,
+      "IMP"
+     ]
+    ],
+    "includes": [
+     [
+      6,
+      "/usr/share"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DIMP",
+    "INCLUDES": "-isystem /usr/share",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "whitespace_link_item",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        " b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        7,
+        "B"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      6,
+      "B"
+     ]
+    ]
+   },
+   "error": "  Target \"main\" links to item \" b\" which has leading or trailing whitespace.\n  This is now an error according to policy CMP0004.\n"
+  },
+  {
+   "name": "non_target_link_items_ignored",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "m;-lfoo;/usr/lib/libz.so;b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        7,
+        "B"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      6,
+      "B"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "static_lib_link_implementation",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "s"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "s": {
+     "type": "STATIC",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "p"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "S"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "p": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "P"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "S"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DS",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "shared_lib_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "sh"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "sh": {
+     "type": "SHARED",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        9,
+        "p"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        10,
+        "q"
+       ]
+      ],
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        11,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "p": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        12,
+        "/usr/lib"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "q": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        13,
+        "/usr/local"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "includes": [
+     [
+      8,
+      "/usr/share"
+     ],
+     [
+      8,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "-I/usr/share -I/usr/local",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "link_language_genex_in_link_libraries",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "$<$<LINK_LANGUAGE:C>:b>;$<$<LINK_LANGUAGE:CXX>:c>"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        8,
+        "B"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "C"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "ninja": {
+    "DEFINES": "",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "target_property_genex_in_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        8,
+        "$<TARGET_PROPERTY:c,INTERFACE_COMPILE_DEFINITIONS>;B"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        9,
+        "C1;C2"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      7,
+      "C1"
+     ],
+     [
+      7,
+      "C2"
+     ],
+     [
+      7,
+      "B"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DB -DC1 -DC2",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "self_referencing_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "b"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        7,
+        "$<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n\n  Dependency loop found.\n"
+  },
+  {
+   "name": "own_property_references_build_property",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "COMPILE_DEFINITIONS": [
+       [
+        5,
+        "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {},
+   "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:COMPILE_DEFINITIONS>\n\n  Self reference on target \"main\".\n"
+  },
+  {
+   "name": "include_directories_via_target_property",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ],
+      "COMPILE_DEFINITIONS": [
+       [
+        8,
+        "I=$<JOIN:$<TARGET_PROPERTY:INCLUDE_DIRECTORIES>,+>"
+       ]
+      ],
+      "INCLUDE_DIRECTORIES": [
+       [
+        9,
+        "/usr/share"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        10,
+        "/usr/lib"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        11,
+        "c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_INCLUDE_DIRECTORIES": [
+       [
+        12,
+        "/usr/local"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      8,
+      "I=/usr/share+/usr/lib+/usr/local"
+     ]
+    ],
+    "includes": [
+     [
+      9,
+      "/usr/share"
+     ],
+     [
+      7,
+      "/usr/lib"
+     ],
+     [
+      7,
+      "/usr/local"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DI=/usr/share+/usr/lib+/usr/local",
+    "INCLUDES": "-I/usr/share -I/usr/lib -I/usr/local",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "executable_interfaces",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        10,
+        "tool;s"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "tool": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "ENABLE_EXPORTS": [
+       [
+        11,
+        "ON"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        12,
+        "p"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        13,
+        "TOOL"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "s": {
+     "type": "STATIC",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        14,
+        "noexports"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "noexports": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        15,
+        "q"
+       ]
+      ],
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        16,
+        "NOEXP"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "p": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        17,
+        "P"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "q": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        18,
+        "Q"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      10,
+      "TOOL"
+     ],
+     [
+      10,
+      "P"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DP -DTOOL",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "module_without_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        8,
+        "s"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "s": {
+     "type": "STATIC",
+     "imported": false,
+     "entries": {
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        9,
+        "mod"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "mod": {
+     "type": "MODULE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "MOD"
+       ]
+      ],
+      "LINK_LIBRARIES": [
+       [
+        11,
+        "p"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "p": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        12,
+        "P"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      8,
+      "MOD"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DMOD",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "custom_transitive_property_in_definitions",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        7,
+        "b"
+       ]
+      ],
+      "CUSTOM": [
+       [
+        8,
+        "mine"
+       ]
+      ],
+      "COMPILE_DEFINITIONS": [
+       [
+        9,
+        "V=$<JOIN:$<TARGET_PROPERTY:CUSTOM>,+>"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "TRANSITIVE_COMPILE_PROPERTIES": [
+       [
+        10,
+        "CUSTOM"
+       ]
+      ],
+      "INTERFACE_CUSTOM": [
+       [
+        11,
+        "fromb"
+       ]
+      ],
+      "INTERFACE_LINK_LIBRARIES": [
+       [
+        12,
+        "c"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "c": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_CUSTOM": [
+       [
+        13,
+        "fromc"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      9,
+      "V=mine+fromb+fromc"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DV=mine+fromb+fromc",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  },
+  {
+   "name": "genex_eval_of_interface",
+   "targets": {
+    "main": {
+     "type": "EXECUTABLE",
+     "imported": false,
+     "entries": {
+      "LINK_LIBRARIES": [
+       [
+        6,
+        "b"
+       ]
+      ],
+      "RAWDEF": [
+       [
+        7,
+        "$<TARGET_PROPERTY:LABEL>"
+       ]
+      ],
+      "LABEL": [
+       [
+        8,
+        "lbl"
+       ]
+      ],
+      "COMPILE_DEFINITIONS": [
+       [
+        9,
+        "G=$<GENEX_EVAL:$<TARGET_PROPERTY:RAWDEF>>"
+       ]
+      ]
+     },
+     "system": []
+    },
+    "b": {
+     "type": "INTERFACE",
+     "imported": false,
+     "entries": {
+      "INTERFACE_COMPILE_DEFINITIONS": [
+       [
+        10,
+        "T=$<TARGET_GENEX_EVAL:b,$<TARGET_PROPERTY:b,RAWB>>"
+       ]
+      ],
+      "RAWB": [
+       [
+        11,
+        "$<TARGET_PROPERTY:b,NAME>"
+       ]
+      ]
+     },
+     "system": []
+    }
+   },
+   "aliases": {},
+   "logs": {
+    "compile definitions": [
+     [
+      9,
+      "G=lbl"
+     ],
+     [
+      6,
+      "T=b"
+     ]
+    ]
+   },
+   "ninja": {
+    "DEFINES": "-DG=lbl -DT=b",
+    "INCLUDES": "",
+    "FLAGS": "",
+    "LINK_FLAGS": "-Wl,--dependency-file=CMakeFiles/main.dir/link.d"
+   }
+  }
+ ]
+}

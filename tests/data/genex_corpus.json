@@ -1,0 +1,5999 @@
+{
+  "variables": {
+    "CMAKE_SYSTEM_NAME": "Linux"
+  },
+  "targets": {
+    "a": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_LINK_LIBRARIES": "b;$<LINK_ONLY:c>;b",
+        "LABEL": "A",
+        "INTERFACE_CUSTOM": "a",
+        "TRANSITIVE_COMPILE_PROPERTIES": "CUSTOM",
+        "RAW": "$<1:rewritten>",
+        "LITERAL": "a;b",
+        "INTERFACE_COMPILE_DEFINITIONS": "A;$<TARGET_PROPERTY:LABEL>;;",
+        "INTERFACE_LINK_OPTIONS": "A_LINK",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/a"
+      }
+    },
+    "b": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "B;$<TARGET_PROPERTY:LABEL>",
+        "LABEL": "B",
+        "INTERFACE_LINK_OPTIONS": "B_LINK",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/b",
+        "INTERFACE_LINK_LIBRARIES": "d",
+        "INTERFACE_CUSTOM": "b"
+      }
+    },
+    "c": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "C",
+        "INTERFACE_LINK_OPTIONS": "C_LINK",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/c"
+      }
+    },
+    "d": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_LINK_LIBRARIES": "a",
+        "INTERFACE_COMPILE_DEFINITIONS": "D",
+        "INTERFACE_LINK_OPTIONS": "D_LINK",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/d"
+      }
+    },
+    "cycle": {
+      "type": "INTERFACE",
+      "properties": {}
+    },
+    "imp": {
+      "type": "UNKNOWN",
+      "imported": true,
+      "properties": {
+        "IMPORTED_LOCATION_RELEASE": "/opt/libsample.so.1",
+        "IMPORTED_LOCATION": "/opt/default.so",
+        "MAP_IMPORTED_CONFIG_DEBUG": "Release"
+      }
+    },
+    "obj": {
+      "type": "OBJECT",
+      "imported": true,
+      "properties": {
+        "IMPORTED_OBJECTS": "/opt/a.o;/opt/b.o"
+      }
+    },
+    "shared": {
+      "type": "SHARED",
+      "imported": true,
+      "properties": {
+        "IMPORTED_LOCATION": "/opt/libshared.so.1.2",
+        "IMPORTED_SONAME": "libshared.so.1"
+      }
+    }
+  },
+  "aliases": {
+    "alias": "a"
+  },
+  "c_variables": {
+    "CMAKE_C_COMPILER_ID": "GNU",
+    "CMAKE_C_COMPILER_VERSION": "13.3.0",
+    "CMAKE_C_COMPILER_FRONTEND_VARIANT": "GNU",
+    "CMAKE_C_COMPILE_FEATURES": "c_std_90;c_function_prototypes;c_std_99;c_restrict;c_variadic_macros;c_std_11;c_static_assert;c_std_17;c_std_23",
+    "CMAKE_C_COMPILER_LOADED": "1",
+    "CMAKE_C_STANDARD_DEFAULT": "17"
+  },
+  "c_targets": {
+    "s": {
+      "type": "STATIC",
+      "properties": {
+        "SOURCES": "main.c",
+        "LINK_LIBRARIES": "a;p;$<LINK_ONLY:q>",
+        "INTERFACE_LINK_LIBRARIES": "$<LINK_ONLY:p>;a;$<LINK_ONLY:q>",
+        "INCLUDE_DIRECTORIES": "/s-inc;/$<COMPILE_LANGUAGE>-lang",
+        "LABEL": "S",
+        "COMPILE_DEFINITIONS": "S_DEF;$<TARGET_PROPERTY:LABEL>;$<$<COMPILE_LANG_AND_ID:C,GNU>:S_GNU>",
+        "INTERFACE_COMPILE_DEFINITIONS": "S_IFACE;$<$<COMPILE_LANGUAGE:C>:S_C>",
+        "COMPILE_OPTIONS": "-s-opt",
+        "LINK_OPTIONS": "-s-link",
+        "LINK_DIRECTORIES": "/s-lib",
+        "CUSTOM": "s-custom",
+        "INTERFACE_CUSTOM": "s-iface-custom",
+        "TRANSITIVE_LINK_PROPERTIES": "CUSTOM",
+        "RAW": "$<TARGET_PROPERTY:LABEL>-$<COMPILE_LANGUAGE>"
+      }
+    },
+    "e": {
+      "type": "EXECUTABLE",
+      "properties": {
+        "SOURCES": "main.c",
+        "LINK_LIBRARIES": "s;x",
+        "INCLUDE_DIRECTORIES": "/e-inc",
+        "COMPILE_DEFINITIONS": "E_DEF",
+        "INTERFACE_LINK_LIBRARIES": "p",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/e-iface",
+        "CUSTOM": "e-custom"
+      }
+    },
+    "x": {
+      "type": "EXECUTABLE",
+      "properties": {
+        "SOURCES": "main.c",
+        "INTERFACE_COMPILE_DEFINITIONS": "X_IFACE",
+        "INTERFACE_LINK_LIBRARIES": "p"
+      }
+    },
+    "p": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "P;$<TARGET_PROPERTY:LABEL>",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/p-inc",
+        "INTERFACE_LINK_OPTIONS": "-p-link",
+        "INTERFACE_LINK_DIRECTORIES": "/p-lib",
+        "INTERFACE_COMPILE_OPTIONS": "$<$<COMPILE_LANGUAGE:C>:-p-c>",
+        "INTERFACE_CUSTOM": "p-custom",
+        "INTERFACE_LINK_LIBRARIES": "q"
+      }
+    },
+    "q": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "Q",
+        "INTERFACE_LINK_OPTIONS": "-q-link",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/q-inc",
+        "INTERFACE_CUSTOM": "q-custom"
+      }
+    }
+  },
+  "cases": [
+    {
+      "expression": "$<BOOL:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:OFF>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:false>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:0.0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL:FALSE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:IGNORE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:ignore>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:n>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:NO>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:notfound>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL:a-NOTFOUND>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<BOOL:a-notfound>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL:yes>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL: >",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL:000>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<BOOL>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<BOOL>\n\n  $<BOOL> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<AND:0,$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<AND:1,0,$<BOOL>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<AND:1,1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<AND:1,0,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<AND:2,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<AND:2,0>\n\n  Parameters to $<AND> must resolve to either '0' or '1'.\n"
+    },
+    {
+      "expression": "$<AND:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<AND:>\n\n  Parameters to $<AND> must resolve to either '0' or '1'.\n"
+    },
+    {
+      "expression": "$<AND>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<AND>\n\n  $<AND> expression requires at least one parameter.\n"
+    },
+    {
+      "expression": "$<AND:1,$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<UNKNOWN>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<OR:1,$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OR:0,1,$<BOOL>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OR:0,0,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<OR:0,1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OR:2,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OR:2,1>\n\n  Parameters to $<OR> must resolve to either '0' or '1'.\n"
+    },
+    {
+      "expression": "$<OR:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OR:>\n\n  Parameters to $<OR> must resolve to either '0' or '1'.\n"
+    },
+    {
+      "expression": "$<OR>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OR>\n\n  $<OR> expression requires at least one parameter.\n"
+    },
+    {
+      "expression": "$<NOT:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<NOT:0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<NOT:01>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<NOT:01>\n\n  $<NOT> parameter must resolve to exactly one '0' or '1' value.\n"
+    },
+    {
+      "expression": "$<NOT:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<NOT:>\n\n  $<NOT> parameter must resolve to exactly one '0' or '1' value.\n"
+    },
+    {
+      "expression": "$<NOT:one,two>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<NOT:one,two>\n\n  $<NOT> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<NOT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<NOT>\n\n  $<NOT> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<IF:1,yes,no>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "yes"
+    },
+    {
+      "expression": "$<IF:0,yes,no>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "no"
+    },
+    {
+      "expression": "$<IF:0,$<UNKNOWN>,no>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "no"
+    },
+    {
+      "expression": "$<IF:1,yes,$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "yes"
+    },
+    {
+      "expression": "$<IF:bad,yes,no>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<IF:bad,yes,no>\n\n  First parameter to $<IF> must resolve to exactly one '0' or '1' value.\n"
+    },
+    {
+      "expression": "$<IF:0,,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<IF:1,yes>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<IF:1,yes>\n\n  $<IF> expression requires 3 comma separated parameters, but got 2 instead.\n"
+    },
+    {
+      "expression": "$<IF:1,1,2,3>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<IF:1,1,2,3>\n\n  $<IF> expression requires 3 comma separated parameters, but got 4 instead.\n"
+    },
+    {
+      "expression": "$<0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<0>\n\n  $<0> expression requires a parameter.\n"
+    },
+    {
+      "expression": "$<0:$<UNKNOWN>,q>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<0:,y>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<1>\n\n  $<1> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<1:x:y,z>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "x:y,z"
+    },
+    {
+      "expression": "$<1:x$<SEMICOLON>y>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "x;y"
+    },
+    {
+      "expression": "$<1:$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<UNKNOWN>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<STREQUAL:,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<STREQUAL:a,A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<STREQUAL:a,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<STREQUAL: ;, ;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<STREQUAL:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<STREQUAL:a>\n\n  $<STREQUAL> expression requires 2 comma separated parameters, but got 1\n  instead.\n"
+    },
+    {
+      "expression": "$<STREQUAL:a,b,c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<STREQUAL:a,b,c>\n\n  $<STREQUAL> expression requires 2 comma separated parameters, but got 3\n  instead.\n"
+    },
+    {
+      "expression": "$<STREQUAL:$<COMMA>,$<COMMA>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:0,00>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:0x10,16>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:+0X10,020>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:0b101,5>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:-0b101,-5>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:0B-11,-3>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:09,9>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<EQUAL:09,9>\n\n  $<EQUAL> parameter 09 is not a valid integer.\n"
+    },
+    {
+      "expression": "$<EQUAL:1 ,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<EQUAL:1 ,1>\n\n  $<EQUAL> parameter 1 is not a valid integer.\n"
+    },
+    {
+      "expression": "$<EQUAL: 1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:-9223372036854775808,-0x8000000000000000>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<EQUAL:9223372036854775808,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<EQUAL:9223372036854775808,0>\n\n  $<EQUAL> parameter 9223372036854775808 is not a valid integer.\n"
+    },
+    {
+      "expression": "$<EQUAL:0.0,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<EQUAL:0.0,0>\n\n  $<EQUAL> parameter 0.0 is not a valid integer.\n"
+    },
+    {
+      "expression": "$<EQUAL:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<EQUAL:,0>\n\n  $<EQUAL> parameter is not a valid integer.\n"
+    },
+    {
+      "expression": "$<IN_LIST:a;a,a;a;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<IN_LIST:a,b;c;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<IN_LIST:,a;;b;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<IN_LIST:,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<IN_LIST:x,[a;x];y>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<IN_LIST:a;b,a\\;b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<IN_LIST:A,a;b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<JOIN:a;;b;,!>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a!b"
+    },
+    {
+      "expression": "$<JOIN:a;b,,,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a,,b"
+    },
+    {
+      "expression": "$<JOIN:a;b,$<COMMA>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a,b"
+    },
+    {
+      "expression": "$<JOIN:,none>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<JOIN:a;b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<JOIN:a;b>\n\n  $<JOIN> expression requires 2 comma separated parameters, but got 1\n  instead.\n"
+    },
+    {
+      "expression": "$<JOIN:a\\;b;c,_>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b_c"
+    },
+    {
+      "expression": "$<FILTER:;a;;b;,INCLUDE,^$>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";;"
+    },
+    {
+      "expression": "$<FILTER:a;b;aa,INCLUDE,^a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;aa"
+    },
+    {
+      "expression": "$<FILTER:a;b;aa,EXCLUDE,a$>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b"
+    },
+    {
+      "expression": "$<FILTER:a,BAD,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<FILTER:a,BAD,a>\n\n  $<FILTER:...> second parameter must be either INCLUDE or EXCLUDE\n"
+    },
+    {
+      "expression": "$<FILTER:a,INCLUDE,[>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<FILTER:a,INCLUDE,[>\n\n  $<FILTER:...> failed to compile regex\n"
+    },
+    {
+      "expression": "$<REMOVE_DUPLICATES:b;b;a;b;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;a"
+    },
+    {
+      "expression": "$<REMOVE_DUPLICATES:;;x;;x;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";x"
+    },
+    {
+      "expression": "$<REMOVE_DUPLICATES:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<REMOVE_DUPLICATES:A;a;b;A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A;a;b"
+    },
+    {
+      "expression": "$<REMOVE_DUPLICATES:a\\;b;a\\;b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b;c"
+    },
+    {
+      "expression": "$<UPPER_CASE: hello,world:ä >",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": " HELLO,WORLD:ä "
+    },
+    {
+      "expression": "$<UPPER_CASE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<UPPER_CASE>\n\n  $<UPPER_CASE> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<UPPER_CASE:$<COMMA>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ","
+    },
+    {
+      "expression": "$<LOWER_CASE:Hello,World:Ä >",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "hello,world:Ä "
+    },
+    {
+      "expression": "$<LOWER_CASE:$<UPPER_CASE:Word>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "word"
+    },
+    {
+      "expression": "$<LOWER_CASE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LOWER_CASE>\n\n  $<LOWER_CASE> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<LOWER_CASE:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<MAKE_C_IDENTIFIER:9 chars-ä.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "_9_chars____"
+    },
+    {
+      "expression": "$<MAKE_C_IDENTIFIER:á>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "__"
+    },
+    {
+      "expression": "$<MAKE_C_IDENTIFIER:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<MAKE_C_IDENTIFIER:abc_123>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "abc_123"
+    },
+    {
+      "expression": "$<MAKE_C_IDENTIFIER:one,two>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "one_two"
+    },
+    {
+      "expression": "$<ANGLE-R>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ">"
+    },
+    {
+      "expression": "$<ANGLE-R:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ">"
+    },
+    {
+      "expression": "$<COMMA>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ","
+    },
+    {
+      "expression": "$<COMMA:x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ","
+    },
+    {
+      "expression": "$<SEMICOLON>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";"
+    },
+    {
+      "expression": "$<SEMICOLON:x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";"
+    },
+    {
+      "expression": "$<QUOTE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "\""
+    },
+    {
+      "expression": "$<QUOTE:x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "\""
+    },
+    {
+      "expression": "$<BUILD_INTERFACE:hello,world>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "hello,world"
+    },
+    {
+      "expression": "$<BUILD_INTERFACE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<BUILD_INTERFACE>\n\n  $<BUILD_INTERFACE> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<BUILD_INTERFACE:$<LOWER_CASE:X>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "x"
+    },
+    {
+      "expression": "$<BUILD_LOCAL_INTERFACE:hello,world>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "hello,world"
+    },
+    {
+      "expression": "$<BUILD_LOCAL_INTERFACE:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<BUILD_LOCAL_INTERFACE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<BUILD_LOCAL_INTERFACE>\n\n  $<BUILD_LOCAL_INTERFACE> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<INSTALL_INTERFACE:$<UNKNOWN>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<INSTALL_INTERFACE:hello,world>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<INSTALL_INTERFACE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<INSTALL_INTERFACE>\n\n  $<INSTALL_INTERFACE> expression requires a parameter.\n"
+    },
+    {
+      "expression": "$<INSTALL_PREFIX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<INSTALL_PREFIX>\n\n  INSTALL_PREFIX is a marker for install(EXPORT) only.  It should never be\n  evaluated.\n"
+    },
+    {
+      "expression": "$<INSTALL_PREFIX:/usr>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<INSTALL_PREFIX:/usr>\n\n  INSTALL_PREFIX is a marker for install(EXPORT) only.  It should never be\n  evaluated.\n"
+    },
+    {
+      "expression": "$<COMPILE_ONLY:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_ONLY:a>\n\n  $<COMPILE_ONLY:...> may only be used for linking\n"
+    },
+    {
+      "expression": "$<COMPILE_ONLY>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_ONLY>\n\n  $<COMPILE_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<COMPILE_ONLY:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_ONLY:a,b>\n\n  $<COMPILE_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<LINK_ONLY:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_ONLY:a>\n\n  $<LINK_ONLY:...> may only be used for linking\n"
+    },
+    {
+      "expression": "$<LINK_ONLY>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_ONLY>\n\n  $<LINK_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<LINK_ONLY:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_ONLY:a,b>\n\n  $<LINK_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<HOST_LINK>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HOST_LINK>\n\n  $<HOST_LINK:...> may only be used with binary targets to specify link\n  options.\n"
+    },
+    {
+      "expression": "$<HOST_LINK:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HOST_LINK:a>\n\n  $<HOST_LINK:...> may only be used with binary targets to specify link\n  options.\n"
+    },
+    {
+      "expression": "$<DEVICE_LINK:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<DEVICE_LINK:a>\n\n  $<DEVICE_LINK:...> may only be used with binary targets to specify link\n  options.\n"
+    },
+    {
+      "expression": "$<DEVICE_LINK>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<DEVICE_LINK>\n\n  $<DEVICE_LINK:...> may only be used with binary targets to specify link\n  options.\n"
+    },
+    {
+      "expression": "$<LINK_GROUP:RESCAN,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_GROUP:RESCAN,a>\n\n  $<LINK_GROUP:...> may only be used with binary targets to specify group of\n  link libraries through 'LINK_LIBRARIES', 'INTERFACE_LINK_LIBRARIES', and\n  'INTERFACE_LINK_LIBRARIES_DIRECT' properties.\n"
+    },
+    {
+      "expression": "$<LINK_GROUP:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_GROUP:>\n\n  $<LINK_GROUP:...> may only be used with binary targets to specify group of\n  link libraries through 'LINK_LIBRARIES', 'INTERFACE_LINK_LIBRARIES', and\n  'INTERFACE_LINK_LIBRARIES_DIRECT' properties.\n"
+    },
+    {
+      "expression": "$<LINK_LIBRARY:WHOLE_ARCHIVE,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LIBRARY:WHOLE_ARCHIVE,a>\n\n  $<LINK_LIBRARY:...> may only be used with binary targets to specify link\n  libraries through 'LINK_LIBRARIES', 'INTERFACE_LINK_LIBRARIES', and\n  'INTERFACE_LINK_LIBRARIES_DIRECT' properties.\n"
+    },
+    {
+      "expression": "$<LINK_LIBRARY>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LIBRARY>\n\n  $<LINK_LIBRARY> expression requires at least one parameter.\n"
+    },
+    {
+      "expression": "$<SHELL_PATH:/a;/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a:/b"
+    },
+    {
+      "expression": "$<SHELL_PATH:/some path;/more path>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/some path:/more path"
+    },
+    {
+      "expression": "$<SHELL_PATH:~/folder>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "~/folder"
+    },
+    {
+      "expression": "$<SHELL_PATH:/with//double/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/with//double/"
+    },
+    {
+      "expression": "$<SHELL_PATH:/abs;relative>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<SHELL_PATH:/abs;relative>\n\n  \"relative\" is not an absolute path.\n"
+    },
+    {
+      "expression": "$<SHELL_PATH:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<SHELL_PATH:>\n\n  \"\" is not an absolute path.\n"
+    },
+    {
+      "expression": "$<SHELL_PATH:C:\\folder>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<SHELL_PATH:C:\\folder>\n\n  \"C:\\folder\" is not an absolute path.\n"
+    },
+    {
+      "expression": "$<TARGET_NAME:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "missing"
+    },
+    {
+      "expression": "$<TARGET_NAME:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a,b"
+    },
+    {
+      "expression": "$<TARGET_NAME:a$<COMMA>b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_NAME:a$<COMMA>b>\n\n  $<TARGET_NAME> expression requires literal input.\n"
+    },
+    {
+      "expression": "$<TARGET_NAME>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_NAME>\n\n  $<TARGET_NAME> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<TARGET_NAME:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_EXISTS:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:alias>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:a::b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:a b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_EXISTS:a b>\n\n  $<TARGET_EXISTS:tgt> expression requires a non-empty valid target name.\n"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_EXISTS:>\n\n  $<TARGET_EXISTS:tgt> expression requires a non-empty valid target name.\n"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_EXISTS:a,b>\n\n  $<TARGET_EXISTS> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<TARGET_EXISTS>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_EXISTS>\n\n  $<TARGET_EXISTS> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:alias>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "alias"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:a b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_NAME_IF_EXISTS:a b>\n\n  $<TARGET_NAME_IF_EXISTS:tgt> expression requires a non-empty valid target\n  name.\n"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_NAME_IF_EXISTS:>\n\n  $<TARGET_NAME_IF_EXISTS:tgt> expression requires a non-empty valid target\n  name.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,TYPE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "INTERFACE_LIBRARY"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,RAW>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "$<1:rewritten>"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,ABSENT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A;A;B;A;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_LINK_OPTIONS>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A_LINK;B_LINK;D_LINK;C_LINK"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a;/b;/d"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:alias,ALIASED_TARGET>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:alias,ALIAS_GLOBAL>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "TRUE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,ALIASED_TARGET>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:missing,ALIASED_TARGET>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:missing,P>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:missing,P>\n\n  Target \"missing\" not found.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,BAD-PROP>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:a,BAD-PROP>\n\n  Property name not supported.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:a,>\n\n  $<TARGET_PROPERTY:...> expression requires a non-empty property name.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a b,p>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:a b,p>\n\n  Target name not supported.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a b,bad-prop>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:a b,bad-prop>\n\n  Target name and property name not supported.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:,P>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:,P>\n\n  $<TARGET_PROPERTY:tgt,prop> expression requires a non-empty target name.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:,>\n\n  $<TARGET_PROPERTY:tgt,prop> expression requires a non-empty target name and\n  property name.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:P>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:P>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,b,c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:a,b,c>\n\n  $<TARGET_PROPERTY:...> expression requires one or two parameters\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:a,$<TARGET_PROPERTY:a,RAW>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "rewritten"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:a,$<1:$<TARGET_PROPERTY:LABEL>>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:LABEL>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:missing,thing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_GENEX_EVAL:missing,thing>\n\n  $<TARGET_GENEX_EVAL:tgt, ...> target \"missing\" not found.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:invalid name,thing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_GENEX_EVAL:invalid name,thing>\n\n  $<TARGET_GENEX_EVAL:tgt, ...> expression requires a non-empty valid target\n  name.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_GENEX_EVAL:a>\n\n  $<TARGET_GENEX_EVAL> expression requires 2 comma separated parameters, but\n  got 1 instead.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:a,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:a,$<TARGET_PROPERTY:a,INTERFACE_CUSTOM>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:a,RAW>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "rewritten"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:a,LITERAL>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<GENEX_EVAL:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a,b"
+    },
+    {
+      "expression": "$<GENEX_EVAL:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<GENEX_EVAL>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<GENEX_EVAL>\n\n  $<GENEX_EVAL> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<TARGET_OBJECTS:obj>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/a.o;/opt/b.o"
+    },
+    {
+      "expression": "$<TARGET_OBJECTS:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_OBJECTS:a>\n\n  Objects of target \"a\" referenced but is not one of the allowed target types\n  (EXECUTABLE, STATIC, SHARED, MODULE, OBJECT).\n"
+    },
+    {
+      "expression": "$<TARGET_OBJECTS:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_OBJECTS:imp>\n\n  Objects of target \"imp\" referenced but is not one of the allowed target\n  types (EXECUTABLE, STATIC, SHARED, MODULE, OBJECT).\n"
+    },
+    {
+      "expression": "$<TARGET_OBJECTS:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_OBJECTS:missing>\n\n  Objects of target \"missing\" referenced but no such target exists.\n"
+    },
+    {
+      "expression": "$<TARGET_RUNTIME_DLLS:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_RUNTIME_DLLS:a>\n\n  Objects of target \"a\" referenced but is not one of the allowed target types\n  (EXECUTABLE, SHARED, MODULE).\n"
+    },
+    {
+      "expression": "$<TARGET_RUNTIME_DLLS:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_RUNTIME_DLLS:missing>\n\n  Objects of target \"missing\" referenced but no such target exists.\n"
+    },
+    {
+      "expression": "$<TARGET_RUNTIME_DLL_DIRS:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_RUNTIME_DLL_DIRS:a>\n\n  Objects of target \"a\" referenced but is not one of the allowed target types\n  (EXECUTABLE, SHARED, MODULE).\n"
+    },
+    {
+      "expression": "$<TARGET_RUNTIME_DLL_DIRS:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_RUNTIME_DLL_DIRS:missing>\n\n  Objects of target \"missing\" referenced but no such target exists.\n"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0112>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_POLICY:CMP0112>\n\n  $<TARGET_POLICY:prop> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0001>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_POLICY:CMP0001>\n\n  $<TARGET_POLICY:prop> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_23>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_23>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:no_such_feature>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:no_such_feature>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES>\n\n  $<COMPILE_FEATURES> expression requires at least one parameter.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "NONE"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:C,CXX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:CXX,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:CXX>\n\n  $<COMPILE_LANG_AND_ID> expression requires at least two parameters.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE:CXX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE:CXX>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:CXX,GNU>\n\n  $<LINK_LANG_AND_ID:lang,id> may only be used with binary targets to specify\n  link libraries, link directories, link options, and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:CXX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:CXX>\n\n  $<LINK_LANG_AND_ID> expression requires at least two parameters.\n"
+    },
+    {
+      "expression": "$<PLATFORM_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "Linux"
+    },
+    {
+      "expression": "$<PLATFORM_ID:Linux>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PLATFORM_ID:Linux,Windows>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PLATFORM_ID:linux>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PLATFORM_ID:>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PLATFORM_ID:Windows>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PLATFORM_ID:x.y,Linux>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OUTPUT_CONFIG:$<CONFIG>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OUTPUT_CONFIG:$<CONFIG>>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<COMMAND_CONFIG:$<CONFIG>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMMAND_CONFIG:$<CONFIG>>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<CXX_MODULES:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_MODULES:a>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<ISPC_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<ISPC_COMPILER_ID>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<ISPC_COMPILER_ID:Intel>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<ISPC_COMPILER_ID:Intel>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<PATH_EQUAL:a//b,a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH_EQUAL:a/b/,a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH_EQUAL:a/./b,a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH_EQUAL://a,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH_EQUAL:,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH_EQUAL:a,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH_EQUAL:/a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH_EQUAL:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH_EQUAL:a>\n\n  $<PATH_EQUAL> expression requires 2 comma separated parameters, but got 1\n  instead.\n"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:1.2.0,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:1.002x,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:2,11>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:1.2,1.10>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:1.1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_EQUAL:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<VERSION_EQUAL:1>\n\n  $<VERSION_EQUAL> expression requires 2 comma separated parameters, but got\n  1 instead.\n"
+    },
+    {
+      "expression": "$<VERSION_GREATER:1.2.0,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:1.002x,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:2,11>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:1.2,1.10>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER:1.1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<VERSION_GREATER:1>\n\n  $<VERSION_GREATER> expression requires 2 comma separated parameters, but\n  got 1 instead.\n"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:1.2.0,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:1.002x,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:2,11>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:1.2,1.10>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:1.1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_GREATER_EQUAL:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<VERSION_GREATER_EQUAL:1>\n\n  $<VERSION_GREATER_EQUAL> expression requires 2 comma separated parameters,\n  but got 1 instead.\n"
+    },
+    {
+      "expression": "$<VERSION_LESS:1.2.0,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS:1.002x,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS:2,11>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS:1.2,1.10>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS:1.1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<VERSION_LESS:1>\n\n  $<VERSION_LESS> expression requires 2 comma separated parameters, but got 1\n  instead.\n"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:1.2.0,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:1.002x,1.2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:2,11>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:1.2,1.10>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:1.1,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<VERSION_LESS_EQUAL:1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<VERSION_LESS_EQUAL:1>\n\n  $<VERSION_LESS_EQUAL> expression requires 2 comma separated parameters, but\n  got 1 instead.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<C_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_FRONTEND_VARIANT>\n\n  $<C_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_ID>\n\n  $<CXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CXX_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CXX_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_VERSION>\n\n  $<CXX_COMPILER_VERSION> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CXX_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CXX_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CXX_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_FRONTEND_VARIANT>\n\n  $<CXX_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJC_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJC_COMPILER_ID>\n\n  $<OBJC_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJC_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJC_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJC_COMPILER_VERSION>\n\n  $<OBJC_COMPILER_VERSION> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJC_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJC_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJC_COMPILER_FRONTEND_VARIANT>\n\n  $<OBJC_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJCXX_COMPILER_ID>\n\n  $<OBJCXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJCXX_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJCXX_COMPILER_VERSION>\n\n  $<OBJCXX_COMPILER_VERSION> may only be used with binary targets.  It may\n  not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<OBJCXX_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<OBJCXX_COMPILER_FRONTEND_VARIANT>\n\n  $<OBJCXX_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.\n  It may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CUDA_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CUDA_COMPILER_ID>\n\n  $<CUDA_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CUDA_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CUDA_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CUDA_COMPILER_VERSION>\n\n  $<CUDA_COMPILER_VERSION> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CUDA_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CUDA_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CUDA_COMPILER_FRONTEND_VARIANT>\n\n  $<CUDA_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<Fortran_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<Fortran_COMPILER_ID>\n\n  $<Fortran_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<Fortran_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<Fortran_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<Fortran_COMPILER_VERSION>\n\n  $<Fortran_COMPILER_VERSION> may only be used with binary targets.  It may\n  not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<Fortran_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<Fortran_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<Fortran_COMPILER_FRONTEND_VARIANT>\n\n  $<Fortran_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.\n  It may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<HIP_COMPILER_ID>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<HIP_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<HIP_COMPILER_ID:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<HIP_COMPILER_ID>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HIP_COMPILER_ID>\n\n  $<HIP_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<HIP_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<HIP_COMPILER_VERSION:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HIP_COMPILER_VERSION:GNU>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<HIP_COMPILER_VERSION:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<HIP_COMPILER_VERSION>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HIP_COMPILER_VERSION>\n\n  $<HIP_COMPILER_VERSION> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<HIP_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<HIP_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<HIP_COMPILER_FRONTEND_VARIANT:>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<HIP_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<HIP_COMPILER_FRONTEND_VARIANT>\n\n  $<HIP_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CONFIG>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:debug>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CONFIG:>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CONFIG:release,debug>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CONFIG:release,bad-config>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CONFIG:bad-config,Debug>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CONFIG:bad-config,Debug>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<CONFIG:Debug,bad-config>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CONFIGURATION>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIGURATION:>",
+      "setup": {
+        "language": "NONE",
+        "config": "Debug"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:Release>",
+      "setup": {
+        "language": "NONE",
+        "head": "imp",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CONFIG:Debug>",
+      "setup": {
+        "language": "NONE",
+        "head": "imp",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CONFIG:RelWithDebInfo>",
+      "setup": {
+        "language": "NONE",
+        "head": "imp",
+        "config": "Debug"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<CONFIG:Release,Debug>",
+      "setup": {
+        "language": "NONE",
+        "head": "imp",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/default.so"
+    },
+    {
+      "expression": "$<TARGET_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "default.so"
+    },
+    {
+      "expression": "$<TARGET_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt"
+    },
+    {
+      "expression": "$<TARGET_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "imp"
+    },
+    {
+      "expression": "$<TARGET_FILE_PREFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_FILE_SUFFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/default.so"
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "default.so"
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt"
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "imp"
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE_PREFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_FILE_SUFFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/default.so"
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "default.so"
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt"
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "imp"
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE_PREFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_LIBRARY_FILE_SUFFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE_PREFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_LINKER_IMPORT_FILE_SUFFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE_PREFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_IMPORT_FILE_SUFFIX:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE:imp>\n\n  TARGET_SONAME_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE_NAME:imp>\n\n  TARGET_SONAME_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE_DIR:imp>\n\n  TARGET_SONAME_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_IMPORT_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_IMPORT_FILE:imp>\n\n  TARGET_SONAME_IMPORT_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_IMPORT_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_IMPORT_FILE_NAME:imp>\n\n  TARGET_SONAME_IMPORT_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_IMPORT_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_IMPORT_FILE_DIR:imp>\n\n  TARGET_SONAME_IMPORT_FILE is allowed only for SHARED libraries.\n"
+    },
+    {
+      "expression": "$<TARGET_PDB_FILE:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PDB_FILE:imp>\n\n  TARGET_PDB_FILE not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_PDB_FILE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PDB_FILE_NAME:imp>\n\n  TARGET_PDB_FILE not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_PDB_FILE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PDB_FILE_DIR:imp>\n\n  TARGET_PDB_FILE not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_PDB_FILE_BASE_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PDB_FILE_BASE_NAME:imp>\n\n  TARGET_PDB_FILE_BASE_NAME not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_BUNDLE_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_BUNDLE_DIR:imp>\n\n  TARGET_BUNDLE_DIR not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_BUNDLE_DIR_NAME:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_BUNDLE_DIR_NAME:imp>\n\n  TARGET_BUNDLE_DIR_NAME not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_BUNDLE_CONTENT_DIR:imp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_BUNDLE_CONTENT_DIR:imp>\n\n  TARGET_BUNDLE_CONTENT_DIR not allowed for IMPORTED targets.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE:shared>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/libshared.so.1"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE:a>\n\n  Target \"a\" is not an executable or library.\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE:missing>\n\n  No target \"missing\"\n"
+    },
+    {
+      "expression": "$<TARGET_SONAME_FILE:bad name>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_SONAME_FILE:bad name>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<TARGET_FILE:a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_FILE:a>\n\n  Target \"a\" is not an executable or library.\n"
+    },
+    {
+      "expression": "$<TARGET_FILE:shared>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/opt/libshared.so.1.2"
+    },
+    {
+      "expression": "$<TARGET_FILE:missing>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_FILE:missing>\n\n  No target \"missing\"\n"
+    },
+    {
+      "expression": "$<TARGET_FILE:bad name>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_FILE:bad name>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0112>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0001>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_POLICY:CMP0001>\n\n  $<TARGET_POLICY:prop> may only be used with a limited number of policies.\n  Currently it may be used with the following policies:\n\n   * CMP0003\n   * CMP0004\n   * CMP0008\n   * CMP0020\n   * CMP0021\n   * CMP0022\n   * CMP0027\n   * CMP0037\n   * CMP0038\n   * CMP0041\n   * CMP0042\n   * CMP0046\n   * CMP0052\n   * CMP0060\n   * CMP0063\n   * CMP0065\n   * CMP0068\n   * CMP0069\n   * CMP0073\n   * CMP0076\n   * CMP0081\n   * CMP0083\n   * CMP0095\n   * CMP0099\n   * CMP0104\n   * CMP0105\n   * CMP0108\n   * CMP0112\n   * CMP0113\n   * CMP0119\n   * CMP0131\n   * CMP0142\n   * CMP0154\n   * CMP0155\n   * CMP0156\n   * CMP0157\n   * CMP0160\n   * CMP0162\n   * CMP0179\n   * CMP0181\n   * CMP0182\n   * CMP0195\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:no_such_feature>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:no_such_feature>\n\n  specified unknown feature \"no_such_feature\" for target \"a\".\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_23>",
+      "setup": {
+        "language": "NONE",
+        "head": "a"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_23>\n\n  cannot use features from non-enabled language CXX\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:LABEL>",
+      "setup": {
+        "language": "NONE",
+        "head": "b"
+      },
+      "output": "B"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:>",
+      "setup": {
+        "language": "NONE",
+        "head": "b"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:>\n\n  $<TARGET_PROPERTY:...> expression requires a non-empty property name.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_CUSTOM>",
+      "setup": {
+        "language": "NONE",
+        "head": "b"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:cycle,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "properties": {
+          "cycle": {
+            "INTERFACE_COMPILE_DEFINITIONS": "$<TARGET_PROPERTY:cycle,INTERFACE_COMPILE_DEFINITIONS>"
+          }
+        }
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:cycle,INTERFACE_COMPILE_DEFINITIONS>\n\n  Self reference on target \"cycle\".\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:a,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "properties": {
+          "a": {
+            "INTERFACE_COMPILE_DEFINITIONS": "$<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>"
+          },
+          "b": {
+            "INTERFACE_COMPILE_DEFINITIONS": "$<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>"
+          }
+        }
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n\n  Dependency loop found.\n",
+      "loop_steps": [
+        "  Loop step 1\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n",
+        "  Loop step 2\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n"
+      ]
+    },
+    {
+      "expression": "$<LIST:LENGTH,a;;b;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "4"
+    },
+    {
+      "expression": "$<LIST:LENGTH,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<LIST:LENGTH,a;b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "2"
+    },
+    {
+      "expression": "$<LIST:LENGTH,a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:LENGTH,a,b>\n\n  $<LIST:LENGTH> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<LIST:LENGTH,a\\;b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "2"
+    },
+    {
+      "expression": "$<LIST:LENGTH,a;[b;c];d>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "3"
+    },
+    {
+      "expression": "$<LIST:GET,a;b;c,1;-1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;c;a"
+    },
+    {
+      "expression": "$<LIST:GET,a;b;c,-3>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a"
+    },
+    {
+      "expression": "$<LIST:GET,a;b;c,3>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:GET,a;b;c,3>\n\n  index: 3 out of range (-3, 2)\n"
+    },
+    {
+      "expression": "$<LIST:GET,a;b;-3,-9>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:GET,a;b;-3,-9>\n\n  index: -9 out of range (-3, 2)\n"
+    },
+    {
+      "expression": "$<LIST:GET,a;;c,1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:GET,,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:GET,,0>\n\n  given empty list\n"
+    },
+    {
+      "expression": "$<LIST:GET,a;b,not-a-number>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:GET,a;b,not-a-number>\n\n  index: \"not-a-number\" is not a valid index\n"
+    },
+    {
+      "expression": "$<LIST:GET,a;b,;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:JOIN,a;;b;,!>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a!!b!"
+    },
+    {
+      "expression": "$<LIST:JOIN,a;b,$<COMMA>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a,b"
+    },
+    {
+      "expression": "$<LIST:JOIN,,!>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:JOIN,a;b,,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:JOIN,a;b,,x>\n\n  $<LIST:JOIN> expression requires exactly two parameters.\n"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b;c,1,-1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;c"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b,0,20>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b,1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b,2,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SUBLIST,a;b,2,0>\n\n  begin index: 2 is out of range 0 - 1\n"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b,-1,5>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SUBLIST,a;b,-1,5>\n\n  begin index: -1 is out of range 0 - 1\n"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;,-1,abc>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SUBLIST,a;,-1,abc>\n\n  index: \"abc\" is not a valid index\n"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,a;b,0,-2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SUBLIST,a;b,0,-2>\n\n  length: -2 should be -1 or greater\n"
+    },
+    {
+      "expression": "$<LIST:SUBLIST,,bad,bad>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:FIND,a;b;c,c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "2"
+    },
+    {
+      "expression": "$<LIST:FIND,a;b;,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "2"
+    },
+    {
+      "expression": "$<LIST:FIND,,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "-1"
+    },
+    {
+      "expression": "$<LIST:FIND,x,Y>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "-1"
+    },
+    {
+      "expression": "$<LIST:APPEND,a;b,c,d;e>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b;c;d;e"
+    },
+    {
+      "expression": "$<LIST:APPEND,,a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:APPEND,a,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;"
+    },
+    {
+      "expression": "$<LIST:APPEND,,,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";a"
+    },
+    {
+      "expression": "$<LIST:APPEND,a\\;b,c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a\\;b;c"
+    },
+    {
+      "expression": "$<LIST:PREPEND,a;b,c,d;e>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "c;d;e;a;b"
+    },
+    {
+      "expression": "$<LIST:PREPEND,,a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:PREPEND,a,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";a"
+    },
+    {
+      "expression": "$<LIST:PREPEND,,,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";a"
+    },
+    {
+      "expression": "$<LIST:INSERT,a;b;c,-1,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b;x;c"
+    },
+    {
+      "expression": "$<LIST:INSERT,a;b,2,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b;x"
+    },
+    {
+      "expression": "$<LIST:INSERT,a;b,3,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:INSERT,a;b,3,x>\n\n  index: 3 out of range (-2, 2)\n"
+    },
+    {
+      "expression": "$<LIST:INSERT,,-1,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:INSERT,,-1,x>\n\n  index: -1 out of range (0, 0)\n"
+    },
+    {
+      "expression": "$<LIST:INSERT,,0,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "x"
+    },
+    {
+      "expression": "$<LIST:INSERT,a;b,0,,x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";x;a;b"
+    },
+    {
+      "expression": "$<LIST:INSERT,a;b,0,x;y>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "x;y;a;b"
+    },
+    {
+      "expression": "$<LIST:POP_BACK,a;b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:POP_BACK,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:POP_BACK,a;b;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:POP_BACK,;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:POP_FRONT,a;b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;c"
+    },
+    {
+      "expression": "$<LIST:POP_FRONT,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:POP_FRONT,;a;b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:POP_FRONT,;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:REMOVE_DUPLICATES,a;a;b;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:REMOVE_DUPLICATES,a;;b;;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;;b"
+    },
+    {
+      "expression": "$<LIST:REMOVE_DUPLICATES,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:REMOVE_ITEM,a;;b;c;,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;;b;c;"
+    },
+    {
+      "expression": "$<LIST:REMOVE_ITEM,a;b;c,b;c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a"
+    },
+    {
+      "expression": "$<LIST:REMOVE_ITEM,a;b;b;c,b,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;c"
+    },
+    {
+      "expression": "$<LIST:REMOVE_ITEM,a;b;A,A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:REMOVE_AT,a;b;c,-1;0,-1>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b"
+    },
+    {
+      "expression": "$<LIST:REMOVE_AT,,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:REMOVE_AT,,0>\n\n  index: 0 out of range (0, 0)\n"
+    },
+    {
+      "expression": "$<LIST:REMOVE_AT,a;b,2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:REMOVE_AT,a;b,2>\n\n  index: 2 out of range (-2, 1)\n"
+    },
+    {
+      "expression": "$<LIST:REMOVE_AT,a;b,;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:REMOVE_AT,a;b,abs>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:REMOVE_AT,a;b,abs>\n\n  index: \"abs\" is not a valid index\n"
+    },
+    {
+      "expression": "$<LIST:FILTER,;A;AB;B;,INCLUDE,^A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A;AB"
+    },
+    {
+      "expression": "$<LIST:FILTER,;A;AB;B;,EXCLUDE,^A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";B;"
+    },
+    {
+      "expression": "$<LIST:FILTER,a,BAD,r>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:FILTER,a,BAD,r>\n\n  sub-command FILTER does not recognize operator \"BAD\".  It must be either\n  INCLUDE or EXCLUDE.\n"
+    },
+    {
+      "expression": "$<LIST:FILTER,one,INCLUDE,[>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:FILTER,one,INCLUDE,[>\n\n  sub-command FILTER, failed to compile regex \"[\".\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,APPEND,_>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a_;b_"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,PREPEND,_,AT,-1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "_a;_b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,AT,0,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A;b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,APPEND,_,AT,0,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a__;b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,APPEND,_,FOR,0,-1,2>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a_;b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;B,TOLOWER>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM, a ;  b,STRIP>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;b"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;B;A;AA,TOLOWER,REGEX,^A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;B;a;aa"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,ab;bc,REPLACE,([a-z]),<\\1$<ANGLE-R>>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "<a><b>;<b><c>"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,aa;ba,REPLACE,^a,X>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "Xa;ba"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,aa;ba,REPLACE,$,X>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "aaX;baX"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,aa;ba,REPLACE,a*,X>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "XX;XbXX"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;B,REPLACE,([a-z]),\\3>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;B,REPLACE,([a-z]),\\3>\n\n  sub-command TRANSFORM, action REPLACE: replace expression \"\\3\" contains an\n  out-of-range escape for regex \"([a-z])\".\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,FOR,1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,FOR,1,0>\n\n  sub-command TRANSFORM, selector FOR expects <start> to be no greater than\n  <stop> (1 > 0)\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,FOR,0,1,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,FOR,0,1,0>\n\n  sub-command TRANSFORM, selector FOR expects positive numeric value for\n  <step>.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,FOR,0>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,FOR,0>\n\n  sub-command TRANSFORM, selector FOR expects, at least, two arguments.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,AT,-5>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,AT,-5>\n\n  sub-command TRANSFORM, selector AT, index: -3 out of range (-2, 1).\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,REGEX,[>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,REGEX,[>\n\n  sub-command TRANSFORM, selector REGEX failed to compile regex \"[\".\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,REGEX>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,REGEX>\n\n  sub-command TRANSFORM, selector REGEX expects 'regular expression'\n  argument.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,REGEX,a,REGEX,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,REGEX,a,REGEX,b>\n\n  sub-command TRANSFORM, selector already specified (REGEX).\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,AT>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,AT>\n\n  sub-command TRANSFORM, selector AT expects at least one numeric value.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,TOUPPER,AT,other>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,TOUPPER,AT,other>\n\n  sub-command TRANSFORM, selector AT: 'other': unexpected argument.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,APPEND>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,APPEND>\n\n  sub-command TRANSFORM, action APPEND expects 1 argument(s).\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a;b,UNKNOWN>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a;b,UNKNOWN>\n   sub-command TRANSFORM, UNKNOWN invalid action.\n"
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,,UNKNOWN>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:TRANSFORM,a,TOUPPER,foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:TRANSFORM,a,TOUPPER,foo>\n\n  sub-command TRANSFORM, 'foo': unexpected argument(s).\n"
+    },
+    {
+      "expression": "$<LIST:REVERSE,a;;b;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";b;;a"
+    },
+    {
+      "expression": "$<LIST:REVERSE,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<LIST:SORT,a;B;b;A>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "A;B;a;b"
+    },
+    {
+      "expression": "$<LIST:SORT,a;B;b;A,CASE:INSENSITIVE,ORDER:DESCENDING>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "B;b;a;A"
+    },
+    {
+      "expression": "$<LIST:SORT,a10;a2;a1;a01;a001,COMPARE:NATURAL>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a001;a01;a1;a2;a10"
+    },
+    {
+      "expression": "$<LIST:SORT,d/f;a/z;q/a,COMPARE:FILE_BASENAME>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "q/a;d/f;a/z"
+    },
+    {
+      "expression": "$<LIST:SORT,a;b,ORDER:ASCENDING,ORDER:DESCENDING>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SORT,a;b,ORDER:ASCENDING,ORDER:DESCENDING>\n\n  sub-command SORT, ORDER option has been specified multiple times.\n"
+    },
+    {
+      "expression": "$<LIST:SORT,a;b,CASE:foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SORT,a;b,CASE:foo>\n\n  sub-command SORT, an invalid CASE option has been specified: \"foo\".\n"
+    },
+    {
+      "expression": "$<LIST:SORT,a;b,COMPARE:nope>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SORT,a;b,COMPARE:nope>\n\n  sub-command SORT, an invalid COMPARE option has been specified: \"nope\".\n"
+    },
+    {
+      "expression": "$<LIST:SORT,a;b,ORDER:nope>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SORT,a;b,ORDER:nope>\n\n  sub-command SORT, an invalid ORDER option has been specified: \"nope\".\n"
+    },
+    {
+      "expression": "$<LIST:SORT,a;b,UNKNOWN>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:SORT,a;b,UNKNOWN>\n\n  sub-command SORT, option \"UNKNOWN\" is invalid.\n"
+    },
+    {
+      "expression": "$<LIST:UNKNOWN,abc>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LIST:UNKNOWN,abc>\n\n  UNKNOWN: invalid option.\n"
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_NAME,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_NAME,C:/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_NAME,//root/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_NAME,/a;/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ";"
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_DIRECTORY,/;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/;"
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_DIRECTORY,///tmp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/"
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_DIRECTORY,C:/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_PATH,//tmp>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/"
+    },
+    {
+      "expression": "$<PATH:GET_ROOT_PATH,/;a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/;"
+    },
+    {
+      "expression": "$<PATH:GET_FILENAME,/root/file.txt;here;where/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "file.txt;here;"
+    },
+    {
+      "expression": "$<PATH:GET_FILENAME,a/.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "."
+    },
+    {
+      "expression": "$<PATH:GET_FILENAME,a/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".."
+    },
+    {
+      "expression": "$<PATH:GET_FILENAME,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_EXTENSION,/root/a.tar.gz;a/.hidden;.hidden.a;bare;dot.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".tar.gz;;.a;;."
+    },
+    {
+      "expression": "$<PATH:GET_EXTENSION,LAST_ONLY,a.tar.gz>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".gz"
+    },
+    {
+      "expression": "$<PATH:GET_EXTENSION,a/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_EXTENSION,LAST_ONLY>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH:GET_EXTENSION,LAST_ONLY>\n\n  $<PATH:GET_EXTENSION,LAST_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<PATH:GET_STEM,/a/a.tar.gz;.hidden;.hidden.a;a/.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;.hidden;.hidden;."
+    },
+    {
+      "expression": "$<PATH:GET_STEM,LAST_ONLY,a.tar.gz>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a.tar"
+    },
+    {
+      "expression": "$<PATH:GET_STEM,foo.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "foo"
+    },
+    {
+      "expression": "$<PATH:GET_STEM,LAST_ONLY>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH:GET_STEM,LAST_ONLY>\n\n  $<PATH:GET_STEM,LAST_ONLY> expression requires exactly one parameter.\n"
+    },
+    {
+      "expression": "$<PATH:GET_RELATIVE_PART,/foo/bar;foo;///bar//x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "foo/bar;foo;bar//x"
+    },
+    {
+      "expression": "$<PATH:GET_RELATIVE_PART,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_PARENT_PATH,a/b;a/;///;a//b//>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;a;///;a//b"
+    },
+    {
+      "expression": "$<PATH:GET_PARENT_PATH,a//b/c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a//b"
+    },
+    {
+      "expression": "$<PATH:GET_PARENT_PATH,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:GET_PARENT_PATH,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_NAME,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_NAME,C:/foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_DIRECTORY,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_DIRECTORY,foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_PATH,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_ROOT_PATH,foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_FILENAME,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_FILENAME,foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_FILENAME,foo/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_FILENAME,.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_EXTENSION,.hidden>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_EXTENSION,foo.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_EXTENSION,..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_EXTENSION,a.b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_STEM,..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_STEM,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_STEM,a/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_RELATIVE_PART,/foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_RELATIVE_PART,///>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_PARENT_PATH,/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_PARENT_PATH,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:HAS_PARENT_PATH,a/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:HAS_PARENT_PATH,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_ABSOLUTE,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_ABSOLUTE,relative>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_ABSOLUTE,C:/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_ABSOLUTE,~/x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_RELATIVE,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_RELATIVE,relative>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_RELATIVE,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,/a,/a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,/a,/ab>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,/a/,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,/a/,/a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,/a/,/a/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,,/a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,NORMALIZE,/a/../b,/b/c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<PATH:IS_PREFIX,NORMALIZE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH:IS_PREFIX,NORMALIZE>\n\n  $<PATH:IS_PREFIX,NORMALIZE> expression requires exactly two parameters.\n"
+    },
+    {
+      "expression": "$<PATH:CMAKE_PATH,a//b//>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/b/"
+    },
+    {
+      "expression": "$<PATH:CMAKE_PATH,///foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/foo"
+    },
+    {
+      "expression": "$<PATH:CMAKE_PATH,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:CMAKE_PATH,NORMALIZE,/a//b/../x/.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/x/"
+    },
+    {
+      "expression": "$<PATH:NATIVE_PATH,a//b//>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a//b//"
+    },
+    {
+      "expression": "$<PATH:NATIVE_PATH,///foo>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "///foo"
+    },
+    {
+      "expression": "$<PATH:NATIVE_PATH,NORMALIZE,a/b/../.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/"
+    },
+    {
+      "expression": "$<PATH:APPEND,a;b,child,leaf>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/child/leaf;b/child/leaf"
+    },
+    {
+      "expression": "$<PATH:APPEND,a,b,/override,c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/override/c"
+    },
+    {
+      "expression": "$<PATH:APPEND,a,,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/b"
+    },
+    {
+      "expression": "$<PATH:APPEND,,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:APPEND,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a"
+    },
+    {
+      "expression": "$<PATH:APPEND,a;z,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/;z/"
+    },
+    {
+      "expression": "$<PATH:REMOVE_FILENAME,/a/a.txt;a//b;only;/a/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/;a//;;/a/"
+    },
+    {
+      "expression": "$<PATH:REMOVE_FILENAME,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:REPLACE_FILENAME,/a/a.txt,new>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/new"
+    },
+    {
+      "expression": "$<PATH:REPLACE_FILENAME,file,/absolute>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/absolute"
+    },
+    {
+      "expression": "$<PATH:REPLACE_FILENAME,/a/,new>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/"
+    },
+    {
+      "expression": "$<PATH:REPLACE_FILENAME,/a/a.txt,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/"
+    },
+    {
+      "expression": "$<PATH:REPLACE_FILENAME,/a/,new/leaf>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/"
+    },
+    {
+      "expression": "$<PATH:REMOVE_EXTENSION,a.tar.gz;.hidden.x;b;>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a;.hidden;b"
+    },
+    {
+      "expression": "$<PATH:REMOVE_EXTENSION,LAST_ONLY,a.tar.gz>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a.tar"
+    },
+    {
+      "expression": "$<PATH:REMOVE_EXTENSION,a/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/.."
+    },
+    {
+      "expression": "$<PATH:REMOVE_EXTENSION,a/>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,a.tar.gz,zip>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a.zip"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,LAST_ONLY,a.tar.gz,.xz>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a.tar.xz"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,a/,txt>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/.txt"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,a/..,txt>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/...txt"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,.hidden,.txt>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".hidden.txt"
+    },
+    {
+      "expression": "$<PATH:REPLACE_EXTENSION,/a/file.old,>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/file"
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,/a//b/../c/.>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/a/c/"
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/../../b/../>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".."
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "."
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/"
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/.//>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/"
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/b/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a/"
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/../..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ".."
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,./>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "."
+    },
+    {
+      "expression": "$<PATH:NORMAL_PATH,a/../b;./x>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b;x"
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,/a/b/c,/a/d>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "../b/c"
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,a,a>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "."
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,/a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,a,b/..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "a"
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,a,b/../..>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,/a/b/,/a/c>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "../b/"
+    },
+    {
+      "expression": "$<PATH:RELATIVE_PATH,/a/b/,/a/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "."
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,a,b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "b/a"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,a,/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/b/a"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,a/../x,/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/b/a/../x"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,NORMALIZE,a/../x,/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/b/x"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,/already,/b>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/already"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,a;b,/base>",
+      "setup": {
+        "language": "NONE"
+      },
+      "output": "/base/a;/base/b"
+    },
+    {
+      "expression": "$<PATH:ABSOLUTE_PATH,NORMALIZE>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH:ABSOLUTE_PATH,NORMALIZE>\n\n  $<PATH:ABSOLUTE_PATH,NORMALIZE> expression requires exactly two parameters.\n"
+    },
+    {
+      "expression": "$<PATH:UNKNOWN,abc>",
+      "setup": {
+        "language": "NONE"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<PATH:UNKNOWN,abc>\n\n  UNKNOWN: invalid option.\n"
+    },
+    {
+      "expression": "literal",
+      "setup": {},
+      "output": "literal"
+    },
+    {
+      "expression": "before:$<1:middle>after",
+      "setup": {},
+      "output": "before:middleafter"
+    },
+    {
+      "expression": "before:$<no end",
+      "setup": {},
+      "output": "before:$<no end"
+    },
+    {
+      "expression": "$<1:$<LOWER_CASE:A>>",
+      "setup": {},
+      "output": "a"
+    },
+    {
+      "expression": "$<$<BOOL:no>:ignored>",
+      "setup": {},
+      "output": ""
+    },
+    {
+      "expression": "$<$<BOOL:yes>:hello,world>",
+      "setup": {},
+      "output": "hello,world"
+    },
+    {
+      "expression": "$<UNKNOWN:arg>",
+      "setup": {},
+      "error": "  Error evaluating generator expression:\n\n    $<UNKNOWN:arg>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<>",
+      "setup": {},
+      "error": "  Error evaluating generator expression:\n\n    $<>\n\n  Expression did not evaluate to a known generator expression\n"
+    },
+    {
+      "expression": "$<1:unclosed-$<COMMA>",
+      "setup": {},
+      "output": "$<1:unclosed-,"
+    },
+    {
+      "expression": "$<1:unclosed-$<COMMA>,",
+      "setup": {},
+      "output": "$<1:u"
+    },
+    {
+      "expression": "before>$<x",
+      "setup": {},
+      "output": "before>$<x"
+    },
+    {
+      "expression": "$<1:a,b:$<1:c,d>>",
+      "setup": {},
+      "output": "a,b:c,d"
+    },
+    {
+      "expression": "$<1:>${missing}",
+      "setup": {},
+      "output": "${missing}"
+    },
+    {
+      "expression": "$<STRE$<1:QUAL>:x,x>",
+      "setup": {},
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "C"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX,C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,Clang,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:CXX,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,bad-id>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE:C>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:C,GNU>\n\n  $<LINK_LANG_AND_ID:lang,id> may only be used with binary targets to specify\n  link libraries, link directories, link options, and link depends.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:GNU>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:Clang,GNU>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:bad-id>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13.3>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3.0.0>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13.3.0.0>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:1.2.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:1.2.3>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_FRONTEND_VARIANT>\n\n  $<C_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_FRONTEND_VARIANT:GNU>\n\n  $<C_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_ID>\n\n  $<CXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_ID:GNU>\n\n  $<CXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_restrict,c_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_restrict,c_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99,cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99,cxx_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:bogus_feature>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:bogus_feature>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/s-inc;/C-lang;/a;/b;/d;/p-inc;/q-inc"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-s-opt;-p-c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "a;p;q;b;c;b;d;a;q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-s-link;A_LINK;B_LINK;D_LINK;C_LINK;-p-link;-q-link"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-p-link;-q-link;A_LINK;B_LINK;D_LINK;C_LINK"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/s-lib;/p-lib"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/e-inc;/a;/b;/d"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "E_DEF;S_IFACE;S_C;A;B;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "p"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/e-iface"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:x,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "X_IFACE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s;x;p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,SOURCES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "main.c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "STATIC_LIBRARY"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "EXECUTABLE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s-custom;a;b;p-custom;q-custom"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "e-custom;s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:LABEL>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:LABEL>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:COMPILE_DEFINITIONS>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0131>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_POLICY:CMP0131>\n\n  $<TARGET_POLICY:prop> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:s,$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:LABEL>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:s>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:e>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "e"
+    },
+    {
+      "expression": "$<CONFIG>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:Debug>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<$<CONFIG:Debug>:dbg>$<$<CONFIG:Release>:rel>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "dbg"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "C"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX,C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,bad-id>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE:C>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:C,GNU>\n\n  $<LINK_LANG_AND_ID:lang,id> may only be used with binary targets to specify\n  link libraries, link directories, link options, and link depends.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "GNU"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:bad-id>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "13.3.0"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3.0.0>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:1.2.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "GNU"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_restrict,c_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_11>\n\n  cannot use features from non-enabled language CXX\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99,cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99,cxx_std_11>\n\n  cannot use features from non-enabled language CXX\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:bogus_feature>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:bogus_feature>\n\n  specified unknown feature \"bogus_feature\" for target \"s\".\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/s-inc;/C-lang;/a;/b;/d;/p-inc;/q-inc"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-s-opt;-p-c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "a;p;q;b;c;b;d;a;q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-s-link;A_LINK;B_LINK;D_LINK;C_LINK;-p-link;-q-link"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-p-link;-q-link;A_LINK;B_LINK;D_LINK;C_LINK"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/s-lib;/p-lib"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/e-inc;/a;/b;/d"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "E_DEF;S_IFACE;S_C;A;B;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "p"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/e-iface"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:x,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "X_IFACE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s;x;p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,SOURCES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "main.c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "STATIC_LIBRARY"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "EXECUTABLE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s-custom;a;b;p-custom;q-custom"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "e-custom;s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:LABEL>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0131>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:s,$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:s>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:e>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "e"
+    },
+    {
+      "expression": "$<CONFIG>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:Debug>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<$<CONFIG:Debug>:dbg>$<$<CONFIG:Release>:rel>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "dbg"
+    }
+  ]
+}
