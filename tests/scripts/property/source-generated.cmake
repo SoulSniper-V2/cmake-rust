@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set_property(SOURCE f.c PROPERTY GENERATED YES)
+get_property(a SOURCE f.c PROPERTY GENERATED)
+get_property(b SOURCE g.c PROPERTY GENERATED)
+message("${a}|${b}")

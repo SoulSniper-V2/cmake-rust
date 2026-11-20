@@ -1,0 +1,7 @@
+get_property(parent DIRECTORY PROPERTY PARENT_DIRECTORY SET)
+get_directory_property(a SOURCE_DIR)
+get_directory_property(b BINARY_DIR)
+get_directory_property(c SUBDIRECTORIES)
+get_directory_property(d IMPORTED_TARGETS)
+get_directory_property(e TESTS)
+message("${parent}|${a}|${b}|${c}|${d}|${e}")

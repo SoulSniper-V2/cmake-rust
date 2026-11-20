@@ -1,0 +1,1 @@
+set_directory_properties(PROPERTIES VARIABLES a)

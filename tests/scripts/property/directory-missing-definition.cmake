@@ -1,0 +1,5 @@
+set(x sentinel)
+get_directory_property(x DEFINITION missing)
+if(DEFINED x)
+  message("defined [${x}]")
+endif()

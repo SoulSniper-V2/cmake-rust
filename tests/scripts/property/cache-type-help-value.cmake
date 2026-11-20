@@ -1,0 +1,5 @@
+set(needle x CACHE STRING "help text")
+get_property(a CACHE needle PROPERTY TYPE)
+get_property(b CACHE needle PROPERTY HELPSTRING)
+get_property(c CACHE needle PROPERTY VALUE)
+message("${a}|${b}|${c}")

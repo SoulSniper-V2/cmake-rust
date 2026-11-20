@@ -1,0 +1,6 @@
+set(needle x CACHE STRING "h")
+set_property(CACHE needle PROPERTY ADVANCED ON)
+set_property(CACHE needle PROPERTY ADVANCED)
+get_property(a CACHE needle PROPERTY ADVANCED SET)
+get_property(b CACHE needle PROPERTY ADVANCED)
+message("${a}|${b}")

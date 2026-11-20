@@ -1,0 +1,5 @@
+get_cmake_property(c CMAKE_C_KNOWN_FEATURES)
+get_cmake_property(cxx CMAKE_CXX_KNOWN_FEATURES)
+get_cmake_property(cuda CMAKE_CUDA_KNOWN_FEATURES)
+get_cmake_property(hip CMAKE_HIP_KNOWN_FEATURES)
+message("${c}|${cxx}|${cuda}|${hip}")

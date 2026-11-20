@@ -1,0 +1,8 @@
+function(report name access value)
+  message("${access} ${value}")
+endfunction()
+function(change)
+  set(watched a PARENT_SCOPE)
+endfunction()
+variable_watch(watched report)
+change()
