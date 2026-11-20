@@ -681,8 +681,12 @@ impl Interp {
             self.issue(MessageType::FatalError, &message);
             return false;
         }
+        // Policies set by cmCoreTryCompile::TryCompileCode are exempt from the
+        // deprecation warning inside try_compile projects.
+        let try_compile_exempt = self.in_try_compile && matches!(index, 83 | 91 | 104 | 123 | 126 | 128 | 136 | 141);
         if status == PolicyStatus::Old
             && index <= 142
+            && !try_compile_exempt
             && (!self.is_set("CMAKE_WARN_DEPRECATED") || self.is_on("CMAKE_WARN_DEPRECATED"))
         {
             let message = crate::policy::deprecated_warning(index);

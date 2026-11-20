@@ -798,7 +798,7 @@ fn random_number() -> u32 {
 }
 
 /// `cmSystemTools::MakeTempDirectory` — mkdtemp for a path ending in XXXXXX.
-fn make_temp_directory(path: &str) -> bool {
+fn make_temp_directory(path: &mut String) -> bool {
     if !path.ends_with("XXXXXX") {
         return false;
     }
@@ -814,6 +814,7 @@ fn make_temp_directory(path: &str) -> bool {
         }
         let candidate = format!("{}{}", &path[..path.len() - 6], suffix);
         if std::fs::create_dir(&candidate).is_ok() {
+            *path = candidate;
             return true;
         }
     }
@@ -2003,7 +2004,7 @@ fn try_compile_code(
             "{}/CMakeFiles/CMakeScratch/TryCompile-XXXXXX",
             interp.home_binary
         );
-        make_temp_directory(&tc.binary_directory);
+        make_temp_directory(&mut tc.binary_directory);
     } else {
         make_directory(&tc.binary_directory);
     }
