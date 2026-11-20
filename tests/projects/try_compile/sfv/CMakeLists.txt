@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C)
+set(CODE "int main(void){return 0;}\n")
+try_compile(OK SOURCE_FROM_VAR genvar.c CODE)
+message(STATUS "result=${OK}")

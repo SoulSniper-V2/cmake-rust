@@ -1,0 +1,8 @@
+set(u "kept")
+string(APPEND u)
+message("u=${u}")
+set(n "")
+string(APPEND n)
+if(DEFINED n)
+  message("n still defined=<${n}>")
+endif()

@@ -82,6 +82,8 @@ pub struct Ext {
     pub configure_outputs: std::collections::BTreeSet<String>,
     pub glob_dependencies: Vec<crate::commands::file::GlobDependency>,
     pub file_locks: crate::commands::file::LockPool,
+    /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
+    pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
 }
 
 /// `cmMakefile::FindTargetToUse`: aliases, then targets visible from the

@@ -1,0 +1,8 @@
+string(JSON a SET "{}" a "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]")
+message("a=<${a}>")
+string(JSON b SET "{}" k "{\"nested\":[true,false,null,\"x\"]}")
+message("b=<${b}>")
+string(JSON c SET "[]" 0 "{\"s\":\"h\u00e9llo \u2603\"}")
+message("c=<${c}>")
+string(JSON d SET "{}" k "{\"a\":[\"line\nbreak\",\"tab\there\"]}")
+message("d=<${d}>")

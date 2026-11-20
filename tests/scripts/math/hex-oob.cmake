@@ -1,0 +1,1 @@
+math(EXPR r "0xFFFFFFFFFFFFFFFFF")

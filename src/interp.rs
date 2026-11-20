@@ -15,6 +15,13 @@ use crate::props::Props;
 use crate::util;
 
 pub const VERSION: (u32, u32, u32) = (4, 1, 0);
+
+type ParseKey = (String, u64, i64, i64);
+
+thread_local! {
+    static PARSE_CACHE: std::cell::RefCell<HashMap<ParseKey, Rc<ParsedFile>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
 pub const VERSION_STRING: &str = "4.1.0";
 
 /// Error returned by a builtin command.
@@ -209,13 +216,24 @@ pub struct Interp {
     pub warn_deprecated: bool,
     pub deprecated_as_errors: bool,
     recursion_depth: usize,
-    /// Parsed file cache keyed by path.
-    parsed: HashMap<String, Rc<ParsedFile>>,
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
+    /// Configuring a try_compile project.
+    pub in_try_compile: bool,
+    /// `--debug-trycompile`: keep try_compile directories and log events.
+    pub debug_trycompile: bool,
+    /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
+    pub root_check_cmp0000: bool,
+    /// Language-enablement state (cmGlobalGenerator language maps).
+    pub langs: crate::languages::LangState,
+    /// Recursion depth inherited from an outer try_compile.
+    pub recursion_depth_base: usize,
+    /// Final variable bindings of each directory scope (index = makefile),
+    /// captured when the directory finishes configuring, for generation.
+    pub dir_final_vars: Vec<HashMap<String, Option<String>>>,
 }
 
 impl Interp {
@@ -248,9 +266,14 @@ impl Interp {
             warn_deprecated: true,
             deprecated_as_errors: false,
             recursion_depth: 0,
-            parsed: HashMap::new(),
             stdout_log: None,
             request_return: false,
+            in_try_compile: false,
+            debug_trycompile: false,
+            root_check_cmp0000: false,
+            langs: crate::languages::LangState::default(),
+            recursion_depth_base: 0,
+            dir_final_vars: Vec::new(),
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -360,6 +383,26 @@ impl Interp {
         parent
             .vars
             .insert(name.to_owned(), value.map(str::to_owned));
+    }
+
+    /// Flattened view of all visible normal-variable bindings.
+    pub fn flatten_scopes(&self) -> HashMap<String, Option<String>> {
+        let mut out: HashMap<String, Option<String>> = HashMap::new();
+        for scope in &self.scopes {
+            for (name, value) in &scope.vars {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+        out
+    }
+
+    /// Records the final variable state of the current directory.
+    pub fn record_directory_vars(&mut self) {
+        let index = self.mf_index();
+        if self.dir_final_vars.len() <= index {
+            self.dir_final_vars.resize(index + 1, HashMap::new());
+        }
+        self.dir_final_vars[index] = self.flatten_scopes();
     }
 
     pub fn push_scope(&mut self) {
@@ -551,6 +594,7 @@ impl Interp {
         let list = format!("{source}/CMakeLists.txt");
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
+        self.record_directory_vars();
         self.pop_scope();
         self.mf_stack.pop();
         ok
@@ -667,6 +711,71 @@ impl Interp {
         eprintln!("{rendered}");
     }
 
+    /// `cmSystemTools::Message` to stdout without prefix.
+    pub fn stdout_line_raw(&mut self, text: &str) {
+        self.stdout_line(text);
+    }
+
+    /// Runs the top-level CMakeLists.txt with the root-directory rules of
+    /// `cmMakefile::Configure` (CMP0000 detection and implicit project()).
+    pub fn run_root_list_file(&mut self, path: &str) {
+        self.backtrace.push(Frame {
+            file: Rc::from(path),
+            line: 0,
+            name: None,
+            deferred: false,
+        });
+        self.set_def("CMAKE_PARENT_LIST_FILE", path);
+        let saved = self.push_list_file_vars(path);
+        if let Some(parsed) = self.parse_file(path) {
+            let mut commands = parsed.commands.clone();
+            let has_version = commands.iter().any(|c| c.lname == "cmake_minimum_required");
+            if !has_version {
+                const ALLOWED: [&str; 11] = [
+                    "project", "set", "if", "endif", "else", "elseif", "add_executable",
+                    "add_library", "target_link_libraries", "option", "message",
+                ];
+                let problem = commands.len() >= 30
+                    || commands.iter().any(|c| !ALLOWED.contains(&c.lname.as_str()));
+                if problem {
+                    self.root_check_cmp0000 = true;
+                    crate::commands::core::apply_policy_version_ex(self, "3.5", "", false);
+                }
+            }
+            if !commands.iter().any(|c| c.lname == "project") {
+                self.issue(
+                    MessageType::AuthorWarning,
+                    "No project() command is present.  The top-level CMakeLists.txt file must contain a literal, direct call to the project() command.  Add a line of code such as\n  project(ProjectName)\nnear the top of the file, but after cmake_minimum_required().\nCMake is pretending there is a \"project(Project)\" command on the first line.",
+                );
+                commands.insert(
+                    0,
+                    Command {
+                        name: "project".into(),
+                        lname: "project".into(),
+                        line: 0,
+                        line_end: 0,
+                        args: vec![Arg {
+                            value: "Project".into(),
+                            delim: Delim::Unquoted,
+                            line: 0,
+                        }],
+                    },
+                );
+            }
+            let parsed = Rc::new(ParsedFile::new(parsed.path.clone(), commands));
+            self.mf_mut().list_files.push(path.to_owned());
+            self.run_file_body(&parsed);
+            self.run_deferred(path);
+        }
+        let depth = self.mf().policies.len();
+        if depth > 1 && !self.fatal {
+            self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+            self.mf_mut().policies.truncate(1);
+        }
+        self.pop_list_file_vars(saved);
+        self.backtrace.pop();
+    }
+
     /// Writes a line to stdout (message STATUS etc.).
     pub fn stdout_line(&mut self, text: &str) {
         use std::io::Write;
@@ -684,21 +793,20 @@ impl Interp {
     // List files
 
     fn parse_file(&mut self, path: &str) -> Option<Rc<ParsedFile>> {
-        if let Some(parsed) = self.parsed.get(path) {
-            return Some(parsed.clone());
+        // Cache parses across interpreter instances (try_compile projects
+        // re-read the same modules), keyed by path, size and mtime so that
+        // rewritten files are re-parsed.
+        let meta = std::fs::metadata(path).ok()?;
+        use std::os::unix::fs::MetadataExt;
+        let key = (path.to_owned(), meta.len(), meta.mtime(), meta.mtime_nsec());
+        if let Some(parsed) = PARSE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+            return Some(parsed);
         }
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                let message = format!("cmake_language could not read file \"{path}\".");
-                let _ = message;
-                return None;
-            }
-        };
+        let bytes = std::fs::read(path).ok()?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let rc_path: Rc<str> = Rc::from(path);
         let parsed = self.parse_text(rc_path, &text)?;
-        self.parsed.insert(path.to_owned(), parsed.clone());
+        PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
         Some(parsed)
     }
 
@@ -1016,11 +1124,12 @@ impl Interp {
 
     fn execute_inner(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         self.recursion_depth += 1;
+        let depth = self.recursion_depth + self.recursion_depth_base;
         let limit = self
             .get_def("CMAKE_MAXIMUM_RECURSION_DEPTH")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(1000);
-        if self.recursion_depth > limit {
+        if depth > limit {
             self.recursion_depth -= 1;
             self.issue(
                 MessageType::FatalError,
@@ -1869,6 +1978,10 @@ impl Interp {
                 self.run_flow_command(&parsed, &command, None).0
             }
         }
+    }
+
+    pub fn recursion_depth_now(&self) -> usize {
+        self.recursion_depth + self.recursion_depth_base
     }
 
     pub fn has_command(&self, name: &str) -> bool {

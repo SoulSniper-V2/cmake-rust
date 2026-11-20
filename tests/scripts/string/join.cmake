@@ -1,0 +1,8 @@
+string(JOIN "," j a b c)
+message("j=<${j}>")
+string(JOIN "-" j2 "x;y" "z")
+message("j2=<${j2}>")
+string(JOIN "" j3 p q)
+message("j3=<${j3}>")
+string(JOIN " + " j4 one)
+message("j4=<${j4}>")

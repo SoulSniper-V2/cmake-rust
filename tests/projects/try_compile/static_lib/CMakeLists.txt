@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+try_compile(OK SOURCE_FROM_CONTENT lib.c "int f(void){return 0;}\n")
+message(STATUS "result=${OK}")

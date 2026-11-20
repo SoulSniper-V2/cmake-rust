@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 1 P "" "S1" "")
+  message(STATUS "S1=${P_S1}-D U=${P_UNPARSED_ARGUMENTS}-D")
+endfunction()
+f(skip S1 v)

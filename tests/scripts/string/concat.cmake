@@ -1,0 +1,7 @@
+string(CONCAT c "a" "b;c" "d")
+message("c=<${c}>")
+string(CONCAT e)
+message("e=<${e}>")
+set(x "${c}")
+string(CONCAT c2 ${x} "z")
+message("c2=<${c2}>")

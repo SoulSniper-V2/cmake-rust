@@ -14,7 +14,6 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 
-use md5::Digest;
 
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
@@ -197,42 +196,31 @@ fn to_hex(data: &[u8]) -> String {
 }
 
 fn hash(interp: &mut Interp, args: &[String]) -> CmdResult {
-    fn digest<D: Digest>(path: &str) -> io::Result<String> {
-        let mut file = File::open(path)?;
-        let mut digest = D::new();
-        let mut buffer = [0; 8192];
-        loop {
-            let size = file.read(&mut buffer)?;
-            if size == 0 {
-                return Ok(to_hex(&digest.finalize()));
-            }
-            digest.update(&buffer[..size]);
-        }
-    }
     let [action, path, variable] = args else {
         return err_name_var(&args[0]);
     };
-    let hash = match action.as_str() {
-        "MD5" => digest::<md5::Md5>(path),
-        "SHA1" => digest::<sha1::Sha1>(path),
-        "SHA224" => digest::<sha2::Sha224>(path),
-        "SHA256" => digest::<sha2::Sha256>(path),
-        "SHA384" => digest::<sha2::Sha384>(path),
-        "SHA512" => digest::<sha2::Sha512>(path),
-        "SHA3_224" => digest::<sha3::Sha3_224>(path),
-        "SHA3_256" => digest::<sha3::Sha3_256>(path),
-        "SHA3_384" => digest::<sha3::Sha3_384>(path),
-        _ => digest::<sha3::Sha3_512>(path),
-    };
-    match hash {
-        Ok(value) => interp.set_def(variable, value),
+    let data = match fs::read(path) {
+        Ok(data) => data,
         Err(error) => {
             return err(format!(
                 "{action} failed to read file \"{path}\": {}",
                 system_error(&error)
             ));
         }
-    }
+    };
+    let digest = match action.as_str() {
+        "MD5" => <md5::Md5 as md5::Digest>::digest(&data).to_vec(),
+        "SHA1" => <sha1::Sha1 as sha1::Digest>::digest(&data).to_vec(),
+        "SHA224" => <sha2::Sha224 as sha2::Digest>::digest(&data).to_vec(),
+        "SHA256" => <sha2::Sha256 as sha2::Digest>::digest(&data).to_vec(),
+        "SHA384" => <sha2::Sha384 as sha2::Digest>::digest(&data).to_vec(),
+        "SHA512" => <sha2::Sha512 as sha2::Digest>::digest(&data).to_vec(),
+        "SHA3_224" => <sha3::Sha3_224 as sha3::Digest>::digest(&data).to_vec(),
+        "SHA3_256" => <sha3::Sha3_256 as sha3::Digest>::digest(&data).to_vec(),
+        "SHA3_384" => <sha3::Sha3_384 as sha3::Digest>::digest(&data).to_vec(),
+        _ => <sha3::Sha3_512 as sha3::Digest>::digest(&data).to_vec(),
+    };
+    interp.set_def(variable, to_hex(&digest));
     Ok(())
 }
 

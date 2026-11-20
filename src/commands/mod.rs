@@ -2,11 +2,18 @@
 
 use crate::interp::Interp;
 
-pub mod core;
 pub mod configure_file;
+pub mod core;
 pub mod file;
 pub mod legacy_fs;
+pub mod list;
+pub mod math;
+pub mod parse_arguments;
 pub mod path;
+pub mod project;
+pub mod separate_arguments;
+pub mod string;
+pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -20,4 +27,11 @@ pub fn register_all(interp: &mut Interp) {
     file::register(interp);
     legacy_fs::register(interp);
     path::register(interp);
+    project::register(interp);
+    string::register(interp);
+    list::register(interp);
+    math::register(interp);
+    separate_arguments::register(interp);
+    parse_arguments::register(interp);
+    try_compile::register(interp);
 }
