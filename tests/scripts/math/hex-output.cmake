@@ -1,0 +1,2 @@
+math(EXPR r "255" OUTPUT_FORMAT HEXADECIMAL)
+message(STATUS "r=${r}")
