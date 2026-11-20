@@ -73,7 +73,7 @@ impl Flags<'_, '_> {
 
     fn config_flags(&self, name: &str) -> String {
         let mut result = self.var(name).unwrap_or_default();
-        if result.trim().is_empty() {
+        if result.trim_matches(cmake_space).is_empty() {
             result.clear();
         }
         if !self.config.is_empty()
@@ -144,8 +144,12 @@ impl Flags<'_, '_> {
     }
 }
 
+fn cmake_space(ch: char) -> bool {
+    ch.is_ascii_whitespace() || ch == '\u{b}'
+}
+
 fn append(flags: &mut String, text: &str) {
-    if !text.trim().is_empty() {
+    if !text.trim_matches(cmake_space).is_empty() {
         if !flags.is_empty() {
             flags.push(' ');
         }
@@ -190,7 +194,7 @@ fn unix_command_line(text: &str) -> Vec<String> {
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
         match (quote, ch) {
-            (None, ch) if ch.is_ascii_whitespace() => {
+            (None, ch) if cmake_space(ch) => {
                 if started {
                     args.push(std::mem::take(&mut word));
                     started = false;
@@ -200,9 +204,10 @@ fn unix_command_line(text: &str) -> Vec<String> {
             (None, '\'' | '"') => quote = Some(ch),
             (Some(active), ch) if active == ch => quote = None,
             (_, '\\') => {
-                if let Some(next) = chars.next() {
-                    word.push(next);
-                }
+                let Some(next) = chars.next() else {
+                    break;
+                };
+                word.push(next);
             }
             _ => word.push(ch),
         }

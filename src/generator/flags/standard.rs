@@ -41,12 +41,9 @@ fn paired_prop<'a>(inputs: &'a Flags<'_, '_>, suffix: &str) -> Option<&'a str> {
 }
 
 fn requested_standard(inputs: &Flags<'_, '_>, default: &str) -> Option<String> {
-    let standards = levels(inputs.lang);
-    let mut requested = inputs
-        .prop(&format!("{}_STANDARD", inputs.lang))
-        .map(str::to_owned);
     let features = inputs.usage("COMPILE_FEATURES");
-    let raise = |language: &str, current: Option<String>, default: &str| {
+    let raise = |language: &str, default: &str| {
+        let current = inputs.prop(&format!("{language}_STANDARD"));
         let standards = levels(language);
         let highest = standards.iter().rposition(|standard| {
             let items = inputs
@@ -57,41 +54,25 @@ fn requested_standard(inputs: &Flags<'_, '_>, default: &str) -> Option<String> {
                 .any(|item| features.contains(item))
         });
         if let Some(highest) = highest
-            && level(standards, current.as_deref().unwrap_or(default))
-                .is_none_or(|idx| idx < highest)
+            && level(standards, current.unwrap_or(default)).is_none_or(|idx| idx < highest)
         {
             return Some(standards[highest].to_owned());
         }
-        current
+        current.map(str::to_owned)
     };
-    if let Some(paired) = paired_language(inputs.lang)
-        && requested.is_none()
-        && inputs
-            .ctx
-            .interp
-            .ext
-            .languages
-            .iter()
-            .any(|lang| lang == paired)
-        && let Some(paired_default) = inputs.var(&format!("CMAKE_{paired}_STANDARD_DEFAULT"))
-    {
-        requested = raise(
-            paired,
-            inputs
-                .prop(&format!("{paired}_STANDARD"))
-                .map(str::to_owned),
-            &paired_default,
-        )
-        .or(Some(paired_default));
-        if inputs.lang == "CUDA" && requested.as_deref() == Some("98") {
-            requested = Some("03".to_owned());
+    raise(inputs.lang, default).or_else(|| {
+        // The paired-language pass runs after feature-driven standards have
+        // been resolved, even when the paired language was not enabled.
+        let paired = paired_language(inputs.lang)?;
+        let paired_default = inputs.var(&format!("CMAKE_{paired}_STANDARD_DEFAULT"));
+        let inherited =
+            raise(paired, paired_default.as_deref().unwrap_or_default()).or(paired_default)?;
+        if inputs.lang == "CUDA" && inherited == "98" {
+            Some("03".to_owned())
+        } else {
+            Some(inherited)
         }
-    }
-    if standards.is_empty() {
-        requested
-    } else {
-        raise(inputs.lang, requested, default)
-    }
+    })
 }
 
 pub(super) fn append_standard(inputs: &Flags<'_, '_>, flags: &mut String) {

@@ -131,6 +131,29 @@ def cases():
                               **({"CMAKE_LINK_DEPENDS_USE_LINKER": "OFF"} if selection == "off" else {})},
                    target={"LINK_DEPENDS_NO_SHARED": "ON"} if selection == "no-shared" else {})
     yield dict(name="empty-build-type-source-definitions", source={"COMPILE_DEFINITIONS_": "EMPTY=1"})
+    yield dict(name="flags-init-release", config="Release",
+               before_project={"CMAKE_C_FLAGS_INIT": "-DFROM_INIT",
+                               "CMAKE_C_FLAGS_RELEASE_INIT": "-DFROM_RELEASE_INIT"})
+    yield dict(name="link-with-dialect", language="CXX",
+               variables={"CMAKE_CXX_LINK_WITH_STANDARD_COMPILE_OPTION": "ON"},
+               target={"CXX_STANDARD": "20", "CXX_EXTENSIONS": "OFF"})
+    yield dict(name="link-variable-policy-old", policies={"CMP0181": "OLD"},
+               variables={"CMAKE_EXE_LINKER_FLAGS": 'LINKER:-z,relro  "-Wl,with space"'},
+               target={"LINK_FLAGS": "-literal=$word", "LINK_OPTIONS": "LINKER:-rpath,/somewhere"})
+    yield dict(name="direct-linker-and-placeholders",
+               variables={"CMAKE_C_LINK_MODE": "LINKER",
+                          "CMAKE_C_USING_LINKER_custom": "/some linker",
+                          "CMAKE_C_LINK_EXECUTABLE":
+                              "<CMAKE_LINKER> <OBJECTS> -o <TARGET> <TARGET_QUOTED> "
+                              "<TARGET_UNQUOTED> <TARGET_BASE> <TARGET_VERSION_MAJOR> "
+                              "<TARGET_VERSION_MINOR> <TARGET_IMPLIB> <ROLE> <UNKNOWN>"},
+               target={"LINKER_TYPE": "custom", "C_LINKER_LAUNCHER": "launcher;has space"})
+    yield dict(name="link-warning-as-error", target={"LINK_WARNING_AS_ERROR": "ON"})
+    yield dict(name="ipo", target={"INTERPROCEDURAL_OPTIMIZATION": "ON"})
+    for global_value in ("", "MISSING-NOTFOUND"):
+        yield dict(name=f"link-depfile-defined-{global_value or 'empty'}",
+                   variables={"CMAKE_LINK_DEPENDS_USE_LINKER": global_value})
+
 
 
 def bracket(value):
@@ -173,7 +196,10 @@ def capture(oracle, root, number, case):
     target_props = replace_paths(case.get("target", {}))
     source_props = replace_paths(case.get("source", {}))
     policies = case.get("policies", {})
-    lines = ["cmake_minimum_required(VERSION 4.1)", f"project(flags {language})"]
+    lines = ["cmake_minimum_required(VERSION 4.1)"]
+    before_project = replace_paths(case.get("before_project", {}))
+    lines += [f"set({key} {bracket(value)})" for key, value in before_project.items()]
+    lines.append(f"project(flags {language})")
     lines += [f"cmake_policy(SET {key} {value})" for key, value in policies.items()]
     lines += [f"set({key} {bracket(value)})" for key, value in variables.items()]
     commands = case.get("commands", "")
@@ -209,7 +235,8 @@ endforeach()
 ''')
     (source / "CMakeLists.txt").write_text("\n".join(lines))
     env = {key: value for key, value in os.environ.items() if key not in {
-        "CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CPATH", "CMAKE_GENERATOR"}}
+        "CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CPATH", "CMAKE_GENERATOR", "CMAKE_GENERATOR_INSTANCE", "CMAKE_GENERATOR_PLATFORM",
+        "CMAKE_GENERATOR_TOOLSET", "CMAKE_TOOLCHAIN_FILE"}}
     run = subprocess.run([oracle, "-G", "Ninja", "-S", str(source), "-B", str(build),
                           f"-DCMAKE_BUILD_TYPE={config}"], env=env, capture_output=True, text=True)
     if run.returncode:
@@ -225,7 +252,7 @@ endforeach()
     cache = dict(re.findall(r"^([\w]+):[^=\n]+=(.*)$", (build / "CMakeCache.txt").read_text(), re.M))
     # Include only variables consumed by the flags layer or needed to rebuild
     # the rule. Multi-line feature lists and raw flags retain their exact text.
-    useful = re.compile(fr'(^CMAKE_{language}([0-9]+_(COMPILE_FEATURES|(STANDARD|EXTENSION)_COMPILE_OPTION)$|_(FLAGS($|_[A-Z]+$)|LINK_|COMPILE_OPTIONS_|ARCHIV|FLAG_REGEX|STANDARD_DEFAULT|EXTENSIONS_DEFAULT|COMPILER($|_ID$|_ARG1$|_TARGET$|_EXTERNAL_TOOLCHAIN$)|IMPLICIT_INCLUDE|STANDARD_INCLUDE|USING_LINKER|LINKER_(DEPFILE|WRAPPER)|DEFINE_FLAG|EXTENSION_COMPILE_OPTION|CREATE_|COMPILE_OBJECT)))|(^CMAKE_(INCLUDE_|DEPFILE_FLAGS_|(EXE|SHARED|MODULE|STATIC)_LINKER_FLAGS|SHARED_(LIBRARY|MODULE|BUILD)_|EXE_EXPORTS_|SYSROOT|QUOTE_INCLUDE_PATHS|COLOR_DIAGNOSTICS|LINK_DEPENDS_USE_LINKER|AR$|RANLIB$|LINKER$|COMMAND$))|(^_CMAKE_.*_IPO_)')
+    useful = re.compile(fr'(^CMAKE_{language}([0-9]+_(COMPILE_FEATURES|(STANDARD|EXTENSION)_COMPILE_OPTION)$|_(FLAGS($|_[A-Z_]+$)|LINK_|COMPILE_OPTIONS_|ARCHIV|FLAG_REGEX|STANDARD_DEFAULT|EXTENSIONS_DEFAULT|COMPILER($|_ID$|_ARG1$|_TARGET$|_EXTERNAL_TOOLCHAIN$)|IMPLICIT_INCLUDE|STANDARD_INCLUDE|USING_LINKER|LINKER_(DEPFILE|WRAPPER)|DEFINE_FLAG|EXTENSION_COMPILE_OPTION|CREATE_|COMPILE_OBJECT)))|(^CMAKE_(INCLUDE_|DEPFILE_FLAGS_|(EXE|SHARED|MODULE|STATIC)_LINKER_FLAGS|SHARED_(LIBRARY|MODULE|BUILD)_|EXE_EXPORTS_|SYSROOT|QUOTE_INCLUDE_PATHS|COLOR_DIAGNOSTICS|LINK_DEPENDS_USE_LINKER|AR$|RANLIB$|LINKER$|COMMAND$))|(^_CMAKE_.*_IPO_)')
     captured_vars = {key: value for key, value in observed.items() if useful.search(key)}
     captured_vars.update(variables)
     cache_inputs = {key: cache[key] for key in captured_vars if key in cache}
@@ -246,7 +273,20 @@ def main():
         raise SystemExit(f"Expected Kitware 4.1.0, found {version!r}")
     with tempfile.TemporaryDirectory(prefix="cmake-rust-flags-") as root:
         results = [capture(args.cmake, Path(root), number, case) for number, case in enumerate(cases())]
-    OUT.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n")
+    # Common observed values are identical within each compiler setup. Keep
+    # a shared table and store the changed inputs alongside each project.
+    common = {}
+    for language in sorted({case["language"] for case in results}):
+        projects = [case for case in results if case["language"] == language]
+        common[language] = {}
+        for field in ("variables", "cache"):
+            first = projects[0][field]
+            defaults = {key: val for key, val in first.items()
+                        if all(case[field].get(key) == val for case in projects)}
+            common[language][field] = defaults
+            for case in projects:
+                case[field] = {key: val for key, val in case[field].items() if key not in defaults}
+    OUT.write_text(json.dumps({"common": common, "projects": results}, indent=2, sort_keys=True) + "\n")
     print(f"Captured {len(results)} projects in {OUT}")
 
 
