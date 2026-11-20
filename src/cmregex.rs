@@ -143,8 +143,17 @@ impl Regex {
             code: Vec::new(),
         };
         comp.regc(MAGIC);
-        let (_, flags) = comp.reg(false)?;
+        // kwsys prints compile diagnostics to stdout (printf).
+        let (_, flags) = match comp.reg(false) {
+            Ok(result) => result,
+            Err(error) => {
+                println!("{error}");
+                println!("RegularExpression::compile(): Error in compile.");
+                return Err(error);
+            }
+        };
         if comp.code.len() >= 65535 {
+            println!("RegularExpression::compile(): Expression too big.");
             return Err("RegularExpression::compile(): Expression too big.".to_string());
         }
 
@@ -195,6 +204,20 @@ impl Regex {
     pub fn find_at(&self, text: &str, start: usize, not_bol: bool) -> Option<Match> {
         let options = if not_bol { 0 } else { BOL_AT_OFFSET };
         self.find_opts(text.as_bytes(), start, options)
+    }
+
+    /// `RegularExpression::find(text, offset, options)` with explicit
+    /// BOL_AT_OFFSET / NONEMPTY_AT_OFFSET flags (the repeated-search loops
+    /// of string(REGEX MATCHALL/REPLACE)).
+    pub fn find_with(&self, text: &str, offset: usize, bol_at_offset: bool, nonempty_at_offset: bool) -> Option<Match> {
+        let mut options = 0;
+        if bol_at_offset {
+            options |= BOL_AT_OFFSET;
+        }
+        if nonempty_at_offset {
+            options |= NONEMPTY_AT_OFFSET;
+        }
+        self.find_opts(text.as_bytes(), offset, options)
     }
 
     /// Search `text` from the beginning.

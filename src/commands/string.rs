@@ -332,17 +332,7 @@ fn regex_find_next(
     nonempty_at_offset: bool,
     old_policy: bool,
 ) -> Option<crate::cmregex::Match> {
-    // `^` matches at `base` when base is the string start or the OLD policy
-    // treats the offset as a line start.
-    let found = re.find_at(input, base, !old_policy && base != 0)?;
-    if nonempty_at_offset
-        && let Some((start, end)) = found.groups[0]
-        && start == base
-        && end == base
-    {
-        return re.find_at(input, base + 1, true);
-    }
-    Some(found)
+    re.find_with(input, base, old_policy, nonempty_at_offset)
 }
 
 fn regex_match(interp: &mut Interp, args: &[String]) -> CmdResult {
