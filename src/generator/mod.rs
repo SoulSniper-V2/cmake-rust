@@ -21,7 +21,12 @@
 //! - `export.rs`   export()/install(EXPORT) files.
 
 pub mod ctx;
+pub mod custom;
+pub mod flags;
+pub mod install;
+pub mod link;
 pub mod target;
+pub mod tests;
 
 use crate::configure::ConfigureOptions;
 use crate::interp::Interp;
