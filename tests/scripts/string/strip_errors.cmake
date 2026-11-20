@@ -1,0 +1,1 @@
+string(STRIP a)

@@ -1,0 +1,6 @@
+set(ENV{SOURCE_DATE_EPOCH} "1123456789")
+set(ENV{TZ} "UTC")
+string(TIMESTAMP a "%Y-%m-%d %H:%M:%S %z %Z")
+message("a=<${a}>")
+string(TIMESTAMP b "%Y" UTC)
+message("b=<${b}>")

@@ -1,0 +1,8 @@
+string(REGEX MATCHALL "b*" a "aabbaa")
+message("a=<${a}>")
+string(REGEX MATCHALL "a*" b "bab")
+message("b=<${b}>")
+string(REGEX MATCHALL "x*" c "")
+message("c=<${c}>")
+string(REGEX MATCHALL "(a*)" d "baa")
+message("d=<${d}> m0=<${CMAKE_MATCH_0}>")
