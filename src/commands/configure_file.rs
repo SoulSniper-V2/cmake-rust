@@ -260,6 +260,15 @@ fn configure_file(interp: &mut Interp, args: &[String]) -> CmdResult {
     // cmMakefile::AddCMakeDependFile appends the input to ListFiles, which
     // generators consume for the cmake re-run rule.
     interp.mf_mut().list_files.push(input.clone());
+    let deps = interp
+        .ext
+        .misc
+        .entry("cmake-depend-files".to_string())
+        .or_default();
+    if !deps.is_empty() {
+        deps.push(';');
+    }
+    deps.push_str(&input);
     interp.ext.configure_outputs.insert(output.clone());
     if bits == 0 {
         bits = fs::metadata(&input).map_or(0o644, |meta| meta.permissions().mode());
