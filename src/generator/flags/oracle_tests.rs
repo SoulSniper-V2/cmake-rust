@@ -133,6 +133,7 @@ fn ninja_flag_assembly_matches_kitware() {
             kind: SourceKind::ObjectSource,
             object_name: format!("{}.o", fixture.source_file),
             generated: false,
+            object_library: None,
         };
         let source_props = properties(fixture.source_props.clone());
         let compile = if fixture.source_props.is_empty() {
@@ -302,6 +303,7 @@ fn standards_inherit_from_paired_language() {
             kind: SourceKind::ObjectSource,
             object_name: "example.o".to_owned(),
             generated: false,
+            object_library: None,
         };
         let ctx = GenCtx::new(&interp);
         assert_eq!(

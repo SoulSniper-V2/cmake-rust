@@ -18,6 +18,7 @@ mod messages;
 mod outconv;
 mod policy;
 mod policy_table;
+pub mod properties;
 mod props;
 mod state;
 mod util;
