@@ -1,0 +1,8 @@
+string(JSON a REMOVE "{\"a\":1,\"b\":2}" a)
+message("a=<${a}>")
+string(JSON b REMOVE "{\"a\":1,\"b\":2}" missing)
+message("b=<${b}>")
+string(JSON c REMOVE "[1,2,3]" 1)
+message("c=<${c}>")
+string(JSON d REMOVE "{\"o\":{\"x\":1}}" o x)
+message("d=<${d}>")

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C)
+file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/main.c "int main(void) { return 0; }\n")
+try_compile(OK SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/main.c OUTPUT_VARIABLE OUT)
+message(STATUS "result=${OK}")

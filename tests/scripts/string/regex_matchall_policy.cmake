@@ -1,0 +1,7 @@
+cmake_policy(SET CMP0186 NEW)
+string(REGEX MATCHALL "(^|,)" a "a,b")
+message("a=<${a}>")
+string(REGEX MATCHALL "a*" b "bab")
+message("b=<${b}>")
+string(REGEX REPLACE "(^|,)" "<" c "a,b")
+message("c=<${c}>")

@@ -227,91 +227,20 @@ impl LogLevel {
     }
 }
 
-/// A configure run writes one YAML document even when it logs many events.
-#[derive(Debug)]
-pub struct ConfigureLog(std::fs::File);
-
-impl Drop for ConfigureLog {
-    fn drop(&mut self) {
-        use std::io::Write;
-        let _ = writeln!(self.0, "...");
-    }
-}
-
+/// `WriteMessageEvent`: a `message-v1` event in CMakeConfigureLog.yaml.
 fn configure_log(interp: &mut Interp, message: &str) {
-    use std::io::Write;
-
     if interp.mode == crate::interp::Mode::Script {
         return;
     }
-    let result = (|| -> std::io::Result<()> {
-        if interp.ext.configure_log.is_none() {
-            let dir = std::path::Path::new(&interp.home_binary).join("CMakeFiles");
-            std::fs::create_dir_all(&dir)?;
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("CMakeConfigureLog.yaml"))?;
-            writeln!(file, "\n---\nevents:")?;
-            interp.ext.configure_log = Some(ConfigureLog(file));
-        }
-        let log = &mut interp
-            .ext
-            .configure_log
-            .as_mut()
-            .expect("open configure log")
-            .0;
-        writeln!(log, "  -\n    kind: \"message-v1\"\n    backtrace:")?;
-        for frame in interp
-            .backtrace
-            .iter()
-            .rev()
-            .filter(|frame| frame.name.is_some() || frame.deferred)
-        {
-            let path = frame
-                .file
-                .strip_prefix(&interp.home_source)
-                .and_then(|relative| relative.strip_prefix('/'))
-                .unwrap_or(&frame.file);
-            let entry = if frame.deferred {
-                format!("{path}:DEFERRED")
-            } else {
-                format!(
-                    "{path}:{} ({})",
-                    frame.line,
-                    frame.name.as_deref().unwrap_or("")
-                )
-            };
-            writeln!(log, "      - {}", serde_json::Value::String(entry))?;
-        }
-        if !interp.ext.message_checks.is_empty() {
-            writeln!(log, "    checks:")?;
-            for check in interp.ext.message_checks.iter().rev() {
-                writeln!(log, "      - {}", serde_json::Value::String(check.clone()))?;
-            }
-        }
-        writeln!(log, "    message: |")?;
-        let mut lines = message.split_inclusive('\n');
-        for line in &mut lines {
-            write!(log, "      ")?;
-            let line = line
-                .strip_suffix('\n')
-                .map_or(line, |line| line.strip_suffix('\r').unwrap_or(line));
-            for ch in line.chars() {
-                match ch {
-                    '\\' => write!(log, "\\\\")?,
-                    '\t' => write!(log, "\t")?,
-                    ch if ch.is_control() => {
-                        for byte in ch.encode_utf8(&mut [0; 4]).bytes() {
-                            write!(log, "\\x{byte:02x}")?;
-                        }
-                    }
-                    _ => write!(log, "{ch}")?,
-                }
-            }
-            writeln!(log)?;
-        }
-        Ok(())
-    })();
-    let _ = result;
+    let log_dir = format!("{}/CMakeFiles", interp.home_binary);
+    let checks = interp.ext.message_checks.clone();
+    let mut slot = interp.ext.configure_log.borrow_mut();
+    let log = slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+    if !log.is_any_log_version_enabled(&[1]) {
+        return;
+    }
+    log.check_messages = checks;
+    log.begin_event("message-v1", interp);
+    log.write_literal_text_block("message", message);
+    log.end_event();
 }

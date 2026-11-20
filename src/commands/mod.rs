@@ -3,11 +3,18 @@
 use crate::interp::Interp;
 
 pub mod core;
-pub mod sysinfo;
-pub mod property;
-pub mod process;
-pub mod message;
 pub mod language;
+pub mod list;
+pub mod math;
+pub mod message;
+pub mod parse_arguments;
+pub mod process;
+pub mod project;
+pub mod property;
+pub mod separate_arguments;
+pub mod string;
+pub mod sysinfo;
+pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -17,9 +24,16 @@ pub fn register_all(interp: &mut Interp) {
         interp.register_flow(name);
     }
     core::register(interp);
-    sysinfo::register(interp);
-    property::register(interp);
-    process::register(interp);
-    message::register(interp);
     language::register(interp);
+    list::register(interp);
+    math::register(interp);
+    message::register(interp);
+    parse_arguments::register(interp);
+    process::register(interp);
+    project::register(interp);
+    property::register(interp);
+    separate_arguments::register(interp);
+    string::register(interp);
+    sysinfo::register(interp);
+    try_compile::register(interp);
 }

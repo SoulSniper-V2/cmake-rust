@@ -80,7 +80,7 @@ pub struct Ext {
     pub experimental_warnings: std::collections::HashSet<(String, String)>,
     pub in_top_level_includes: bool,
     pub message_checks: Vec<String>,
-    pub configure_log: Option<crate::commands::message::ConfigureLog>,
+
     pub property_definitions: crate::properties::Definitions,
     pub source_properties: HashMap<usize, Vec<crate::properties::SourceFile>>,
     pub generated_sources: std::collections::HashSet<String>,
@@ -95,6 +95,8 @@ pub struct Ext {
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
+    /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
+    pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
 }
 
 /// `cmMakefile::FindTargetToUse`: aliases, then targets visible from the

@@ -1,0 +1,6 @@
+set(P_S1 "old")
+set(P_M1 "old")
+set(P_UNPARSED_ARGUMENTS "old")
+set(P_KEYWORDS_MISSING_VALUES "old")
+cmake_parse_arguments(P "" "S1" "M1" X)
+message(STATUS "S1=${P_S1}-D M1=${P_M1}-D U=${P_UNPARSED_ARGUMENTS}-D K=${P_KEYWORDS_MISSING_VALUES}-D")
