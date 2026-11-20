@@ -3,19 +3,19 @@
 //!
 //! Structure mirrors the C++ sources so work can proceed in parallel:
 //! - `ctx.rs`      GenCtx: read-only access to the configured state + caches
-//!                 (cmGlobalGenerator/cmLocalGenerator queries, genex hook).
+//!   (cmGlobalGenerator/cmLocalGenerator queries, genex hook).
 //! - `target.rs`   cmGeneratorTarget core: names, directories, artifacts,
-//!                 sources, linker language.            (lead)
+//!   sources, linker language.            (lead)
 //! - `options.rs`  compile definitions/options/includes/features/link
-//!                 options/directories with usage requirements (uses genex).
+//!   options/directories with usage requirements (uses genex).
 //! - `flags.rs`    cmLocalGenerator flag assembly: AddLanguageFlags,
-//!                 standards, PIC, visibility, include/define formatting,
-//!                 cmRulePlaceholderExpander.
+//!   standards, PIC, visibility, include/define formatting,
+//!   cmRulePlaceholderExpander.
 //! - `link.rs`     cmComputeLinkDepends + cmComputeLinkInformation (link
-//!                 line items, search paths, rpaths).
+//!   line items, search paths, rpaths).
 //! - `custom.rs`   cmCustomCommandGenerator.
 //! - `ninja/`      cmGlobalNinjaGenerator, cmLocalNinjaGenerator,
-//!                 cmNinjaTargetGenerator + Normal/Utility.  (lead)
+//!   cmNinjaTargetGenerator + Normal/Utility.  (lead)
 //! - `install.rs`  cmInstallGenerator family -> cmake_install.cmake.
 //! - `tests.rs`    cmTestGenerator -> CTestTestfile.cmake.
 //! - `export.rs`   export()/install(EXPORT) files.
@@ -29,6 +29,9 @@ pub mod link;
 pub mod ninja;
 pub mod target;
 pub mod tests;
+
+#[cfg(test)]
+mod oracle_tests;
 
 use crate::configure::ConfigureOptions;
 use crate::interp::Interp;

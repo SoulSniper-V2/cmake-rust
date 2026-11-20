@@ -394,12 +394,12 @@ fn render_target(
     if imported {
         let location = target::full_path(ctx, tgt, &ctx.config, target::ArtifactType::Runtime, false);
         let mut files = vec![location];
-        if tgt.kind == TargetKind::SharedLibrary {
-            let names = target::names(ctx, tgt, &ctx.config);
-            if !names.shared_object.is_empty() {
-                let soname = format!("{}/{}", crate::util::filename_path(&files[0]), names.shared_object);
-                if soname != files[0] { files.push(soname); }
-            }
+        if tgt.kind == TargetKind::SharedLibrary
+            && let Some(info) = target::import_info(tgt, &ctx.config)
+            && !info.soname.is_empty()
+        {
+            let soname = format!("{}/{}", crate::util::filename_path(&files[0]), info.soname);
+            if soname != files[0] { files.push(soname); }
         }
         write_copy(out, indent, opts, CopyRule::new(&dest, kind, &files));
         return;
