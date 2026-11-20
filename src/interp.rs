@@ -218,6 +218,8 @@ pub struct Interp {
     pub request_return: bool,
     /// Configuring a try_compile project.
     pub in_try_compile: bool,
+    /// `--debug-trycompile`: keep try_compile directories and log events.
+    pub debug_trycompile: bool,
     /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
     pub root_check_cmp0000: bool,
     /// Language-enablement state (cmGlobalGenerator language maps).
@@ -260,6 +262,7 @@ impl Interp {
             stdout_log: None,
             request_return: false,
             in_try_compile: false,
+            debug_trycompile: false,
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,

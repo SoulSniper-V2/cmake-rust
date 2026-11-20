@@ -4,6 +4,7 @@ use crate::interp::Interp;
 
 pub mod core;
 pub mod project;
+pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -14,4 +15,5 @@ pub fn register_all(interp: &mut Interp) {
     }
     core::register(interp);
     project::register(interp);
+    try_compile::register(interp);
 }
