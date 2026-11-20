@@ -1088,6 +1088,10 @@ impl<'a> NinjaGenerator<'a> {
             if depfile_format != "msvc" {
                 build.variables.insert("DEP_FILE".into(), format!("{object}.d"));
             }
+            build.variables.insert(
+                "LAUNCHER".into(),
+                flags::compiler_launcher(self.ctx, target, &source.language),
+            );
             let object_dir_rel = self.ninja_path(&object_dir);
             build.variables.insert("OBJECT_DIR".into(), object_dir_rel);
             build.variables.insert("OBJECT_FILE_DIR".into(), object_file_dir);
@@ -1150,14 +1154,15 @@ impl<'a> NinjaGenerator<'a> {
             TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
             _ => String::new(),
         };
-        let has_link_depfile = link_depfile_supported(self.ctx, target, language);
+        // cmGeneratorTarget::HasLinkDependencyFile.
+        let link_depfile = flags::link_dependency_file(self.ctx, target, language);
         let use_rsp = false;
         if !self.has_rule(&rule_name) {
             let mut rule = Rule {
                 name: rule_name.clone(),
                 ..Rule::default()
             };
-            if has_link_depfile {
+            if link_depfile.is_some() {
                 rule.deptype = self.ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
                 rule.depfile = "$DEP_FILE".into();
             }
@@ -1262,13 +1267,15 @@ impl<'a> NinjaGenerator<'a> {
             build.variables.insert("LANGUAGE_COMPILE_FLAGS".into(), link_vars.language_compile_flags);
             build.variables.insert("ARCH_FLAGS".into(), link_vars.arch_flags);
         }
-        let mut link_flags = link_vars.link_flags;
-        if has_link_depfile {
-            let depfile = format!("{object_dir}/link.d");
-            build.variables.insert("DEP_FILE".into(), depfile);
-            let _ = &mut link_flags;
+        // cmNinjaTargetGenerator::AddDepfileBinding.
+        if let Some(depfile) = &link_depfile {
+            let depfile_shell = self.shell(depfile);
+            if depfile_shell != *depfile {
+                build.variables.insert("depfile".into(), depfile.clone());
+            }
+            build.variables.insert("DEP_FILE".into(), depfile_shell);
         }
-        build.variables.insert("LINK_FLAGS".into(), link_flags);
+        build.variables.insert("LINK_FLAGS".into(), link_vars.link_flags);
         build.variables.insert("CONFIG".into(), config.clone());
         build.variables.insert("OBJECT_DIR".into(), object_dir.clone());
         build.variables.insert("TARGET_FILE".into(), target_real.clone());
@@ -1381,18 +1388,4 @@ fn rule_launcher(ctx: &GenCtx, target: &Target, property: &str) -> String {
     }
 }
 
-/// `cmGeneratorTarget::HasLinkDependencyFile`.
-fn link_depfile_supported(ctx: &GenCtx, target: &Target, language: &str) -> bool {
-    if !matches!(target.kind, TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary) {
-        return false;
-    }
-    let makefile = target.makefile;
-    let depfile_flags = ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FLAGS"));
-    let format = ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
-    if depfile_flags.is_empty() || format.is_empty() {
-        return false;
-    }
-    let supported = ctx.var(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_SUPPORTED"));
-    let use_linker = ctx.var(makefile, "CMAKE_LINK_DEPENDS_USE_LINKER");
-    supported.is_some_and(|value| util::is_on(&value)) && use_linker.is_none_or(|value| util::is_on(&value))
-}
+

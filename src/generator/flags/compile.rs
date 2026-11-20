@@ -6,7 +6,7 @@ use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
 use crate::state::{Target, TargetKind};
-use crate::util::{collapse_full_path, expand_list, is_on, is_on_opt};
+use crate::util::{expand_list, is_on, is_on_opt};
 
 /// Per-object bindings for the Ninja build statement.
 #[derive(Clone, Debug, Default)]
@@ -491,12 +491,14 @@ fn include_flags(inputs: &Flags<'_, '_>, dirs: &[String], system: &HashSet<Strin
 }
 
 /// Implicit dependencies from OBJECT_DEPENDS, before mapping to Ninja paths.
+/// INTEGRATION: wire into ninja.rs once SourceInfo carries source props.
+#[cfg(test)]
 pub fn object_dependencies(properties: &Props) -> Vec<String> {
     expand_list(properties.get("OBJECT_DEPENDS").unwrap_or_default(), false)
         .into_iter()
         .map(|path| {
             if Path::new(&path).is_absolute() {
-                collapse_full_path(&path, "")
+                crate::util::collapse_full_path(&path, "")
             } else {
                 path
             }

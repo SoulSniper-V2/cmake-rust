@@ -142,6 +142,7 @@ fn replacement(
     match name {
         "CMAKE_COMMAND" => return shell_with_make_vars(&inputs.ctx.interp.cmake_command),
         "CMAKE_LINKER" if step == RuleStep::Link => {
+            // cmGeneratorTarget::GetLinkerTool.
             let linker = if inputs.lang_var("LINK_MODE").as_deref() == Some("LINKER") {
                 selected_linker(inputs)
             } else {
@@ -149,9 +150,14 @@ fn replacement(
             }
             .or_else(|| inputs.var(name))
             .unwrap_or_default();
-            let mut command = launcher(inputs, "LINKER_LAUNCHER");
-            append(&mut command, &shell_with_make_vars(&linker));
-            return command;
+            // cmStrCat(Launcher, ' ', result) always inserts the separator.
+            let launcher = launcher(inputs, "LINKER_LAUNCHER");
+            let escaped = shell_with_make_vars(&linker);
+            return if launcher.is_empty() {
+                escaped
+            } else {
+                format!("{launcher} {escaped}")
+            };
         }
         "CONFIG"
         | "ROLE"
@@ -253,13 +259,18 @@ fn mapped_variable(inputs: &Flags<'_, '_>, name: &str) -> String {
 }
 
 fn compiler(inputs: &Flags<'_, '_>, step: RuleStep, current_language: bool) -> String {
-    let path = inputs.lang_var("COMPILER").unwrap_or_default();
+    let path = shell_with_make_vars(&inputs.lang_var("COMPILER").unwrap_or_default());
+    // cmStrCat(Launcher, ' ', ret) always inserts the separator.
     let mut command = if step == RuleStep::Link && current_language {
-        launcher(inputs, "LINKER_LAUNCHER")
+        let launcher = launcher(inputs, "LINKER_LAUNCHER");
+        if launcher.is_empty() {
+            path
+        } else {
+            format!("{launcher} {path}")
+        }
     } else {
-        String::new()
+        path
     };
-    append(&mut command, &shell_with_make_vars(&path));
     if let Some(arg) = inputs
         .lang_var("COMPILER_ARG1")
         .filter(|arg| !arg.is_empty())
@@ -309,7 +320,9 @@ fn expand_placeholders(template: &str, mut replacement: impl FnMut(&str) -> Stri
     };
     let mut result = String::new();
     let mut pos = 0;
-    while start + 2 < template.len() {
+    // C++ compares `start < s.size() - 2` in size_t, which underflows for
+    // inputs shorter than two characters and still enters the loop.
+    while start + 2 < template.len() || template.len() < 2 {
         let Some(offset) = template[start..].find('>') else {
             return result;
         };

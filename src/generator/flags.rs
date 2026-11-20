@@ -6,9 +6,16 @@ mod link;
 mod rule;
 mod standard;
 
-pub use compile::{CompileVars, compile_vars, compile_vars_with_source_props, object_dependencies};
-pub use link::{LinkFlagVars, link_dependency_file, link_flag_vars};
-pub use rule::{RuleStep, compiler_launcher, expand_rule, expand_rule_for_step};
+pub use compile::compile_vars;
+pub use link::{link_dependency_file, link_flag_vars};
+pub use rule::{compiler_launcher, expand_rule};
+
+// API pending the source-property and linked-target integrations below;
+// kept visible to the oracle replay tests.
+#[cfg(test)]
+pub use compile::{compile_vars_with_source_props, object_dependencies};
+#[cfg(test)]
+pub use rule::{RuleStep, expand_rule_for_step};
 
 use super::ctx::GenCtx;
 use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};

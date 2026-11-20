@@ -1,13 +1,11 @@
 use std::path::Path;
 
-use super::{
-    Flags, RuleStep, append, append_options, expand_rule_for_step, shell_with_make_vars,
-    target_options, unix_command_line,
-};
+use super::rule::{RuleStep, expand_rule_for_step};
+use super::{Flags, append, append_options, shell_with_make_vars, target_options, unix_command_line};
 use crate::generator::ctx::GenCtx;
 use crate::policy::PolicyStatus;
 use crate::state::{Target, TargetKind};
-use crate::util::{expand_list, is_notfound, is_off_opt, is_on_opt};
+use crate::util::{expand_list, is_off_opt, is_on, is_on_opt};
 
 /// Per-link bindings for the Ninja build statement.
 #[derive(Clone, Debug, Default)]
@@ -332,11 +330,11 @@ pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Op
         TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
     ) || is_on_opt(inputs.prop("LINK_DEPENDS_NO_SHARED"))
         || !is_on_opt(inputs.lang_var("LINK_DEPENDS_USE_LINKER").as_deref())
+        // cmGeneratorTarget::HasLinkDependencyFile: defined-but-off counts
+        // (IsDefinitionSet treats empty and -NOTFOUND values as defined).
         || inputs
             .var("CMAKE_LINK_DEPENDS_USE_LINKER")
-            .is_some_and(|value| {
-                !value.is_empty() && !is_notfound(&value) && !crate::util::is_on(&value)
-            })
+            .is_some_and(|value| !is_on(&value))
     {
         return None;
     }
