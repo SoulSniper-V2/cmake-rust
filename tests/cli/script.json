@@ -19,5 +19,6 @@
   {"name": "p-log-level", "argv": ["--log-level=VERBOSE", "-P", "s.cmake"], "files": {"s.cmake": "message(VERBOSE visible)\nmessage(DEBUG hidden)\n"}},
   {"name": "p-empty-file-argument", "argv": ["-P", ""]},
   {"name": "p-message-context", "argv": ["--log-context", "-P", "s.cmake"], "files": {"s.cmake": "set(CMAKE_MESSAGE_CONTEXT first second)\nmessage(STATUS hello)\n"}},
-  {"name": "p-typed-path-tilde", "argv": ["-DA:PATH=~/sub", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}\")\n"}}
+  {"name": "p-typed-path-tilde", "argv": ["-DA:PATH=~/sub", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}\")\n"}},
+  {"name": "p-reject-fifo", "argv": ["-P", "/dev/stdin"], "stdin": "return()\n"}
 ]

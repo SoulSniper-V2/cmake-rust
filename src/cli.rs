@@ -1,5 +1,6 @@
 //! Public command dispatch and project/script argument handling.
 
+use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::process::Command;
 
@@ -1051,7 +1052,18 @@ fn read_script(interp: &mut Interp, script: &str, cwd: &str, script_mode: bool) 
     if script_mode {
         interp.set_def("CMAKE_SCRIPT_MODE_FILE", &path);
     }
-    if !Path::new(&path).is_file() {
+    let metadata = std::fs::metadata(&path);
+    if metadata
+        .as_ref()
+        .is_ok_and(|entry| entry.file_type().is_fifo())
+    {
+        eprintln!(
+            "CMake Error in {script}:\n  Error while reading Byte-Order-Mark.  File not seekable?\n\n"
+        );
+        cmcmd::error(format!("Error processing file: {script}"));
+        return 1;
+    }
+    if !metadata.is_ok_and(|entry| entry.is_file()) {
         cmcmd::error(format!("Not a file: {script}"));
         cmcmd::error(format!("Error processing file: {script}"));
         return 1;
