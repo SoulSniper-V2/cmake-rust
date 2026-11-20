@@ -1,0 +1,1 @@
+string(MAKE_C_IDENTIFIER a)

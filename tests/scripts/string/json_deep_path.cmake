@@ -1,0 +1,8 @@
+string(JSON a GET "{\"x\":[{\"y\":[\"a\",\"b\",\"c\"]}]}" x 0 y 2)
+message("a=${a}")
+string(JSON b ERROR_VARIABLE e GET "{\"x\":[{\"y\":1}]}" x 0 z)
+message("b=${b}|${e}")
+string(JSON c ERROR_VARIABLE e GET "{\"x\":5}" x 0)
+message("c=${c}|${e}")
+string(JSON d ERROR_VARIABLE e GET "[[1]]" 0 0 0)
+message("d=${d}|${e}")

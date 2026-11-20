@@ -1,0 +1,1 @@
+string(RANDOM LENGTH 3 ALPHABET "" out)

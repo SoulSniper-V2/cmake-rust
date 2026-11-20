@@ -1,0 +1,8 @@
+string(RANDOM LENGTH 8 RANDOM_SEED 42 a)
+message("a=${a}")
+string(RANDOM LENGTH 8 b)
+message("b=${b}")
+string(RANDOM LENGTH 4 RANDOM_SEED 1 c)
+message("c=${c}")
+string(RANDOM LENGTH 4 d)
+message("d=${d}")
