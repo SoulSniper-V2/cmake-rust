@@ -219,6 +219,7 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
             return;
         }
         // CMAKE_PROJECT_TOP_LEVEL_INCLUDES
+        interp.ext.in_top_level_includes = true;
         let includes = interp.get_safe("CMAKE_PROJECT_TOP_LEVEL_INCLUDES");
         for setup in util::expand_list(&includes, false) {
             let mut file = setup.clone();
@@ -230,6 +231,7 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
                             Some(interp),
                             &format!("CMAKE_PROJECT_TOP_LEVEL_INCLUDES module:\n  {setup}"),
                         );
+                        interp.ext.in_top_level_includes = false;
                         return;
                     }
                 }
@@ -241,6 +243,7 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
                     Some(interp),
                     &format!("CMAKE_PROJECT_TOP_LEVEL_INCLUDES file does not exist: {setup}"),
                 );
+                interp.ext.in_top_level_includes = false;
                 return;
             }
             if path.is_dir() {
@@ -248,10 +251,19 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
                     Some(interp),
                     &format!("CMAKE_PROJECT_TOP_LEVEL_INCLUDES file is a directory: {setup}"),
                 );
+                interp.ext.in_top_level_includes = false;
                 return;
             }
-            read(interp, &absolute);
+            if !read(interp, &absolute) {
+                crate::configure::system_error(
+                    Some(interp),
+                    &format!("Failed reading CMAKE_PROJECT_TOP_LEVEL_INCLUDES file: {setup}"),
+                );
+                interp.ext.in_top_level_includes = false;
+                return;
+            }
         }
+        interp.ext.in_top_level_includes = false;
     }
     // Ninja supports every language the Modules provide except a few.
     if interp.get_def("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED").is_none() {

@@ -2,6 +2,7 @@
 
 use crate::interp::Interp;
 
+pub mod cmake_language;
 pub mod core;
 pub mod find;
 pub mod project;
@@ -24,6 +25,7 @@ pub fn register_all(interp: &mut Interp) {
     ] {
         interp.register_flow(name);
     }
+    cmake_language::register(interp);
     core::register(interp);
     find::register(interp);
     project::register(interp);

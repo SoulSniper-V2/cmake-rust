@@ -1,0 +1,19 @@
+[
+  {"name": "tar-missing-list", "argv": ["-E", "tar", "tf", "missing"]},
+  {"name": "tar-missing-extract", "argv": ["-E", "tar", "xf", "missing"]},
+  {"name": "tar-no-action", "argv": ["-E", "tar", "f", "a.tar", "a"]},
+  {"name": "tar-unknown-option", "argv": ["-E", "tar", "cf", "a.tar", "--oops"]},
+  {"name": "tar-unknown-format", "argv": ["-E", "tar", "cf", "a.tar", "--format=oops"]},
+  {"name": "tar-mixed-compression", "argv": ["-E", "tar", "czjf", "a.tar"]},
+  {"name": "tar-zip-compression", "argv": ["-E", "tar", "czf", "a.tar", "--format=zip"]},
+  {"name": "tar-files-from-missing", "argv": ["-E", "tar", "cf", "a.tar", "--files-from=not-here"]},
+  {"name": "tar-files-from-directory", "argv": ["-E", "tar", "cf", "a.tar", "--files-from=."]},
+  {"name": "tar-files-from-invalid-line", "argv": ["-E", "tar", "cf", "a.tar", "--files-from=list"], "files": {"list": "one\n-nope\n"}},
+  {"name": "tar-no-files", "argv": ["-E", "tar", "cf", "a.tar"]},
+  {"name": "tar-missing-input", "argv": ["-E", "tar", "cvf", "a.tar", "missing", "exists"], "files": {"exists": "one"}},
+  {"name": "tar-bad-mtime", "argv": ["-E", "tar", "cvf", "a.tar", "--mtime=bad", "exists"], "files": {"exists": "one"}},
+  {"name": "tar-roundtrip-plain", "steps": [{"argv": ["-E", "tar", "cvf", "out.tar", "--mtime=1970-01-01UTC", "--format=gnutar", "{work}/a"]}, {"argv": ["-E", "tar", "tf", "out.tar"]}, {"argv": ["-E", "tar", "tvf", "out.tar"]}, {"argv": ["-E", "tar", "xvf", "../out.tar"], "cwd": "extracted"}], "files": {"a/one": "data\n"}, "links": {"a/two": "one"}, "dirs": ["extracted"], "inspect": ["extracted/a/one", "extracted/a/two"]},
+  {"name": "tar-roundtrip-z", "steps": [{"argv": ["-E", "tar", "cvzf", "out.tar", "--mtime=1970-01-01UTC", "--format=gnutar", "{work}/a"]}, {"argv": ["-E", "tar", "tf", "out.tar"]}, {"argv": ["-E", "tar", "tvf", "out.tar"]}, {"argv": ["-E", "tar", "xvf", "../out.tar"], "cwd": "extracted"}], "files": {"a/one": "data\n"}, "links": {"a/two": "one"}, "dirs": ["extracted"], "inspect": ["extracted/a/one", "extracted/a/two"]},
+  {"name": "tar-selected-files", "steps": [{"argv": ["-E", "tar", "cf", "out.tar", "--files-from=list"]}, {"argv": ["-E", "tar", "tf", "out.tar", "dir"]}, {"argv": ["-E", "tar", "xvf", "../out.tar", "dir/a"], "cwd": "extracted"}], "files": {"list": "dir\n--add-file=-word\n", "dir/a": "selected", "dir/b": "ignored", "-word": "present"}, "dirs": ["extracted"], "inspect": ["extracted/dir/a", "extracted/dir/b"]},
+  {"name": "tar-unmatched-filter", "steps": [{"argv": ["-E", "tar", "cf", "out.tar", "a"]}, {"argv": ["-E", "tar", "tf", "out.tar", "missing"]}], "files": {"a": "data"}}
+]

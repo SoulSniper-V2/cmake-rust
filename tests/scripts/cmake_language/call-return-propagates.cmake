@@ -1,0 +1,6 @@
+function(f)
+  cmake_language(CALL return)
+  message("unreached in function")
+endfunction()
+f()
+message("after f")
