@@ -45,7 +45,8 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
     let mut overrides = HashMap::new();
     for (key, value) in head.props.iter() {
         if let Some(item) = key.strip_prefix("LINK_LIBRARY_OVERRIDE_")
-            && !item.is_empty() && !value.is_empty()
+            && !item.is_empty()
+            && !value.is_empty()
         {
             overrides.insert(item.to_owned(), query.eval(value, head));
         }
@@ -54,15 +55,26 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
     let mut combined = combined.split(',').filter(|item| !item.is_empty());
     if let Some(feature) = combined.next() {
         for name in combined {
-            overrides.entry(name.to_owned()).or_insert_with(|| feature.to_owned());
+            overrides
+                .entry(name.to_owned())
+                .or_insert_with(|| feature.to_owned());
         }
     }
 
     let mut graph = LinkGraph {
-        query, head, overrides,
-        entries: Vec::new(), index: HashMap::new(), edges: Vec::new(), direct: Vec::new(),
-        objects: Vec::new(), groups: BTreeMap::new(), queue: VecDeque::new(),
-        shared_queue: VecDeque::new(), shared_followed: HashSet::new(), inferred: Vec::new(),
+        query,
+        head,
+        overrides,
+        entries: Vec::new(),
+        index: HashMap::new(),
+        edges: Vec::new(),
+        direct: Vec::new(),
+        objects: Vec::new(),
+        groups: BTreeMap::new(),
+        queue: VecDeque::new(),
+        shared_queue: VecDeque::new(),
+        shared_followed: HashSet::new(),
+        inferred: Vec::new(),
         languages: dependency_languages(head, query).into_iter().collect(),
     };
     let direct = implementation(query, head);
@@ -73,7 +85,11 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
     }
     graph.follow();
     let entries = graph.finish();
-    Ordered { entries, has_implementation, languages: graph.languages }
+    Ordered {
+        entries,
+        has_implementation,
+        languages: graph.languages,
+    }
 }
 
 impl<'i> LinkGraph<'_, '_, 'i> {
@@ -124,8 +140,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 continue;
             }
             let mut kind = Kind::Library;
-            if item.target.is_none() && item.text.starts_with('-')
-                && !item.text.starts_with("-l") && !item.text.starts_with("-framework")
+            if item.target.is_none()
+                && item.text.starts_with('-')
+                && !item.text.starts_with("-l")
+                && !item.text.starts_with("-framework")
             {
                 kind = Kind::Flag;
             }
@@ -133,7 +151,9 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 item.feature = feature.clone();
             }
             if kind == Kind::Flag
-                || item.target.is_some_and(|target| !self.attributes(&item.feature).applies(target.kind))
+                || item
+                    .target
+                    .is_some_and(|target| !self.attributes(&item.feature).applies(target.kind))
             {
                 item.feature = DEFAULT.to_owned();
             }
@@ -142,7 +162,8 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             if new {
                 let entry = &self.entries[index];
                 if entry.item.target.is_some() || self.legacy_depends(&entry.item.text).is_some() {
-                    self.queue.push_back((index, group.as_ref().map(|group| group.0)));
+                    self.queue
+                        .push_back((index, group.as_ref().map(|group| group.0)));
                 }
             } else if self.entries[index].item.feature != feature {
                 self.resolve_mismatch(index, &feature);
@@ -160,9 +181,16 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 continue;
             }
             let entry = &self.entries[index];
-            let mut dependees: Vec<_> = self.groups.iter()
-                .filter(|(_, members)| members.iter().any(|&member| self.entries[member].item.text == entry.item.text))
-                .map(|(&group, _)| group).collect();
+            let mut dependees: Vec<_> = self
+                .groups
+                .iter()
+                .filter(|(_, members)| {
+                    members
+                        .iter()
+                        .any(|&member| self.entries[member].item.text == entry.item.text)
+                })
+                .map(|(&group, _)| group)
+                .collect();
             if dependees.is_empty() {
                 dependees.push(index);
             }
@@ -196,13 +224,23 @@ impl<'i> LinkGraph<'_, '_, 'i> {
     }
 
     fn legacy_depends(&self, text: &str) -> Option<String> {
-        self.query.ctx.var(self.head.makefile, &format!("{text}_LIB_DEPENDS"))
+        self.query
+            .ctx
+            .var(self.head.makefile, &format!("{text}_LIB_DEPENDS"))
     }
 
     fn legacy_items(&self, raw: &str) -> Vec<Item<'i>> {
-        let debug_configs = self.query.ctx.interp.global_props.get("DEBUG_CONFIGURATIONS").unwrap_or("DEBUG");
+        let debug_configs = self
+            .query
+            .ctx
+            .interp
+            .global_props
+            .get("DEBUG_CONFIGURATIONS")
+            .unwrap_or("DEBUG");
         let debug = !self.query.config.is_empty()
-            && expand_list(debug_configs, false).iter().any(|config| config.eq_ignore_ascii_case(self.query.config));
+            && expand_list(debug_configs, false)
+                .iter()
+                .any(|config| config.eq_ignore_ascii_case(self.query.config));
         let mut kind = None;
         let mut items = Vec::new();
         for value in expand_list(raw, false) {
@@ -210,7 +248,9 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 kind = Some(value);
                 continue;
             }
-            let kind = kind.take().unwrap_or_else(|| self.query.var(self.head, &format!("{value}_LINK_TYPE")));
+            let kind = kind
+                .take()
+                .unwrap_or_else(|| self.query.var(self.head, &format!("{value}_LINK_TYPE")));
             if (kind == "debug" && !debug) || (kind == "optimized" && debug) {
                 continue;
             }
@@ -225,8 +265,12 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             let item = self.entries[index].item.clone();
             if let Some(target) = item.target {
                 let iface = interface(self.query, target, self.head);
-                if matches!(target.kind, TargetKind::StaticLibrary | TargetKind::ObjectLibrary) {
-                    self.languages.extend(dependency_languages(target, self.query));
+                if matches!(
+                    target.kind,
+                    TargetKind::StaticLibrary | TargetKind::ObjectLibrary
+                ) {
+                    self.languages
+                        .extend(dependency_languages(target, self.query));
                 }
                 self.add_list(Some(parent), iface.libraries.clone());
                 if target.kind != TargetKind::InterfaceLibrary {
@@ -247,25 +291,50 @@ impl<'i> LinkGraph<'_, '_, 'i> {
         }
     }
 
-    fn queue_shared(&mut self, index: usize, target: &Target, iface: &Interface<'i>, follow_interface: bool) {
+    fn queue_shared(
+        &mut self,
+        index: usize,
+        target: &Target,
+        iface: &Interface<'i>,
+        follow_interface: bool,
+    ) {
         if !self.shared_followed.insert(index) {
             return;
         }
         if follow_interface {
-            self.shared_queue.extend(iface.libraries.iter().cloned().map(|item| (index, item)));
+            self.shared_queue
+                .extend(iface.libraries.iter().cloned().map(|item| (index, item)));
         }
         let shared = if target.imported {
-            plain_items(self.query, target, import_property(target, self.query.config, "IMPORTED_LINK_DEPENDENT_LIBRARIES").unwrap_or_default())
-        } else if matches!(target.kind, TargetKind::StaticLibrary | TargetKind::SharedLibrary) {
+            plain_items(
+                self.query,
+                target,
+                import_property(
+                    target,
+                    self.query.config,
+                    "IMPORTED_LINK_DEPENDENT_LIBRARIES",
+                )
+                .unwrap_or_default(),
+            )
+        } else if matches!(
+            target.kind,
+            TargetKind::StaticLibrary | TargetKind::SharedLibrary
+        ) {
             let mut emitted: HashSet<_> = iface.libraries.iter().map(Item::identity).collect();
-            implementation(self.query, target).into_iter().filter(|item| {
-                emitted.insert(item.identity())
-                    && item.target.is_some_and(|target| target.kind == TargetKind::SharedLibrary)
-            }).collect()
+            implementation(self.query, target)
+                .into_iter()
+                .filter(|item| {
+                    emitted.insert(item.identity())
+                        && item
+                            .target
+                            .is_some_and(|target| target.kind == TargetKind::SharedLibrary)
+                })
+                .collect()
         } else {
             Vec::new()
         };
-        self.shared_queue.extend(shared.into_iter().map(|item| (index, item)));
+        self.shared_queue
+            .extend(shared.into_iter().map(|item| (index, item)));
     }
 
     fn finish(&mut self) -> Vec<Entry<'i>> {
@@ -278,8 +347,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
         for (edges, inferred) in self.edges.iter_mut().zip(&self.inferred) {
             edges.extend(inferred.iter().flatten().copied());
             for edge in &mut *edges {
-                if !matches!(self.entries[*edge].kind, Kind::Flag | Kind::Group | Kind::Object)
-                    && let Some(&group) = member_groups.get(edge)
+                if !matches!(
+                    self.entries[*edge].kind,
+                    Kind::Flag | Kind::Group | Kind::Object
+                ) && let Some(&group) = member_groups.get(edge)
                 {
                     *edge = group;
                 }
@@ -290,21 +361,63 @@ impl<'i> LinkGraph<'_, '_, 'i> {
 
         let components = Components::new(&self.edges);
         for members in &components.members {
-            if members.len() > 1 && members.iter().any(|&index| self.groups.contains_key(&index)) {
-                self.query.error(format!("The inter-target dependency graph, for the target \"{}\", contains the following strongly connected component (cycle):\n{}", self.head.name,
-                    members.iter().map(|&index| self.entries[index].item.text.as_str()).collect::<Vec<_>>().join("\n")));
+            if members.len() > 1
+                && members
+                    .iter()
+                    .any(|&index| self.groups.contains_key(&index))
+            {
+                use std::fmt::Write as _;
+                let describe = |index: usize| {
+                    let entry = &self.entries[index];
+                    if entry.kind == Kind::Group
+                        && let Some((feature, items)) = entry
+                            .item
+                            .text
+                            .strip_prefix("<LINK_GROUP:")
+                            .and_then(|tag| tag.strip_suffix('>'))
+                            .and_then(|tag| tag.split_once(':'))
+                    {
+                        return format!("group \"{feature}:{{{}}}\"", items.replace('|', ","));
+                    }
+                    format!("\"{}\"", entry.item.text)
+                };
+                let mut message = format!(
+                    "The inter-target dependency graph, for the target \"{}\", contains the following strongly connected component (cycle):\n",
+                    self.head.name
+                );
+                for &index in members {
+                    let _ = writeln!(message, "  {}", describe(index));
+                    for &edge in &self.edges[index] {
+                        if components.index[edge] == components.index[index] {
+                            let _ = writeln!(message, "    depends on {}", describe(edge));
+                        }
+                    }
+                }
+                self.query.error(message);
                 return Vec::new();
             }
         }
-        let counts = components.members.iter().map(|members| {
-            if members.len() == 1 {
-                return 1;
-            }
-            members.iter().filter_map(|&index| self.entries[index].item.target)
-                .map(|target| multiplicity(self.query, target)).fold(2, usize::max)
-        }).collect();
+        let counts = components
+            .members
+            .iter()
+            .map(|members| {
+                if members.len() == 1 {
+                    return 1;
+                }
+                members
+                    .iter()
+                    .filter_map(|&index| self.entries[index].item.target)
+                    .map(|target| multiplicity(self.query, target))
+                    .fold(2, usize::max)
+            })
+            .collect();
         let mut schedule = Schedule::new(&components, counts);
-        match self.head.props.get("LINK_LIBRARIES_STRATEGY").unwrap_or("REORDER_MINIMALLY") {
+        match self
+            .head
+            .props
+            .get("LINK_LIBRARIES_STRATEGY")
+            .unwrap_or("REORDER_MINIMALLY")
+        {
             "REORDER_FREELY" => {
                 for index in &self.direct {
                     schedule.require(components.index[*index]);
@@ -316,21 +429,35 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 }
             }
             strategy => {
-                self.query.error(format!("LINK_LIBRARIES_STRATEGY value '{strategy}' is not recognized."));
+                self.query.error(format!(
+                    "LINK_LIBRARIES_STRATEGY value '{strategy}' is not recognized."
+                ));
                 return Vec::new();
             }
         }
         while let Some((_, pending)) = schedule.pending.first_key_value() {
-            schedule.emit(*pending.remaining.first().expect("pending component has members"));
+            schedule.emit(
+                *pending
+                    .remaining
+                    .first()
+                    .expect("pending component has members"),
+            );
         }
-        let mut result = self.objects.iter().map(|&index| self.entries[index].clone()).collect::<Vec<_>>();
+        let mut result = self
+            .objects
+            .iter()
+            .map(|&index| self.entries[index].clone())
+            .collect::<Vec<_>>();
         let order = self.dedup(schedule.output, member_groups.into_keys().collect());
         for index in order {
             let entry = &self.entries[index];
             result.push(entry.clone());
             if let Some(members) = self.groups.get(&index) {
                 result.extend(members.iter().map(|&member| self.entries[member].clone()));
-                result.push(Entry { item: entry.item.clone(), kind: Kind::GroupEnd });
+                result.push(Entry {
+                    item: entry.item.clone(),
+                    kind: Kind::GroupEnd,
+                });
             }
         }
         result
@@ -347,15 +474,23 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 match option.split_once('=') {
                     Some(("ORDER", "FORWARD")) => forward = true,
                     Some(("ORDER", "REVERSE")) => forward = false,
-                    Some(("DEDUPLICATION" | "UNICITY", value @ ("ALL" | "NONE" | "SHARED"))) => mode = value.to_owned(),
+                    Some(("DEDUPLICATION" | "UNICITY", value @ ("ALL" | "NONE" | "SHARED"))) => {
+                        mode = value.to_owned()
+                    }
                     _ => invalid.push_str(&format!("  {option}\n")),
                 }
             }
             if !invalid.is_empty() {
-                self.query.error(format!("Erroneous option(s) for '{variable}':\n{invalid}"));
+                self.query
+                    .error(format!("Erroneous option(s) for '{variable}':\n{invalid}"));
             }
-            if !first_static && mode == "ALL" && self.query.var(self.head, "CMAKE_EXECUTABLE_FORMAT") == "ELF"
-                && self.query.var(self.head, &format!("CMAKE_{}_PLATFORM_LINKER_ID", self.query.language)) == "LLD"
+            if !first_static
+                && mode == "ALL"
+                && self.query.var(self.head, "CMAKE_EXECUTABLE_FORMAT") == "ELF"
+                && self.query.var(
+                    self.head,
+                    &format!("CMAKE_{}_PLATFORM_LINKER_ID", self.query.language),
+                ) == "LLD"
             {
                 mode = "SHARED".to_owned();
             }
@@ -380,8 +515,12 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             if mode == "ALL" && first_static {
                 let mut seen = emitted.clone();
                 entries.retain(|&index| {
-                    self.entries[index].item.target.is_none_or(|target| target.kind != TargetKind::StaticLibrary)
-                        || keep_repeats(index) || seen.insert(index)
+                    self.entries[index]
+                        .item
+                        .target
+                        .is_none_or(|target| target.kind != TargetKind::StaticLibrary)
+                        || keep_repeats(index)
+                        || seen.insert(index)
                 });
             }
             entries.reverse();
@@ -395,7 +534,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
 
     fn resolve_mismatch(&mut self, index: usize, feature: &str) {
         let entry = &self.entries[index].item;
-        let old = self.attributes(&entry.feature).overrides.contains(&feature.to_owned());
+        let old = self
+            .attributes(&entry.feature)
+            .overrides
+            .contains(&feature.to_owned());
         let new = self.attributes(feature).overrides.contains(&entry.feature);
         if new && !old {
             self.entries[index].item.feature = feature.to_owned();
@@ -403,7 +545,11 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             self.query.error(format!("Impossible to link target '{}' because the link item '{}' is specified with the features '{}' and '{}', and both have an 'OVERRIDE' attribute that overrides the other. Such cycles are not allowed.", self.head.name, entry.text, feature, entry.feature));
         } else if !old {
             fn description(feature: &str) -> String {
-                if feature == DEFAULT { "without any feature or 'DEFAULT' feature".into() } else { format!("with the feature '{feature}'") }
+                if feature == DEFAULT {
+                    "without any feature or 'DEFAULT' feature".into()
+                } else {
+                    format!("with the feature '{feature}'")
+                }
             }
             self.query.error(format!("Impossible to link target '{}' because the link item '{}', specified {}, has already occurred {}, which is not allowed.", self.head.name, entry.text, description(feature), description(&entry.feature)));
         }
@@ -413,7 +559,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
         if feature == DEFAULT {
             return Attributes::default();
         }
-        let mut key = format!("CMAKE_{}_LINK_LIBRARY_{feature}_ATTRIBUTES", self.query.language);
+        let mut key = format!(
+            "CMAKE_{}_LINK_LIBRARY_{feature}_ATTRIBUTES",
+            self.query.language
+        );
         let mut value = self.query.var(self.head, &key);
         if value.is_empty() {
             key = format!("CMAKE_LINK_LIBRARY_{feature}_ATTRIBUTES");
@@ -426,24 +575,37 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 Some(("DEDUPLICATION", "YES")) => attrs.dedup = Some(true),
                 Some(("DEDUPLICATION", "NO")) => attrs.dedup = Some(false),
                 Some(("DEDUPLICATION", "DEFAULT")) => attrs.dedup = None,
-                Some(("OVERRIDE", list)) if list.split(',').all(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) => {
+                Some(("OVERRIDE", list))
+                    if list.split(',').all(|name| {
+                        !name.is_empty()
+                            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    }) =>
+                {
                     attrs.overrides = list.split(',').map(str::to_owned).collect();
                 }
                 Some(("LIBRARY_TYPE", kinds)) => {
-                    let types: Option<Vec<_>> = kinds.split(',').map(|kind| match kind {
-                        "STATIC" => Some(TargetKind::StaticLibrary),
-                        "SHARED" => Some(TargetKind::SharedLibrary),
-                        "MODULE" => Some(TargetKind::ModuleLibrary),
-                        "EXECUTABLE" => Some(TargetKind::Executable),
-                        _ => None,
-                    }).collect();
-                    if let Some(types) = types { attrs.types = Some(types) } else { invalid.push_str(&format!("  {option}\n")) }
+                    let types: Option<Vec<_>> = kinds
+                        .split(',')
+                        .map(|kind| match kind {
+                            "STATIC" => Some(TargetKind::StaticLibrary),
+                            "SHARED" => Some(TargetKind::SharedLibrary),
+                            "MODULE" => Some(TargetKind::ModuleLibrary),
+                            "EXECUTABLE" => Some(TargetKind::Executable),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(types) = types {
+                        attrs.types = Some(types)
+                    } else {
+                        invalid.push_str(&format!("  {option}\n"))
+                    }
                 }
                 _ => invalid.push_str(&format!("  {option}\n")),
             }
         }
         if !invalid.is_empty() {
-            self.query.error(format!("Erroneous option(s) for '{key}':\n{invalid}"));
+            self.query
+                .error(format!("Erroneous option(s) for '{key}':\n{invalid}"));
         }
         attrs
     }
@@ -458,10 +620,19 @@ struct Attributes {
 
 impl Attributes {
     fn applies(&self, kind: TargetKind) -> bool {
-        kind == TargetKind::UnknownLibrary || self.types.as_ref().map_or_else(
-            || matches!(kind, TargetKind::StaticLibrary | TargetKind::SharedLibrary | TargetKind::ModuleLibrary | TargetKind::Executable),
-            |types| types.contains(&kind),
-        )
+        kind == TargetKind::UnknownLibrary
+            || self.types.as_ref().map_or_else(
+                || {
+                    matches!(
+                        kind,
+                        TargetKind::StaticLibrary
+                            | TargetKind::SharedLibrary
+                            | TargetKind::ModuleLibrary
+                            | TargetKind::Executable
+                    )
+                },
+                |types| types.contains(&kind),
+            )
     }
 }
 
@@ -469,35 +640,64 @@ fn multiplicity(query: &Query<'_, '_>, target: &Target) -> usize {
     let value = if target.imported {
         import_property(target, query.config, "IMPORTED_LINK_INTERFACE_MULTIPLICITY")
     } else if target.kind == TargetKind::StaticLibrary {
-        target.props.get(&format!("LINK_INTERFACE_MULTIPLICITY{}", config_suffix(query.config)))
+        target
+            .props
+            .get(&format!(
+                "LINK_INTERFACE_MULTIPLICITY{}",
+                config_suffix(query.config)
+            ))
             .or_else(|| target.props.get("LINK_INTERFACE_MULTIPLICITY"))
     } else {
         None
     };
-    value.and_then(|value| value.trim_start().trim_start_matches('+')
-        .split(|ch: char| !ch.is_ascii_digit()).next()?.parse().ok()).unwrap_or(0)
+    value
+        .and_then(|value| {
+            value
+                .trim_start()
+                .trim_start_matches('+')
+                .split(|ch: char| !ch.is_ascii_digit())
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0)
 }
 
 fn linked_object(query: &Query<'_, '_>, item: &Item<'_>) -> bool {
-    if item.target.is_some() || !Path::new(&item.text).is_absolute() {
-        return false;
+    item.target.is_none() && linked_object_owner(query, &item.text).is_some()
+}
+
+pub(super) fn linked_object_owner<'i>(query: &Query<'_, 'i>, path: &str) -> Option<&'i Target> {
+    if !Path::new(path).is_absolute() {
+        return None;
     }
     // INTEGRATION: Prefer the source record's EXTERNAL_OBJECT and owning
     // object-library metadata once available to the generator.
-    if !item.text.ends_with(".o") && !item.text.ends_with(".obj") {
-        return false;
-    }
-    query.ctx.targets_in_order().into_iter().filter(|target| target.kind == TargetKind::ObjectLibrary)
-        .any(|target| {
+    query
+        .ctx
+        .targets_in_order()
+        .into_iter()
+        .filter(|target| target.kind == TargetKind::ObjectLibrary)
+        .find(|target| {
             if target.imported {
-                expand_list(import_property(target, query.config, "IMPORTED_OBJECTS").unwrap_or_default(), false).contains(&item.text)
+                expand_list(
+                    import_property(target, query.config, "IMPORTED_OBJECTS").unwrap_or_default(),
+                    false,
+                )
+                .iter()
+                .any(|object| object == path)
             } else {
-                Path::new(&item.text).starts_with(query.generator.object_dir(query.ctx, target, query.config))
+                (path.ends_with(".o") || path.ends_with(".obj"))
+                    && Path::new(path).starts_with(query.generator.object_dir(
+                        query.ctx,
+                        target,
+                        query.config,
+                    ))
             }
         })
 }
 
-/// SCCs indexed by the first node in the original graph.
+/// SCCs indexed by DFS completion order, as in cmComputeComponentGraph.
 pub(super) struct Components {
     pub index: Vec<usize>,
     pub members: Vec<Vec<usize>>,
@@ -515,7 +715,7 @@ impl Components {
         let order = postorder(graph, 0..graph.len());
         let mut visited = vec![false; graph.len()];
         let mut members = Vec::new();
-        for node in order.into_iter().rev() {
+        for &node in order.iter().rev() {
             if visited[node] {
                 continue;
             }
@@ -530,7 +730,11 @@ impl Components {
             component.sort_unstable();
             members.push(component);
         }
-        members.sort_unstable();
+        let mut finish = vec![0; graph.len()];
+        for (position, node) in order.into_iter().enumerate() {
+            finish[node] = position;
+        }
+        members.sort_by_key(|component| component.iter().map(|&node| finish[node]).max());
         let mut index = vec![0; graph.len()];
         for (component, nodes) in members.iter().enumerate() {
             for &node in nodes {
@@ -540,17 +744,25 @@ impl Components {
         let mut edges = vec![Vec::new(); members.len()];
         for (node, outgoing) in graph.iter().enumerate() {
             let component = index[node];
-            edges[component].extend(outgoing.iter().map(|&edge| index[edge]).filter(|&edge| edge != component));
+            edges[component].extend(
+                outgoing
+                    .iter()
+                    .map(|&edge| index[edge])
+                    .filter(|&edge| edge != component),
+            );
         }
-        for outgoing in &mut edges {
-            outgoing.sort_unstable();
-            outgoing.dedup();
+        Self {
+            index,
+            members,
+            edges,
         }
-        Self { index, members, edges }
     }
 }
 
-pub(super) fn postorder(graph: &[Vec<usize>], roots: impl IntoIterator<Item = usize>) -> Vec<usize> {
+pub(super) fn postorder(
+    graph: &[Vec<usize>],
+    roots: impl IntoIterator<Item = usize>,
+) -> Vec<usize> {
     let mut visited = vec![false; graph.len()];
     let mut output = Vec::new();
     for root in roots {
@@ -583,20 +795,41 @@ struct Schedule<'a> {
 
 impl<'a> Schedule<'a> {
     fn new(components: &'a Components, counts: Vec<usize>) -> Self {
-        let edges: Vec<_> = components.edges.iter().map(|edges| edges.iter().rev().copied().collect()).collect();
+        let edges: Vec<_> = components
+            .edges
+            .iter()
+            .map(|edges| edges.iter().rev().copied().collect())
+            .collect();
         let mut priority = vec![0; edges.len()];
-        for (priority_id, component) in postorder(&edges, (0..edges.len()).rev()).into_iter().rev().enumerate() {
+        for (priority_id, component) in postorder(&edges, (0..edges.len()).rev())
+            .into_iter()
+            .rev()
+            .enumerate()
+        {
             priority[component] = priority_id;
         }
-        Self { components, priority, counts, pending: BTreeMap::new(), output: Vec::new() }
+        Self {
+            components,
+            priority,
+            counts,
+            pending: BTreeMap::new(),
+            output: Vec::new(),
+        }
     }
 
     fn require(&mut self, component: usize) {
-        let pending = self.pending.entry(self.priority[component]).or_insert_with(|| Pending {
-            component, count: 0, remaining: BTreeSet::new(),
-        });
+        let pending = self
+            .pending
+            .entry(self.priority[component])
+            .or_insert_with(|| Pending {
+                component,
+                count: 0,
+                remaining: BTreeSet::new(),
+            });
         pending.count = self.counts[component];
-        pending.remaining.extend(&self.components.members[component]);
+        pending
+            .remaining
+            .extend(&self.components.members[component]);
     }
 
     fn emit(&mut self, index: usize) {
@@ -613,7 +846,9 @@ impl<'a> Schedule<'a> {
             }
             pending.count -= 1;
             if pending.count > 0 {
-                pending.remaining.extend(&self.components.members[pending.component]);
+                pending
+                    .remaining
+                    .extend(&self.components.members[pending.component]);
                 return;
             }
             self.pending.remove(&priority);

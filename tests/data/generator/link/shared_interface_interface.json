@@ -36,7 +36,14 @@
       "output": "app"
     }
   },
+  "failure": null,
+  "files": {},
   "policy": "NEW",
+  "target_order": [
+    "a",
+    "b",
+    "app"
+  ],
   "targets": {
     "a": {
       "directory": "",
@@ -104,6 +111,8 @@
     "CMAKE_EXE_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
     "CMAKE_INSTALL_PREFIX": "/usr/local",
     "CMAKE_LIBRARY_ARCHITECTURE": "x86_64-linux-gnu",
+    "CMAKE_LIBRARY_PATH_FLAG": "-L",
+    "CMAKE_LIBRARY_PATH_TERMINATOR": "",
     "CMAKE_LINK_GROUP_USING_RESCAN": "LINKER:--start-group;LINKER:--end-group",
     "CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED": "TRUE",
     "CMAKE_LINK_LIBRARY_FLAG": "-l",
@@ -118,15 +127,19 @@
     "CMAKE_SHARED_LIBRARY_LINK_C_FLAGS": "-rdynamic",
     "CMAKE_SHARED_LIBRARY_LINK_DYNAMIC_C_FLAGS": "-Wl,-Bdynamic",
     "CMAKE_SHARED_LIBRARY_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
+    "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
     "CMAKE_SHARED_LIBRARY_RPATH_LINK_C_FLAG": "-Wl,-rpath-link,",
     "CMAKE_SHARED_LIBRARY_RPATH_ORIGIN_TOKEN": "$ORIGIN",
     "CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG": "-Wl,-rpath,",
     "CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG_SEP": ":",
+    "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
     "CMAKE_SHARED_MODULE_LINK_DYNAMIC_C_FLAGS": "-Wl,-Bdynamic",
     "CMAKE_SHARED_MODULE_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
     "CMAKE_SKIP_INSTALL_RPATH": "NO",
     "CMAKE_SKIP_INSTALL_RPATH-ADVANCED": "1",
     "CMAKE_SKIP_RPATH": "NO",
-    "CMAKE_SKIP_RPATH-ADVANCED": "1"
+    "CMAKE_SKIP_RPATH-ADVANCED": "1",
+    "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+    "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
   }
 }

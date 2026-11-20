@@ -2,7 +2,6 @@
 """Configure, build, and record the CMake 4.1.0 Ninja link fixtures."""
 import concurrent.futures
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -11,7 +10,7 @@ import tempfile
 
 OUTPUT = Path(__file__).resolve().parent
 ORACLE = sys.argv[1]
-KEY = re.compile(r"^CMAKE_(?:BUILD_TYPE$|EXECUTABLE_FORMAT$|INSTALL_PREFIX$|STAGING_PREFIX$|SYSROOT|SKIP_|NO_BUILTIN_CHRPATH$|LIBRARY_(?:ARCHITECTURE|PATH_.*)$|(?:STATIC|SHARED|IMPORT)_LIBRARY_(?:PREFIX|SUFFIX)$|EXTRA_(?:LINK_EXTENSIONS|SHARED_LIBRARY_SUFFIXES)$|PLATFORM_(?:IMPLICIT_LINK|RUNTIME|REQUIRED_RUNTIME|USES_PATH)|(?:EXE|EXECUTABLE|SHARED_LIBRARY|SHARED_MODULE)_(?:LINK|RPATH|RUNTIME)|LINK_|(?:C|CXX)_(?:LINK|IMPLICIT_LINK|PLATFORM_LINKER|STANDARD_LIBRARIES|USE_IMPLICIT))")
+KEY = re.compile(r"^CMAKE_(?:BUILD_TYPE$|EXECUTABLE_FORMAT$|INSTALL_PREFIX$|STAGING_PREFIX$|SYSROOT|SKIP_|NO_BUILTIN_CHRPATH$|LIBRARY_(?:ARCHITECTURE|PATH_.*)$|(?:STATIC|SHARED|IMPORT)_LIBRARY_(?:PREFIX|SUFFIX)$|EXTRA_(?:LINK_EXTENSIONS|SHARED_LIBRARY_SUFFIXES)$|PLATFORM_(?:IMPLICIT_LINK|RUNTIME|REQUIRED_RUNTIME|USES_PATH)|(?:EXE|EXECUTABLE|SHARED_LIBRARY|SHARED_MODULE)_(?:LINK|RPATH|RUNTIME)|LINK_|(?:C|CXX)_(?:LINK|LIBRARY_PATH|IMPLICIT_LINK|PLATFORM_LINKER|STANDARD_LIBRARIES|STANDARD_LINK_DIRECTORIES|USE_IMPLICIT))")
 FIXTURES = []
 
 
@@ -24,6 +23,7 @@ class Project:
                      f"cmake_policy(SET CMP0179 {policy})"]
         self.targets = {}
         self.files = {}
+        self.failure = None
         FIXTURES.append(self)
 
     def target(self, name, kind="EXECUTABLE", imported=False, directory=""):
@@ -224,6 +224,66 @@ for mode in ("name", "explicit", "full", "dirs", "switches", "no_shared_dep",
         p.target("a", "STATIC").props("a", ARCHIVE_OUTPUT_DIRECTORY="${CMAKE_BINARY_DIR}/space dir").link("app", "PRIVATE", "a")
 
 
+p = Project("link_object_expression").target("objects", "OBJECT").target("app")
+p.link("app", "PRIVATE", "m", '"$<TARGET_OBJECTS:objects>"',
+       evaluated=("m", "${CMAKE_BINARY_DIR}/CMakeFiles/objects.dir/./empty.c.o"))
+
+p = Project("archive_object_expression").target("objects", "OBJECT").target("a", "STATIC")
+p.link("a", "PRIVATE", '"$<TARGET_OBJECTS:objects>"',
+       evaluated=("${CMAKE_BINARY_DIR}/CMakeFiles/objects.dir/./empty.c.o",))
+
+p = Project("archive_object_direct_order").target("z", "OBJECT").target("b", "OBJECT").target("app")
+p.link("app", "PRIVATE", "z", "b")
+
+p = Project("link_legacy_external_bfs").target("app")
+p.set("m_LIB_DEPENDS", "general;dl;debug;rt;optimized;pthread").link("app", "PRIVATE", "m")
+
+p = Project("link_multiple_static_groups").target("app")
+for name in ("a", "b", "c", "d"):
+    p.target(name, "STATIC")
+p.link("a", "PRIVATE", "b").link("b", "PRIVATE", "a", "c")
+p.link("c", "PRIVATE", "d").link("d", "PRIVATE", "c")
+p.link("app", "PRIVATE", "d", "a")
+
+p = Project("link_static_lld_old", policy="OLD").target("a", "STATIC").target("app")
+p.set("CMAKE_C_PLATFORM_LINKER_ID", "LLD")
+p.set("CMAKE_C_LINK_LIBRARIES_PROCESSING", "ORDER=REVERSE;DEDUPLICATION=ALL")
+p.link("app", "PRIVATE", "a", "a")
+
+p = Project("link_static_lld_new").target("a", "STATIC").target("app")
+p.set("CMAKE_C_PLATFORM_LINKER_ID", "LLD")
+p.set("CMAKE_C_LINK_LIBRARIES_PROCESSING", "ORDER=REVERSE;DEDUPLICATION=ALL")
+p.link("app", "PRIVATE", "a", "a")
+
+p = Project("rpath_install_link_path").target("a", "SHARED").target("app")
+p.props("app", INSTALL_RPATH="/opt/install", BUILD_WITH_INSTALL_RPATH="ON",
+        INSTALL_RPATH_USE_LINK_PATH="ON", LINK_DIRECTORIES="/opt/deps")
+p.link("app", "PRIVATE", "a").install("app")
+
+p = Project("link_c_with_cxx_archive").target("a", "STATIC").target("app")
+p.code[1] = "project(probe LANGUAGES C CXX)"
+p.code.insert(3, "set_source_files_properties(empty.c PROPERTIES LANGUAGE CXX)")
+p.targets["a"]["source_language"] = "CXX"
+p.props("app", LINKER_LANGUAGE="C").link("app", "PRIVATE", "a")
+
+p = Project("error_shared_cycle").target("a", "SHARED").target("b", "SHARED")
+p.link("a", "PRIVATE", "b").link("b", "PRIVATE", "a")
+p.failure = "At least one of these targets is not a STATIC_LIBRARY."
+
+p = Project("error_strong_cycle").target("a", "STATIC").target("b", "STATIC")
+p.add_dependency("a", "b").add_dependency("b", "a")
+p.failure = "contains at least one cycle consisting of strong"
+
+p = Project("error_missing_utility").target("app").add_dependency("app", "missing")
+p.failure = 'The dependency target "missing" of target "app" does not exist.'
+
+p = Project("error_missing_link_target").target("app").link("app", "PRIVATE", "Pkg::Missing")
+p.failure = "but the target was not found."
+
+p = Project("error_notfound_link_variable").target("app").link("app", "PRIVATE", "EXTERNAL-NOTFOUND")
+p.failure = "The following variables are used in this project, but they are set to NOTFOUND."
+
+
 def record(project):
     with tempfile.TemporaryDirectory(prefix="cmake-link-oracle-") as temp:
         root = Path(temp)
@@ -253,10 +313,13 @@ endforeach()
         (source / "CMakeLists.txt").write_text(cmakelists)
         configured = subprocess.run([ORACLE, "-S", str(source), "-B", str(build), "-G", "Ninja",
                                      f"-DCMAKE_BUILD_TYPE={project.config}"], text=True, capture_output=True)
-        if configured.returncode:
+        if project.failure:
+            if not configured.returncode or project.failure not in " ".join(configured.stderr.split()):
+                raise RuntimeError(f"{project.name}: {configured.stderr}")
+        elif configured.returncode:
             raise RuntimeError(f"{project.name}: {configured.stderr}")
-        built = subprocess.run([ORACLE, "--build", str(build), "-j", "1"], text=True, capture_output=True)
-        if built.returncode:
+        built = subprocess.run([ORACLE, "--build", str(build), "-j", "1"], text=True, capture_output=True) if not project.failure else None
+        if built is not None and built.returncode:
             raise RuntimeError(f"{project.name}: {built.stdout}\n{built.stderr}")
         compiler = {}
         for file in (build / "CMakeFiles" / "4.1.0").glob("*.cmake"):
@@ -266,9 +329,10 @@ endforeach()
         variables = {key: value for key, value in (cache | compiler | variables).items() if KEY.match(key)}
 
         edges = {}
-        link = re.compile(r"^build (.*?): (?:C_(?:EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY)_LINKER__)([^ ]+)(.*)$")
+        link = re.compile(r"^build (.*?): (?:(?:C|CXX)_(?:EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY)_LINKER__)([^ ]+)(.*)$")
         current = None
-        for line in (build / "build.ninja").read_text().splitlines():
+        ninja = "" if project.failure else (build / "build.ninja").read_text()
+        for line in ninja.splitlines():
             if match := link.match(line):
                 output, rule, inputs = match.groups()
                 name = rule.split("_", 1)[0]
@@ -290,11 +354,15 @@ endforeach()
         def normalize(value):
             return value.replace(str(root), "@ROOT@").replace("${CMAKE_BINARY_DIR}", "@ROOT@/build").replace("${CMAKE_SOURCE_DIR}", "@ROOT@/src")
         data = {"config": project.config, "policy": project.policy, "cmakelists": project.code,
-                "targets": project.targets, "variables": variables, "edges": edges}
+                "targets": project.targets, "target_order": list(project.targets), "files": project.files,
+                "variables": variables, "edges": edges, "failure": project.failure}
+        if project.failure:
+            data["diagnostic"] = configured.stderr
         (OUTPUT / (project.name + ".json")).write_text(normalize(json.dumps(data, indent=2, sort_keys=True)) + "\n")
 
 
 assert len(FIXTURES) >= 60 and len({p.name for p in FIXTURES}) == len(FIXTURES)
 with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
     list(pool.map(record, FIXTURES))
-print(f"Recorded {len(FIXTURES)} built projects")
+print(f"Recorded {sum(not project.failure for project in FIXTURES)} built projects and "
+      f"{sum(bool(project.failure) for project in FIXTURES)} diagnostic cases")
