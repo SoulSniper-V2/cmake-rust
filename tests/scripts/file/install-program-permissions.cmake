@@ -1,0 +1,5 @@
+file(WRITE input "program")
+file(INSTALL DESTINATION destination TYPE PROGRAM FILES input MESSAGE_NEVER)
+if(IS_EXECUTABLE destination/input)
+  message("Program installed with execute permission")
+endif()

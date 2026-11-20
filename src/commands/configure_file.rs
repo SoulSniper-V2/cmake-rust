@@ -106,7 +106,7 @@ pub(super) fn configure_text(
     output
 }
 
-pub(super) fn bom(data: &[u8]) -> (usize, &str) {
+pub(super) fn bom(data: &[u8]) -> (usize, &'static str) {
     for (prefix, encoding) in [
         (&b"\xff\xfe\0\0"[..], "UTF-32LE"),
         (&b"\0\0\xfe\xff"[..], "UTF-32BE"),

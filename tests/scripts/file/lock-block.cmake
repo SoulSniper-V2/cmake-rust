@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.25)
+block()
+  file(LOCK path GUARD FUNCTION TIMEOUT 0 RESULT_VARIABLE first)
+  file(LOCK path TIMEOUT 0 RESULT_VARIABLE second)
+  message("[${first}][${second}]")
+endblock()
+file(LOCK path TIMEOUT 0 RESULT_VARIABLE after)
+message("[${after}]")
