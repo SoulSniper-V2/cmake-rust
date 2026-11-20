@@ -1,0 +1,7 @@
+string(TIMESTAMP a "%Y-%m-%dT%H:%M:%S" UTC)
+string(REGEX MATCH "^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$" m "${a}")
+if(NOT m STREQUAL a)
+  message(FATAL_ERROR "bad format <${a}>")
+endif()
+string(TIMESTAMP b "junk" UTC)
+message("b=<${b}>")

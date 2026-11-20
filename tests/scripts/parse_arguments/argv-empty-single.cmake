@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 0 P "" "S1" "")
+  message(STATUS "S1='${P_S1}' D=${P_S1-D}")
+endfunction()
+f(S1 "")

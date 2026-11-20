@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 0 P "" "" "M")
+  message(STATUS "M='${P_M}'")
+endfunction()
+f(M "a;b" c)
