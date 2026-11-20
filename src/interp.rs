@@ -220,6 +220,9 @@ pub struct Interp {
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
+    /// When set, diagnostics and `message()` stderr lines are appended here
+    /// instead of written to the process stderr (used by in-process tests).
+    pub stderr_capture: Option<String>,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
     /// Configuring a try_compile project.
@@ -268,6 +271,7 @@ impl Interp {
             deprecated_as_errors: false,
             recursion_depth: 0,
             stdout_log: None,
+            stderr_capture: None,
             request_return: false,
             in_try_compile: false,
             debug_trycompile: false,
@@ -717,7 +721,18 @@ impl Interp {
         if messages::is_error(kind) {
             self.error = true;
         }
-        eprintln!("{rendered}");
+        self.stderr_line(&rendered);
+    }
+
+    /// Writes one line to stderr (or to `stderr_capture`).
+    pub fn stderr_line(&mut self, text: &str) {
+        match &mut self.stderr_capture {
+            Some(capture) => {
+                capture.push_str(text);
+                capture.push('\n');
+            }
+            None => eprintln!("{text}"),
+        }
     }
 
     /// `cmSystemTools::Message` to stdout without prefix.
@@ -775,6 +790,7 @@ impl Interp {
             self.mf_mut().list_files.push(path.to_owned());
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            crate::commands::directory::finish_directory(self);
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {

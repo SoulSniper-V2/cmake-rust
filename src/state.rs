@@ -139,7 +139,6 @@ pub enum CustomCommandKind {
 pub struct CustomCommand {
     pub kind: CustomCommandKind,
     pub makefile: usize,
-    pub order: usize,
     pub command_lines: Vec<Vec<String>>,
     pub outputs: Vec<String>,
     pub byproducts: Vec<String>,
@@ -156,10 +155,61 @@ pub struct CustomCommand {
     pub command_expand_lists: bool,
     pub depends_explicit_only: bool,
     pub codegen: bool,
+    /// `cmCustomCommand::SetEscapeAllowMakeVars`, set when the command is
+    /// attached at generate time.
+    pub escape_allow_make_vars: bool,
+    /// `cmCustomCommand::SetTarget`: the owning target's name for TARGET
+    /// (PRE_BUILD/PRE_LINK/POST_BUILD) commands.
+    pub target: Option<String>,
     #[allow(dead_code, reason = "custom command generation metadata")]
     pub backtrace: Vec<Frame>,
     #[allow(dead_code, reason = "custom command generation metadata")]
     pub policies: PolicyMap,
+}
+
+/// A custom-command action deferred to generate time
+/// (`cmMakefile::AddGeneratorAction`).
+#[derive(Debug)]
+pub enum GeneratorAction {
+    /// add_custom_command(OUTPUT): `detail::AddCustomCommandToOutput`.
+    Output {
+        command: CustomCommand,
+        replace: bool,
+    },
+    /// add_custom_command(OUTPUT ... APPEND):
+    /// `detail::AppendCustomCommandToOutput` (outputs[0] is the output).
+    Append(CustomCommand),
+    /// add_custom_command(TARGET): `detail::AddCustomCommandToTarget`.
+    Target {
+        target: String,
+        command: CustomCommand,
+    },
+    /// add_custom_target with commands or depends: `detail::AddUtilityCommand`.
+    Utility {
+        target: String,
+        command: CustomCommand,
+    },
+}
+
+impl GeneratorAction {
+    pub fn command(&self) -> &CustomCommand {
+        match self {
+            Self::Output { command, .. }
+            | Self::Append(command)
+            | Self::Target { command, .. }
+            | Self::Utility { command, .. } => command,
+        }
+    }
+}
+
+/// `cmLocalGenerator::SourceEntry`: what produces an output path.
+#[derive(Clone, Debug, Default)]
+pub struct OutputSource {
+    /// Index into `ext.sources[dir]` of the source carrying the command.
+    pub source: Option<usize>,
+    pub source_is_byproduct: bool,
+    /// Key of a target whose utility or build-event command produces it.
+    pub target: Option<String>,
 }
 
 #[derive(Debug)]
@@ -221,8 +271,13 @@ pub struct Ext {
     pub directory_system_includes: BTreeMap<usize, BTreeSet<String>>,
     pub directory_define_flags: BTreeMap<usize, String>,
     pub pending_subdirs: BTreeMap<usize, Vec<PendingSubdirectory>>,
-    pub pending_custom_appends: Vec<CustomCommand>,
-    pub custom_command_count: usize,
+    /// `cmMakefile::GeneratorActions`, in configure order across all
+    /// directories.  Consumed by `custom_actions::run_generator_actions`.
+    pub generator_actions: Vec<GeneratorAction>,
+    pub generator_actions_invoked: bool,
+    /// `cmLocalGenerator::OutputToSource`, per directory, filled at generate
+    /// time by `run_generator_actions`.
+    pub output_to_source: BTreeMap<usize, HashMap<String, OutputSource>>,
     pub scoped_targets: HashMap<(usize, String), String>,
     pub scoped_aliases: HashMap<(usize, String), String>,
     pub target_property_initializers: BTreeMap<String, String>,

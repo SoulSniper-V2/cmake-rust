@@ -2,21 +2,21 @@
 
 use std::collections::BTreeSet;
 
-use crate::cache::convert_to_unix_slashes;
+use crate::cache::{CacheType, convert_to_unix_slashes};
 use crate::interp::{Builtin, CmdResult, Interp, Mode, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
 use crate::state::{
-    CustomCommand, CustomCommandKind, FileSet, Scope, TargetKind, Test, find_alias,
-    find_global_target_key, find_target_key, find_target_to_use,
+    CustomCommand, CustomCommandKind, FileSet, GeneratorAction, Scope, TargetKind, Test,
+    find_alias, find_global_target_key, find_target_key, find_target_to_use,
 };
 use crate::util::{collapse_full_path, expand_list, is_off_opt, is_on, strtol};
 
 use super::directory::input_path;
 use super::target::{
     PropertyWrite, add_sources, check_target_name, create_alias, create_target,
-    enforce_unique_name, format_signature_traces, full_path, genex_start, get_or_create_source,
-    has_genex, mark_generated, policy_warning, report, write_target_property,
+    enforce_unique_name, format_signature_traces, full_path, genex_start, has_genex,
+    mark_generated, policy_warning, report, write_target_property,
 };
 
 pub fn register(interp: &mut Interp) {
@@ -27,20 +27,14 @@ pub fn register(interp: &mut Interp) {
         ("add_custom_command", add_custom_command),
         ("add_dependencies", add_dependencies),
         ("target_link_libraries", target_link_libraries),
-        (
-            "target_include_directories",
-            target_include_directories),
-        (
-            "target_compile_definitions",
-            target_compile_definitions),
+        ("target_include_directories", target_include_directories),
+        ("target_compile_definitions", target_compile_definitions),
         ("target_compile_options", target_compile_options),
         ("target_compile_features", target_compile_features),
         ("target_link_options", target_link_options),
         ("target_link_directories", target_link_directories),
         ("target_sources", target_sources),
-        (
-            "target_precompile_headers",
-            target_precompile_headers),
+        ("target_precompile_headers", target_precompile_headers),
         ("enable_testing", enable_testing),
         ("add_test", add_test),
     ];
@@ -270,9 +264,6 @@ fn add_library(interp: &mut Interp, args: &[String]) -> CmdResult {
             "The UNKNOWN library type may be used only for IMPORTED libraries.",
         );
     }
-    if !modifiers.imported {
-        interp.cache.remove(&format!("{name}_LIB_DEPENDS"));
-    }
     add_build_target(interp, name, kind, &modifiers, remaining)?;
     Ok(())
 }
@@ -327,6 +318,9 @@ fn add_build_target(
     }
     enforce_unique_name(interp, name, false)?;
     let key = create_target(interp, name, kind, false, false);
+    if kind != TargetKind::Executable {
+        interp.cache.remove(&format!("{name}_LIB_DEPENDS"));
+    }
     if modifiers.exclude {
         interp
             .ext
@@ -349,6 +343,7 @@ fn add_build_target(
                 _ => ("general", library.as_str()),
             };
             let (direct, interface) = link_expressions(interp, lib, link_type);
+            record_link_dependency(interp, &key, lib, link_type);
             let target = interp.ext.targets.get_mut(&key).unwrap();
             target.insert_entry("LINK_LIBRARIES", &direct, &interp.backtrace, false);
             target.insert_entry(
@@ -569,6 +564,40 @@ fn link_expressions(interp: &Interp, name: &str, link_type: &str) -> (String, St
     (direct, interface)
 }
 
+fn record_link_dependency(interp: &mut Interp, key: &str, library: &str, link_type: &str) {
+    let target = &interp.ext.targets[key];
+    if !matches!(
+        target.kind,
+        TargetKind::StaticLibrary | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) || target
+        .policies
+        .get(crate::policy::index_of("CMP0073").unwrap())
+        == Some(PolicyStatus::New)
+        || target.name == library
+        || has_genex(library)
+        || find_target_to_use(interp, library).is_some_and(|target| {
+            matches!(
+                target.kind,
+                TargetKind::InterfaceLibrary | TargetKind::ObjectLibrary
+            )
+        })
+    {
+        return;
+    }
+    let entry = format!("{}_LIB_DEPENDS", target.name);
+    let dependencies = format!(
+        "{}{link_type};{library};",
+        interp.get_def(&entry).unwrap_or_default()
+    );
+    interp.add_cache_def(
+        &entry,
+        Some(&dependencies),
+        Some("Dependencies for the target"),
+        CacheType::Static,
+        false,
+    );
+}
+
 /// Directory marker understood by the generator when looking up a link item.
 #[allow(dead_code, reason = "used when resolving generated link lines")]
 pub fn link_lookup_directory(entry: &str) -> Option<usize> {
@@ -663,9 +692,13 @@ impl LinkCall {
                     ),
                 );
             }
-            if let Some(right) =
-                find_global_target_key(interp, lib).map(|key| &interp.ext.targets[&key])
-            {
+            let right = interp
+                .ext
+                .aliases
+                .get(lib)
+                .cloned()
+                .or_else(|| find_global_target_key(interp, lib));
+            if let Some(right) = right.map(|key| &interp.ext.targets[&key]) {
                 use TargetKind::*;
                 let linkable = matches!(
                     right.kind,
@@ -684,6 +717,7 @@ impl LinkCall {
                 }
             }
             self.append(interp, "LINK_LIBRARIES", &direct);
+            record_link_dependency(interp, &self.key, lib, link_type);
         }
         if self.remote && policy == PolicyStatus::Warn {
             interp.issue(MessageType::AuthorWarning, &format!(
@@ -1110,9 +1144,11 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
     if interp.is_on("APPLE") && target.props.get("FRAMEWORK").is_some_and(is_on) {
         return err("FILE_SETs may not be added to FRAMEWORK targets");
     }
+    let imported = target.imported;
+    let target_kind = target.kind;
     let new_set = !target.file_sets.contains_key(name);
     let is_default = kind == name || (kind.is_empty() && name.as_bytes()[0].is_ascii_uppercase());
-    if let Some(original) = target.file_sets.get(name) {
+    let kind = if let Some(original) = target.file_sets.get(name) {
         if !kind.is_empty() && original.kind != kind {
             return err(format!(
                 "Type \"{kind}\" for file set \"{name}\" does not match original type \"{}\"",
@@ -1126,15 +1162,43 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
                 original.scope.name()
             ));
         }
-        kind = &original.kind;
+        original.kind.clone()
     } else {
-        if is_default {
-            kind = name;
-        } else if !name.as_bytes()[0].is_ascii_lowercase() && !name.as_bytes()[0].is_ascii_digit()
-            || !is_default
-                && !name
+        let kind = if is_default { name } else { kind };
+        let target = interp.ext.targets.get_mut(key).unwrap();
+        // cmTarget::GetOrCreateFileSet registers the set before the command
+        // validates its type, name and visibility.
+        target.file_sets.insert(
+            name.to_owned(),
+            FileSet {
+                kind: kind.to_owned(),
+                scope,
+                base_dirs: Vec::new(),
+                files: Vec::new(),
+            },
+        );
+        let property = match kind {
+            "HEADERS" => Some("HEADER_SETS"),
+            "CXX_MODULES" => Some("CXX_MODULE_SETS"),
+            _ => None,
+        };
+        if let Some(property) = property {
+            if scope.direct() {
+                target.props.append(property, name, false);
+            }
+            if scope.interface() {
+                target
+                    .props
+                    .append(&format!("INTERFACE_{property}"), name, false);
+            }
+        }
+        let valid_name =
+            name.as_bytes()[0].is_ascii_lowercase() || name.as_bytes()[0].is_ascii_digit();
+        if !is_default
+            && (!valid_name
+                || !name
                     .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
         {
             return err(
                 "Non-default file set name must contain only letters, numbers, and underscores, and must not start with a capital letter or underscore",
@@ -1146,8 +1210,8 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
         if !matches!(kind, "HEADERS" | "CXX_MODULES") {
             return err("File set TYPE may only be \"HEADERS\" or \"CXX_MODULES\"");
         }
-        if kind == "CXX_MODULES" && !target.imported {
-            if scope.direct() && target.kind == TargetKind::InterfaceLibrary {
+        if kind == "CXX_MODULES" && !imported {
+            if scope.direct() && target_kind == TargetKind::InterfaceLibrary {
                 return err(
                     "File set TYPE \"CXX_MODULES\" may not have \"PUBLIC\" or \"PRIVATE\" visibility on INTERFACE libraries.",
                 );
@@ -1156,7 +1220,8 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
                 return err("File set TYPE \"CXX_MODULES\" may not have \"INTERFACE\" visibility");
             }
         }
-    }
+        kind.to_owned()
+    };
     let base = interp.current_source_dir();
     let dirs: Vec<_> = if new_set && dirs.is_empty() {
         vec![base.clone()]
@@ -1164,11 +1229,10 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
         dirs.iter().map(|dir| input_path(&base, dir)).collect()
     };
     let files: Vec<_> = files.iter().map(|file| input_path(&base, file)).collect();
-    let kind = kind.to_owned();
-    let (sets_prop, dirs_prop, files_prop) = if kind == "HEADERS" {
-        ("HEADER_SETS", "HEADER_DIRS", "HEADER_SET")
-    } else {
-        ("CXX_MODULE_SETS", "CXX_MODULE_DIRS", "CXX_MODULE_SET")
+    let (dirs_prop, files_prop) = match kind.as_str() {
+        "HEADERS" => ("HEADER_DIRS", "HEADER_SET"),
+        "CXX_MODULES" => ("CXX_MODULE_DIRS", "CXX_MODULE_SET"),
+        _ => return Ok(()),
     };
     let files_prop = if name == kind {
         files_prop.to_owned()
@@ -1181,25 +1245,7 @@ fn add_file_set(interp: &mut Interp, key: &str, scope: Scope, args: &[String]) -
         format!("{dirs_prop}_{name}")
     };
     let target = interp.ext.targets.get_mut(key).unwrap();
-    if new_set {
-        if scope.direct() {
-            target.props.append(sets_prop, name, false);
-        }
-        if scope.interface() {
-            target
-                .props
-                .append(&format!("INTERFACE_{sets_prop}"), name, false);
-        }
-    }
-    let set = target
-        .file_sets
-        .entry(name.to_owned())
-        .or_insert_with(|| FileSet {
-            kind: kind.clone(),
-            scope,
-            base_dirs: Vec::new(),
-            files: Vec::new(),
-        });
+    let set = target.file_sets.get_mut(name).unwrap();
     let files = files.join(";");
     if !files.is_empty() {
         set.files.push((files.clone(), interp.backtrace.clone()));
@@ -1467,10 +1513,7 @@ fn add_custom_target(interp: &mut Interp, args: &[String]) -> CmdResult {
         ));
     }
     let all = rest.first().is_some_and(|arg| arg == "ALL");
-    let order = interp.ext.custom_command_count;
-    interp.ext.custom_command_count += 1;
     let mut command = CustomCommand {
-        order,
         kind: CustomCommandKind::Utility,
         makefile: interp.mf_index(),
         backtrace: interp.backtrace.clone(),
@@ -1544,18 +1587,21 @@ fn add_custom_target(interp: &mut Interp, args: &[String]) -> CmdResult {
             .props
             .set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
     }
-    let valid = validate_command_lines(interp, &command);
+    // cmMakefile::AddUtilityCommand: nothing to run without commands or
+    // depends; otherwise validate and defer to generate time.
+    let valid = if command.command_lines.is_empty() && command.depends.is_empty() {
+        Ok(())
+    } else {
+        validate_command_lines(interp, &command)
+    };
     if valid.is_ok() && !(command.command_lines.is_empty() && command.depends.is_empty()) {
         for byproduct in &command.byproducts {
             mark_generated(interp, command.makefile, byproduct);
         }
-        interp
-            .ext
-            .targets
-            .get_mut(&key)
-            .unwrap()
-            .custom_commands
-            .push(command);
+        interp.ext.generator_actions.push(GeneratorAction::Utility {
+            target: key.clone(),
+            command,
+        });
     }
     add_sources(interp, &key, &sources);
     valid
@@ -1649,10 +1695,7 @@ fn add_custom_command(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() < 4 {
         return err("called with wrong number of arguments.");
     }
-    let order = interp.ext.custom_command_count;
-    interp.ext.custom_command_count += 1;
     let mut command = CustomCommand {
-        order,
         makefile: interp.mf_index(),
         depends_explicit_only: interp.is_on("CMAKE_ADD_CUSTOM_COMMAND_DEPENDS_EXPLICIT_ONLY"),
         backtrace: interp.backtrace.clone(),
@@ -1687,6 +1730,17 @@ fn add_custom_command(interp: &mut Interp, args: &[String]) -> CmdResult {
                 }
                 "SOURCE" | "TARGET" | "OUTPUT" | "WORKING_DIRECTORY" | "MAIN_DEPENDENCY"
                 | "COMMENT" | "DEPFILE" | "JOB_POOL" | "JOB_SERVER_AWARE" => {
+                    if arg == "DEPFILE" {
+                        let generator = interp.get_def("CMAKE_GENERATOR").unwrap_or("Ninja");
+                        let supported = generator.starts_with("Ninja")
+                            || generator == "Xcode"
+                            || generator.contains("Makefiles")
+                            || generator == "Watcom WMake"
+                            || generator.starts_with("Visual Studio");
+                        if !supported {
+                            return err(format!("Option DEPFILE not supported by {generator}"));
+                        }
+                    }
                     mode = arg;
                     expected = Some(arg);
                 }
@@ -1830,13 +1884,10 @@ fn add_custom_command(interp: &mut Interp, args: &[String]) -> CmdResult {
         for byproduct in &command.byproducts {
             mark_generated(interp, command.makefile, byproduct);
         }
-        interp
-            .ext
-            .targets
-            .get_mut(&key)
-            .unwrap()
-            .custom_commands
-            .push(command);
+        interp.ext.generator_actions.push(GeneratorAction::Target {
+            target: key,
+            command,
+        });
     } else if target.is_empty() {
         validate_custom_keywords(
             interp,
@@ -1851,20 +1902,10 @@ fn add_custom_command(interp: &mut Interp, args: &[String]) -> CmdResult {
         for output in command.outputs.iter().chain(&command.byproducts) {
             mark_generated(interp, command.makefile, output);
         }
-        let first = command.outputs[0].clone();
-        let file = get_or_create_source(interp, command.makefile, &first);
-        if let Some(existing) = &file.custom_command {
-            if existing.command_lines != command.command_lines {
-                return report(
-                    interp,
-                    &format!(
-                        "Attempt to add a custom rule to output\n  {first}.rule\nwhich already has a custom rule."
-                    ),
-                );
-            }
-        } else {
-            file.custom_command = Some(command);
-        }
+        interp.ext.generator_actions.push(GeneratorAction::Output {
+            command,
+            replace: false,
+        });
     } else {
         return report(
             interp,
@@ -1905,40 +1946,17 @@ fn custom_command_target(interp: &mut Interp, name: &str) -> Result<String, crat
     report(interp, &message)
 }
 
-fn append_custom_command(interp: &mut Interp, mut command: CustomCommand) -> CmdResult {
-    let first = &command.outputs[0];
-    if has_genex(first) {
-        interp.ext.pending_custom_appends.push(command);
-        return Ok(());
-    }
-    let existing = interp
+/// `cmMakefile::AppendCustomCommandToOutput`: resolved at generate time.
+fn append_custom_command(interp: &mut Interp, command: CustomCommand) -> CmdResult {
+    interp
         .ext
-        .sources
-        .get_mut(&command.makefile)
-        .into_iter()
-        .flatten()
-        .filter_map(|source| source.custom_command.as_mut())
-        .find(|existing| existing.order < command.order && existing.outputs.contains(first));
-    let Some(existing) = existing else {
-        // CMake resolves APPEND during generation, including genex outputs whose
-        // expansion can match a differently spelled output.
-        interp.ext.pending_custom_appends.push(command);
-        return Ok(());
-    };
-    let invalid = existing.codegen && !command.implicit_depends.is_empty();
-    existing.command_lines.append(&mut command.command_lines);
-    existing.depends.append(&mut command.depends);
-    existing
-        .implicit_depends
-        .append(&mut command.implicit_depends);
-    if invalid {
-        return report(
-            interp,
-            "Cannot append IMPLICIT_DEPENDS to existing CODEGEN custom command.",
-        );
-    }
+        .generator_actions
+        .push(GeneratorAction::Append(command));
     Ok(())
 }
+
+#[cfg(test)]
+mod project_cases;
 
 #[cfg(test)]
 mod tests {
@@ -2185,8 +2203,14 @@ add_library(system_lib INTERFACE)
             interp.ext.targets["system_lib"].props.get("SYSTEM"),
             Some("ON")
         );
+        crate::commands::custom_actions::run_generator_actions(
+            &mut interp,
+            &mut crate::commands::custom_actions::unsupported_output_genex,
+        );
         assert_eq!(
-            interp.ext.targets["late_target"].custom_commands[0].command_lines[0],
+            crate::commands::custom_actions::utility_command(&interp, "late_target")
+                .unwrap()
+                .command_lines[0],
             ["echo", "value"]
         );
         interp.mf_stack.push(caller);
@@ -2291,8 +2315,41 @@ add_test(NAME "new test" COMMAND echo "" CONFIGURATIONS Debug Release
   WORKING_DIRECTORY /somewhere COMMAND_EXPAND_LISTS)
 "#,
         );
-        let source = find_source(&interp, 0, "main.out").unwrap();
+        // Nothing is attached until generation starts.
+        assert!(find_source(&interp, 0, "main.in").is_none());
+        assert!(interp.ext.targets["work"].custom_commands.is_empty());
+        crate::commands::custom_actions::run_generator_actions(
+            &mut interp,
+            &mut crate::commands::custom_actions::unsupported_output_genex,
+        );
+        assert!(!interp.error);
+        // MAIN_DEPENDENCY carries the command (detail::AddCustomCommand).
+        let source = find_source(&interp, 0, "main.in").unwrap();
         let cc = source.custom_command.as_ref().unwrap();
+        assert!(cc.escape_allow_make_vars);
+        let post = &interp.ext.targets["work"].custom_commands;
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].target.as_deref(), Some("work"));
+        let utility = crate::commands::custom_actions::utility_command(&interp, "work").unwrap();
+        assert_eq!(utility.command_lines, [["tool", "run"]]);
+        assert_eq!(utility.outputs, ["/build/CMakeFiles/work"]);
+        assert_eq!(
+            interp.ext.targets["work"].props.get("SOURCES"),
+            Some("info.txt;/build/CMakeFiles/work")
+        );
+        let entry = crate::commands::custom_actions::source_with_output(
+            &interp,
+            0,
+            "/build/second.out",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            interp.ext.sources[&0][entry.source.unwrap()]
+                .location
+                .path(),
+            "main.in"
+        );
         assert_eq!(cc.command_lines[1], ["tool", "append"]);
         assert_eq!(cc.implicit_depends, [("C".to_owned(), "more.c".to_owned())]);
         assert_eq!(cc.depends, ["main.in", "dependency", "more.c", "last"]);
@@ -2304,7 +2361,7 @@ add_test(NAME "new test" COMMAND echo "" CONFIGURATIONS Debug Release
                 && cc.depends_explicit_only
                 && cc.command_expand_lists
         );
-        assert!(interp.ext.pending_custom_appends.is_empty());
+        assert!(interp.ext.generator_actions.is_empty());
         for generated in ["main.out", "second.out", "side.out", "clean.out"] {
             let file = find_source(&interp, 0, generated).unwrap();
             assert!(file.generated);
@@ -2313,9 +2370,8 @@ add_test(NAME "new test" COMMAND echo "" CONFIGURATIONS Debug Release
                 format!("/build/{generated}")
             );
         }
-        let work = &interp.ext.targets["work"];
-        assert_eq!(work.custom_commands[0].kind, CustomCommandKind::Utility);
-        assert_eq!(work.custom_commands[1].kind, CustomCommandKind::PostBuild);
+        assert_eq!(utility.kind, CustomCommandKind::Utility);
+        assert_eq!(post[0].kind, CustomCommandKind::PostBuild);
         assert!(interp.ext.testing_enabled.contains(&0));
         assert!(has_test(&interp, "new test"));
         assert_eq!(interp.ext.tests[0].command, ["echo", "after"]);
@@ -2341,7 +2397,7 @@ add_test(NAME "new test" COMMAND echo "" CONFIGURATIONS Debug Release
         assert!(resolved.extension_warning.unwrap().contains("CMP0115"));
         configure(&mut interp, "cmake_minimum_required(VERSION 4.1)");
         assert!(resolve_source(&interp, 0, "unit").is_err());
-        get_or_create_source(&mut interp, 0, "unit")
+        crate::commands::target::get_or_create_source(&mut interp, 0, "unit")
             .props
             .set("LANGUAGE", "CXX".to_owned());
         assert!(find_source(&interp, 0, "unit.c").is_none());

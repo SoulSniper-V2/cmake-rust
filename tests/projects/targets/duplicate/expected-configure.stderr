@@ -1,0 +1,5 @@
+CMake Error at CMakeLists.txt:5 (add_executable):
+  add_executable cannot create target "name" because another target with the
+  same name already exists.  The existing target is an interface library
+  created in source directory "<SOURCE_DIR>".  See documentation for
+  policy CMP0002 for more details.

@@ -122,7 +122,11 @@ fn configure_subdirectory(
             &format!("The source directory\n  {source}\ndoes not contain a CMakeLists.txt file."),
         );
     }
-    interp.run_subdirectory_with_system(source, binary, exclude, system);
+    if system {
+        interp.run_subdirectory_with_system(source, binary, exclude, true);
+    } else {
+        interp.run_subdirectory(source, binary, exclude);
+    }
     Ok(())
 }
 
@@ -451,8 +455,8 @@ fn link_libraries(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-fn normalized_group(name: &str) -> String {
-    name.split(['/', '\\'])
+fn normalized_group(name: &str, delimiters: &str) -> String {
+    name.split(|ch| delimiters.contains(ch))
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\\")
@@ -514,14 +518,13 @@ fn source_group(interp: &mut Interp, args: &[String]) -> CmdResult {
             .map(|file| collapse_full_path(file, &base))
             .filter(|file| !Path::new(file).is_dir())
             .collect();
+        if let Some(file) = files.iter().find(|file| !file.starts_with(&root)) {
+            return err(format!("ROOT: {root} is not a prefix of file: {file}"));
+        }
         for file in files {
-            let Some(relative) = file.strip_prefix(&root) else {
-                return err(format!("ROOT: {root} is not a prefix of file: {file}"));
-            };
-            let (_, parent) = relative
-                .rsplit_once('/')
-                .map_or(("", ""), |(parent, _)| ("", parent));
-            let group = normalized_group(&format!("{prefix}/{parent}"));
+            let relative = file.get(root.len() + 1..).unwrap_or_default();
+            let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
+            let group = normalized_group(&format!("{prefix}/{parent}"), "/\\");
             interp
                 .ext
                 .source_groups
@@ -539,12 +542,16 @@ fn source_group(interp: &mut Interp, args: &[String]) -> CmdResult {
         if OPTIONS.contains(&first.as_str()) && !(args.len() == 2 && args[1] != "FILES") {
             return err("Missing source group name.");
         }
+        let name = normalized_group(
+            first,
+            interp.get_def("SOURCE_GROUP_DELIMITER").unwrap_or("/\\"),
+        );
         let group = interp
             .ext
             .source_groups
             .entry(dir)
             .or_default()
-            .entry(normalized_group(first))
+            .entry(name)
             .or_insert_with(|| SourceGroup {
                 files: BTreeSet::new(),
                 regex: None,

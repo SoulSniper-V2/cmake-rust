@@ -1,0 +1,66 @@
+CMake Error at CMakeLists.txt:8 (add_library):
+  add_library cannot create ALIAS target "a2" because target "a1" is itself
+  an ALIAS.
+
+
+CMake Error at CMakeLists.txt:9 (add_library):
+  add_library cannot create ALIAS target "a3" because target "missing" does
+  not already exist.
+
+
+CMake Error at CMakeLists.txt:10 (add_library):
+  add_library cannot create ALIAS target "a4" because target "exe" is not a
+  library.
+
+
+CMake Error at CMakeLists.txt:11 (add_executable):
+  add_executable cannot create ALIAS target "a5" because target "real" is not
+  an executable.
+
+
+CMake Error at CMakeLists.txt:13 (add_library):
+  add_library cannot create ALIAS target "a7" because target "util" is not a
+  library.
+
+
+CMake Error at CMakeLists.txt:14 (add_library):
+  add_library cannot create ALIAS target "a1" because another target with the
+  same name already exists.
+
+
+CMake Error at CMakeLists.txt:15 (add_library):
+  add_library cannot create ALIAS target "real" because another target with
+  the same name already exists.
+
+
+CMake Error at CMakeLists.txt:16 (add_library):
+  add_library ALIAS requires exactly one target argument.
+
+
+CMake Error at CMakeLists.txt:17 (add_library):
+  add_library ALIAS requires exactly one target argument.
+
+
+CMake Error at CMakeLists.txt:18 (add_library):
+  The target name "bad alias" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:20 (add_executable):
+  add_executable ALIAS requires exactly one target argument.
+
+
+a1: aliased=[real] global=[TRUE]
+a6: aliased=[exe] global=[TRUE]
+a10: aliased=[imp] global=[FALSE]
+CMake Error at CMakeLists.txt:26 (target_link_libraries):
+  target_link_libraries can not be used on an ALIAS target.
+
+
+CMake Error at CMakeLists.txt:27 (target_compile_definitions):
+  target_compile_definitions can not be used on an ALIAS target.
+
+
+CMake Error at CMakeLists.txt:28 (add_dependencies):
+  Cannot add target-level dependencies to alias target "a1".

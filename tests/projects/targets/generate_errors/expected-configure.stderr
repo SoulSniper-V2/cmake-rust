@@ -1,0 +1,38 @@
+configured
+CMake Error at CMakeLists.txt:4 (add_custom_command):
+  Attempt to add a custom rule to output
+
+    <BINARY_DIR>/a.out.rule
+
+  which already has a custom rule.
+
+
+CMake Error at CMakeLists.txt:6 (add_custom_command):
+  Attempt to APPEND to custom command with output
+
+    <BINARY_DIR>/never.out
+
+  which is not already a custom command output.
+
+
+CMake Error at CMakeLists.txt:7 (add_custom_command):
+  OUTPUT containing a "<" is not allowed.
+
+
+CMake Error at CMakeLists.txt:9 (add_custom_target):
+  BYPRODUCTS containing a "<" is not allowed.
+
+
+CMake Error at CMakeLists.txt:10 (add_custom_command):
+  BYPRODUCTS containing a ">" is not allowed.
+
+
+CMake Error at CMakeLists.txt:14 (add_custom_command):
+  Attempt to APPEND to custom command with output
+
+    <BINARY_DIR>/x.out
+
+  which is not already a custom command output.
+
+
+CMake Generate step failed.  Build files cannot be regenerated correctly.

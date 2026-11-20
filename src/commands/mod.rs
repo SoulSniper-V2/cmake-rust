@@ -3,6 +3,7 @@
 use crate::interp::Interp;
 
 pub mod core;
+pub mod custom_actions;
 pub mod directory;
 pub mod targets;
 #[path = "../target.rs"]

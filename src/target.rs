@@ -458,23 +458,11 @@ pub fn create_target(
 ) -> String {
     use TargetKind::*;
     let dir = interp.mf_index();
-    let mut target = Target {
-        name: name.to_owned(),
-        kind,
-        makefile: dir,
-        imported,
-        imported_global: imported && global,
-        alias_of: None,
-        props: Default::default(),
-        provenance: Default::default(),
-        backtrace: interp.backtrace.clone(),
-        policies: interp.effective_policies(),
-        system_include_directories: Default::default(),
-        dependencies: Default::default(),
-        custom_commands: Vec::new(),
-        file_sets: Default::default(),
-        link_signatures: Vec::new(),
-    };
+    let mut target = Target::new(name, kind, dir);
+    target.imported = imported;
+    target.imported_global = imported && global;
+    target.backtrace.clone_from(&interp.backtrace);
+    target.policies = interp.effective_policies();
     for prop in [
         "TYPE",
         "NAME",
@@ -631,18 +619,14 @@ pub fn create_target(
 pub fn register_target(interp: &mut Interp, target: Target) -> String {
     let dir = target.makefile;
     let name = target.name.clone();
-    let key = if target.imported && !target.imported_global
-        || interp.ext.targets.contains_key(&name)
-    {
-        let key = format!("[{dir}]{name}");
-        interp
-            .ext
-            .scoped_targets
-            .insert((dir, name), key.clone());
-        key
-    } else {
-        name
-    };
+    let key =
+        if target.imported && !target.imported_global || interp.ext.targets.contains_key(&name) {
+            let key = format!("[{dir}]{name}");
+            interp.ext.scoped_targets.insert((dir, name), key.clone());
+            key
+        } else {
+            name
+        };
     if !target.imported {
         interp.makefiles[dir].targets.push(key.clone());
     }
@@ -1013,6 +997,9 @@ pub fn write_target_property(
     value: Option<&str>,
     how: PropertyWrite,
 ) -> CmdResult {
+    if find_alias(interp, name).is_some() {
+        return err("can not be used on an ALIAS target.");
+    }
     let Some(key) = find_target_key(interp, name) else {
         return Ok(());
     };
@@ -1188,7 +1175,14 @@ pub fn write_target_property(
                 &format!("PRECOMPILE_HEADERS property is already set on target (\"{name}\")\n"),
             );
         }
-        let Some(reused_key) = value.and_then(|value| find_global_target_key(interp, value)) else {
+        let Some(reused_key) = value.and_then(|value| {
+            interp
+                .ext
+                .aliases
+                .get(value)
+                .cloned()
+                .or_else(|| find_global_target_key(interp, value))
+        }) else {
             return report(
                 interp,
                 "PRECOMPILE_HEADERS_REUSE_FROM set with non existing target",
@@ -1199,7 +1193,7 @@ pub fn write_target_property(
             .props
             .get(prop)
             .filter(|value| !value.is_empty())
-            .unwrap_or(&reused.name)
+            .unwrap_or_else(|| value.unwrap())
             .to_owned();
         reused.props.set("COMPILE_PDB_NAME", origin.clone());
         reused
@@ -1377,7 +1371,18 @@ pub fn get_or_create_source<'a>(
     dir_index: usize,
     path: &str,
 ) -> &'a mut SourceFile {
-    let location = SourceFileLocation::new(interp, dir_index, path);
+    let index = source_index(interp, dir_index, path, false);
+    &mut interp.ext.sources.get_mut(&dir_index).unwrap()[index]
+}
+
+/// `cmMakefile::GetOrCreateSource` returning the index into
+/// `ext.sources[dir_index]`.  `known` is `cmSourceFileLocationKind::Known`
+/// (the name's extension is not ambiguous).
+pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bool) -> usize {
+    let mut location = SourceFileLocation::new(interp, dir_index, path);
+    if known {
+        location.ambiguous_extension = false;
+    }
     let mf = &interp.makefiles[dir_index];
     let sources = interp.ext.sources.entry(dir_index).or_default();
     if let Some(index) = sources.iter().position(|entry| {
@@ -1394,7 +1399,7 @@ pub fn get_or_create_source<'a>(
             source.location.name = location.name;
             source.location.ambiguous_extension = false;
         }
-        return source;
+        return index;
     }
     sources.push(SourceFile {
         makefile: dir_index,
@@ -1403,7 +1408,30 @@ pub fn get_or_create_source<'a>(
         generated: false,
         custom_command: None,
     });
-    sources.last_mut().unwrap()
+    sources.len() - 1
+}
+
+/// `cmMakefile::GetSource` with `cmSourceFileLocationKind::Known`.
+pub fn find_known_source(interp: &Interp, dir: usize, path: &str) -> Option<usize> {
+    let mut location = SourceFileLocation::new(interp, dir, path);
+    location.ambiguous_extension = false;
+    let mf = &interp.makefiles[dir];
+    interp.ext.sources.get(&dir)?.iter().position(|entry| {
+        entry
+            .location
+            .matches(&location, &mf.source_dir, &mf.binary_dir)
+    })
+}
+
+/// `cmMakefile::GetSource` (ambiguous location) returning the index.
+pub fn find_source_index(interp: &Interp, dir: usize, path: &str) -> Option<usize> {
+    let location = SourceFileLocation::new(interp, dir, path);
+    let mf = &interp.makefiles[dir];
+    interp.ext.sources.get(&dir)?.iter().position(|entry| {
+        entry
+            .location
+            .matches(&location, &mf.source_dir, &mf.binary_dir)
+    })
 }
 
 pub fn find_source<'a>(interp: &'a Interp, dir: usize, path: &str) -> Option<&'a SourceFile> {
@@ -1419,6 +1447,7 @@ pub fn find_source<'a>(interp: &'a Interp, dir: usize, path: &str) -> Option<&'a
 /// A source file's stored property (`cmSourceFile::GetProperty` for plain
 /// properties), looked up with `cmSourceFileLocation` matching in directory
 /// `dir_index`.  `None` when the source is unknown or the property is unset.
+#[allow(dead_code, reason = "used by the source property commands")]
 pub fn source_prop<'a>(
     interp: &'a Interp,
     dir_index: usize,
