@@ -254,6 +254,21 @@ pub struct Test {
     pub backtrace: Vec<Frame>,
 }
 
+/// A `file(GENERATE)` request (cmGeneratorExpressionEvaluationFile).
+#[derive(Debug, Clone)]
+pub struct EvaluationFile {
+    pub dir: usize,
+    pub input: String,
+    pub input_is_content: bool,
+    pub output: String,
+    pub condition: String,
+    pub target: String,
+    pub newline: String,
+    pub permissions: u32,
+    pub backtrace: Vec<Frame>,
+    pub cmp0070_new: bool,
+}
+
 /// Extension state for command implementations.
 #[derive(Debug, Default)]
 pub struct Ext {
@@ -302,6 +317,8 @@ pub struct Ext {
     pub file_api_queries: BTreeMap<String, (u32, u32)>,
     /// Enabled languages.
     pub languages: Vec<String>,
+    /// file(GENERATE) requests, evaluated at generate time.
+    pub evaluation_files: Vec<EvaluationFile>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
     pub configure_dependencies: std::collections::BTreeSet<String>,

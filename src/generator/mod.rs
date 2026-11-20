@@ -23,7 +23,9 @@
 pub mod ctx;
 pub mod custom;
 pub mod export;
+pub mod evaluation_files;
 pub mod flags;
+pub mod genex_host;
 pub mod install;
 pub mod link;
 pub mod ninja;

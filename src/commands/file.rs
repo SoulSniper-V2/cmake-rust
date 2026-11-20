@@ -3,6 +3,7 @@
 mod copy;
 mod glob;
 mod lock;
+mod generate;
 mod rpath;
 mod strings;
 
@@ -59,8 +60,8 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "DIFFERENT" => different(interp, &args[1..]),
         "RPATH_CHANGE" | "CHRPATH" | "RPATH_SET" | "RPATH_CHECK" | "RPATH_REMOVE"
         | "READ_ELF" => rpath::run(interp, args),
-        "GENERATE"
-        | "DOWNLOAD"
+        "GENERATE" => generate::run(interp, args),
+        "DOWNLOAD"
         | "UPLOAD"
         | "ARCHIVE_CREATE"
         | "ARCHIVE_EXTRACT"

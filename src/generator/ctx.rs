@@ -18,6 +18,8 @@ pub struct GenCtx<'a> {
     pub errors: RefCell<Vec<Diagnostic>>,
     /// Free-form memo for expensive per-target computations.
     pub memo: RefCell<HashMap<String, String>>,
+    /// Backtrace table referenced by generator-expression provenance ids.
+    pub backtraces: RefCell<Vec<Vec<Frame>>>,
 }
 
 impl<'a> GenCtx<'a> {
@@ -28,6 +30,7 @@ impl<'a> GenCtx<'a> {
             config,
             errors: RefCell::new(Vec::new()),
             memo: RefCell::new(HashMap::new()),
+            backtraces: RefCell::new(Vec::new()),
         }
     }
 
@@ -83,20 +86,75 @@ impl<'a> GenCtx<'a> {
         None
     }
 
-    /// Evaluates generator expressions in `text` for `target`/`config`/
-    /// `language`. Until the genex engine is integrated, text without `$<`
-    /// passes through and anything else is reported as unsupported.
+    pub fn intern_backtrace(&self, backtrace: Vec<Frame>) -> usize {
+        let mut table = self.backtraces.borrow_mut();
+        table.push(backtrace);
+        table.len() - 1
+    }
+
+    pub fn backtrace(&self, id: Option<usize>) -> Vec<Frame> {
+        id.and_then(|id| self.backtraces.borrow().get(id).cloned()).unwrap_or_default()
+    }
+
+    /// Evaluates generator expressions in `text` for `target` (head and
+    /// current), the build configuration and `language`
+    /// (`cmGeneratorExpressionInterpreter`). Diagnostics are recorded.
     pub fn genex(&self, text: &str, target: Option<&Target>, language: Option<&str>) -> String {
-        let _ = (target, language);
+        let dir = target.map_or(0, |target| target.makefile);
+        let key = target.map(|target| self.target_key(target));
+        self.genex_full(text, dir, key.as_deref(), language, true)
+    }
+
+    /// The `ext.targets` key of `target`.
+    pub fn target_key(&self, target: &Target) -> String {
+        if self.interp.ext.targets.get(&target.name).is_some_and(|found| std::ptr::eq(found, target)) {
+            return target.name.clone();
+        }
+        self.interp
+            .ext
+            .targets
+            .iter()
+            .find(|(_, found)| std::ptr::eq(*found, target))
+            .map(|(key, _)| key.clone())
+            .unwrap_or_else(|| target.name.clone())
+    }
+
+    pub fn genex_full(
+        &self,
+        text: &str,
+        dir: usize,
+        target: Option<&str>,
+        language: Option<&str>,
+        for_buildsystem: bool,
+    ) -> String {
         if !text.contains("$<") {
             return text.to_owned();
         }
-        self.error(Vec::new(), format!("Error evaluating generator expression:\n  {text}\ngenerator expressions are not yet supported by this build of cmake-rust"));
-        String::new()
+        let compiled = crate::genex::parse(text);
+        let mut ectx = crate::genex::EvalContext {
+            config: &self.config,
+            head_target: target,
+            current_target: target,
+            language,
+            evaluate_for_buildsystem: for_buildsystem,
+            ..crate::genex::EvalContext::default()
+        };
+        let mut host = super::genex_host::CtxHost::new(self, dir);
+        match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
+            Ok(value) => value,
+            Err(error) => {
+                if !error.quiet {
+                    let backtrace = self.backtrace(error.backtrace);
+                    self.error(backtrace, error.to_string());
+                }
+                String::new()
+            }
+        }
     }
 
     /// Runs the whole generate step.
     pub fn check_and_generate(&self) -> Result<(), Vec<Diagnostic>> {
+        super::evaluation_files::generate(self);
         let mut ninja = super::ninja::NinjaGenerator::new(self);
         if let Err(error) = ninja.generate() {
             self.error(Vec::new(), format!("Unable to write build files: {error}"));
