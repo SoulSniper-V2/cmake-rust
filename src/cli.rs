@@ -366,8 +366,8 @@ impl CacheView {
 }
 
 fn warning(message: &str) {
-    eprint!(
-        "{}\n",
+    eprintln!(
+        "{}",
         crate::messages::render(crate::messages::MessageType::Warning, message, &[], None)
     );
 }

@@ -47,6 +47,10 @@ impl From<&str> for CmdErr {
 
 pub type CmdResult = Result<(), CmdErr>;
 pub type Builtin = fn(&mut Interp, &[String]) -> CmdResult;
+/// A builtin that receives the raw (unexpanded) command so it can expand
+/// arguments lazily (`cmCMakeLanguageCommand`).
+pub type RawBuiltin =
+    fn(&mut Interp, &Rc<ParsedFile>, &Command, Option<&MacroSubst>) -> Result<Ctl, CmdErr>;
 
 /// Shorthand for returning a `SetError` failure.
 pub fn err<T>(message: impl Into<String>) -> Result<T, CmdErr> {
@@ -108,6 +112,8 @@ pub struct Callable {
 #[derive(Clone)]
 pub enum CommandDef {
     Builtin(Builtin),
+    /// Builtins dispatched with raw arguments (`cmake_language`).
+    Raw(RawBuiltin),
     /// Commands handled directly by the run loop (`if`, `foreach`, ...).
     Flow,
     User(Rc<Callable>),
@@ -173,7 +179,9 @@ pub struct Makefile {
     pub exclude_from_all: bool,
     /// Deferred calls registered with cmake_language(DEFER).
     pub deferred: Vec<Deferred>,
-    pub defer_counter: usize,
+    /// `cmMakefile::Defer`: non-null while this directory's top-level list
+    /// file executes (deferring is allowed).
+    pub defer_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -289,7 +297,7 @@ impl Interp {
             children: Vec::new(),
             exclude_from_all: false,
             deferred: Vec::new(),
-            defer_counter: 0,
+            defer_enabled: false,
         });
         interp.mf_stack.push(0);
         crate::commands::register_all(&mut interp);
@@ -579,7 +587,7 @@ impl Interp {
             children: Vec::new(),
             exclude_from_all: exclude,
             deferred: Vec::new(),
-            defer_counter: 0,
+            defer_enabled: false,
         });
         self.makefiles[parent].children.push(index);
         self.mf_stack.push(index);
@@ -764,8 +772,10 @@ impl Interp {
             }
             let parsed = Rc::new(ParsedFile::new(parsed.path.clone(), commands));
             self.mf_mut().list_files.push(path.to_owned());
+            self.mf_mut().defer_enabled = true;
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            self.mf_mut().defer_enabled = false;
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
@@ -904,8 +914,10 @@ impl Interp {
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
             self.mf_mut().list_files.push(path.to_owned());
+            self.mf_mut().defer_enabled = true;
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            self.mf_mut().defer_enabled = false;
         }
         // Directory-level end-of-file checks.
         let depth = self.mf().policies.len();
@@ -983,6 +995,10 @@ impl Interp {
             let Some(deferred) = next else {
                 return;
             };
+            if deferred.id.is_empty() {
+                // Canceled with cmake_language(DEFER CANCEL_CALL).
+                continue;
+            }
             self.backtrace.push(Frame {
                 file: Rc::from(path),
                 line: 0,
@@ -1004,6 +1020,87 @@ impl Interp {
             self.backtrace.pop();
             self.backtrace.pop();
         }
+    }
+
+    /// `cmGlobalGenerator::NewDeferId`: `__N`, global across directories.
+    pub fn new_defer_id(&mut self) -> String {
+        let id = format!("__{}", self.ext.next_defer_id);
+        self.ext.next_defer_id += 1;
+        id
+    }
+
+    /// `cmGlobalGenerator::FindMakefile`: source or binary directory of the
+    /// first matching makefile (`insert` keeps the first on key collisions).
+    pub fn find_makefile(&self, dir: &str) -> Option<usize> {
+        self.makefiles
+            .iter()
+            .position(|mf| mf.source_dir == dir || mf.binary_dir == dir)
+    }
+
+    /// `cmMakefile::DeferCall`: schedule `command` at the end of directory
+    /// `index`'s list file. Fails when its `Defer` scope is not active.
+    pub fn defer_call(&mut self, index: usize, id: String, file: String, command: Command) -> bool {
+        let mf = &mut self.makefiles[index];
+        if !mf.defer_enabled {
+            return false;
+        }
+        mf.deferred.push(Deferred {
+            id,
+            file: Rc::from(file.as_str()),
+            command,
+        });
+        true
+    }
+
+    /// `cmMakefile::DeferCancelCall`: blank out matching ids.
+    pub fn defer_cancel_call(&mut self, index: usize, id: &str) -> bool {
+        let mf = &mut self.makefiles[index];
+        if !mf.defer_enabled {
+            return false;
+        }
+        for deferred in &mut mf.deferred {
+            if deferred.id == id {
+                deferred.id.clear();
+            }
+        }
+        true
+    }
+
+    /// `cmMakefile::DeferGetCallIds`: `;`-joined live ids.
+    pub fn defer_get_call_ids(&self, index: usize) -> Option<String> {
+        let mf = &self.makefiles[index];
+        if !mf.defer_enabled {
+            return None;
+        }
+        Some(
+            mf.deferred
+                .iter()
+                .filter(|deferred| !deferred.id.is_empty())
+                .map(|deferred| deferred.id.as_str())
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+    }
+
+    /// `cmMakefile::DeferGetCall`: `name;arg;...` of the first match, empty
+    /// when unknown (but `Some` whenever deferring is enabled).
+    pub fn defer_get_call(&self, index: usize, id: &str) -> Option<String> {
+        let mf = &self.makefiles[index];
+        if !mf.defer_enabled {
+            return None;
+        }
+        let mut call = String::new();
+        for deferred in &mf.deferred {
+            if deferred.id == id {
+                call = deferred.command.name.clone();
+                for arg in &deferred.command.args {
+                    call.push(';');
+                    call.push_str(&arg.value);
+                }
+                break;
+            }
+        }
+        Some(call)
     }
 
     /// Sets `PROPAGATE` variables in the parent scope (`RaiseScope`).
@@ -1178,6 +1275,23 @@ impl Interp {
                     }
                 }
             }
+            CommandDef::Raw(function) => match function(self, file, command, subst) {
+                Ok(ctl) => {
+                    if std::mem::take(&mut self.request_return) {
+                        (true, Ctl::Return(None))
+                    } else {
+                        (true, ctl)
+                    }
+                }
+                Err(error) => {
+                    if let CmdErr::Error(message) = error {
+                        let text = format!("{} {}", command.name, message);
+                        self.issue(MessageType::FatalError, &text);
+                    }
+                    self.command_failed();
+                    (false, Ctl::Normal)
+                }
+            },
             CommandDef::User(callable) => {
                 let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
                     return (true, Ctl::Normal);
@@ -1919,6 +2033,11 @@ impl Interp {
         self.commands.insert(name.to_owned(), CommandDef::Builtin(function));
     }
 
+    pub fn register_raw(&mut self, name: &str, function: RawBuiltin) {
+        self.commands
+            .insert(name.to_owned(), CommandDef::Raw(function));
+    }
+
     pub fn register_flow(&mut self, name: &str) {
         self.commands.insert(name.to_owned(), CommandDef::Flow);
     }
@@ -1946,6 +2065,36 @@ impl Interp {
                 }
             },
             CommandDef::User(callable) => self.invoke_callable(&callable, args, name).0,
+            CommandDef::Raw(function) => {
+                let command = Command {
+                    name: name.to_owned(),
+                    lname,
+                    line: self.backtrace.last().map_or(0, |frame| frame.line),
+                    line_end: 0,
+                    args: args
+                        .iter()
+                        .map(|value| Arg {
+                            value: value.clone(),
+                            delim: Delim::Bracket,
+                            line: 0,
+                        })
+                        .collect(),
+                };
+                let file = self
+                    .backtrace
+                    .last()
+                    .map(|frame| frame.file.clone())
+                    .unwrap_or_else(|| Rc::from(""));
+                let parsed = Rc::new(ParsedFile::new(file, vec![command]));
+                let command = parsed.commands[0].clone();
+                match function(self, &parsed, &command, None) {
+                    Ok(_) => true,
+                    Err(_) => {
+                        self.command_failed();
+                        false
+                    }
+                }
+            }
             CommandDef::Flow => {
                 // Build a synthetic command so flow commands work through CALL.
                 let command = Command {

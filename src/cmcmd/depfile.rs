@@ -48,8 +48,8 @@ pub(super) fn transform(args: &[String]) -> i32 {
             rules
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprint!(
-                "{}\n",
+            eprintln!(
+                "{}",
                 messages::render(
                     messages::MessageType::Warning,
                     &format!("Expected depfile does not exist.\n  {input}"),

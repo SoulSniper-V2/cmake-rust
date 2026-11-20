@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::interp::Interp;
 use crate::messages::Frame;
@@ -64,6 +65,16 @@ pub struct Test {
     pub backtrace: Vec<Frame>,
 }
 
+/// `cmDependencyProvider` set by `cmake_language(SET_DEPENDENCY_PROVIDER)`.
+/// Read by find_package/FetchContent once provider dispatch is ported.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DependencyProvider {
+    pub command: String,
+    pub find_package: bool,
+    pub fetchcontent_makeavailable_serial: bool,
+}
+
 /// Extension state for command implementations.
 #[derive(Debug, Default)]
 pub struct Ext {
@@ -74,6 +85,14 @@ pub struct Ext {
     pub aliases: HashMap<String, String>,
     pub tests: Vec<Test>,
     pub defer_current_id: Option<String>,
+    /// `cmGlobalGenerator::NextDeferId` (`__N` ids, global across directories).
+    pub next_defer_id: usize,
+    /// `cmState::InTopLevelIncludes` (first project() TOP_LEVEL_INCLUDES).
+    pub in_top_level_includes: bool,
+    /// `cmState` dependency provider.
+    pub dependency_provider: Option<DependencyProvider>,
+    /// `cmGlobalGenerator::WarnedExperimental` ("<name>-<uuid>" seen set).
+    pub warned_experimental: HashSet<String>,
     /// Enabled languages.
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.

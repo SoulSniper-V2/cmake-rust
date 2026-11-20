@@ -6,7 +6,7 @@ mod depfile;
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 use std::process::Command;
