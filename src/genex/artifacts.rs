@@ -240,8 +240,8 @@ impl Evaluator<'_, '_> {
             self.host
                 .target_artifact(&target, kind, config)
                 .map(|value| match component {
-                    Name => util::filename_name(&value),
-                    Directory => util::filename_path(&value),
+                    Name => path::filename_name(&value).to_owned(),
+                    Directory => path::filename_path(&value),
                     _ => value,
                 })
         };
@@ -290,7 +290,7 @@ impl Evaluator<'_, '_> {
             }
         }
         if node == "TARGET_RUNTIME_DLL_DIRS" {
-            paths = list::dedup(paths.iter().map(|path| util::filename_path(path)).collect());
+            paths = list::dedup(paths.iter().map(|path| path::filename_path(path)).collect());
         }
         Ok(paths.join(";"))
     }

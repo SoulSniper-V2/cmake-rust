@@ -11,7 +11,8 @@ impl Evaluator<'_, '_> {
     ) -> Result<String, GenexError> {
         let fail = |message: &str| Err(self.error(expr, message));
         let input = args.first().map_or("", String::as_str);
-        let lang = self.ctx.language.unwrap_or_default();
+        let lang = self.language.clone();
+        let lang = lang.as_str();
         let value = match id {
             "1" | "BUILD_INTERFACE" | "BUILD_LOCAL_INTERFACE" | "TARGET_NAME" => input.to_owned(),
             "AND" | "OR" => {
@@ -115,7 +116,7 @@ impl Evaluator<'_, '_> {
                     .map_err(|_| self.error(expr, "$<FILTER:...> failed to compile regex"))?
                     .join(";")
             }
-            "LIST" => list::evaluate(args, self.host.local_policy_status("CMP0186"))
+            "LIST" => list::evaluate(args, self.host.local_policy_status("CMP0186"), self.host)
                 .map_err(|error| self.error(expr, error))?,
             "PATH" => path::evaluate(args).map_err(|error| self.error(expr, error))?,
             "PATH_EQUAL" => boolean(path::equal(input, &args[1])),
@@ -141,10 +142,15 @@ impl Evaluator<'_, '_> {
                     return fail("\"\" is not an absolute path.");
                 }
                 for path in &mut paths {
-                    if !(util::is_full_path(path)
-                        || (cfg!(windows) && std::path::Path::new(path).is_absolute()))
-                    {
+                    if !path::file_is_full_path(path) {
                         return fail(&format!("\"{path}\" is not an absolute path."));
+                    }
+                    if self.host.msys_shell()
+                        && path.as_bytes().get(1) == Some(&b':')
+                        && path.len() > 2
+                    {
+                        let drive = path[..1].to_owned();
+                        path.replace_range(..2, &format!("/{drive}"));
                     }
                     if windows {
                         *path = path.replace('/', "\\");
@@ -325,8 +331,8 @@ impl Evaluator<'_, '_> {
         scope: Scope<'_>,
         dag: Option<&DagChecker>,
     ) -> Result<(), GenexError> {
-        let missing_compile = self.ctx.language.unwrap_or_default().is_empty()
-            && !dag.is_some_and(DagChecker::compile_expression);
+        let missing_compile =
+            self.language.is_empty() && !dag.is_some_and(DagChecker::compile_expression);
         let missing_link = scope.head.is_none() || !dag.is_some_and(DagChecker::link_language);
         let problem = match id {
             "COMPILE_LANGUAGE" if missing_compile => {

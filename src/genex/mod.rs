@@ -15,7 +15,9 @@ pub use preprocess::{
     replace_install_prefix, split, strip, strip_empty_list_elements,
 };
 #[allow(unused_imports)]
-pub use target::{LinkDependency, UsageItem, target_usage, usage_requirements};
+pub use target::{
+    LinkDependency, UsageItem, system_include_directories, target_usage, usage_requirements,
+};
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -114,9 +116,21 @@ pub trait GenexHost {
     fn link_language_propagates(&self, target: &str) -> bool {
         self.target_type(target) == Some("STATIC_LIBRARY")
     }
+    /// cmLinkImplementation::LanguageRuntimeLibraries for the requested
+    /// compile or link language, in link order.
+    fn language_runtime_dependencies(
+        &self,
+        _target: &str,
+        _config: &str,
+        _language: &str,
+        _usage: Usage,
+    ) -> Vec<LinkDependency> {
+        Vec::new()
+    }
     /// cmGeneratorTarget::GetLinkInterfaceLibraries / GetLinkImplementationLibraries.
-    /// Return None to evaluate the raw LINK_LIBRARIES or INTERFACE_LINK_LIBRARIES.
-    /// Supply resolved entries for imported maps, scoped link items, and direct overrides.
+    /// Return None to compute dependencies from raw properties. A resolved
+    /// implementation list must already include direct overrides. Supply it
+    /// for scoped or synthetic links and linker-language second-pass results.
     fn link_dependencies(
         &self,
         _target: &str,
@@ -175,6 +189,12 @@ pub trait GenexHost {
     }
     /// cmMakefile::AddTargetObject.
     fn record_target_object(&mut self, _target: &str, _path: &str) {}
+    /// cmMakefile::ClearMatches followed by StoreMatches in LIST:TRANSFORM,REPLACE.
+    fn record_regex_match(&mut self, _input: &str, _groups: &[Option<(usize, usize)>; 10]) {}
+    /// cmState::UseMSYSShell.
+    fn msys_shell(&self) -> bool {
+        self.generator_name() == "MSYS Makefiles"
+    }
     /// cmState::UseWindowsShell.
     fn windows_shell(&self) -> bool {
         cfg!(windows)
@@ -184,6 +204,38 @@ pub trait GenexHost {
         self.variable(&format!("CMAKE_{language}_COMPILER_LOADED"))
             .as_deref()
             .is_some_and(util::is_on)
+    }
+    /// cmTarget::GetSystemIncludeDirectories: the raw entries recorded by
+    /// target_include_directories(SYSTEM) for the target itself.
+    fn system_include_directories(&self, target: &str) -> Vec<String> {
+        self.target_property_raw(target, "SYSTEM_INCLUDE_DIRECTORIES")
+            .map(|value| vec![value])
+            .unwrap_or_default()
+    }
+    /// cmGeneratorTarget::GetAllConfigCompileLanguages.
+    fn compile_languages(&self, _target: &str, _config: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// cmGeneratorTarget::GetObjectDirectory.
+    fn object_directory(&self, _target: &str, _config: &str) -> String {
+        String::new()
+    }
+    /// cmGeneratorTarget::GetSupportDirectory.
+    fn support_directory(&self, _target: &str) -> String {
+        String::new()
+    }
+    /// cmGeneratorTarget::IsInBuildSystem.
+    fn in_build_system(&self, target: &str) -> bool {
+        if self.is_imported(target) {
+            return false;
+        }
+        match self.target_type(target) {
+            Some("INTERFACE_LIBRARY") => self
+                .target_property_raw(target, "SOURCES")
+                .is_some_and(|sources| !sources.is_empty()),
+            Some("UNKNOWN_LIBRARY") | None => false,
+            Some(_) => true,
+        }
     }
     /// cmStandardLevelResolver::HaveStandardAvailable. The returned standard
     /// is recorded if link-library evaluation succeeds despite the feature.
@@ -388,7 +440,9 @@ impl<'a> Scope<'a> {
 struct Evaluator<'a, 'ctx> {
     ctx: &'a mut EvalContext<'ctx>,
     host: &'a mut dyn GenexHost,
-    seen: HashSet<(String, String)>,
+    /// cmGeneratorExpressionContext::Language, which nested link-item
+    /// evaluation replaces with the head target's linker language.
+    language: String,
 }
 
 pub fn evaluate(
@@ -404,10 +458,11 @@ pub fn evaluate(
         current: ctx.current_target.or(ctx.head_target),
     };
     let dag = ctx.dag;
+    let language = ctx.language.unwrap_or_default().to_owned();
     Evaluator {
         ctx,
         host,
-        seen: HashSet::new(),
+        language,
     }
     .parts(compiled, &compiled.parts, scope, dag)
 }

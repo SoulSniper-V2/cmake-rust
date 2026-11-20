@@ -10,7 +10,33 @@ struct MockTarget {
     kind: String,
     #[serde(default)]
     imported: bool,
+    #[serde(default)]
     properties: BTreeMap<String, String>,
+    /// Property entries with their CMakeLists.txt line as backtrace.
+    #[serde(default)]
+    entries: BTreeMap<String, Vec<(Backtrace, String)>>,
+    /// target_include_directories(SYSTEM) entries.
+    #[serde(default)]
+    system: Vec<String>,
+}
+
+impl MockTarget {
+    fn property(&self, prop: &str) -> Option<String> {
+        if let Some(value) = self.properties.get(prop) {
+            return Some(value.clone());
+        }
+        if let Some(entries) = self.entries.get(prop) {
+            return Some(
+                entries
+                    .iter()
+                    .map(|(_, value)| value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            );
+        }
+        // cmTarget: imported targets are created with SYSTEM=ON.
+        (prop == "SYSTEM" && self.imported).then(|| "ON".to_owned())
+    }
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -22,18 +48,18 @@ struct MockHost {
     backtraces: BTreeMap<(String, String), Backtrace>,
     #[serde(skip)]
     policies: BTreeMap<String, String>,
+    #[serde(default)]
+    missing_path: String,
 }
 
 impl MockHost {
     fn imported_value(&self, target: &str, config: &str, prop: &str) -> Option<String> {
-        let props = &self.targets.get(target)?.properties;
+        let mock = self.targets.get(target)?;
         let suffix = self
             .mapped_imported_config(target, config)
             .unwrap_or_default();
-        props
-            .get(&format!("{prop}{suffix}"))
-            .or_else(|| props.get(prop))
-            .cloned()
+        mock.property(&format!("{prop}{suffix}"))
+            .or_else(|| mock.property(prop))
     }
 }
 
@@ -67,7 +93,7 @@ impl GenexHost for MockHost {
                 }
                 .to_owned()
             }),
-            _ => self.targets.get(target)?.properties.get(prop).cloned(),
+            _ => self.targets.get(target)?.property(prop),
         }
     }
 
@@ -158,7 +184,23 @@ impl GenexHost for MockHost {
         }
     }
 
+    fn system_include_directories(&self, target: &str) -> Vec<String> {
+        self.targets
+            .get(target)
+            .map(|t| t.system.clone())
+            .unwrap_or_default()
+    }
+
     fn property_entries(&self, target: &str, prop: &str) -> Vec<PropertyEntry> {
+        if let Some(entries) = self.targets.get(target).and_then(|t| t.entries.get(prop)) {
+            return entries
+                .iter()
+                .map(|(line, value)| PropertyEntry {
+                    value: value.clone(),
+                    backtrace: Some(*line),
+                })
+                .collect();
+        }
         self.target_property_raw(target, prop)
             .into_iter()
             .map(|value| PropertyEntry {
@@ -172,23 +214,22 @@ impl GenexHost for MockHost {
     }
 
     fn mapped_imported_config(&self, target: &str, config: &str) -> Option<String> {
-        let props = &self.targets.get(target)?.properties;
+        let mock = self.targets.get(target)?;
+        let has = |name: &str| mock.property(name).is_some();
         let prefix = if self.target_type(target) == Some("OBJECT_LIBRARY") {
             "IMPORTED_OBJECTS"
         } else {
             "IMPORTED_LOCATION"
         };
         let config = config.to_ascii_uppercase();
-        if let Some(map) = props.get(&format!("MAP_IMPORTED_CONFIG_{config}")) {
-            return cm_list(map, true).into_iter().find_map(|name| {
+        if let Some(map) = mock.property(&format!("MAP_IMPORTED_CONFIG_{config}")) {
+            return cm_list(&map, true).into_iter().find_map(|name| {
                 let suffix = if name.is_empty() {
                     name
                 } else {
                     format!("_{}", name.to_ascii_uppercase())
                 };
-                props
-                    .contains_key(&format!("{prefix}{suffix}"))
-                    .then_some(suffix)
+                has(&format!("{prefix}{suffix}")).then_some(suffix)
             });
         }
         let suffix = if config.is_empty() {
@@ -196,14 +237,14 @@ impl GenexHost for MockHost {
         } else {
             format!("_{config}")
         };
-        if props.contains_key(&format!("{prefix}{suffix}")) {
+        if has(&format!("{prefix}{suffix}")) {
             return Some(suffix);
         }
-        props.contains_key(prefix).then(String::new)
+        has(prefix).then(String::new)
     }
 
-    fn path_exists(&self, _path: &str) -> bool {
-        true
+    fn path_exists(&self, path: &str) -> bool {
+        path != self.missing_path
     }
 }
 
@@ -211,6 +252,8 @@ impl GenexHost for MockHost {
 struct Corpus {
     #[serde(flatten)]
     host: MockHost,
+    c_variables: BTreeMap<String, String>,
+    c_targets: BTreeMap<String, MockTarget>,
     cases: Vec<Case>,
 }
 
@@ -220,6 +263,8 @@ struct Case {
     setup: Setup,
     output: Option<String>,
     error: Option<String>,
+    #[serde(default)]
+    loop_steps: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -240,7 +285,12 @@ fn corpus() -> &'static Corpus {
 }
 
 fn replay(case: &Case) {
-    let mut host = corpus().host.clone();
+    let corpus = corpus();
+    let mut host = corpus.host.clone();
+    if case.setup.language.as_deref() == Some("C") {
+        host.variables.extend(corpus.c_variables.clone());
+        host.targets.extend(corpus.c_targets.clone());
+    }
     for (target, properties) in &case.setup.properties {
         host.targets
             .get_mut(target)
@@ -265,6 +315,23 @@ fn replay(case: &Case) {
         assert_eq!(
             body.trim_end(),
             case.error.as_deref().unwrap().trim_end(),
+            "{}",
+            case.expression
+        );
+        let actual_steps: Vec<_> = error
+            .loop_steps
+            .iter()
+            .map(|(step, _)| crate::messages::format_text(step, 2))
+            .collect();
+        assert_eq!(
+            actual_steps
+                .iter()
+                .map(|step| step.trim_end())
+                .collect::<Vec<_>>(),
+            case.loop_steps
+                .iter()
+                .map(|step| step.trim_end())
+                .collect::<Vec<_>>(),
             "{}",
             case.expression
         );
@@ -379,7 +446,7 @@ fn link_and_compile_dag_modes() {
     let dag = DagChecker {
         transitive_properties_only: true,
         transitive_properties_only_cmp0131: true,
-        ..dag
+        ..DagChecker::new("a", "LINK_LIBRARIES")
     };
     ctx.dag = Some(&dag);
     assert_eq!(
@@ -394,90 +461,263 @@ fn link_and_compile_dag_modes() {
 }
 
 #[test]
-fn usage_items_preserve_order_and_provenance() {
+fn unix_command_line_matches_kwsys() {
+    use super::target::parse_unix_command_line as parse;
+    assert_eq!(parse(r#"-x 'a b' "c d"e \ f"#), ["-x", "a b", "c de", " f"]);
+    assert_eq!(parse("a\u{b}b\t c"), ["a", "b", "c"]);
+    assert_eq!(parse("''"), [""]);
+    assert_eq!(parse("'unterminated x"), ["unterminated x"]);
+    assert_eq!(parse("  "), Vec::<String>::new());
+    assert_eq!(parse("ä'ö ü'"), ["äö ü"]);
+}
+
+#[test]
+fn device_link_options_wrap_host_flags() {
     let mut host = corpus().host.clone();
-    let props = &mut host.targets.get_mut("a").unwrap().properties;
-    props.insert("LINK_LIBRARIES".to_owned(), "b;imp".to_owned());
-    props.insert(
-        "COMPILE_OPTIONS".to_owned(),
-        "A;SHELL:-I 'two words';A".to_owned(),
+    let a = host.targets.get_mut("a").unwrap();
+    a.kind = "EXECUTABLE".to_owned();
+    a.properties.insert(
+        "LINK_OPTIONS".to_owned(),
+        "-host;$<DEVICE_LINK:-dev;SHELL:-x y>;LINKER:-z,defs;SHELL:-s t".to_owned(),
     );
-    props.insert(
-        "INCLUDE_DIRECTORIES".to_owned(),
-        "/a;/opt/imported".to_owned(),
-    );
-    props.insert("SYSTEM_INCLUDE_DIRECTORIES".to_owned(), "/a".to_owned());
-    host.targets.get_mut("b").unwrap().properties.insert(
-        "INTERFACE_COMPILE_OPTIONS".to_owned(),
-        "SHELL:-I 'two words';B;$<$<COMPILE_LANG_AND_ID:CXX,Clang>:CLANG>".to_owned(),
-    );
-    host.targets.get_mut("imp").unwrap().properties.insert(
-        "INTERFACE_INCLUDE_DIRECTORIES".to_owned(),
-        "/opt/imported".to_owned(),
-    );
-    host.targets.get_mut("imp").unwrap().properties.insert(
-        "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES".to_owned(),
-        "/explicit".to_owned(),
-    );
-    host.targets
-        .get_mut("imp")
-        .unwrap()
-        .properties
-        .get_mut("INTERFACE_INCLUDE_DIRECTORIES")
-        .unwrap()
-        .push_str(";/explicit");
-    host.variables
-        .insert("CMAKE_CXX_COMPILER_ID".to_owned(), "Clang".to_owned());
-    host.backtraces
-        .insert(("a".to_owned(), "COMPILE_OPTIONS".to_owned()), 11);
-    host.backtraces
-        .insert(("b".to_owned(), "INTERFACE_COMPILE_OPTIONS".to_owned()), 12);
-    let options = target_usage(&mut host, "a", "COMPILE_OPTIONS", "Debug", "CXX").unwrap();
+    a.properties.remove("INTERFACE_LINK_LIBRARIES");
+    for (name, value) in [
+        ("CMAKE_CUDA_DEVICE_COMPILER_WRAPPER_FLAG", "-Xcompiler=;"),
+        ("CMAKE_CUDA_DEVICE_COMPILER_WRAPPER_FLAG_SEP", ","),
+        ("CMAKE_CUDA_DEVICE_LINKER_WRAPPER_FLAG", "-Xlinker; "),
+        ("CMAKE_CUDA_LINKER_WRAPPER_FLAG", "-Wl,"),
+        ("CMAKE_CUDA_LINKER_WRAPPER_FLAG_SEP", ","),
+    ] {
+        host.variables.insert(name.to_owned(), value.to_owned());
+    }
+    let values = |host: &mut MockHost, device| {
+        let mut ctx = EvalContext {
+            language: Some("CUDA"),
+            device_link: device,
+            ..EvalContext::default()
+        };
+        usage_requirements(host, "a", "LINK_OPTIONS", &mut ctx)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.value)
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        options
-            .iter()
-            .map(|item| (item.value.as_str(), item.backtrace))
-            .collect::<Vec<_>>(),
+        values(&mut host, false),
+        ["-host", "-Wl,-z,defs", "-s", "t"]
+    );
+    // Device sections split SHELL: options; host options stay whole until
+    // they are parsed and wrapped for the device compiler. Nested linker
+    // flags keep LINKER: and then use the device linker wrapper.
+    assert_eq!(
+        values(&mut host, true),
         [
-            ("A", Some(11)),
-            ("-I", Some(11)),
-            ("two words", Some(11)),
-            ("B", Some(12)),
-            ("CLANG", Some(12))
+            "-Xcompiler=-host",
+            "-dev",
+            "-x",
+            "y",
+            "-Xlinker",
+            "-z",
+            "-Xlinker",
+            "defs",
+            "-Xcompiler=-s,t"
         ]
     );
-    let includes = target_usage(&mut host, "a", "INCLUDE_DIRECTORIES", "", "CXX").unwrap();
-    assert_eq!(
-        includes
-            .iter()
-            .map(|item| (item.value.as_str(), item.system))
-            .collect::<Vec<_>>(),
-        [
-            ("/a", true),
-            ("/opt/imported", true),
-            ("/b", false),
-            ("/d", false),
-            ("/explicit", true)
-        ]
+}
+
+#[test]
+fn per_root_already_seen() {
+    // Two separate top-level evaluations must not share their Seen sets.
+    let mut host = corpus().host.clone();
+    let mut ctx = EvalContext::default();
+    let expression = parse(
+        "$<TARGET_PROPERTY:a,INTERFACE_LINK_OPTIONS>|$<TARGET_PROPERTY:a,INTERFACE_LINK_OPTIONS>",
     );
+    assert_eq!(
+        evaluate(&expression, &mut ctx, &mut host).unwrap(),
+        "A_LINK;B_LINK;D_LINK;C_LINK|A_LINK;B_LINK;D_LINK;C_LINK"
+    );
+}
+
+#[derive(Deserialize)]
+struct UsageCorpus {
+    variables: BTreeMap<String, String>,
+    missing_path: String,
+    cases: Vec<UsageCase>,
+}
+
+#[derive(Deserialize)]
+struct UsageCase {
+    name: String,
+    targets: BTreeMap<String, MockTarget>,
+    aliases: BTreeMap<String, String>,
+    logs: BTreeMap<String, Vec<(Backtrace, String)>>,
+    error: Option<String>,
+    ninja: Option<BTreeMap<String, String>>,
+}
+
+fn usage_corpus() -> &'static UsageCorpus {
+    static CORPUS: OnceLock<UsageCorpus> = OnceLock::new();
+    CORPUS.get_or_init(|| {
+        serde_json::from_str(include_str!("../../tests/data/genex_usage_corpus.json")).unwrap()
+    })
+}
+
+const USAGE_LOGS: [(&str, &str); 6] = [
+    ("compile options", "COMPILE_OPTIONS"),
+    ("compile definitions", "COMPILE_DEFINITIONS"),
+    ("includes", "INCLUDE_DIRECTORIES"),
+    ("compile features", "COMPILE_FEATURES"),
+    ("link options", "LINK_OPTIONS"),
+    ("link directories", "LINK_DIRECTORIES"),
+];
+
+fn replay_usage(case: &UsageCase) {
+    use super::target::parse_unix_command_line as parse;
+    let corpus = usage_corpus();
+    let mut host = MockHost {
+        variables: corpus.variables.clone(),
+        targets: case.targets.clone(),
+        aliases: case.aliases.clone(),
+        missing_path: corpus.missing_path.clone(),
+        ..MockHost::default()
+    };
+    let results: Vec<_> = USAGE_LOGS
+        .iter()
+        .map(|(log, prop)| (*log, target_usage(&mut host, "main", prop, "", "C")))
+        .collect();
+    if let Some(expected) = &case.error {
+        let errors: Vec<String> = results
+            .iter()
+            .filter_map(|(_, result)| result.as_ref().err())
+            .map(|error| crate::messages::format_text(&error.to_string(), 2))
+            .collect();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.trim_end() == expected.trim_end()),
+            "{}: expected error\n{expected}\ngot {errors:#?}",
+            case.name
+        );
+        return;
+    }
+    let ninja = case.ninja.as_ref().unwrap();
+    for (log, result) in results {
+        let items = result.unwrap_or_else(|error| panic!("{}: {log}: {error}", case.name));
+        let expected = case.logs.get(log).cloned().unwrap_or_default();
+        match log {
+            "compile options" => {
+                // The log shows values before SHELL: splitting.
+                let expected: Vec<(Backtrace, String)> = expected
+                    .into_iter()
+                    .flat_map(|(line, value)| match value.strip_prefix("SHELL:") {
+                        Some(rest) => parse(rest).into_iter().map(|v| (line, v)).collect(),
+                        None => vec![(line, value)],
+                    })
+                    .collect();
+                let actual: Vec<_> = items
+                    .iter()
+                    .map(|item| (item.backtrace.unwrap(), item.value.clone()))
+                    .collect();
+                assert_eq!(actual, expected, "{}: {log}", case.name);
+                let values: Vec<_> = items.iter().map(|item| item.value.clone()).collect();
+                assert_eq!(values, parse(&ninja["FLAGS"]), "{}: FLAGS", case.name);
+            }
+            "link options" => {
+                // The log shows values before SHELL: splitting and LINKER:
+                // wrapping; build.ninja shows the final flags.
+                let mut flags = parse(&ninja["LINK_FLAGS"]);
+                assert!(flags.pop().unwrap().starts_with("-Wl,--dependency-file="));
+                let values: Vec<_> = items.iter().map(|item| item.value.clone()).collect();
+                assert_eq!(values, flags, "{}: LINK_FLAGS", case.name);
+                let lines: BTreeSet<_> = expected.iter().map(|(line, _)| *line).collect();
+                assert!(
+                    items
+                        .iter()
+                        .all(|item| lines.contains(&item.backtrace.unwrap())),
+                    "{}: link option backtraces",
+                    case.name
+                );
+            }
+            _ => {
+                let actual: Vec<_> = items
+                    .iter()
+                    .map(|item| (item.backtrace.unwrap(), item.value.clone()))
+                    .collect();
+                assert_eq!(actual, expected, "{}: {log}", case.name);
+            }
+        }
+        if log == "includes" {
+            // cmLocalGenerator moves system directories last, so compare
+            // classification rather than order.
+            let mut tokens = parse(&ninja["INCLUDES"]).into_iter();
+            let mut system = BTreeMap::new();
+            while let Some(token) = tokens.next() {
+                if token == "-isystem" {
+                    system.insert(tokens.next().unwrap(), true);
+                } else {
+                    system.insert(token.strip_prefix("-I").unwrap().to_owned(), false);
+                }
+            }
+            for item in &items {
+                assert_eq!(
+                    system.get(&item.value),
+                    Some(&item.system),
+                    "{}: system flag of {}",
+                    case.name,
+                    item.value
+                );
+            }
+        }
+    }
+}
+
+macro_rules! usage_cases {
+    ($($name:ident => $index:expr,)*) => {
+        $(
+            #[test]
+            fn $name() {
+                replay_usage(&usage_corpus().cases[$index]);
+            }
+        )*
+        #[test]
+        fn all_usage_rows_are_tested() {
+            assert_eq!(usage_corpus().cases.len(), [$($index),*].len());
+        }
+    };
+}
+
+include!("usage_corpus_tests.rs");
+
+#[test]
+fn interface_usage_collects_transitive_includes_and_their_origins() {
+    let mut host = corpus().host.clone();
+    host.backtraces
+        .insert(("a".into(), "INTERFACE_INCLUDE_DIRECTORIES".into()), 7);
+    host.backtraces
+        .insert(("a".into(), "INTERFACE_LINK_LIBRARIES".into()), 8);
     host.targets
-        .get_mut("a")
+        .get_mut("b")
         .unwrap()
         .properties
-        .insert("NO_SYSTEM_FROM_IMPORTED".to_owned(), "ON".to_owned());
-    let includes = target_usage(&mut host, "a", "INCLUDE_DIRECTORIES", "", "CXX").unwrap();
-    assert!(
-        !includes
+        .insert("SYSTEM".into(), "ON".into());
+    let items = target_usage(
+        &mut host,
+        "a",
+        "INTERFACE_INCLUDE_DIRECTORIES",
+        "Debug",
+        "C",
+    )
+    .unwrap();
+    assert_eq!(
+        items
             .iter()
-            .find(|item| item.value == "/opt/imported")
-            .unwrap()
-            .system
-    );
-    assert!(
-        includes
-            .iter()
-            .find(|item| item.value == "/explicit")
-            .unwrap()
-            .system
+            .map(|item| (item.value.as_str(), item.backtrace, item.system))
+            .collect::<Vec<_>>(),
+        [
+            ("/a", Some(7), false),
+            ("/b", Some(8), true),
+            ("/d", Some(8), false)
+        ]
     );
 }

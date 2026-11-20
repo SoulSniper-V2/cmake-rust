@@ -77,6 +77,76 @@
   "aliases": {
     "alias": "a"
   },
+  "c_variables": {
+    "CMAKE_C_COMPILER_ID": "GNU",
+    "CMAKE_C_COMPILER_VERSION": "13.3.0",
+    "CMAKE_C_COMPILER_FRONTEND_VARIANT": "GNU",
+    "CMAKE_C_COMPILE_FEATURES": "c_std_90;c_function_prototypes;c_std_99;c_restrict;c_variadic_macros;c_std_11;c_static_assert;c_std_17;c_std_23",
+    "CMAKE_C_COMPILER_LOADED": "1",
+    "CMAKE_C_STANDARD_DEFAULT": "17"
+  },
+  "c_targets": {
+    "s": {
+      "type": "STATIC",
+      "properties": {
+        "SOURCES": "main.c",
+        "LINK_LIBRARIES": "a;p;$<LINK_ONLY:q>",
+        "INTERFACE_LINK_LIBRARIES": "$<LINK_ONLY:p>;a;$<LINK_ONLY:q>",
+        "INCLUDE_DIRECTORIES": "/s-inc;/$<COMPILE_LANGUAGE>-lang",
+        "LABEL": "S",
+        "COMPILE_DEFINITIONS": "S_DEF;$<TARGET_PROPERTY:LABEL>;$<$<COMPILE_LANG_AND_ID:C,GNU>:S_GNU>",
+        "INTERFACE_COMPILE_DEFINITIONS": "S_IFACE;$<$<COMPILE_LANGUAGE:C>:S_C>",
+        "COMPILE_OPTIONS": "-s-opt",
+        "LINK_OPTIONS": "-s-link",
+        "LINK_DIRECTORIES": "/s-lib",
+        "CUSTOM": "s-custom",
+        "INTERFACE_CUSTOM": "s-iface-custom",
+        "TRANSITIVE_LINK_PROPERTIES": "CUSTOM",
+        "RAW": "$<TARGET_PROPERTY:LABEL>-$<COMPILE_LANGUAGE>"
+      }
+    },
+    "e": {
+      "type": "EXECUTABLE",
+      "properties": {
+        "SOURCES": "main.c",
+        "LINK_LIBRARIES": "s;x",
+        "INCLUDE_DIRECTORIES": "/e-inc",
+        "COMPILE_DEFINITIONS": "E_DEF",
+        "INTERFACE_LINK_LIBRARIES": "p",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/e-iface",
+        "CUSTOM": "e-custom"
+      }
+    },
+    "x": {
+      "type": "EXECUTABLE",
+      "properties": {
+        "SOURCES": "main.c",
+        "INTERFACE_COMPILE_DEFINITIONS": "X_IFACE",
+        "INTERFACE_LINK_LIBRARIES": "p"
+      }
+    },
+    "p": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "P;$<TARGET_PROPERTY:LABEL>",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/p-inc",
+        "INTERFACE_LINK_OPTIONS": "-p-link",
+        "INTERFACE_LINK_DIRECTORIES": "/p-lib",
+        "INTERFACE_COMPILE_OPTIONS": "$<$<COMPILE_LANGUAGE:C>:-p-c>",
+        "INTERFACE_CUSTOM": "p-custom",
+        "INTERFACE_LINK_LIBRARIES": "q"
+      }
+    },
+    "q": {
+      "type": "INTERFACE",
+      "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "Q",
+        "INTERFACE_LINK_OPTIONS": "-q-link",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/q-inc",
+        "INTERFACE_CUSTOM": "q-custom"
+      }
+    }
+  },
   "cases": [
     {
       "expression": "$<BOOL:>",
@@ -3240,7 +3310,11 @@
           }
         }
       },
-      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n\n  Dependency loop found.\n"
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n\n  Dependency loop found.\n",
+      "loop_steps": [
+        "  Loop step 1\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n",
+        "  Loop step 2\n\n    $<TARGET_PROPERTY:b,INTERFACE_COMPILE_DEFINITIONS>\n"
+      ]
     },
     {
       "expression": "$<LIST:LENGTH,a;;b;>",
@@ -4900,6 +4974,1026 @@
       "expression": "$<STRE$<1:QUAL>:x,x>",
       "setup": {},
       "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "C"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX,C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,Clang,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:CXX,GNU>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,bad-id>\n\n  $<COMPILE_LANG_AND_ID:lang,id> may only be used with binary targets to\n  specify include directories, compile definitions, and compile options.  It\n  may not be used with the add_custom_command, add_custom_target, or\n  file(GENERATE) commands.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE:C>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:C,GNU>\n\n  $<LINK_LANG_AND_ID:lang,id> may only be used with binary targets to specify\n  link libraries, link directories, link options, and link depends.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:GNU>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:Clang,GNU>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:bad-id>\n\n  $<C_COMPILER_ID> may only be used with binary targets.  It may not be used\n  with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13.3>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3.0.0>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:13.3.0.0>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:1.2.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_VERSION:1.2.3>\n\n  $<C_COMPILER_VERSION> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_FRONTEND_VARIANT>\n\n  $<C_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_FRONTEND_VARIANT:GNU>\n\n  $<C_COMPILER_FRONTEND_VARIANT> may only be used with binary targets.  It\n  may not be used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_ID>\n\n  $<CXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<CXX_COMPILER_ID:GNU>\n\n  $<CXX_COMPILER_ID> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_restrict,c_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_restrict,c_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99,cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99,cxx_std_11>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:bogus_feature>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:bogus_feature>\n\n  $<COMPILE_FEATURE> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/s-inc;/C-lang;/a;/b;/d;/p-inc;/q-inc"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-s-opt;-p-c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "a;p;q;b;c;b;d;a;q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-s-link;A_LINK;B_LINK;D_LINK;C_LINK;-p-link;-q-link"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "-p-link;-q-link;A_LINK;B_LINK;D_LINK;C_LINK"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/s-lib;/p-lib"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/e-inc;/a;/b;/d"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "E_DEF;S_IFACE;S_C;A;B;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "p"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "/e-iface"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:x,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "X_IFACE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s;x;p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,SOURCES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "main.c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "STATIC_LIBRARY"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "EXECUTABLE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s-custom;a;b;p-custom;q-custom"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "e-custom;s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:LABEL>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:LABEL>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:COMPILE_DEFINITIONS>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0131>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_POLICY:CMP0131>\n\n  $<TARGET_POLICY:prop> may only be used with binary targets.  It may not be\n  used with add_custom_command or add_custom_target.\n"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:s,$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<TARGET_PROPERTY:LABEL>\n\n  $<TARGET_PROPERTY:prop> may only be used with binary targets.  It may not\n  be used with add_custom_command or add_custom_target.  Specify the target\n  to read a property from using the $<TARGET_PROPERTY:tgt,prop> signature\n  instead.\n"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:s>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:e>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "e"
+    },
+    {
+      "expression": "$<CONFIG>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:Debug>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<$<CONFIG:Debug>:dbg>$<$<CONFIG:Release>:rel>",
+      "setup": {
+        "language": "C",
+        "config": "Debug"
+      },
+      "output": "dbg"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "C"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX,C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANGUAGE:CXX>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_LANG_AND_ID:C,bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_LANG_AND_ID:C,bad-id>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<LINK_LANGUAGE:C>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANGUAGE:C>\n\n  $<LINK_LANGUAGE:...> may only be used with binary targets to specify link\n  libraries, link directories, link options and link depends.\n"
+    },
+    {
+      "expression": "$<LINK_LANG_AND_ID:C,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<LINK_LANG_AND_ID:C,GNU>\n\n  $<LINK_LANG_AND_ID:lang,id> may only be used with binary targets to specify\n  link libraries, link directories, link options, and link depends.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "GNU"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:Clang,GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_ID:bad-id>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<C_COMPILER_ID:bad-id>\n\n  Expression syntax not recognized.\n"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "13.3.0"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:13.3.0.0>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<C_COMPILER_VERSION:1.2.3>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "GNU"
+    },
+    {
+      "expression": "$<C_COMPILER_FRONTEND_VARIANT:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": ""
+    },
+    {
+      "expression": "$<CXX_COMPILER_ID:GNU>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "0"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_restrict,c_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:cxx_std_11>\n\n  cannot use features from non-enabled language CXX\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:c_std_99,cxx_std_11>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:c_std_99,cxx_std_11>\n\n  cannot use features from non-enabled language CXX\n"
+    },
+    {
+      "expression": "$<COMPILE_FEATURES:bogus_feature>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "error": "  Error evaluating generator expression:\n\n    $<COMPILE_FEATURES:bogus_feature>\n\n  specified unknown feature \"bogus_feature\" for target \"s\".\n"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/s-inc;/C-lang;/a;/b;/d;/p-inc;/q-inc"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,COMPILE_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-s-opt;-p-c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "a;p;q;b;c;b;d;a;q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-s-link;A_LINK;B_LINK;D_LINK;C_LINK;-p-link;-q-link"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_LINK_OPTIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "-p-link;-q-link;A_LINK;B_LINK;D_LINK;C_LINK"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,LINK_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/s-lib;/p-lib"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/e-inc;/a;/b;/d"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "E_DEF;S_IFACE;S_C;A;B;D"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "p"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,INTERFACE_INCLUDE_DIRECTORIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "/e-iface"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:x,INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "X_IFACE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,LINK_LIBRARIES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s;x;p;a;q;q;b;c;b;d;a"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,SOURCES>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "main.c"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "STATIC_LIBRARY"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,TYPE>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "EXECUTABLE"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s-custom;a;b;p-custom;q-custom"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:e,CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "e-custom;s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:s,INTERFACE_CUSTOM>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "s-iface-custom;p-custom;q-custom;a;b"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:LABEL>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_DEF;S;S_GNU;A;S;;;B;S;D;P;S;Q"
+    },
+    {
+      "expression": "$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S_IFACE;S_C;A;S;B;S;D"
+    },
+    {
+      "expression": "$<TARGET_POLICY:CMP0131>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_GENEX_EVAL:s,$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<GENEX_EVAL:$<TARGET_PROPERTY:s,RAW>>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "S-C"
+    },
+    {
+      "expression": "$<TARGET_EXISTS:s>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<TARGET_NAME_IF_EXISTS:e>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "e"
+    },
+    {
+      "expression": "$<CONFIG>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "Debug"
+    },
+    {
+      "expression": "$<CONFIG:Debug>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "1"
+    },
+    {
+      "expression": "$<$<CONFIG:Debug>:dbg>$<$<CONFIG:Release>:rel>",
+      "setup": {
+        "language": "C",
+        "config": "Debug",
+        "head": "s"
+      },
+      "output": "dbg"
     }
   ]
 }

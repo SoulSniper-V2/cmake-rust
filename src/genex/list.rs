@@ -7,7 +7,7 @@ use crate::cmregex::Regex;
 use crate::policy::PolicyStatus;
 use crate::util;
 
-use super::cm_list;
+use super::{GenexHost, cm_list};
 
 pub(super) fn dedup(mut values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -69,7 +69,11 @@ fn index(pos: i64, len: usize, insert: bool) -> Result<usize, String> {
     Err(format!("index: {pos} out of range ({range})"))
 }
 
-pub(super) fn evaluate(args: &[String], anchor: PolicyStatus) -> Result<String, String> {
+pub(super) fn evaluate(
+    args: &[String],
+    anchor: PolicyStatus,
+    host: &mut dyn GenexHost,
+) -> Result<String, String> {
     let [op, input, tail @ ..] = args else {
         unreachable!()
     };
@@ -188,7 +192,7 @@ pub(super) fn evaluate(args: &[String], anchor: PolicyStatus) -> Result<String, 
                 )
             })?;
         }
-        "TRANSFORM" => transform(&mut values, tail, anchor)?,
+        "TRANSFORM" => transform(&mut values, tail, anchor, host)?,
         "REVERSE" => values.reverse(),
         "SORT" => sort(&mut values, tail)?,
         _ => unreachable!(),
@@ -224,7 +228,7 @@ fn sort(values: &mut [String], args: &[String]) -> Result<(), String> {
     }
     let key = |value: &str| {
         let value = if compare == Some("FILE_BASENAME") {
-            util::filename_name(value)
+            super::path::filename_name(value).to_owned()
         } else {
             value.to_owned()
         };
@@ -282,10 +286,15 @@ fn natural(left: &str, right: &str) -> Ordering {
             }
         }
     }
-    a.cmp(&b)
+    (a as std::ffi::c_char).cmp(&(b as std::ffi::c_char))
 }
 
-fn transform(values: &mut [String], args: &[String], anchor: PolicyStatus) -> Result<(), String> {
+fn transform(
+    values: &mut [String],
+    args: &[String],
+    anchor: PolicyStatus,
+    host: &mut dyn GenexHost,
+) -> Result<(), String> {
     if values.is_empty() {
         return Ok(());
     }
@@ -320,7 +329,7 @@ fn transform(values: &mut [String], args: &[String], anchor: PolicyStatus) -> Re
                     .trim_matches(|c: char| c.is_ascii_whitespace() || c == '\u{b}')
                     .to_owned()
             }
-            "REPLACE" => *value = replace.as_ref().unwrap().replace(value)?,
+            "REPLACE" => *value = replace.as_ref().unwrap().replace(value, host)?,
             _ => unreachable!(),
         }
     }
@@ -475,19 +484,27 @@ impl<'a> Replacement<'a> {
             rest = &rest[at + 1 + escape.len_utf8()..];
         }
         parts.push(ReplacePart::Literal(rest));
-        let mut escaped = false;
-        let mut in_class = false;
         let mut capture_count = 0;
-        for b in pattern.bytes() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            match b {
-                b'\\' => escaped = true,
-                b'[' => in_class = true,
-                b']' => in_class = false,
-                b'(' if !in_class => capture_count += 1,
+        let mut bytes = pattern.bytes().take_while(|b| *b != 0).peekable();
+        while let Some(byte) = bytes.next() {
+            match byte {
+                b'\\' => {
+                    bytes.next();
+                }
+                b'[' => {
+                    if bytes.peek() == Some(&b'^') {
+                        bytes.next();
+                    }
+                    if matches!(bytes.peek(), Some(b']' | b'-')) {
+                        bytes.next();
+                    }
+                    for next in bytes.by_ref() {
+                        if next == b']' {
+                            break;
+                        }
+                    }
+                }
+                b'(' => capture_count += 1,
                 _ => {}
             }
         }
@@ -501,22 +518,17 @@ impl<'a> Replacement<'a> {
         })
     }
 
-    fn replace(&self, input: &str) -> Result<String, String> {
+    fn replace(&self, input: &str, host: &mut dyn GenexHost) -> Result<String, String> {
         let mut result = Vec::new();
         let mut base = 0;
-        let mut offset = 0;
-        while offset <= input.len() {
-            let (found, shift) =
-                if self.anchor == PolicyStatus::New || !input.is_char_boundary(offset) {
-                    (self.regex.find_at(input, offset, true), 0)
-                } else {
-                    (self.regex.find(&input[offset..]), offset)
-                };
-            let Some(found) = found else {
-                break;
-            };
+        let mut nonempty_at_offset = false;
+        let bol_at_offset = self.anchor != PolicyStatus::New;
+        while let Some(found) = self
+            .regex
+            .find_with(input, base, bol_at_offset, nonempty_at_offset)
+        {
             let (start, end) = found.groups[0].unwrap();
-            let (start, end) = (start + shift, end + shift);
+            host.record_regex_match(input, &found.groups);
             result.extend_from_slice(&input.as_bytes()[base..start]);
             for part in &self.parts {
                 match *part {
@@ -529,13 +541,16 @@ impl<'a> Replacement<'a> {
                             ));
                         }
                         if let Some((start, end)) = found.groups[i] {
-                            result.extend_from_slice(&input.as_bytes()[start + shift..end + shift]);
+                            result.extend_from_slice(&input.as_bytes()[start..end]);
                         }
                     }
                 }
             }
             base = end;
-            offset = end + usize::from(start == end);
+            if start == input.len() {
+                break;
+            }
+            nonempty_at_offset = start == end;
         }
         result.extend_from_slice(&input.as_bytes()[base..]);
         Ok(String::from_utf8_lossy(&result).into_owned())

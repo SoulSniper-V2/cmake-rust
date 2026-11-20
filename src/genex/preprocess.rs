@@ -1,6 +1,8 @@
 //! String-level helpers from cmGeneratorExpression.cxx.
 
-use crate::util::{expand_list, is_full_path};
+use crate::util::expand_list;
+
+use super::path::file_is_full_path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreprocessContext {
@@ -129,7 +131,7 @@ pub fn preprocess(input: &str, context: PreprocessContext, import_prefix: &str) 
             ("$<INSTALL_INTERFACE:", PreprocessContext::InstallInterface) => {
                 let mut items = split(content);
                 for item in &mut items {
-                    if !is_full_path(item) && find(item) != Some(0) {
+                    if !file_is_full_path(item) && find(item) != Some(0) {
                         item.insert_str(0, import_prefix);
                     }
                 }

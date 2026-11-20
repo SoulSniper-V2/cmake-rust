@@ -2,6 +2,7 @@
 """Regenerate genex_corpus.json and its unit-test inventory with CMake 4.1.0."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -189,6 +190,40 @@ def cases():
         "$<1:a,b:$<1:c,d>>", "$<1:>${missing}", "$<STRE$<1:QUAL>:x,x>",
     ]:
         yield expression, {}
+    # project(x C): a real compiler and binary targets (see C_TARGETS).
+    for head in [None, "s"]:
+        extra = {"head": head} if head else {}
+        for expression in [
+            "$<COMPILE_LANGUAGE>", "$<COMPILE_LANGUAGE:C>", "$<COMPILE_LANGUAGE:CXX,C>",
+            "$<COMPILE_LANGUAGE:CXX>", "$<COMPILE_LANG_AND_ID:C,GNU>",
+            "$<COMPILE_LANG_AND_ID:C,Clang,GNU>", "$<COMPILE_LANG_AND_ID:CXX,GNU>",
+            "$<COMPILE_LANG_AND_ID:C,bad-id>", "$<LINK_LANGUAGE:C>", "$<LINK_LANG_AND_ID:C,GNU>",
+            "$<C_COMPILER_ID>", "$<C_COMPILER_ID:GNU>", "$<C_COMPILER_ID:Clang,GNU>",
+            "$<C_COMPILER_ID:bad-id>", "$<C_COMPILER_VERSION>", "$<C_COMPILER_VERSION:13>",
+            "$<C_COMPILER_VERSION:13.3>", "$<C_COMPILER_VERSION:13.3.0.0>",
+            "$<C_COMPILER_VERSION:1.2.3>", "$<C_COMPILER_FRONTEND_VARIANT>",
+            "$<C_COMPILER_FRONTEND_VARIANT:GNU>", "$<CXX_COMPILER_ID>", "$<CXX_COMPILER_ID:GNU>",
+            "$<COMPILE_FEATURES:c_std_99>", "$<COMPILE_FEATURES:c_restrict,c_std_11>",
+            "$<COMPILE_FEATURES:cxx_std_11>", "$<COMPILE_FEATURES:c_std_99,cxx_std_11>",
+            "$<COMPILE_FEATURES:bogus_feature>",
+            "$<TARGET_PROPERTY:s,INCLUDE_DIRECTORIES>", "$<TARGET_PROPERTY:s,COMPILE_DEFINITIONS>",
+            "$<TARGET_PROPERTY:s,INTERFACE_COMPILE_DEFINITIONS>", "$<TARGET_PROPERTY:s,COMPILE_OPTIONS>",
+            "$<TARGET_PROPERTY:s,LINK_LIBRARIES>", "$<TARGET_PROPERTY:s,INTERFACE_LINK_LIBRARIES>",
+            "$<TARGET_PROPERTY:s,LINK_OPTIONS>", "$<TARGET_PROPERTY:s,INTERFACE_LINK_OPTIONS>",
+            "$<TARGET_PROPERTY:s,LINK_DIRECTORIES>", "$<TARGET_PROPERTY:e,INCLUDE_DIRECTORIES>",
+            "$<TARGET_PROPERTY:e,COMPILE_DEFINITIONS>", "$<TARGET_PROPERTY:e,INTERFACE_LINK_LIBRARIES>",
+            "$<TARGET_PROPERTY:e,INTERFACE_INCLUDE_DIRECTORIES>",
+            "$<TARGET_PROPERTY:x,INTERFACE_COMPILE_DEFINITIONS>",
+            "$<TARGET_PROPERTY:e,LINK_LIBRARIES>", "$<TARGET_PROPERTY:s,SOURCES>",
+            "$<TARGET_PROPERTY:s,TYPE>", "$<TARGET_PROPERTY:e,TYPE>", "$<TARGET_PROPERTY:s,CUSTOM>",
+            "$<TARGET_PROPERTY:e,CUSTOM>", "$<TARGET_PROPERTY:s,INTERFACE_CUSTOM>",
+            "$<TARGET_PROPERTY:LABEL>", "$<TARGET_PROPERTY:COMPILE_DEFINITIONS>",
+            "$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>", "$<TARGET_POLICY:CMP0131>",
+            "$<TARGET_GENEX_EVAL:s,$<TARGET_PROPERTY:s,RAW>>", "$<GENEX_EVAL:$<TARGET_PROPERTY:s,RAW>>",
+            "$<TARGET_EXISTS:s>", "$<TARGET_NAME_IF_EXISTS:e>",
+            "$<CONFIG>", "$<CONFIG:Debug>", "$<$<CONFIG:Debug>:dbg>$<$<CONFIG:Release>:rel>",
+        ]:
+            yield expression, {"language": "C", "config": "Debug", **extra}
 
 
 TARGETS = {
@@ -225,13 +260,55 @@ TARGETS = {
     }},
 }
 ALIASES = {"alias": "a"}
+C_TARGETS = {
+    "s": {"type": "STATIC", "properties": {
+        "SOURCES": "main.c", "LINK_LIBRARIES": "a;p;$<LINK_ONLY:q>",
+        "INTERFACE_LINK_LIBRARIES": "$<LINK_ONLY:p>;a;$<LINK_ONLY:q>",
+        "INCLUDE_DIRECTORIES": "/s-inc;/$<COMPILE_LANGUAGE>-lang", "LABEL": "S",
+        "COMPILE_DEFINITIONS": "S_DEF;$<TARGET_PROPERTY:LABEL>;$<$<COMPILE_LANG_AND_ID:C,GNU>:S_GNU>",
+        "INTERFACE_COMPILE_DEFINITIONS": "S_IFACE;$<$<COMPILE_LANGUAGE:C>:S_C>",
+        "COMPILE_OPTIONS": "-s-opt", "LINK_OPTIONS": "-s-link", "LINK_DIRECTORIES": "/s-lib",
+        "CUSTOM": "s-custom", "INTERFACE_CUSTOM": "s-iface-custom",
+        "TRANSITIVE_LINK_PROPERTIES": "CUSTOM",
+        "RAW": "$<TARGET_PROPERTY:LABEL>-$<COMPILE_LANGUAGE>",
+    }},
+    "e": {"type": "EXECUTABLE", "properties": {
+        "SOURCES": "main.c", "LINK_LIBRARIES": "s;x", "INCLUDE_DIRECTORIES": "/e-inc",
+        "COMPILE_DEFINITIONS": "E_DEF", "INTERFACE_LINK_LIBRARIES": "p",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/e-iface", "CUSTOM": "e-custom",
+    }},
+    "x": {"type": "EXECUTABLE", "properties": {
+        "SOURCES": "main.c", "INTERFACE_COMPILE_DEFINITIONS": "X_IFACE", "INTERFACE_LINK_LIBRARIES": "p",
+    }},
+    "p": {"type": "INTERFACE", "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "P;$<TARGET_PROPERTY:LABEL>",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/p-inc", "INTERFACE_LINK_OPTIONS": "-p-link",
+        "INTERFACE_LINK_DIRECTORIES": "/p-lib",
+        "INTERFACE_COMPILE_OPTIONS": "$<$<COMPILE_LANGUAGE:C>:-p-c>",
+        "INTERFACE_CUSTOM": "p-custom", "INTERFACE_LINK_LIBRARIES": "q",
+    }},
+    "q": {"type": "INTERFACE", "properties": {
+        "INTERFACE_COMPILE_DEFINITIONS": "Q", "INTERFACE_LINK_OPTIONS": "-q-link",
+        "INTERFACE_INCLUDE_DIRECTORIES": "/q-inc", "INTERFACE_CUSTOM": "q-custom",
+    }},
+}
+C_VARIABLES = ["CMAKE_C_COMPILER_ID", "CMAKE_C_COMPILER_VERSION", "CMAKE_C_COMPILER_FRONTEND_VARIANT",
+               "CMAKE_C_COMPILE_FEATURES", "CMAKE_C_COMPILER_LOADED", "CMAKE_C_STANDARD_DEFAULT"]
+
+
+C_FOUND = {}
 
 
 def capture(oracle, root, case, setup):
-    script = ["cmake_minimum_required(VERSION 4.1)", "project(x NONE)"]
-    for target, value in TARGETS.items():
+    c_project = setup.get("language") == "C"
+    script = ["cmake_minimum_required(VERSION 4.1)", f"project(x {'C' if c_project else 'NONE'})"]
+    targets = TARGETS | (C_TARGETS if c_project else {})
+    for target, value in targets.items():
         imported = " IMPORTED" if value.get("imported") else ""
-        script.append(f"add_library({target} {value['type']}{imported})")
+        if value["type"] == "EXECUTABLE":
+            script.append(f"add_executable({target})")
+        else:
+            script.append(f"add_library({target} {value['type']}{imported})")
         props = value["properties"] | setup.get("properties", {}).get(target, {})
         for prop, val in props.items():
             script.append(f"set_property(TARGET {target} PROPERTY {prop} {bracket(val)})")
@@ -239,19 +316,36 @@ def capture(oracle, root, case, setup):
         script.append(f"add_library({alias} ALIAS {target})")
     head = " TARGET " + setup["head"] if "head" in setup else ""
     script.append(f"file(GENERATE OUTPUT out.txt CONTENT {bracket(case)}{head})")
+    if c_project:
+        script.append("foreach(v IN ITEMS " + " ".join(C_VARIABLES) + ")")
+        script.append('  message(STATUS "GENEX-VAR ${v}=${${v}}")')
+        script.append("endforeach()")
     (root / "CMakeLists.txt").write_text("\n".join(script) + "\n")
+    (root / "main.c").write_text("int main(void) { return 0; }\n")
     output = root / "b" / "out.txt"
     output.unlink(missing_ok=True)
     run = subprocess.run([oracle, "-G", "Ninja", "-S", root, "-B", root / "b",
                           f"-DCMAKE_BUILD_TYPE={setup.get('config', '')}"],
                          capture_output=True, text=True, check=False)
+    if c_project:
+        C_FOUND.update(re.findall(r"^-- GENEX-VAR (\w+)=(.*)$", run.stdout, re.M))
     if run.returncode == 0:
         return {"output": output.read_text()}
     marker = "  Error evaluating generator expression:\n"
     if marker not in run.stderr:
         raise RuntimeError(f"{case}: {run.returncode}\n{run.stderr}")
-    error = run.stderr[run.stderr.index(marker):].split("\n\n\n", 1)[0] + "\n"
-    return {"error": error}
+    diagnostics = run.stderr[run.stderr.index(marker):].split("\n\n\n")
+    result = {"error": diagnostics[0] + "\n"}
+    steps = []
+    for diagnostic in diagnostics[1:]:
+        match = re.search(r"^  Loop step [0-9]+\n", diagnostic, re.M)
+        if match is not None:
+            steps.append(diagnostic[match.start():] + "\n")
+        elif marker in diagnostic:
+            break
+    if steps:
+        result["loop_steps"] = steps
+    return result
 
 
 def main():
@@ -264,11 +358,15 @@ def main():
     inventory = []
     with tempfile.TemporaryDirectory(prefix="genex-oracle-") as work:
         for expression, setup in cases():
-            expected = capture(args.oracle.resolve(), Path(work), expression, setup)
+            # Separate trees keep the C compiler detection cached.
+            root = Path(work) / setup.get("language", "NONE")
+            root.mkdir(exist_ok=True)
+            expected = capture(args.oracle.resolve(), root, expression, setup)
             inventory.append({"expression": expression, "setup": setup, **expected})
     path = Path(__file__).resolve().parent
     document = {"variables": {"CMAKE_SYSTEM_NAME": "Linux"}, "targets": TARGETS,
-                "aliases": ALIASES, "cases": inventory}
+                "aliases": ALIASES, "c_variables": C_FOUND, "c_targets": C_TARGETS,
+                "cases": inventory}
     (path / "genex_corpus.json").write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n")
     inventory_file = path / "../../src/genex/corpus_tests.rs"
     with inventory_file.open("w") as tests:
@@ -277,7 +375,8 @@ def main():
         for i in range(len(inventory)):
             tests.write(f"    oracle_{i:03} => {i},\n")
         tests.write("}\n")
-    print(f"Captured {len(inventory)} oracle runs")
+    compiler = sum(case["setup"].get("language") == "C" for case in inventory)
+    print(f"Captured {len(inventory)} oracle runs ({len(inventory) - compiler} without a compiler)")
 
 
 if __name__ == "__main__":

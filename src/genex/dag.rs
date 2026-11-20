@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::collections::HashSet;
+
 use crate::genex::{Backtrace, Evaluator, GenexError, Scope};
 
 /// One cmGeneratorExpressionDAGChecker frame. The generator can supply a root
@@ -13,6 +16,8 @@ pub struct DagChecker<'a> {
     pub transitive_properties_only: bool,
     pub transitive_properties_only_cmp0131: bool,
     pub computing_link_libraries: bool,
+    /// cmGeneratorExpressionDAGChecker::Seen, meaningful on the top checker.
+    pub seen: RefCell<HashSet<(String, String)>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -35,6 +40,7 @@ impl<'a> DagChecker<'a> {
             transitive_properties_only: false,
             transitive_properties_only_cmp0131: false,
             computing_link_libraries: false,
+            seen: RefCell::default(),
         }
     }
 
@@ -96,7 +102,7 @@ impl<'a> DagChecker<'a> {
 }
 
 impl Evaluator<'_, '_> {
-    pub(super) fn check(&mut self, frame: &DagChecker<'_>) -> Check {
+    pub(super) fn check(&self, frame: &DagChecker<'_>) -> Check {
         let mut ancestor = frame.parent;
         let mut direct = true;
         while let Some(parent) = ancestor {
@@ -110,9 +116,11 @@ impl Evaluator<'_, '_> {
             ancestor = parent.parent;
             direct = false;
         }
-        if frame.root().transitive
-            && !self
+        let root = frame.root();
+        if root.transitive
+            && !root
                 .seen
+                .borrow_mut()
                 .insert((frame.target.to_owned(), frame.property.to_owned()))
         {
             return Check::AlreadySeen;

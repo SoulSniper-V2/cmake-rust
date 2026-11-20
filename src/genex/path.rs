@@ -3,6 +3,58 @@
 
 use super::{boolean, cm_list, list::check_count};
 
+/// kwsys::SystemTools::FileIsFullPath, distinct from std::filesystem.
+pub(super) fn file_is_full_path(value: &str) -> bool {
+    if cfg!(windows) {
+        value.len() >= 2 && (value.starts_with(['/', '\\']) || value.as_bytes()[1] == b':')
+    } else {
+        crate::util::is_full_path(value)
+    }
+}
+
+/// kwsys::SystemTools::GetFilenamePath.
+pub(super) fn filename_path(value: &str) -> String {
+    let normalized = unix_slashes(value);
+    if normalized.as_bytes().get(1..3) == Some(b":/") && normalized.rfind('/') == Some(2) {
+        return normalized[..3].to_owned();
+    }
+    crate::util::filename_path(&normalized)
+}
+
+/// kwsys::SystemTools::GetFilenameName.
+pub(super) fn filename_name(value: &str) -> &str {
+    value.rsplit(separator).next().unwrap_or_default()
+}
+
+/// cmSystemTools::ConvertToUnixSlashes.
+pub(super) fn unix_slashes(value: &str) -> String {
+    let value = value.replace('\\', "/");
+    let keep = if value.starts_with("//") && !value.starts_with("///") {
+        2
+    } else {
+        0
+    };
+    let mut result = value[..keep].to_owned();
+    for c in value[keep..].chars() {
+        if c != '/' || !result.ends_with('/') {
+            result.push(c);
+        }
+    }
+    if result == "~" || result.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME").and_then(|home| home.into_string().ok()) {
+            result.replace_range(..1, &home);
+        }
+    }
+    if result.len() > 1
+        && result.ends_with('/')
+        && !result.ends_with("//")
+        && !(result.len() == 3 && result.ends_with(":/"))
+    {
+        result.pop();
+    }
+    result
+}
+
 fn separator(c: char) -> bool {
     c == '/' || (cfg!(windows) && c == '\\')
 }
