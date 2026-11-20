@@ -1,0 +1,6 @@
+file(MAKE_DIRECTORY a)
+file(CREATE_LINK a b COPY_ON_ERROR RESULT out)
+if(IS_DIRECTORY b)
+  message(copied)
+endif()
+message("[${out}]")

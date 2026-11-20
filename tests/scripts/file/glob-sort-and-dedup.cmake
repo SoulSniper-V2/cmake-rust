@@ -1,0 +1,6 @@
+file(WRITE b.txt B)
+file(WRITE a.txt A)
+file(WRITE .hidden H)
+file(MAKE_DIRECTORY c.txt)
+file(GLOB out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" LIST_DIRECTORIES FALSE "*.txt" "?.txt" ".h[ia]dden")
+message("[${out}]")

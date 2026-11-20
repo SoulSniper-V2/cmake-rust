@@ -1,0 +1,7 @@
+file(COPY_FILE data/prog prog)
+file(RPATH_CHECK FILE prog RPATH "/second/lib")
+if(EXISTS prog)
+  message(STATUS "exists")
+else()
+  message(STATUS "removed")
+endif()

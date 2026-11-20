@@ -1036,9 +1036,11 @@ impl Interp {
     }
 
     fn run_file_body(&mut self, parsed: &Rc<ParsedFile>) {
+        self.ext.file_locks.files.push(Default::default());
         self.loop_depth.push(0);
         let ctl = self.run_range(parsed, 0, parsed.commands.len(), None);
         self.loop_depth.pop();
+        self.ext.file_locks.files.pop();
         if let Ctl::Return(Some(vars)) = ctl {
             self.propagate(&vars);
         }
@@ -1345,7 +1347,9 @@ impl Interp {
             );
             self.set_def("CMAKE_CURRENT_FUNCTION_LIST_LINE", callable.line.to_string());
             self.loop_depth.push(0);
+            self.ext.file_locks.functions.push(Default::default());
             let result = self.run_body(callable, None);
+            self.ext.file_locks.functions.pop();
             self.loop_depth.pop();
             if let BodyResult::Ctl(Ctl::Return(Some(vars))) = &result {
                 let vars = vars.clone();
@@ -1801,7 +1805,10 @@ impl Interp {
     /// `configure_file`/`string(CONFIGURE)` style expansion: `no_escapes`
     /// and optional `@ONLY`.
     pub fn expand_configure(&mut self, source: &str, at_only: bool, escape_quotes: bool) -> Result<String, String> {
-        self.expand_impl(source, None, escape_quotes, at_only, true, true)
+        let frame = self.backtrace.last().map(|frame| (frame.file.clone(), frame.line));
+        let location = frame.as_ref().map(|(file, line)| (file.as_ref(), *line));
+        let source = source.split_once('\0').map_or(source, |(text, _)| text);
+        self.expand_impl(source, location, escape_quotes, at_only, true, true)
             .map_err(|(_, message)| message)
     }
 

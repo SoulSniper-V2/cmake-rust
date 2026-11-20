@@ -1,0 +1,8 @@
+make_directory(a/b)
+write_file(a/b/c one two)
+write_file(a/b/c three APPEND)
+file(READ a/b/c out HEX)
+set(items "one;two;one;three")
+remove(items one three)
+message("${items}")
+message("[${out}]")

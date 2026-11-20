@@ -1,0 +1,1 @@
+file(RPATH_CHECK RPATH "/a")

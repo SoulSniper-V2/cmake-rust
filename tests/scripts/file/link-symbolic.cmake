@@ -1,0 +1,6 @@
+file(CREATE_LINK missing link SYMBOLIC RESULT result)
+file(READ_SYMLINK link target)
+file(WRITE missing contents)
+file(READ link out)
+message(${result}:${target})
+message("[${out}]")

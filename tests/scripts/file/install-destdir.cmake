@@ -1,0 +1,6 @@
+set(ENV{DESTDIR} "${CMAKE_CURRENT_BINARY_DIR}/stage")
+file(WRITE source value)
+file(INSTALL DESTINATION /prefix/type TYPE FILE FILES source)
+file(READ stage/prefix/type/source out)
+message("${CMAKE_INSTALL_MANIFEST_FILES}")
+message("[${out}]")

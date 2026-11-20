@@ -2,6 +2,7 @@
 
 use crate::interp::Interp;
 
+pub mod configure_file;
 pub mod core;
 pub mod find;
 pub mod custom_actions;
@@ -12,6 +13,8 @@ pub mod target;
 pub mod project;
 pub mod string;
 pub mod language;
+pub mod file;
+pub mod legacy_fs;
 pub mod list;
 pub mod math;
 pub mod message;
@@ -20,6 +23,7 @@ pub mod process;
 pub mod property;
 pub mod separate_arguments;
 pub mod sysinfo;
+pub mod path;
 pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
@@ -33,6 +37,10 @@ pub fn register_all(interp: &mut Interp) {
     find::register(interp);
     directory::register(interp);
     targets::register(interp);
+    configure_file::register(interp);
+    file::register(interp);
+    legacy_fs::register(interp);
+    path::register(interp);
     project::register(interp);
     string::register(interp);
     language::register(interp);

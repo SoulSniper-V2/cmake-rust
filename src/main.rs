@@ -3,6 +3,7 @@
 mod cache;
 mod cli;
 mod cmcmd;
+mod cmelf;
 mod cmregex;
 mod commands;
 mod condition;

@@ -1,0 +1,1 @@
+file(RPATH_SET NEW_RPATH "/b")

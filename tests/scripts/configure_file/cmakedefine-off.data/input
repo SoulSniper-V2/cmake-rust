@@ -1,0 +1,2 @@
+  #cmakedefine FLAG @FLAG@
+# cmakedefine01 FLAG extra

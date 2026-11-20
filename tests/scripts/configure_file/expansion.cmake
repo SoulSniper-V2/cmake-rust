@@ -1,0 +1,5 @@
+set(VAR "a;b")
+set(ENV{CONFIGURE_ENV} keep)
+configure_file(data/input configured )
+file(READ configured out HEX)
+message("[${out}]")
