@@ -1,0 +1,134 @@
+{
+  "cmakelists": [
+    "cmake_minimum_required(VERSION 4.1)",
+    "project(probe LANGUAGES C)",
+    "cmake_policy(SET CMP0179 NEW)",
+    "add_library(a OBJECT empty.c)",
+    "add_library(b SHARED empty.c)",
+    "add_executable(app main.c)",
+    "target_link_libraries(a INTERFACE b)",
+    "target_link_libraries(app PRIVATE a)"
+  ],
+  "config": "",
+  "edges": {
+    "app": {
+      "LINK_LIBRARIES": "-Wl,-rpath,@ROOT@/build  libb.so",
+      "LINK_PATH": "",
+      "explicit": [
+        "CMakeFiles/a.dir/empty.c.o",
+        "CMakeFiles/app.dir/main.c.o"
+      ],
+      "implicit": [
+        "libb.so"
+      ],
+      "order_only": [
+        "a",
+        "libb.so"
+      ],
+      "output": "app"
+    },
+    "b": {
+      "LINK_LIBRARIES": "",
+      "LINK_PATH": "",
+      "explicit": [
+        "CMakeFiles/b.dir/empty.c.o"
+      ],
+      "implicit": [],
+      "order_only": [],
+      "output": "libb.so"
+    }
+  },
+  "policy": "NEW",
+  "targets": {
+    "a": {
+      "directory": "",
+      "imported": false,
+      "kind": "OBJECT",
+      "properties": {
+        "INTERFACE_LINK_LIBRARIES": "b"
+      }
+    },
+    "app": {
+      "directory": "",
+      "imported": false,
+      "kind": "EXECUTABLE",
+      "properties": {
+        "LINK_LIBRARIES": "a"
+      }
+    },
+    "b": {
+      "directory": "",
+      "imported": false,
+      "kind": "SHARED",
+      "properties": {}
+    }
+  },
+  "variables": {
+    "CMAKE_BUILD_TYPE": "",
+    "CMAKE_C_IMPLICIT_LINK_DIRECTORIES": "/usr/lib/gcc/x86_64-linux-gnu/13;/usr/lib/x86_64-linux-gnu;/usr/lib;/lib/x86_64-linux-gnu;/lib",
+    "CMAKE_C_IMPLICIT_LINK_FRAMEWORK_DIRECTORIES": "",
+    "CMAKE_C_IMPLICIT_LINK_LIBRARIES": "gcc;gcc_s;c;gcc;gcc_s",
+    "CMAKE_C_LINKER_DEPFILE_FLAGS": "LINKER:--dependency-file=<DEP_FILE>",
+    "CMAKE_C_LINKER_DEPFILE_FORMAT": "gcc",
+    "CMAKE_C_LINKER_DEPFILE_SUPPORTED": "TRUE",
+    "CMAKE_C_LINKER_INFORMATION_LOADED": "1",
+    "CMAKE_C_LINKER_PREFERENCE": "10",
+    "CMAKE_C_LINKER_PUSHPOP_STATE_SUPPORTED": "TRUE",
+    "CMAKE_C_LINKER_WRAPPER_FLAG": "-Wl,",
+    "CMAKE_C_LINKER_WRAPPER_FLAG_SEP": ",",
+    "CMAKE_C_LINK_DEPENDS_USE_LINKER": "TRUE",
+    "CMAKE_C_LINK_EXECUTABLE": "<CMAKE_C_COMPILER> <FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>",
+    "CMAKE_C_LINK_LIBRARY_USING_WHOLE_ARCHIVE": "LINKER:--push-state,--whole-archive;<LINK_ITEM>;LINKER:--pop-state",
+    "CMAKE_C_LINK_LIBRARY_USING_WHOLE_ARCHIVE_SUPPORTED": "TRUE",
+    "CMAKE_C_LINK_LIBRARY_WHOLE_ARCHIVE_ATTRIBUTES": "LIBRARY_TYPE=STATIC;DEDUPLICATION=YES;OVERRIDE=DEFAULT",
+    "CMAKE_C_LINK_MODE": "DRIVER",
+    "CMAKE_C_LINK_OPTIONS_NO_PIE": "-no-pie",
+    "CMAKE_C_LINK_OPTIONS_PIE": "-fPIE;-pie",
+    "CMAKE_C_LINK_OPTIONS_WARNING_AS_ERROR": "LINKER:--fatal-warnings",
+    "CMAKE_C_LINK_WHAT_YOU_USE_FLAG": "LINKER:--no-as-needed",
+    "CMAKE_C_PLATFORM_LINKER_ID": "GNU",
+    "CMAKE_EXECUTABLE_FORMAT": "ELF",
+    "CMAKE_EXECUTABLE_RPATH_LINK_C_FLAG": "-Wl,-rpath-link,",
+    "CMAKE_EXECUTABLE_RUNTIME_C_FLAG": "-Wl,-rpath,",
+    "CMAKE_EXECUTABLE_RUNTIME_C_FLAG_SEP": ":",
+    "CMAKE_EXE_LINKER_FLAGS": "",
+    "CMAKE_EXE_LINKER_FLAGS-ADVANCED": "1",
+    "CMAKE_EXE_LINKER_FLAGS_DEBUG": "",
+    "CMAKE_EXE_LINKER_FLAGS_DEBUG-ADVANCED": "1",
+    "CMAKE_EXE_LINKER_FLAGS_INIT": " ",
+    "CMAKE_EXE_LINKER_FLAGS_MINSIZEREL": "",
+    "CMAKE_EXE_LINKER_FLAGS_MINSIZEREL-ADVANCED": "1",
+    "CMAKE_EXE_LINKER_FLAGS_RELEASE": "",
+    "CMAKE_EXE_LINKER_FLAGS_RELEASE-ADVANCED": "1",
+    "CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO": "",
+    "CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED": "1",
+    "CMAKE_EXE_LINK_DYNAMIC_C_FLAGS": "-Wl,-Bdynamic",
+    "CMAKE_EXE_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
+    "CMAKE_INSTALL_PREFIX": "/usr/local",
+    "CMAKE_LIBRARY_ARCHITECTURE": "x86_64-linux-gnu",
+    "CMAKE_LINK_GROUP_USING_RESCAN": "LINKER:--start-group;LINKER:--end-group",
+    "CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED": "TRUE",
+    "CMAKE_LINK_LIBRARY_FLAG": "-l",
+    "CMAKE_LINK_LIBRARY_SUFFIX": "",
+    "CMAKE_LINK_LIBRARY_USING_DEFAULT_SUPPORTED": "TRUE",
+    "CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE": "LINKER:--push-state,--whole-archive;<LINK_ITEM>;LINKER:--pop-state",
+    "CMAKE_LINK_LIBRARY_USING_WHOLE_ARCHIVE_SUPPORTED": "TRUE",
+    "CMAKE_LINK_LIBRARY_WHOLE_ARCHIVE_ATTRIBUTES": "LIBRARY_TYPE=STATIC;DEDUPLICATION=YES;OVERRIDE=DEFAULT",
+    "CMAKE_LINK_WHAT_YOU_USE_CHECK": "ldd;-u;-r",
+    "CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES": "/lib;/lib32;/lib64;/usr/lib;/usr/lib32;/usr/lib64",
+    "CMAKE_PLATFORM_USES_PATH_WHEN_NO_SONAME": "1",
+    "CMAKE_SHARED_LIBRARY_LINK_C_FLAGS": "-rdynamic",
+    "CMAKE_SHARED_LIBRARY_LINK_DYNAMIC_C_FLAGS": "-Wl,-Bdynamic",
+    "CMAKE_SHARED_LIBRARY_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
+    "CMAKE_SHARED_LIBRARY_RPATH_LINK_C_FLAG": "-Wl,-rpath-link,",
+    "CMAKE_SHARED_LIBRARY_RPATH_ORIGIN_TOKEN": "$ORIGIN",
+    "CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG": "-Wl,-rpath,",
+    "CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG_SEP": ":",
+    "CMAKE_SHARED_MODULE_LINK_DYNAMIC_C_FLAGS": "-Wl,-Bdynamic",
+    "CMAKE_SHARED_MODULE_LINK_STATIC_C_FLAGS": "-Wl,-Bstatic",
+    "CMAKE_SKIP_INSTALL_RPATH": "NO",
+    "CMAKE_SKIP_INSTALL_RPATH-ADVANCED": "1",
+    "CMAKE_SKIP_RPATH": "NO",
+    "CMAKE_SKIP_RPATH-ADVANCED": "1"
+  }
+}
