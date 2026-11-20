@@ -4,6 +4,10 @@
 use crate::cache::CacheType;
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
+
+// Existing configure and generator callers import message helpers from here.
+#[allow(unused_imports)]
+pub use super::message::{LogLevel, current_log_level, parse_log_level, status_line};
 use crate::policy::{self, PolicyStatus};
 use crate::policy_table::POLICIES;
 use crate::util;
@@ -12,7 +16,6 @@ pub fn register(interp: &mut Interp) {
     interp.register("set", set);
     interp.register("unset", unset);
     interp.register("option", option);
-    interp.register("message", message);
     interp.register("include", include);
     interp.register("include_guard", include_guard);
     interp.register("cmake_policy", cmake_policy);
@@ -195,214 +198,6 @@ fn option(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.unset_def(name);
     }
     Ok(())
-}
-
-fn indent_text(interp: &Interp, text: &str) -> String {
-    let indent = interp
-        .get_def("CMAKE_MESSAGE_INDENT")
-        .map(|value| util::expand_list(value, false).concat())
-        .unwrap_or_default();
-    if indent.is_empty() {
-        return text.to_owned();
-    }
-    let mut out = String::new();
-    for (index, line) in text.split('\n').enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        out.push_str(&indent);
-        out.push_str(line);
-    }
-    out
-}
-
-/// Log levels (`Message::LogLevel`).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum LogLevel {
-    Error = 1,
-    Warning,
-    Notice,
-    Status,
-    Verbose,
-    Debug,
-    Trace,
-}
-
-pub fn parse_log_level(text: &str) -> Option<LogLevel> {
-    Some(match text.to_ascii_uppercase().as_str() {
-        "ERROR" => LogLevel::Error,
-        "WARNING" => LogLevel::Warning,
-        "NOTICE" => LogLevel::Notice,
-        "STATUS" => LogLevel::Status,
-        "VERBOSE" => LogLevel::Verbose,
-        "DEBUG" => LogLevel::Debug,
-        "TRACE" => LogLevel::Trace,
-        _ => return None,
-    })
-}
-
-/// `cmMakefile::GetCurrentLogLevel`: command-line level wins, then
-/// CMAKE_MESSAGE_LOG_LEVEL.
-pub fn current_log_level(interp: &Interp) -> LogLevel {
-    if let Some(level) = interp.ext.misc.get("log-level").and_then(|level| parse_log_level(level)) {
-        return level;
-    }
-    interp
-        .get_def("CMAKE_MESSAGE_LOG_LEVEL")
-        .and_then(parse_log_level)
-        .unwrap_or(LogLevel::Status)
-}
-
-fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
-    if args.is_empty() {
-        return err("called with incorrect number of arguments");
-    }
-    let mut index = 1;
-    let mut kind = MessageType::Message;
-    let mut fatal = false;
-    let mut check: Option<&str> = None;
-    let level = match args[0].as_str() {
-        "SEND_ERROR" => {
-            kind = MessageType::FatalError;
-            LogLevel::Error
-        }
-        "FATAL_ERROR" => {
-            fatal = true;
-            kind = MessageType::FatalError;
-            LogLevel::Error
-        }
-        "WARNING" => {
-            kind = MessageType::Warning;
-            LogLevel::Warning
-        }
-        "AUTHOR_WARNING" => {
-            if interp.is_set("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
-                && !interp.is_on("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
-            {
-                fatal = true;
-                kind = MessageType::AuthorError;
-                LogLevel::Error
-            } else if !interp.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") {
-                kind = MessageType::AuthorWarning;
-                LogLevel::Warning
-            } else {
-                return Ok(());
-            }
-        }
-        "CHECK_START" | "CHECK_PASS" | "CHECK_FAIL" => {
-            check = Some(match args[0].as_str() {
-                "CHECK_START" => "start",
-                "CHECK_PASS" => "pass",
-                _ => "fail",
-            });
-            LogLevel::Status
-        }
-        "CONFIGURE_LOG" => return Ok(()),
-        "STATUS" => LogLevel::Status,
-        "VERBOSE" => LogLevel::Verbose,
-        "DEBUG" => LogLevel::Debug,
-        "TRACE" => LogLevel::Trace,
-        "DEPRECATION" => {
-            if interp.is_on("CMAKE_ERROR_DEPRECATED") {
-                fatal = true;
-                kind = MessageType::DeprecationError;
-                LogLevel::Error
-            } else if !interp.is_set("CMAKE_WARN_DEPRECATED") || interp.is_on("CMAKE_WARN_DEPRECATED") {
-                kind = MessageType::DeprecationWarning;
-                LogLevel::Warning
-            } else {
-                return Ok(());
-            }
-        }
-        "NOTICE" => LogLevel::Notice,
-        _ => {
-            index = 0;
-            LogLevel::Notice
-        }
-    };
-    if current_log_level(interp) < level {
-        return Ok(());
-    }
-    let text = args[index..].concat();
-    match level {
-        LogLevel::Error | LogLevel::Warning => {
-            // Displayed directly with the overridden type (no suppression).
-            let backtrace = interp.backtrace.clone();
-            let rendered = crate::messages::render(kind, &text, &backtrace, interp.top_source());
-            if crate::messages::is_error(kind) {
-                interp.error = true;
-            }
-            eprintln!("{rendered}");
-        }
-        LogLevel::Notice => {
-            let text = indent_text(interp, &text);
-            eprintln!("{text}");
-        }
-        LogLevel::Status => match check {
-            Some("start") => {
-                let shown = indent_text(interp, &text);
-                status_line(interp, &shown);
-                let stack = interp.ext.misc.entry("check-stack".into()).or_default();
-                if !stack.is_empty() {
-                    stack.push('\u{1}');
-                }
-                stack.push_str(&text);
-            }
-            Some(_) => {
-                let stack = interp.ext.misc.entry("check-stack".into()).or_default();
-                let started = match stack.rfind('\u{1}') {
-                    Some(position) => {
-                        let started = stack[position + 1..].to_owned();
-                        stack.truncate(position);
-                        Some(started)
-                    }
-                    None if !stack.is_empty() => Some(std::mem::take(stack)),
-                    None => None,
-                };
-                match started {
-                    Some(started) => {
-                        let shown = indent_text(interp, &format!("{started} - {text}"));
-                        status_line(interp, &shown);
-                    }
-                    None => {
-                        let text = format!(
-                            "Ignored {} without CHECK_START",
-                            if check == Some("pass") { "CHECK_PASS" } else { "CHECK_FAIL" }
-                        );
-                        interp.issue(MessageType::AuthorWarning, &text);
-                    }
-                }
-            }
-            None => {
-                let shown = indent_text(interp, &text);
-                status_line(interp, &shown);
-            }
-        },
-        _ => {
-            let shown = indent_text(interp, &text);
-            status_line(interp, &shown);
-        }
-    }
-    if fatal {
-        interp.set_fatal();
-    }
-    Ok(())
-}
-
-/// `cmMakefile::DisplayStatus`: "-- " prefixed lines on stdout, with the
-/// CMAKE_MESSAGE_CONTEXT prefix when enabled.
-pub fn status_line(interp: &mut Interp, text: &str) {
-    let mut prefix = String::from("-- ");
-    if interp.ext.misc.get("log-context").is_some_and(|value| value == "1")
-        && let Some(context) = interp.get_def("CMAKE_MESSAGE_CONTEXT")
-    {
-        let parts = util::expand_list(context, false);
-        if !parts.is_empty() {
-            prefix = format!("-- [{}] ", parts.join("."));
-        }
-    }
-    let line = format!("{prefix}{text}");
-    interp.stdout_line(&line);
 }
 
 /// Resolves a module name to a file in CMAKE_MODULE_PATH or the CMake root.

@@ -16,6 +16,7 @@ mod messages;
 mod outconv;
 mod policy;
 mod policy_table;
+pub mod properties;
 mod props;
 mod state;
 mod util;
@@ -165,7 +166,23 @@ fn run() -> i32 {
         let mut position = 1;
         while position < index {
             let arg = &argv[position];
-            if let Some(definition) = arg.strip_prefix("-D") {
+            if arg == "--log-context" {
+                interp.ext.misc.insert("log-context".into(), "1".into());
+            } else if let Some(option) = ["--log-level", "--loglevel"].into_iter()
+                .find(|option| arg == option || arg.strip_prefix(option).is_some_and(|tail| tail.starts_with('=')))
+            {
+                let level = if let Some((_, level)) = arg.split_once('=') {
+                    level
+                } else {
+                    position += 1;
+                    argv.get(position).filter(|_| position < index).map_or("", String::as_str)
+                };
+                if commands::message::parse_log_level(level).is_none() {
+                    eprintln!("CMake Error: Invalid level specified for {option}\nCMake Error: Run 'cmake --help' for all supported options.");
+                    return 1;
+                }
+                interp.ext.misc.insert("log-level".into(), level.into());
+            } else if let Some(definition) = arg.strip_prefix("-D") {
                 let definition = if definition.is_empty() {
                     position += 1;
                     argv.get(position).cloned().unwrap_or_default()

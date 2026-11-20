@@ -73,9 +73,25 @@ pub struct Ext {
     /// Alias name -> real target name.
     pub aliases: HashMap<String, String>,
     pub tests: Vec<Test>,
+    pub execution_files: Vec<String>,
     pub defer_current_id: Option<String>,
     pub dependency_provider: Option<(String, Vec<String>)>,
     pub find_package: HashMap<usize, crate::commands::find::package::PackageState>,
+    pub next_defer_id: usize,
+    pub experimental_warnings: std::collections::HashSet<(String, String)>,
+    pub in_top_level_includes: bool,
+    pub message_checks: Vec<String>,
+
+    pub property_definitions: crate::properties::Definitions,
+    pub source_properties: HashMap<usize, Vec<crate::properties::SourceFile>>,
+    pub generated_sources: std::collections::HashSet<String>,
+    pub install_properties: HashMap<String, Props>,
+    pub directory_definitions: HashMap<usize, BTreeMap<String, String>>,
+    pub variable_watches: HashMap<String, Vec<String>>,
+    pub active_variable_watches: std::collections::HashSet<(String, usize)>,
+    pub host_information: Option<crate::commands::sysinfo::HostInformation>,
+    pub distribution: Option<BTreeMap<String, String>>,
+    pub file_api_queries: BTreeMap<String, (u32, u32)>,
     /// Enabled languages.
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.

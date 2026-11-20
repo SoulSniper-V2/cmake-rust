@@ -1,0 +1,8 @@
+function(on_watch name access value file stack)
+  message("${name}|${access}|${value}|${file}|${stack}")
+endfunction()
+variable_watch(watched on_watch)
+set(watched a)
+set(x "${watched}")
+unset(watched)
+set(x "${watched}")

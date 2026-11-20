@@ -1,0 +1,4 @@
+set_property(DIRECTORY PROPERTY LINK_OPTIONS x)
+set_property(DIRECTORY PROPERTY LINK_OPTIONS)
+get_property(x DIRECTORY PROPERTY LINK_OPTIONS SET)
+message("${x}")

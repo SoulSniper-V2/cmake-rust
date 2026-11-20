@@ -1,0 +1,1 @@
+cmake_host_system_information(RESULT result QUERY not_a_key)

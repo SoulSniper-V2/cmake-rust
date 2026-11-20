@@ -1,0 +1,5 @@
+set(needle x CACHE STRING "h")
+set_property(CACHE needle APPEND PROPERTY STRINGS a b)
+set_property(CACHE needle APPEND_STRING PROPERTY STRINGS c d)
+get_property(x CACHE needle PROPERTY STRINGS)
+message("${x}")

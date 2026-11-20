@@ -1,0 +1,5 @@
+set_property(GLOBAL PROPERTY k v)
+set_property(GLOBAL PROPERTY k)
+set(x sentinel)
+get_property(x GLOBAL PROPERTY k)
+message("[${x}]")

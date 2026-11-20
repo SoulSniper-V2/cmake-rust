@@ -1,0 +1,4 @@
+get_property(a GLOBAL PROPERTY IN_TRY_COMPILE)
+get_property(b GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+get_property(c GLOBAL PROPERTY ENABLED_LANGUAGES SET)
+message("${a}|${b}|${c}")
