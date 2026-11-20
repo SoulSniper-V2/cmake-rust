@@ -1,0 +1,96 @@
+{
+  "oracle": "Kitware CMake 4.1.0, Linux Ninja, RelWithDebInfo",
+  "objects": {
+    "statik": [
+      {
+        "object": "nested/CMakeFiles/statik.dir/local.c.o",
+        "source": "src/nested/local.c"
+      },
+      {
+        "object": "nested/CMakeFiles/statik.dir/__/common.c.o",
+        "source": "src/common.c"
+      },
+      {
+        "object": "nested/CMakeFiles/statik.dir/gen/generated.c.o",
+        "source": "build/nested/gen/generated.c"
+      }
+    ],
+    "shared": [
+      {
+        "object": "nested/CMakeFiles/shared.dir/local.c.o",
+        "source": "src/nested/local.c"
+      }
+    ],
+    "only_so": [
+      {
+        "object": "nested/CMakeFiles/only_so.dir/local.c.o",
+        "source": "src/nested/local.c"
+      }
+    ],
+    "no_so": [
+      {
+        "object": "nested/CMakeFiles/no_so.dir/local.c.o",
+        "source": "src/nested/local.c"
+      }
+    ],
+    "tool": [
+      {
+        "object": "nested/CMakeFiles/tool.dir/local.c.o",
+        "source": "src/nested/local.c"
+      }
+    ],
+    "gendir": [
+      {
+        "object": "nested/CMakeFiles/gendir.dir/local.c.o",
+        "source": "src/nested/local.c"
+      }
+    ],
+    "long": [
+      {
+        "object": "nested/CMakeFiles/long.dir/79188c8d70ddff94e873c09c78f1b60a/long.c.o",
+        "source": "src/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/long.c"
+      }
+    ]
+  },
+  "artifacts": {
+    "statik": {
+      "real": "nested/oldlib/lang-core_rw.arc",
+      "output": "nested/oldlib/lang-core_rw.arc"
+    },
+    "shared": {
+      "real": "products/pre-actual.plugin.3.4",
+      "output": "products/pre-actual.plugin",
+      "soname": "pre-actual.plugin.3"
+    },
+    "only_so": {
+      "real": "nested/oldlib/libonly_so.so.8",
+      "output": "nested/oldlib/libonly_so.so",
+      "soname": "libonly_so.so.8"
+    },
+    "no_so": {
+      "real": "nested/oldlib/libno_so.so",
+      "output": "nested/oldlib/libno_so.so"
+    },
+    "tool": {
+      "real": "nested/oldbin/runner.bin-2",
+      "output": "nested/oldbin/runner.bin"
+    },
+    "gendir": {
+      "real": "nested/bin/relwithdebinfo/gendir",
+      "output": "nested/bin/relwithdebinfo/gendir"
+    },
+    "long": {
+      "real": "nested/oldlib/lang-long.arc",
+      "output": "nested/oldlib/lang-long.arc"
+    }
+  },
+  "imported_location": "src/import-release.a",
+  "custom": {
+    "outputs": [
+      "nested/gen/generated.c",
+      "nested/gen/stamp"
+    ],
+    "description": "Generating gen/generated.c",
+    "command": "cd build/nested && <cmake> -E touch gen/generated.c \"a b\" \"\\$$literal\""
+  }
+}
