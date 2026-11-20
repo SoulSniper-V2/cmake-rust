@@ -1810,6 +1810,7 @@ mod corpus_tests {
                     props,
                     provenance: Default::default(),
                     backtrace: Vec::new(),
+                    ..crate::state::Target::new("", crate::state::TargetKind::Executable, 0)
                 },
             );
         }
@@ -2197,6 +2198,7 @@ pub(super) mod tests {
             props,
             provenance: Default::default(),
             backtrace: Vec::new(),
+            ..crate::state::Target::new("", crate::state::TargetKind::Executable, 0)
         }
     }
 

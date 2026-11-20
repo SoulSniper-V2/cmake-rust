@@ -1,0 +1,101 @@
+CMake Error at CMakeLists.txt:3 (add_library):
+  The target name "bad name" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:4 (add_library):
+  The target name "bad/name" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:5 (add_executable):
+  The target name "ns::exe" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:6 (add_library):
+  The target name "ns::lib" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:7 (add_custom_target):
+  The target name "ns::custom" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:8 (add_custom_target):
+  The target name "bad custom" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:10 (add_executable):
+  The target name "all" is reserved or not valid for certain CMake features,
+  such as generator expressions, and may result in undefined behavior.
+
+
+CMake Error at CMakeLists.txt:11 (add_custom_target):
+  The target name "help" is reserved or not valid for certain CMake features,
+  such as generator expressions, and may result in undefined behavior.
+
+
+CMake Error at CMakeLists.txt:12 (add_library):
+  The target name "clean" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:14 (add_custom_target):
+  The target name "install" is reserved or not valid for certain CMake
+  features, such as generator expressions, and may result in undefined
+  behavior.
+
+
+CMake Error at CMakeLists.txt:17 (add_library):
+  add_library cannot create imported target "dup" because another target with
+  the same name already exists.
+
+
+CMake Error at CMakeLists.txt:18 (add_custom_target):
+  add_custom_target cannot create target "dup" because another target with
+  the same name already exists.  The existing target is an interface library
+  created in source directory "<SOURCE_DIR>".  See documentation for
+  policy CMP0002 for more details.
+
+
+CMake Error at CMakeLists.txt:19 (add_executable):
+  add_executable cannot create imported target "dup" because another target
+  with the same name already exists.
+
+
+CMake Error at CMakeLists.txt:21 (add_library):
+  add_library cannot create imported target "dup_global" because another
+  target with the same name already exists.
+
+
+CMake Error at CMakeLists.txt:22 (add_executable):
+  add_executable called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:23 (add_library):
+  add_library called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:24 (add_custom_target):
+  add_custom_target called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:26 (add_library):
+  add_library called with IMPORTED argument but no library type.
+
+
+CMake Error at CMakeLists.txt:32 (add_executable):
+  add_executable may not be given EXCLUDE_FROM_ALL for an IMPORTED target.
+
+
+t5=[TRUE] t6=[TRUE]

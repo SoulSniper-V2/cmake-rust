@@ -1,0 +1,109 @@
+CMake Error at CMakeLists.txt:6 (add_custom_command):
+  add_custom_command called with wrong number of arguments.
+
+
+CMake Error at CMakeLists.txt:7 (add_custom_command):
+  add_custom_command called with wrong number of arguments.
+
+
+CMake Error at CMakeLists.txt:8 (add_custom_command):
+  add_custom_command Wrong syntax.  A TARGET and OUTPUT can not both be
+  specified.
+
+
+CMake Error at CMakeLists.txt:16 (add_custom_command):
+  No TARGET 'missing' has been created in this directory.
+
+
+CMake Error at CMakeLists.txt:17 (add_custom_command):
+  TARGET 'imp' is IMPORTED and does not build here.
+
+
+CMake Error at CMakeLists.txt:18 (add_custom_command):
+  Target "lib" is an INTERFACE library that may not have PRE_BUILD, PRE_LINK,
+  or POST_BUILD commands.
+
+
+CMake Error at CMakeLists.txt:19 (add_custom_command):
+  Exactly one of PRE_BUILD, PRE_LINK, or POST_BUILD must be given.
+
+
+CMake Error at CMakeLists.txt:20 (add_custom_command):
+  Exactly one of PRE_BUILD, PRE_LINK, or POST_BUILD must be given.
+
+
+CMake Error at CMakeLists.txt:21 (add_custom_command):
+  add_custom_command Wrong syntax.  A TARGET and OUTPUT can not both be
+  specified.
+
+
+CMake Error at CMakeLists.txt:22 (add_custom_command):
+  The following keywords are not supported when using
+  add_custom_command(TARGET): MAIN_DEPENDENCY
+
+
+CMake Error at CMakeLists.txt:23 (add_custom_command):
+  The following keywords are not supported when using
+  add_custom_command(TARGET): DEPENDS
+
+
+CMake Error at CMakeLists.txt:24 (add_custom_command):
+  add_custom_command given APPEND option with no OUTPUT.
+
+
+CMake Error at CMakeLists.txt:25 (add_custom_command):
+  The following keywords are not supported when using
+  add_custom_command(TARGET): DEPFILE
+
+
+CMake Error at CMakeLists.txt:26 (add_custom_command):
+  The following keywords are not supported when using
+  add_custom_command(TARGET): JOB_POOL
+
+
+CMake Error at CMakeLists.txt:27 (add_custom_command):
+  The following keywords are not supported when using
+  add_custom_command(TARGET): IMPLICIT_DEPENDS
+
+
+CMake Error at CMakeLists.txt:28 (add_custom_command):
+  add_custom_command CODEGEN requires at least 1 OUTPUT.
+
+
+CMake Error at CMakeLists.txt:29 (add_custom_command):
+  add_custom_command called with wrong number of arguments.
+
+
+CMake Error at CMakeLists.txt:31 (add_custom_command):
+  add_custom_command JOB_POOL is shadowed by USES_TERMINAL.
+
+
+CMake Error at CMakeLists.txt:32 (add_custom_command):
+  add_custom_command called with wrong number of arguments.
+
+
+CMake Error at CMakeLists.txt:33 (add_custom_command):
+  add_custom_command called with wrong number of arguments.
+
+
+CMake Error at CMakeLists.txt:37 (add_custom_command):
+  COMMENT requires exactly one argument, but multiple values or COMMENT
+  keywords have been given.
+
+
+CMake Error at CMakeLists.txt:41 (add_custom_target):
+  USES_TERMINAL may not be specified without any COMMAND
+
+
+CMake Error at CMakeLists.txt:45 (add_custom_target):
+  add_custom_target cannot create target "t" because another target with the
+  same name already exists.  The existing target is a custom target created
+  in source directory "<SOURCE_DIR>".  See documentation for policy
+  CMP0002 for more details.
+
+
+u6 sources=[]
+a.out=[1]
+ok.out=[1]
+cg2.out=[1]
+wd.out=[1]

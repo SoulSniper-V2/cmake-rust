@@ -1,0 +1,8 @@
+tests=[new test;old]
+test directory=[<BINARY_DIR>]
+sources=[CMakeLists.txt] excluded=[TRUE]
+main.out.generated=[1]
+secondary.out.generated=[1]
+side.out.generated=[1]
+target.out.generated=[1]
+post.out.generated=[1]

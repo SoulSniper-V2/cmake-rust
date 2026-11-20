@@ -920,6 +920,7 @@ set_property(DIRECTORY PROPERTY example_flag inherited)
             props: Props::default(),
             provenance: BTreeMap::new(),
             backtrace: Vec::new(),
+            ..crate::state::Target::new("", crate::state::TargetKind::Executable, 0)
         };
         initialize_target(&interp, &mut target);
         interp.ext.targets.insert(target.name.clone(), target);

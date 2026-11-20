@@ -1,0 +1,5 @@
+foreach(command IN ITEMS add_compile_definitions add_link_options subdirs target_link_options target_link_directories target_precompile_headers)
+  if(COMMAND ${command})
+    message(FATAL_ERROR "${command} is registered")
+  endif()
+endforeach()

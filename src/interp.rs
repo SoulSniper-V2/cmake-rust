@@ -110,6 +110,7 @@ pub struct Callable {
 pub enum CommandDef {
     Raw(RawBuiltin),
     Builtin(Builtin),
+    Unexpected(&'static str),
     /// Commands handled directly by the run loop (`if`, `foreach`, ...).
     Flow,
     User(Rc<Callable>),
@@ -221,6 +222,9 @@ pub struct Interp {
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
+    /// When set, diagnostics and `message()` stderr lines are appended here
+    /// instead of written to the process stderr (used by in-process tests).
+    pub stderr_capture: Option<String>,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
     /// Configuring a try_compile project.
@@ -269,6 +273,7 @@ impl Interp {
             deprecated_as_errors: false,
             recursion_depth: 0,
             stdout_log: None,
+            stderr_capture: None,
             request_return: false,
             in_try_compile: false,
             debug_trycompile: false,
@@ -561,6 +566,10 @@ impl Interp {
     /// Creates a child directory and runs its CMakeLists.txt
     /// (`add_subdirectory`).
     pub fn run_subdirectory(&mut self, source: &str, binary: &str, exclude_from_all: bool) -> bool {
+        self.run_subdirectory_with_system(source, binary, exclude_from_all, false)
+    }
+
+    pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
         let parent = self.mf_index();
         self.save_directory_definitions(parent);
         let flattened = self.effective_policies();
@@ -575,7 +584,6 @@ impl Interp {
             "LINK_OPTIONS",
             "LINK_DIRECTORIES",
             "INCLUDE_REGULAR_EXPRESSION",
-            "SYSTEM",
         ] {
             if let Some(value) = parent_props.get(key) {
                 props.set(key, value.to_owned());
@@ -587,7 +595,7 @@ impl Interp {
             }
         }
         let exclude = exclude_from_all || self.makefiles[parent].exclude_from_all;
-        if exclude {
+        if exclude_from_all {
             props.set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
         }
         self.makefiles.push(Makefile {
@@ -606,6 +614,7 @@ impl Interp {
             deferred: Vec::new(),
             defer_counter: 0,
         });
+        crate::commands::directory::initialize_subdirectory(self, parent, index, system);
         self.makefiles[parent].children.push(index);
         self.mf_stack.push(index);
         self.push_scope();
@@ -637,13 +646,17 @@ impl Interp {
     // Policies
 
     pub fn policy_status(&self, id: &str) -> PolicyStatus {
+        self.policy_status_at(self.mf_index(), id)
+    }
+
+    pub fn policy_status_at(&self, dir: usize, id: &str) -> PolicyStatus {
         let Some(index) = crate::policy::index_of(id) else {
             return PolicyStatus::Warn;
         };
         if crate::policy_table::POLICIES[index].removed {
             return PolicyStatus::New;
         }
-        for frame in self.mf().policies.iter().rev() {
+        for frame in self.makefiles[dir].policies.iter().rev() {
             if let Some(status) = frame.map.get(index) {
                 return status;
             }
@@ -748,7 +761,7 @@ impl Interp {
         if messages::is_error(kind) {
             self.error = true;
         }
-        eprintln!("{rendered}");
+        self.stderr_line(&rendered);
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
@@ -757,7 +770,18 @@ impl Interp {
         if messages::is_error(kind) {
             self.error = true;
         }
-        eprintln!("{rendered}");
+        self.stderr_line(&rendered);
+    }
+
+    /// Writes one line to stderr (or to `stderr_capture`).
+    pub fn stderr_line(&mut self, text: &str) {
+        match &mut self.stderr_capture {
+            Some(capture) => {
+                capture.push_str(text);
+                capture.push('\n');
+            }
+            None => eprintln!("{text}"),
+        }
     }
 
     /// `cmSystemTools::Message` to stdout without prefix.
@@ -815,6 +839,7 @@ impl Interp {
             self.mf_mut().list_files.push(path.to_owned());
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            crate::commands::directory::finish_directory(self);
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
@@ -957,6 +982,7 @@ impl Interp {
             self.mf_mut().list_files.push(path.to_owned());
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            crate::commands::directory::finish_directory(self);
         }
         // Directory-level end-of-file checks.
         let depth = self.mf().policies.len();
@@ -1209,6 +1235,11 @@ impl Interp {
         match def {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
             CommandDef::Raw(function) => function(self, file, command, subst),
+            CommandDef::Unexpected(message) => {
+                self.issue(MessageType::FatalError, &format!("{} {message}", command.name));
+                self.command_failed();
+                (false, Ctl::Normal)
+            }
             CommandDef::Builtin(function) => {
                 let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
                     return (true, Ctl::Normal);
@@ -1985,6 +2016,10 @@ impl Interp {
         self.commands.insert(name.to_owned(), CommandDef::Builtin(function));
     }
 
+    pub fn register_unexpected(&mut self, name: &str, message: &'static str) {
+        self.commands.insert(name.to_owned(), CommandDef::Unexpected(message));
+    }
+
     pub fn register_flow(&mut self, name: &str) {
         self.commands.insert(name.to_owned(), CommandDef::Flow);
     }
@@ -2011,6 +2046,11 @@ impl Interp {
                     false
                 }
             },
+            CommandDef::Unexpected(message) => {
+                self.issue(MessageType::FatalError, &format!("{name} {message}"));
+                self.command_failed();
+                false
+            }
             CommandDef::User(callable) => self.invoke_callable(&callable, args, name).0,
             CommandDef::Raw(_) | CommandDef::Flow => {
                 // Build a synthetic command so flow commands work through CALL.

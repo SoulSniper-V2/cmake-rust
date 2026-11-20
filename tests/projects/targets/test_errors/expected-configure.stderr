@@ -1,0 +1,40 @@
+CMake Error at CMakeLists.txt:3 (add_test):
+  add_test called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:4 (add_test):
+  add_test called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:5 (add_test):
+  add_test must be given non-empty NAME.
+
+
+CMake Error at CMakeLists.txt:6 (add_test):
+  add_test must be given non-empty COMMAND.
+
+
+CMake Error at CMakeLists.txt:7 (add_test):
+  add_test must be given non-empty COMMAND.
+
+
+CMake Error at CMakeLists.txt:12 (add_test):
+  add_test given test NAME "n6" which already exists in this directory.
+
+
+CMake Error at CMakeLists.txt:13 (add_test):
+  add_test given test name "n6" which already exists in this directory.
+
+
+CMake Error at CMakeLists.txt:15 (add_test):
+  add_test given test NAME "old1" which already exists in this directory.
+
+
+CMake Error at CMakeLists.txt:16 (add_test):
+  add_test must be given non-empty NAME.
+
+
+tests=[n3;n4;n5;n6;n7;n8;old1;with space]
+n7 wd=[rel]
+testing=[]
+testing=[1]

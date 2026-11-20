@@ -1,0 +1,107 @@
+CMake Error at CMakeLists.txt:8 (target_include_directories):
+  Cannot specify include directories for target "missing" which is not built
+  by this project.
+
+
+CMake Error at CMakeLists.txt:9 (target_include_directories):
+  target_include_directories called with invalid arguments
+
+
+CMake Error at CMakeLists.txt:10 (target_include_directories):
+  target_include_directories called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:12 (target_include_directories):
+  target_include_directories can not be used on an ALIAS target.
+
+
+CMake Error at CMakeLists.txt:13 (target_include_directories):
+  target_include_directories may only set INTERFACE properties on INTERFACE
+  targets
+
+
+CMake Error at CMakeLists.txt:15 (target_include_directories):
+  target_include_directories may only set INTERFACE properties on INTERFACE
+  targets
+
+
+CMake Error at CMakeLists.txt:17 (target_include_directories):
+  target_include_directories called with non-compilable target type
+
+
+CMake Error at CMakeLists.txt:20 (target_compile_options):
+  target_compile_options called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:24 (target_link_directories):
+  target_link_directories may only set INTERFACE properties on INTERFACE
+  targets
+
+
+CMake Error at CMakeLists.txt:25 (target_sources):
+  target_sources called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:29 (target_sources):
+  target_sources FILE_SET must not be empty
+
+
+CMake Error at CMakeLists.txt:30 (target_sources):
+  target_sources Must specify a TYPE when creating file set
+
+
+CMake Error at CMakeLists.txt:31 (target_sources):
+  target_sources Type "BOGUS" for file set "fs" does not match original type
+  ""
+
+
+CMake Error at CMakeLists.txt:32 (target_sources):
+  target_sources Non-default file set name must contain only letters,
+  numbers, and underscores, and must not start with a capital letter or
+  underscore
+
+
+CMake Error at CMakeLists.txt:35 (target_sources):
+  target_sources Scope PUBLIC for file set "hs" does not match original scope
+  PRIVATE
+
+
+CMake Error at CMakeLists.txt:37 (target_sources):
+  target_sources Non-default file set name must contain only letters,
+  numbers, and underscores, and must not start with a capital letter or
+  underscore
+
+
+CMake Error at CMakeLists.txt:38 (target_sources):
+  target_sources Non-default file set name must contain only letters,
+  numbers, and underscores, and must not start with a capital letter or
+  underscore
+
+
+CMake Error at CMakeLists.txt:42 (target_precompile_headers):
+  target_precompile_headers called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:43 (target_precompile_headers):
+  PRECOMPILE_HEADERS_REUSE_FROM set with non existing target
+
+
+CMake Error at CMakeLists.txt:45 (target_precompile_headers):
+  PRECOMPILE_HEADERS_REUSE_FROM property is already set on target ("lib")
+
+
+
+lib INCLUDE_DIRECTORIES=[$<BUILD_INTERFACE:<SOURCE>>;$<BUILD_INTERFACE:/elsewhere>]
+lib INTERFACE_INCLUDE_DIRECTORIES=[]
+lib COMPILE_DEFINITIONS=[A;;;B=1;C=$<1:x>]
+lib COMPILE_OPTIONS=[BEFORE;-x]
+lib LINK_OPTIONS=[SHELL:-a;-b]
+lib LINK_DIRECTORIES=[<SOURCE>/rel;/abs;$<1:g>]
+lib SOURCES=[CMakeLists.txt;rel.c;/abs/x.c;$<1:g.c>]
+lib PRECOMPILE_HEADERS=[]
+lib HEADER_SETS=[hs;Bad;_bad;hs2]
+lib INTERFACE_HEADER_SETS=[]
+lib HEADER_SET_hs=[<SOURCE>/a.h;<SOURCE>/c.h]
+lib HEADER_DIRS_hs=[<SOURCE>]
+iface INTERFACE_INCLUDE_DIRECTORIES=[<SOURCE>/rel;<SOURCE>/;/abs;$<1:gen>]
+imp INTERFACE_INCLUDE_DIRECTORIES=[<SOURCE>/imp-inc]

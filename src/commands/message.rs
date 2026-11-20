@@ -164,7 +164,7 @@ fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         LogLevel::Notice => {
             let text = indent_text(interp, &text);
-            eprintln!("{text}");
+            interp.stderr_line(&text);
         }
         LogLevel::Status => match check {
             Some("start") => {

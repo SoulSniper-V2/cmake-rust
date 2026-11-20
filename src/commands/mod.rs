@@ -4,6 +4,11 @@ use crate::interp::Interp;
 
 pub mod core;
 pub mod find;
+pub mod custom_actions;
+pub mod directory;
+pub mod targets;
+#[path = "../target.rs"]
+pub mod target;
 pub mod project;
 pub mod string;
 pub mod language;
@@ -26,6 +31,8 @@ pub fn register_all(interp: &mut Interp) {
     }
     core::register(interp);
     find::register(interp);
+    directory::register(interp);
+    targets::register(interp);
     project::register(interp);
     string::register(interp);
     language::register(interp);
@@ -38,4 +45,6 @@ pub fn register_all(interp: &mut Interp) {
     separate_arguments::register(interp);
     sysinfo::register(interp);
     try_compile::register(interp);
+    // Must stay last: overrides project commands in script mode.
+    targets::register_script_mode_unexpected(interp);
 }

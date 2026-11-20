@@ -1,8 +1,9 @@
 //! Build-system state that commands share: targets, tests, and auxiliary
 //! interpreter extension state.
 
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use crate::policy::{PolicyMap, PolicyStatus};
 
 use crate::interp::Interp;
 use crate::messages::Frame;
@@ -39,7 +40,7 @@ impl TargetKind {
 }
 
 /// A target (`cmTarget`). Property values that carry backtraces keep them in
-/// `entries` (for usage requirements and `--explain`).
+/// `provenance` (for usage requirements and `--explain`).
 #[derive(Debug)]
 pub struct Target {
     pub name: String,
@@ -47,20 +48,209 @@ pub struct Target {
     pub makefile: usize,
     pub imported: bool,
     pub imported_global: bool,
+    #[allow(dead_code, reason = "legacy target model field used by integration")]
     pub alias_of: Option<String>,
     pub props: Props,
     /// Backtraces for list-valued properties, parallel to entries appended.
-    pub provenance: BTreeMap<String, Vec<(String, Vec<Frame>)>>,
+    pub provenance: BTreeMap<String, Vec<PropertyEntry>>,
+    #[allow(dead_code, reason = "target diagnostics in the generator")]
     pub backtrace: Vec<Frame>,
+    pub policies: PolicyMap,
+    pub system_include_directories: BTreeSet<String>,
+    pub dependencies: BTreeMap<String, Vec<Frame>>,
+    pub custom_commands: Vec<CustomCommand>,
+    pub file_sets: BTreeMap<String, FileSet>,
+    /// `target_link_libraries` signature uses (keyword?, call site) for the
+    /// plain/keyword signature mixing check.
+    pub link_signatures: Vec<(bool, Frame)>,
+}
+
+impl Target {
+    /// A bare target with no properties.  Commands create targets through
+    /// `commands::target::create_target`, which also runs the cmTarget
+    /// constructor initialization; this is for tests and synthetic targets.
+    pub fn new(name: &str, kind: TargetKind, makefile: usize) -> Self {
+        Target {
+            name: name.to_owned(),
+            kind,
+            makefile,
+            imported: false,
+            imported_global: false,
+            alias_of: None,
+            props: Props::default(),
+            provenance: BTreeMap::new(),
+            backtrace: Vec::new(),
+            policies: PolicyMap::default(),
+            system_include_directories: BTreeSet::new(),
+            dependencies: BTreeMap::new(),
+            custom_commands: Vec::new(),
+            file_sets: BTreeMap::new(),
+            link_signatures: Vec::new(),
+        }
+    }
+}
+
+pub type PropertyEntry = (String, Vec<Frame>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scope {
+    Private,
+    Public,
+    Interface,
+}
+
+impl Scope {
+    pub fn direct(self) -> bool {
+        self != Self::Interface
+    }
+
+    pub fn interface(self) -> bool {
+        self != Self::Private
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Private => "PRIVATE",
+            Self::Public => "PUBLIC",
+            Self::Interface => "INTERFACE",
+        }
+    }
 }
 
 #[derive(Debug)]
+pub struct FileSet {
+    pub kind: String,
+    pub scope: Scope,
+    pub base_dirs: Vec<PropertyEntry>,
+    pub files: Vec<PropertyEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CustomCommandKind {
+    #[default]
+    Output,
+    PreBuild,
+    PreLink,
+    PostBuild,
+    Utility,
+}
+
+#[derive(Debug, Default)]
+pub struct CustomCommand {
+    pub kind: CustomCommandKind,
+    pub makefile: usize,
+    pub command_lines: Vec<Vec<String>>,
+    pub outputs: Vec<String>,
+    pub byproducts: Vec<String>,
+    pub depends: Vec<String>,
+    pub implicit_depends: Vec<(String, String)>,
+    pub main_dependency: String,
+    pub working_directory: String,
+    pub comment: Option<String>,
+    pub depfile: String,
+    pub job_pool: String,
+    pub job_server_aware: bool,
+    pub verbatim: bool,
+    pub uses_terminal: bool,
+    pub command_expand_lists: bool,
+    pub depends_explicit_only: bool,
+    pub codegen: bool,
+    /// `cmCustomCommand::SetEscapeAllowMakeVars`, set when the command is
+    /// attached at generate time.
+    pub escape_allow_make_vars: bool,
+    /// `cmCustomCommand::SetTarget`: the owning target's name for TARGET
+    /// (PRE_BUILD/PRE_LINK/POST_BUILD) commands.
+    pub target: Option<String>,
+    #[allow(dead_code, reason = "custom command generation metadata")]
+    pub backtrace: Vec<Frame>,
+    #[allow(dead_code, reason = "custom command generation metadata")]
+    pub policies: PolicyMap,
+}
+
+/// A custom-command action deferred to generate time
+/// (`cmMakefile::AddGeneratorAction`).
+#[derive(Debug)]
+pub enum GeneratorAction {
+    /// add_custom_command(OUTPUT): `detail::AddCustomCommandToOutput`.
+    Output {
+        command: CustomCommand,
+        replace: bool,
+    },
+    /// add_custom_command(OUTPUT ... APPEND):
+    /// `detail::AppendCustomCommandToOutput` (outputs[0] is the output).
+    Append(CustomCommand),
+    /// add_custom_command(TARGET): `detail::AddCustomCommandToTarget`.
+    Target {
+        target: String,
+        command: CustomCommand,
+    },
+    /// add_custom_target with commands or depends: `detail::AddUtilityCommand`.
+    Utility {
+        target: String,
+        command: CustomCommand,
+    },
+}
+
+impl GeneratorAction {
+    pub fn command(&self) -> &CustomCommand {
+        match self {
+            Self::Output { command, .. }
+            | Self::Append(command)
+            | Self::Target { command, .. }
+            | Self::Utility { command, .. } => command,
+        }
+    }
+}
+
+/// `cmLocalGenerator::SourceEntry`: what produces an output path.
+#[derive(Clone, Debug, Default)]
+pub struct OutputSource {
+    /// Index into `ext.sources[dir]` of the source carrying the command.
+    pub source: Option<usize>,
+    pub source_is_byproduct: bool,
+    /// Key of a target whose utility or build-event command produces it.
+    pub target: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct SourceFile {
+    #[allow(
+        dead_code,
+        reason = "source file directory scope for property integration"
+    )]
+    pub makefile: usize,
+    pub props: Props,
+    pub location: SourceFileLocation,
+    pub generated: bool,
+    pub custom_command: Option<CustomCommand>,
+}
+
+#[derive(Debug)]
+pub struct SourceFileLocation {
+    pub directory: String,
+    pub name: String,
+    pub ambiguous_directory: bool,
+    pub ambiguous_extension: bool,
+}
+
+#[derive(Debug)]
+pub struct SourceGroup {
+    pub regex: Option<String>,
+    pub files: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code, reason = "test model also carries generation metadata")]
 pub struct Test {
     pub name: String,
     pub makefile: usize,
     pub command: Vec<String>,
     pub props: Props,
     pub old_style: bool,
+    pub configurations: Vec<String>,
+    pub command_expand_lists: bool,
+    pub empty_argument_policy: PolicyStatus,
+    pub emulator_policy: PolicyStatus,
     pub backtrace: Vec<Frame>,
 }
 
@@ -74,6 +264,24 @@ pub struct Ext {
     pub aliases: HashMap<String, String>,
     pub tests: Vec<Test>,
     pub execution_files: Vec<String>,
+    pub testing_enabled: BTreeSet<usize>,
+    pub sources: BTreeMap<usize, Vec<SourceFile>>,
+    pub generated_sources: BTreeSet<String>,
+    pub source_groups: BTreeMap<usize, BTreeMap<String, SourceGroup>>,
+    pub directory_provenance: BTreeMap<usize, BTreeMap<String, Vec<PropertyEntry>>>,
+    pub directory_system_includes: BTreeMap<usize, BTreeSet<String>>,
+    pub directory_define_flags: BTreeMap<usize, String>,
+    pub pending_subdirs: BTreeMap<usize, Vec<PendingSubdirectory>>,
+    /// `cmMakefile::GeneratorActions`, in configure order across all
+    /// directories.  Consumed by `custom_actions::run_generator_actions`.
+    pub generator_actions: Vec<GeneratorAction>,
+    pub generator_actions_invoked: bool,
+    /// `cmLocalGenerator::OutputToSource`, per directory, filled at generate
+    /// time by `run_generator_actions`.
+    pub output_to_source: BTreeMap<usize, HashMap<String, OutputSource>>,
+    pub scoped_targets: HashMap<(usize, String), String>,
+    pub scoped_aliases: HashMap<(usize, String), String>,
+    pub target_property_initializers: BTreeMap<String, String>,
     pub defer_current_id: Option<String>,
     pub dependency_provider: Option<(String, Vec<String>)>,
     pub find_package: HashMap<usize, crate::commands::find::package::PackageState>,
@@ -84,7 +292,6 @@ pub struct Ext {
 
     pub property_definitions: crate::properties::Definitions,
     pub source_properties: HashMap<usize, Vec<crate::properties::SourceFile>>,
-    pub generated_sources: std::collections::HashSet<String>,
     pub install_properties: HashMap<String, Props>,
     pub directory_definitions: HashMap<usize, BTreeMap<String, String>>,
     pub variable_watches: HashMap<String, Vec<String>>,
@@ -100,25 +307,87 @@ pub struct Ext {
     pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
 }
 
-/// `cmMakefile::FindTargetToUse`: aliases, then targets visible from the
-/// current directory (imported non-global targets are directory-scoped).
-pub fn find_target_to_use<'a>(interp: &'a Interp, name: &str) -> Option<&'a Target> {
-    let real = interp.ext.aliases.get(name).map(String::as_str).unwrap_or(name);
-    let target = interp.ext.targets.get(real)?;
-    if target.imported && !target.imported_global {
-        // Imported targets are visible in the directory that created them and
-        // its subdirectories.
-        let mut directory = Some(interp.mf_index());
-        while let Some(index) = directory {
-            if index == target.makefile {
-                return Some(target);
-            }
-            directory = interp.makefiles[index].parent;
-        }
-        return None;
-    }
-    Some(target)
+#[derive(Debug)]
+pub struct PendingSubdirectory {
+    pub source: String,
+    pub binary: String,
+    pub exclude_from_all: bool,
+    pub backtrace: Vec<Frame>,
 }
+
+/// Look up a visible alias and return its target key and global visibility.
+/// A local alias stays local even if its imported target is promoted later.
+pub fn find_alias<'a>(interp: &'a Interp, name: &str) -> Option<(&'a str, bool)> {
+    find_alias_at(interp, interp.mf_index(), name)
+}
+
+fn find_alias_at<'a>(interp: &'a Interp, dir: usize, name: &str) -> Option<(&'a str, bool)> {
+    if let Some(key) = interp.ext.scoped_aliases.get(&(dir, name.to_owned())) {
+        return Some((key, false));
+    }
+    interp.ext.aliases.get(name).map(|key| (key.as_str(), true))
+}
+
+/// Target keys index both `targets` and `target_order`.
+pub fn find_target_key(interp: &Interp, name: &str) -> Option<String> {
+    find_target_key_at(interp, interp.mf_index(), name)
+}
+
+/// Resolve a link item in the directory encoded by target_link_libraries.
+pub fn find_target_key_at(interp: &Interp, dir: usize, name: &str) -> Option<String> {
+    if let Some((key, false)) = find_alias_at(interp, dir, name) {
+        return Some(key.to_owned());
+    }
+    if let Some(key) = interp.ext.scoped_targets.get(&(dir, name.to_owned())) {
+        return Some(key.clone());
+    }
+    find_alias_at(interp, dir, name)
+        .map(|(key, _)| key.to_owned())
+        .or_else(|| find_global_target_key(interp, name))
+}
+
+pub fn find_global_target_key(interp: &Interp, name: &str) -> Option<String> {
+    if interp
+        .ext
+        .targets
+        .get(name)
+        .is_some_and(|target| !target.imported || target.imported_global)
+    {
+        return Some(name.to_owned());
+    }
+    interp
+        .ext
+        .target_order
+        .iter()
+        .find(|key| {
+            let target = &interp.ext.targets[*key];
+            target.name == name && target.imported_global
+        })
+        .cloned()
+}
+
+/// `cmMakefile::FindTargetToUse`, also returning the target's key in
+/// `interp.ext.targets` (which differs from `Target::name` for
+/// directory-scoped imported targets).
+pub fn find_target_entry<'a>(interp: &'a Interp, name: &str) -> Option<(&'a str, &'a Target)> {
+    let key = find_target_key(interp, name)?;
+    interp
+        .ext
+        .targets
+        .get_key_value(&key)
+        .map(|(key, target)| (key.as_str(), target))
+}
+
+/// `cmMakefile::FindTargetToUse`.
+pub fn find_target_to_use<'a>(interp: &'a Interp, name: &str) -> Option<&'a Target> {
+    interp.ext.targets.get(&find_target_key(interp, name)?)
+}
+
+#[allow(unused_imports, reason = "shared API for property command integration")]
+pub use crate::commands::target::{
+    PropertyWrite, find_source, get_or_create_source, mark_generated, read_target_property,
+    register_target, source_prop, target_property, write_target_property,
+};
 
 pub fn has_test(interp: &Interp, name: &str) -> bool {
     let current = interp.mf_index();

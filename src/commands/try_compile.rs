@@ -983,17 +983,10 @@ fn find_targets_in_value<'a>(
     exports: &mut Vec<&'a str>,
 ) {
     for item in util::expand_list(value, false) {
-        if let Some(target) = state::find_target_to_use(interp, &item)
+        if let Some((key, target)) = state::find_target_entry(interp, &item)
             && emitted_deps.insert(target.name.clone())
         {
-            // Leak-free approach: store the map key.
-            let name: &'a str = interp
-                .ext
-                .targets
-                .get_key_value(&target.name)
-                .map(|(key, _)| key.as_str())
-                .unwrap_or(&target.name);
-            exports.push(name);
+            exports.push(key);
         }
     }
 }
@@ -1122,10 +1115,8 @@ fn generate_targets_file(interp: &Interp, targets: &[String], languages: &BTreeS
     // CreateImportedGenerationObjects resolves names to targets.
     let mut exports: Vec<&str> = Vec::new();
     for name in targets {
-        if let Some(target) = state::find_target_to_use(interp, name)
-            && let Some((key, _)) = interp.ext.targets.get_key_value(&target.name)
-        {
-            exports.push(key.as_str());
+        if let Some((key, _)) = state::find_target_entry(interp, name) {
+            exports.push(key);
         }
     }
 
@@ -1213,11 +1204,10 @@ fn find_targets_in_genex<'a>(
                         .and_then(|rest| rest.split(',').next())
                 };
                 if let Some(name) = name
-                    && let Some(target) = state::find_target_to_use(interp, name)
+                    && let Some((key, target)) = state::find_target_entry(interp, name)
                     && emitted_deps.insert(target.name.clone())
-                    && let Some((key, _)) = interp.ext.targets.get_key_value(&target.name)
                 {
-                    exports.push(key.as_str());
+                    exports.push(key);
                 }
                 index = end;
             }
@@ -3230,18 +3220,12 @@ mod tests {
             props.set("IMPORTED_LOCATION", "/opt/libimpl.a".to_owned());
             props.set("INTERFACE_INCLUDE_DIRECTORIES", "/opt/inc".to_owned());
             props.set("SYSTEM", "ON".to_owned());
-            interp.ext.targets.insert(
-                "implib".to_owned(),
+            state::register_target(
+                &mut interp,
                 state::Target {
-                    name: "implib".to_owned(),
-                    kind: TargetKind::StaticLibrary,
-                    makefile: 0,
                     imported: true,
-                    imported_global: false,
-                    alias_of: None,
                     props,
-                    provenance: BTreeMap::new(),
-                    backtrace: Vec::new(),
+                    ..state::Target::new("implib", TargetKind::StaticLibrary, 0)
                 },
             );
             interp

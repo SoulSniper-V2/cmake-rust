@@ -64,6 +64,7 @@ fn target(name: &str, kind: TargetKind, props: Props) -> Target {
         props,
         provenance: Default::default(),
         backtrace: Vec::new(),
+        ..crate::state::Target::new("", crate::state::TargetKind::Executable, 0)
     }
 }
 
