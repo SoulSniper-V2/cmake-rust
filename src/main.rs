@@ -7,6 +7,7 @@ mod configure;
 mod condition;
 mod flow;
 mod fsutil;
+#[allow(dead_code)] mod genex;
 mod interp;
 mod lexer;
 mod messages;
