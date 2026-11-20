@@ -1,0 +1,8 @@
+set(v "base")
+string(APPEND v "a" "b;c")
+message("v=${v}")
+set(e "")
+string(APPEND e "x")
+message("e=${e}")
+string(APPEND newvar "init")
+message("n=${newvar}")

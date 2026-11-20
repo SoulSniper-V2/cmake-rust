@@ -1,0 +1,8 @@
+string(FIND "hello world" "o" a REVERSE)
+message("a=${a}")
+string(FIND "hello world" "l" b REVERSE)
+message("b=${b}")
+string(FIND "hello" "" c REVERSE)
+message("c=${c}")
+string(FIND "hello" "z" d REVERSE)
+message("d=${d}")

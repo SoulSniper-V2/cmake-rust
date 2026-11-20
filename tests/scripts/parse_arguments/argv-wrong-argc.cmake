@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 0 P "" "")
+  message(STATUS "never")
+endfunction()
+f()

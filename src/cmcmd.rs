@@ -12,7 +12,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use md5::{Digest, Md5};
+use md5::Md5;
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
 
@@ -655,7 +655,47 @@ fn sleep(args: &[String]) -> i32 {
     0
 }
 
-fn hash_sum<D: Digest + Write>(args: &[String]) -> i32 {
+// md-5 pins digest 0.10 while sha1/sha2/sha3 use digest 0.11, so the two
+// `Digest` traits are distinct. This bridge lets one `hash_sum` drive both.
+trait Hasher {
+    fn new() -> Self;
+    fn feed(&mut self, data: &[u8]);
+    fn finish(self) -> Vec<u8>;
+}
+
+impl Hasher for Md5 {
+    fn new() -> Self {
+        <Self as md5::Digest>::new()
+    }
+    fn feed(&mut self, data: &[u8]) {
+        <Self as md5::Digest>::update(self, data);
+    }
+    fn finish(self) -> Vec<u8> {
+        <Self as md5::Digest>::finalize(self).to_vec()
+    }
+}
+
+macro_rules! impl_hasher {
+    ($($t:ty, $krate:ident);+ $(;)?) => {
+        $(
+            impl Hasher for $t {
+                fn new() -> Self {
+                    <Self as $krate::Digest>::new()
+                }
+                fn feed(&mut self, data: &[u8]) {
+                    <Self as $krate::Digest>::update(self, data);
+                }
+                fn finish(self) -> Vec<u8> {
+                    <Self as $krate::Digest>::finalize(self).to_vec()
+                }
+            }
+        )+
+    };
+}
+
+impl_hasher!(Sha1, sha1; Sha224, sha2; Sha256, sha2; Sha384, sha2; Sha512, sha2);
+
+fn hash_sum<D: Hasher>(args: &[String]) -> i32 {
     let mut failures = 0;
     for arg in args {
         if Path::new(arg).is_dir() {
@@ -663,14 +703,21 @@ fn hash_sum<D: Digest + Write>(args: &[String]) -> i32 {
             failures += 1;
         } else {
             let mut hash = D::new();
-            if File::open(arg)
-                .and_then(|mut file| io::copy(&mut file, &mut hash))
-                .is_err()
-            {
+            let hashed = File::open(arg).and_then(|mut file| {
+                let mut buf = [0u8; 8192];
+                loop {
+                    let read = file.read(&mut buf)?;
+                    if read == 0 {
+                        return Ok(());
+                    }
+                    hash.feed(&buf[..read]);
+                }
+            });
+            if hashed.is_err() {
                 eprintln!("{arg}: No such file or directory");
                 failures += 1;
             } else {
-                for byte in hash.finalize() {
+                for byte in hash.finish() {
                     print!("{byte:02x}");
                 }
                 println!("  {arg}");

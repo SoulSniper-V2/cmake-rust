@@ -1,0 +1,5 @@
+set(l "a\;b;c")
+list(LENGTH l n)
+message(STATUS "n=${n}")
+list(GET l 0 x)
+message(STATUS "x=${x}")

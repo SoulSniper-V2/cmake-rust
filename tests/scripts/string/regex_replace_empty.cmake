@@ -1,0 +1,6 @@
+string(REGEX REPLACE "b*" "X" a "aabbaa")
+message("a=<${a}>")
+string(REGEX REPLACE "a*" "<>" b "bab")
+message("b=<${b}>")
+string(REGEX REPLACE "$" "!" c "ab")
+message("c=<${c}>")

@@ -1,0 +1,8 @@
+string(REGEX MATCHALL "[0-9]+" a "a1b22c333")
+message("a=<${a}>")
+string(REGEX MATCHALL "(a|b)" b "abcba")
+message("b=<${b}> m0=<${CMAKE_MATCH_0}> m1=<${CMAKE_MATCH_1}> cnt=<${CMAKE_MATCH_COUNT}>")
+string(REGEX MATCHALL "x" c "abc")
+message("c=<${c}>")
+string(REGEX MATCHALL "l+" d "hello lll")
+message("d=<${d}>")
