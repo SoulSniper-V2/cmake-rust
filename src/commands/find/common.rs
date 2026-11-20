@@ -9,9 +9,11 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::cache::convert_to_unix_slashes;
+use crate::cache::{CacheType, convert_to_unix_slashes};
 use crate::interp::{CmdErr, Interp, err};
-use crate::util::{collapse_full_path, expand_list, is_on, is_subdirectory, strtol};
+use crate::util::{
+    collapse_full_path, expand_list, is_off, is_on, is_subdirectory, join_list, strtol,
+};
 
 pub(super) const SOURCES: [&str; 6] = [
     "PACKAGE_ROOT_PATH",
@@ -416,4 +418,37 @@ pub(super) fn lib_path_variants(interp: &Interp) -> impl Iterator<Item = &'stati
     })
     .collect::<Vec<_>>()
     .into_iter()
+}
+
+/// cmMakefile assigns metadata to untyped -D paths before normal-variable
+/// policy handling. Values recognized as OFF, including NOTFOUND, stay literal.
+pub(super) fn cache_result(
+    interp: &mut Interp,
+    name: &str,
+    value: &str,
+    doc: &str,
+    kind: CacheType,
+    force: bool,
+) {
+    let mut value = value.to_owned();
+    if matches!(kind, CacheType::Path | CacheType::Filepath)
+        && let Some(previous) = interp
+            .cache
+            .get(name)
+            .filter(|entry| entry.kind == CacheType::Uninitialized)
+    {
+        let paths = expand_list(if force { &value } else { &previous.value }, false)
+            .into_iter()
+            .map(|path| {
+                if is_off(&path) {
+                    path
+                } else {
+                    normalized(&path)
+                }
+            })
+            .collect::<Vec<_>>();
+        value = join_list(&paths);
+        interp.cache.add(name, Some(&value), Some(doc), kind);
+    }
+    interp.add_cache_def(name, Some(&value), Some(doc), kind, force);
 }

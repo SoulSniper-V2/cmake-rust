@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_FRAMEWORK ONLY)
+find_path(FRAMEWORK_HEADER Widget/widget.h HINTS data NO_DEFAULT_PATH)
+find_file(HEADER Widget/widget.h HINTS data NO_DEFAULT_PATH)
+message("${FRAMEWORK_HEADER} | ${HEADER}")

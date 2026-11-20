@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+cmake_policy(SET CMP0125 OLD)
+find_program(FIRST missing NO_DEFAULT_PATH)
+find_program(SECOND missing NO_DEFAULT_PATH)
+message("${FIRST} | $CACHE{FIRST} | ${SECOND} | $CACHE{SECOND}")
