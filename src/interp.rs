@@ -15,6 +15,13 @@ use crate::props::Props;
 use crate::util;
 
 pub const VERSION: (u32, u32, u32) = (4, 1, 0);
+
+type ParseKey = (String, u64, i64, i64);
+
+thread_local! {
+    static PARSE_CACHE: std::cell::RefCell<HashMap<ParseKey, Rc<ParsedFile>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
 pub const VERSION_STRING: &str = "4.1.0";
 
 /// Error returned by a builtin command.
@@ -209,8 +216,6 @@ pub struct Interp {
     pub warn_deprecated: bool,
     pub deprecated_as_errors: bool,
     recursion_depth: usize,
-    /// Parsed file cache keyed by path.
-    parsed: HashMap<String, Rc<ParsedFile>>,
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
@@ -218,6 +223,8 @@ pub struct Interp {
     pub request_return: bool,
     /// Configuring a try_compile project.
     pub in_try_compile: bool,
+    /// `--debug-trycompile`: keep try_compile directories and log events.
+    pub debug_trycompile: bool,
     /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
     pub root_check_cmp0000: bool,
     /// Language-enablement state (cmGlobalGenerator language maps).
@@ -259,10 +266,10 @@ impl Interp {
             warn_deprecated: true,
             deprecated_as_errors: false,
             recursion_depth: 0,
-            parsed: HashMap::new(),
             stdout_log: None,
             request_return: false,
             in_try_compile: false,
+            debug_trycompile: false,
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,
@@ -786,21 +793,20 @@ impl Interp {
     // List files
 
     fn parse_file(&mut self, path: &str) -> Option<Rc<ParsedFile>> {
-        if let Some(parsed) = self.parsed.get(path) {
-            return Some(parsed.clone());
+        // Cache parses across interpreter instances (try_compile projects
+        // re-read the same modules), keyed by path, size and mtime so that
+        // rewritten files are re-parsed.
+        let meta = std::fs::metadata(path).ok()?;
+        use std::os::unix::fs::MetadataExt;
+        let key = (path.to_owned(), meta.len(), meta.mtime(), meta.mtime_nsec());
+        if let Some(parsed) = PARSE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+            return Some(parsed);
         }
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                let message = format!("cmake_language could not read file \"{path}\".");
-                let _ = message;
-                return None;
-            }
-        };
+        let bytes = std::fs::read(path).ok()?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let rc_path: Rc<str> = Rc::from(path);
         let parsed = self.parse_text(rc_path, &text)?;
-        self.parsed.insert(path.to_owned(), parsed.clone());
+        PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
         Some(parsed)
     }
 

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C CXX)
+file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/a.c "int a(void){return 0;}\n")
+file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/b.cxx "int b(){return 0;}\n")
+try_compile(OK SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/a.c ${CMAKE_CURRENT_SOURCE_DIR}/b.cxx)
+message(STATUS "result=${OK}")

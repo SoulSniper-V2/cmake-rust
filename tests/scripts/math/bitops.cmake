@@ -1,0 +1,2 @@
+math(EXPR r "0xff & 0x0f | 0x30 ^ 0x10")
+message(STATUS "r=${r}")
