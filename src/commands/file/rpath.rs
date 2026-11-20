@@ -532,7 +532,8 @@ fn maybe_report_error(interp: &mut Interp, parsed: &Parsed) -> bool {
 }
 
 fn status_line(interp: &mut Interp, message: &str) {
-    // cmMakefile::DisplayStatus prints "-- <message>".
+    // cmMakefile::DisplayStatus -> cmake::UpdateProgress prints
+    // "-- <message>" unconditionally outside find-package mode.
     interp.stdout_line(&format!("-- {message}"));
 }
 
