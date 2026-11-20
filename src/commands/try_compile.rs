@@ -3100,6 +3100,8 @@ fn run_single_command(
         };
         cmd.stdout(writer).stderr(writer2);
         let mut child = cmd.spawn().map_err(|_| ())?;
+        // Close the parent's copies of the write ends so the read sees EOF.
+        drop(cmd);
         // SAFETY: reader fd from pipe().
         let mut reader = unsafe { std::fs::File::from_raw_fd(fds[0]) };
         let mut data = Vec::new();

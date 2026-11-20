@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-use super::{Flags, append, append_options, cmake_space, shell_with_make_vars, target_options};
+use super::{Flags, append, append_options, cmake_space, shell_with_make_vars};
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
