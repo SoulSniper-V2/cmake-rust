@@ -1,0 +1,113 @@
+{
+ "case": {
+  "dirs": {
+   "": {
+    "vars": {
+     "CMAKE_SHARED_LIBRARY_NAME_WITH_VERSION": "ON"
+    }
+   }
+  },
+  "files": [
+   "src/a.c"
+  ],
+  "name": "name_with_version",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "SHARED_LIBRARY",
+    "name": "d",
+    "props": {
+     "SOURCES": "a.c",
+     "SOVERSION": "4",
+     "VERSION": "4.1"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "SHARED_LIBRARY",
+    "name": "n",
+    "props": {
+     "SOURCES": "a.c"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "d": {
+    "file": "<ROOT>/build/libd-4.so.4.1",
+    "linker": "<ROOT>/build/libd-4.so",
+    "soname": "<ROOT>/build/libd-4.so.4"
+   },
+   "n": {
+    "file": "<ROOT>/build/libn.so",
+    "linker": "<ROOT>/build/libn.so",
+    "soname": "<ROOT>/build/libn.so"
+   }
+  },
+  "custom": [],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_NAME_WITH_VERSION": "ON",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "",
+  "targets": {
+   "d": {
+    "externals": [],
+    "link_output": "<ROOT>/build/libd-4.so.4.1",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/d.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   },
+   "n": {
+    "externals": [],
+    "link_output": "<ROOT>/build/libn.so",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/n.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 41
+}

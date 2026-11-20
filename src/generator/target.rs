@@ -44,7 +44,7 @@ pub enum SourceKind {
     ObjectSource,
     Header,
     ExternalObject,
-    /// HEADER_FILE_ONLY or no language.
+    /// Source without a build action.
     Extra,
     CustomCommandOutput,
     ModuleDefinition,
@@ -63,6 +63,9 @@ pub struct SourceInfo {
     pub object_name: String,
     /// Whether this source is GENERATED.
     pub generated: bool,
+    /// For an object file of a linked OBJECT library
+    /// (`cmSourceFile::GetObjectLibrary`), that library's name.
+    pub object_library: Option<String>,
 }
 
 /// Prefix, configured base (including the postfix), and suffix of an artifact.
@@ -388,6 +391,7 @@ pub fn has_soname(ctx: &GenCtx, target: &Target, config: &str) -> bool {
     ctx.var(target.makefile, &variable).is_some()
 }
 
+#[allow(dead_code, reason = "target query for generator consumers")]
 pub fn is_framework_on_apple(_ctx: &GenCtx, _target: &Target, _config: &str) -> bool {
     false
 }
@@ -471,6 +475,10 @@ fn import_prop<'a>(target: &'a Target, property: &str, suffix: &str) -> Option<&
 
 /// Imported artifact metadata shared with the link generator.
 #[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "import metadata shared with link and genex consumers"
+)]
 pub struct ImportInfo<'a> {
     pub suffix: String,
     pub location: &'a str,
@@ -661,15 +669,34 @@ pub(super) fn target_in_directory<'a>(
     None
 }
 
+#[cfg(test)]
+type TestSourceProps = Option<Box<dyn Fn(usize, &str, &str) -> Option<String>>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only stand-in for the source-file model consulted by `source_prop`.
+    pub(super) static TEST_SOURCE_PROPS: std::cell::RefCell<TestSourceProps> =
+        const { std::cell::RefCell::new(None) };
+}
+
 // INTEGRATION: Look up the SourceFile in the named directory, including the
 // global GENERATED registry. For CUSTOM_COMMAND return ON when the rule is
 // attached to this source (a generated output can instead be an ObjectSource).
 pub(super) fn source_prop(
     _ctx: &GenCtx,
-    _dir_index: usize,
-    _path: &str,
-    _name: &str,
+    dir_index: usize,
+    path: &str,
+    name: &str,
 ) -> Option<String> {
+    #[cfg(test)]
+    if let Some(value) = TEST_SOURCE_PROPS.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|lookup| lookup(dir_index, path, name))
+    }) {
+        return value;
+    }
+    let _ = (dir_index, path, name);
     None
 }
 
@@ -679,12 +706,14 @@ const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
     "f95", "f03", "hip", "ispc",
 ];
 
+/// `cmSourceFile::ResolveFullPath` for a source listed by `target`.
 fn resolve_source(
     ctx: &GenCtx,
-    makefile: usize,
+    target: &Target,
     source: &str,
     property: &impl Fn(&str, &str) -> Option<String>,
 ) -> Option<(String, bool)> {
+    let makefile = target.makefile;
     let directory = &ctx.interp.makefiles[makefile];
     let source_path = collapse_full_path(source, &directory.source_dir);
     let binary_path = collapse_full_path(source, &directory.binary_dir);
@@ -731,6 +760,8 @@ fn resolve_source(
     }
     let key = format!("target:missing-source:{makefile}:{source}");
     if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
+        // INTEGRATION: attach the source entry's backtrace when the target
+        // model exposes it alongside SOURCES/INTERFACE_SOURCES.
         ctx.error(Vec::new(), error);
     }
     None
@@ -802,20 +833,52 @@ fn classify_source(
     }
 }
 
+/// `cmSystemTools::SplitPath` for Unix paths: the root ("/") followed by the
+/// remaining components (empty components are kept, as kwsys does).
+fn split_path(path: &str) -> Vec<&str> {
+    match path.strip_prefix('/') {
+        Some("") => vec!["/"],
+        Some(rest) => std::iter::once("/").chain(rest.split('/')).collect(),
+        None => path.split('/').collect(),
+    }
+}
+
+/// `cmSystemTools::ForceToRelativePath(local, remote)`.
+pub(super) fn force_to_relative_path(local: &str, remote: &str) -> String {
+    if !is_full_path(remote) {
+        return remote.to_owned();
+    }
+    let local_parts = split_path(local);
+    let remote_parts = split_path(remote);
+    let common = local_parts
+        .iter()
+        .zip(&remote_parts)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common == 0 {
+        return remote.to_owned();
+    }
+    if common == remote_parts.len() && common == local_parts.len() {
+        return ".".to_owned();
+    }
+    if common + 1 == remote_parts.len()
+        && remote_parts[common].is_empty()
+        && common == local_parts.len()
+    {
+        return "./".to_owned();
+    }
+    let mut relative = vec![".."; local_parts.len() - common];
+    relative.extend(&remote_parts[common..]);
+    relative.join("/")
+}
+
+/// `relativeIfUnder` in cmLocalGenerator.cxx.
 fn relative_from_tree(top: &str, dir: &str, path: &str) -> String {
-    if !(is_subdirectory(path, dir) || (is_subdirectory(dir, top) && is_subdirectory(path, top))) {
-        return path.to_owned();
+    if is_subdirectory(path, dir) || (is_subdirectory(dir, top) && is_subdirectory(path, top)) {
+        force_to_relative_path(dir, path)
+    } else {
+        path.to_owned()
     }
-    let mut from = dir.split('/').peekable();
-    let mut to = path.split('/').peekable();
-    while from.peek().is_some() && from.peek() == to.peek() {
-        from.next();
-        to.next();
-    }
-    std::iter::repeat_n("..", from.count())
-        .chain(to)
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn object_stem(ctx: &GenCtx, target: &Target, path: &str) -> String {
@@ -932,13 +995,12 @@ fn object_file_name(
 ) -> String {
     let mut name = object_stem(ctx, target, path);
     let pch = property(path, "PCH_EXTENSION");
-    if (pch.is_some() || name.contains("cmake_pch"))
-        && let Some(start) = name.find("CMakeFiles/")
-        && let Some(end) = name[start + "CMakeFiles/".len()..].find('/')
+    if property(path, "UNITY_SOURCE_FILE").is_some() || pch.is_some() || name.contains("cmake_pch")
     {
-        let end = start + "CMakeFiles/".len() + end;
-        if name[..end].ends_with(".dir") {
-            name.replace_range(start..=end, "");
+        let regex = crate::cmregex::Regex::new("(CMakeFiles/[^/]+.dir/)")
+            .expect("static regular expression");
+        if let Some((start, end)) = regex.find(&name).and_then(|found| found.groups[0]) {
+            name.replace_range(start..end, "");
         }
     }
     let custom_extension = pch
@@ -990,7 +1052,9 @@ fn object_file_name(
         }
     }
 
-    let directory = object_directory(ctx, target, config);
+    // cmGlobalNinjaGenerator::ComputeTargetObjectDirectory appends the
+    // configuration intermediate directory "." (`<support>/./`).
+    let directory = format!("{}./", object_directory(ctx, target, config));
     let max = object_path_max(ctx, target.makefile);
     if !shorten_object_name(&mut name, directory.len(), max) {
         let warning_key = format!("target:object-path-violation:{directory}");
@@ -1132,6 +1196,18 @@ pub fn sources_with_link_closure(
     })
 }
 
+/// One evaluated item of `GetSourceFilePaths`.
+enum Listed {
+    /// A source path and, for INTERFACE_SOURCES, the providing target.
+    Path {
+        path: String,
+        provider: Option<String>,
+    },
+    /// `$<TARGET_OBJECTS:lib>` of a directly linked OBJECT library.
+    Object { path: String, library: String },
+}
+
+/// `cmGeneratorTarget::GetSourceFilePaths` + `ComputeKindedSources`.
 fn collect_sources(
     ctx: &GenCtx,
     target: &Target,
@@ -1139,63 +1215,152 @@ fn collect_sources(
     compile_closure: &[&Target],
     property: &impl Fn(&str, &str) -> Option<String>,
 ) -> Vec<SourceInfo> {
-    let mut listed = evaluated_links(ctx, target, target, "SOURCES");
-    for provider in compile_closure {
-        for source in evaluated_links(ctx, provider, target, "INTERFACE_SOURCES") {
-            if is_full_path(&source) {
-                listed.push(source);
+    let path_entry = |path: String, provider: Option<&Target>| Listed::Path {
+        path,
+        provider: provider.map(|provider| provider.name.clone()),
+    };
+    // Each group is one processSources call, with one entry per provider.
+    let mut groups: Vec<Vec<Vec<Listed>>> = Vec::new();
+    groups.push(vec![
+        evaluated_links(ctx, target, target, "SOURCES")
+            .into_iter()
+            .map(|source| path_entry(source, None))
+            .collect(),
+    ]);
+    // AddInterfaceEntries(INTERFACE_SOURCES) over the compile closure.
+    groups.push(
+        compile_closure
+            .iter()
+            .map(|provider| {
+                evaluated_links(ctx, provider, target, "INTERFACE_SOURCES")
+                    .into_iter()
+                    .map(|source| path_entry(source, Some(provider)))
+                    .collect()
+            })
+            .collect(),
+    );
+    // AddObjectEntries: objects of OBJECT libraries in the link implementation.
+    if target.kind != TargetKind::ObjectLibrary {
+        let mut entries = Vec::new();
+        for item in evaluated_links(ctx, target, target, "LINK_LIBRARIES") {
+            let Some(library) = target_in_directory(ctx, target.makefile, &item)
+                .filter(|dep| dep.kind == TargetKind::ObjectLibrary && !std::ptr::eq(*dep, target))
+            else {
+                continue;
+            };
+            let objects = if library.imported {
+                let list = mapped_import_config(library, config).and_then(|info| info.location);
+                expand_list(list.unwrap_or_default(), false)
             } else {
-                ctx.error(Vec::new(), format!(
-                    "Target \"{}\" contains relative path in its INTERFACE_SOURCES:\n  \"{source}\"",
-                    provider.name
-                ));
-            }
+                let object_dir = object_directory(ctx, library, config);
+                sources(ctx, library, config)
+                    .into_iter()
+                    .filter(|source| source.kind == SourceKind::ObjectSource)
+                    .map(|source| format!("{object_dir}{}", source.object_name))
+                    .collect()
+            };
+            entries.push(
+                objects
+                    .into_iter()
+                    .map(|path| Listed::Object {
+                        path,
+                        library: library.name.clone(),
+                    })
+                    .collect(),
+            );
         }
+        groups.push(entries);
     }
-
-    let sets = file_sets(ctx, target);
     let mut header_set = HashSet::new();
-    for (file, header) in sets {
+    let mut set_files = Vec::new();
+    for (file, header) in file_sets(ctx, target) {
         if header {
+            // addFileSetEntry marks HEADERS members HEADER_FILE_ONLY.
             header_set.insert(file.clone());
         }
-        listed.push(file);
+        set_files.push(path_entry(file, None));
     }
+    groups.push(vec![set_files]);
 
     let mut found = Vec::new();
     let mut seen = HashSet::new();
     let mut bad_objects = Vec::new();
     let mut unity_objects = false;
-    for source in listed {
-        let Some((path, generated)) = resolve_source(ctx, target.makefile, &source, property)
-        else {
-            continue;
-        };
-        if !seen.insert(path.clone()) {
-            continue;
+    'groups: for group in groups {
+        for entry in group {
+            // Resolve the whole entry first; an unresolvable source drops the
+            // entry and ends this processSources call.
+            let mut resolved = Vec::new();
+            for item in entry {
+                let (path, generated, listed, object_library) = match item {
+                    Listed::Object { path, library } => (path.clone(), true, path, Some(library)),
+                    Listed::Path {
+                        path: source,
+                        provider,
+                    } => {
+                        let Some((path, generated)) =
+                            resolve_source(ctx, target, &source, property)
+                        else {
+                            continue 'groups;
+                        };
+                        if let Some(provider) = provider
+                            && !is_full_path(&source)
+                        {
+                            ctx.error(
+                            Vec::new(),
+                            format!(
+                                "Target \"{provider}\" contains relative path in its INTERFACE_SOURCES:\n  \"{source}\""
+                            ),
+                        );
+                            continue 'groups;
+                        }
+                        (path, generated, source, None)
+                    }
+                };
+                resolved.push((path, generated, listed, object_library));
+            }
+            for (path, generated, listed, object_library) in resolved {
+                if !seen.insert(path.clone()) {
+                    continue;
+                }
+                if object_library.is_some() {
+                    found.push(SourceInfo {
+                        path,
+                        language: String::new(),
+                        kind: SourceKind::ExternalObject,
+                        object_name: String::new(),
+                        generated,
+                        object_library,
+                    });
+                    continue;
+                }
+                let language = source_language(ctx, &path, property);
+                let set_kind = header_set.contains(&path).then_some(SourceKind::Header);
+                let kind = classify_source(target, &path, &language, set_kind, property);
+                if target.kind == TargetKind::ObjectLibrary
+                    && (kind == SourceKind::ModuleDefinition
+                        || (kind == SourceKind::Resource
+                            && source_extension(&path).eq_ignore_ascii_case("idl")))
+                {
+                    bad_objects.push(filename_name(&listed));
+                }
+                let object_name = if kind == SourceKind::ObjectSource {
+                    unity_objects |=
+                        !is_on_opt(property(&path, "SKIP_UNITY_BUILD_INCLUSION").as_deref());
+                    object_file_name(ctx, target, config, &path, &language, property)
+                } else {
+                    String::new()
+                };
+                found.push(SourceInfo {
+                    path,
+                    language,
+                    kind,
+                    object_name,
+                    generated,
+                    object_library: None,
+                });
+            }
         }
-        let language = source_language(ctx, &path, property);
-        let set_kind = header_set.contains(&path).then_some(SourceKind::Header);
-        let kind = classify_source(target, &path, &language, set_kind, property);
-        if target.kind == TargetKind::ObjectLibrary
-            && (kind == SourceKind::ModuleDefinition
-                || source_extension(&path).eq_ignore_ascii_case("idl"))
-        {
-            bad_objects.push(source);
-        }
-        let object_name = if kind == SourceKind::ObjectSource {
-            unity_objects |= !is_on_opt(property(&path, "SKIP_UNITY_BUILD_INCLUSION").as_deref());
-            object_file_name(ctx, target, config, &path, &language, property)
-        } else {
-            String::new()
-        };
-        found.push(SourceInfo {
-            path,
-            language,
-            kind,
-            object_name,
-            generated,
-        });
     }
     if !bad_objects.is_empty() {
         ctx.error(Vec::new(), format!(
@@ -1204,6 +1369,8 @@ fn collect_sources(
         ));
     }
     if unity_objects && is_on_opt(target.props.get("UNITY_BUILD")) {
+        // cmLocalGenerator::AddUnityBuild is not ported; fail loudly rather
+        // than silently generating a non-unity build.
         let key = memo_key("unity-build", target, config);
         if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
             ctx.error(
@@ -1223,6 +1390,69 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
     sources_with_link_closure(ctx, target, config, &link_closure(ctx, target, config))
 }
 
+/// `cmTarget::CanCompileSources`.
+pub fn can_compile_sources(target: &Target) -> bool {
+    !target.imported
+        && matches!(
+            target.kind,
+            TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+        )
+}
+
+/// `cmGlobalGenerator::CheckTargetsForMissingSources`. Returns true when an
+/// error was reported (generation must stop).
+#[allow(dead_code, reason = "preflight query for the generator driver")]
+pub fn check_targets_for_missing_sources(ctx: &GenCtx) -> bool {
+    let mut failed = false;
+    for target in ctx.targets_in_order() {
+        if !can_compile_sources(target) || is_on_opt(target.props.get("ghs_integrity_app")) {
+            continue;
+        }
+        if sources(ctx, target, &ctx.config).is_empty() {
+            ctx.error(
+                Vec::new(),
+                format!("No SOURCES given to target: {}", target.name),
+            );
+            failed = true;
+        }
+    }
+    failed
+}
+
+/// `cmGeneratorTarget::GetLanguages`: languages of all sources plus those of
+/// OBJECT libraries whose objects are among them.
+fn target_languages(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    sources_found: &[SourceInfo],
+    languages: &mut BTreeSet<String>,
+) {
+    if !can_compile_sources(target) {
+        return;
+    }
+    let mut libraries = BTreeSet::new();
+    for source in sources_found {
+        if !source.language.is_empty() {
+            languages.insert(source.language.clone());
+        }
+        if let Some(library) = &source.object_library {
+            libraries.insert(library.clone());
+        }
+    }
+    for library in libraries {
+        if let Some(library) = target_in_directory(ctx, target.makefile, &library) {
+            let found = sources(ctx, library, config);
+            target_languages(ctx, library, config, &found, languages);
+        }
+    }
+}
+
+/// `cmGeneratorTarget::ComputeLinkClosure` + `cmTargetSelectLinker`.
 fn select_linker_language(
     ctx: &GenCtx,
     target: &Target,
@@ -1230,40 +1460,25 @@ fn select_linker_language(
     sources: &[SourceInfo],
     link_closure: &[&Target],
 ) -> String {
-    let mut languages: BTreeSet<_> = sources
-        .iter()
-        .filter(|source| !source.language.is_empty())
-        .map(|source| source.language.clone())
-        .collect();
+    let mut own = BTreeSet::new();
+    target_languages(ctx, target, config, sources, &mut own);
+    // cmTargetCollectLinkLanguages: link interface languages, which only
+    // static libraries propagate (LinkLanguagePropagatesToDependents).
+    let mut languages = own.clone();
     for provider in link_closure {
-        if !matches!(
-            provider.kind,
-            TargetKind::StaticLibrary | TargetKind::ObjectLibrary
-        ) {
+        if provider.kind != TargetKind::StaticLibrary {
             continue;
         }
-        let propagated = if provider.imported {
-            import_info(provider, config)
-                .map(|import| expand_list(import.languages, false))
-                .unwrap_or_default()
-        } else {
-            let property = |path: &str, name: &str| source_prop(ctx, provider.makefile, path, name);
-            collect_sources(ctx, provider, config, &[], &property)
-                .into_iter()
-                .filter(|source| !source.language.is_empty())
-                .map(|source| source.language)
-                .collect()
-        };
-        for language in propagated {
-            let variable = format!("CMAKE_{language}_LINKER_PREFERENCE_PROPAGATES");
-            if provider.kind == TargetKind::ObjectLibrary
-                || is_on_opt(ctx.var(target.makefile, &variable).as_deref())
-            {
-                languages.insert(language);
+        if provider.imported {
+            if let Some(import) = import_info(provider, config) {
+                languages.extend(expand_list(import.languages, false));
             }
+        } else {
+            let found = self::sources(ctx, provider, config);
+            target_languages(ctx, provider, config, &found, &mut languages);
         }
     }
-    let preference = |language: &String| {
+    let preference = |language: &str| {
         ctx.interp
             .langs
             .linker_preference
@@ -1271,18 +1486,35 @@ fn select_linker_language(
             .copied()
             .unwrap_or(0)
     };
-    let best = languages.iter().map(preference).max().unwrap_or(0).max(0);
-    let best_languages = languages
-        .into_iter()
-        .filter(|language| preference(language) == best)
-        .collect::<Vec<_>>();
-    if best_languages.len() > 1 {
+    let mut best = 0;
+    let mut preferred = BTreeSet::new();
+    let mut consider = |language: &str| {
+        let value = preference(language);
+        if value > best {
+            best = value;
+            preferred.clear();
+        }
+        if value == best {
+            preferred.insert(language.to_owned());
+        }
+    };
+    for language in &own {
+        consider(language);
+    }
+    for language in &languages {
+        let variable = format!("CMAKE_{language}_LINKER_PREFERENCE_PROPAGATES");
+        if is_on_opt(ctx.var(target.makefile, &variable).as_deref()) {
+            consider(language);
+        }
+    }
+    if preferred.len() > 1 {
+        let list: Vec<_> = preferred.iter().map(String::as_str).collect();
         ctx.error(Vec::new(), format!(
             "Target {} contains multiple languages with the highest linker preference ({best}):\n  {}\nSet the LINKER_LANGUAGE property for this target.",
-            target.name, best_languages.join("\n  ")
+            target.name, list.join("\n  ")
         ));
     }
-    best_languages.into_iter().next().unwrap_or_default()
+    preferred.into_iter().next().unwrap_or_default()
 }
 
 fn fixed_linker_language(target: &Target) -> Option<&str> {
@@ -1297,6 +1529,10 @@ fn fixed_linker_language(target: &Target) -> Option<&str> {
 }
 
 /// Select a linker using the supplied evaluated sources and link usage closure.
+#[allow(
+    dead_code,
+    reason = "entry point for an externally computed link closure"
+)]
 pub fn linker_language_with_link_closure(
     ctx: &GenCtx,
     target: &Target,
@@ -1311,16 +1547,13 @@ pub fn linker_language_with_link_closure(
 }
 
 fn compute_linker_language(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    // GetLinkClosure: no link implementation for targets that cannot
+    // compile sources.
+    if !can_compile_sources(target) {
+        return String::new();
+    }
     if let Some(language) = fixed_linker_language(target) {
         return language.to_owned();
-    }
-    if target.imported
-        || matches!(
-            target.kind,
-            TargetKind::Utility | TargetKind::InterfaceLibrary | TargetKind::GlobalTarget
-        )
-    {
-        return String::new();
     }
     let key = memo_key("linker-language", target, config);
     if let Some(value) = ctx.memo.borrow().get(&key) {
@@ -1349,54 +1582,589 @@ fn compute_linker_language(ctx: &GenCtx, target: &Target, config: &str) -> Strin
             sensitive,
         )
     };
-    let in_progress = memo_key("linker-language-in-progress", target, config);
-    ctx.memo
-        .borrow_mut()
-        .insert(in_progress.clone(), String::new());
     let (language, sensitive) = compute();
     ctx.memo.borrow_mut().insert(key, language.clone());
     if sensitive {
         let (second, _) = compute();
         if second != language {
+            // cmSystemTools::Error (no backtrace).
             ctx.error(Vec::new(), format!(
                 "Evaluation of $<LINK_LANGUAGE:...> or $<LINK_LAND_AND_ID:...> changes\nthe linker language for target \"{}\" (from '{language}' to '{second}') which is invalid.",
                 target.name
             ));
         }
     }
-    ctx.memo.borrow_mut().remove(&in_progress);
     language
 }
 
-/// `cmGeneratorTarget::GetLinkerLanguage(config)` (empty if none).
+/// `cmGeneratorTarget::GetLinkerLanguage(config)` (empty if none). Like
+/// upstream this never reports an error; the Ninja target generator reports
+/// "CMake can not determine linker language for target: ...".
 pub fn linker_language(ctx: &GenCtx, target: &Target, config: &str) -> String {
-    let language = compute_linker_language(ctx, target, config);
-    if language.is_empty()
-        && !ctx
-            .memo
-            .borrow()
-            .contains_key(&memo_key("linker-language-in-progress", target, config))
-        && !target.imported
-        && matches!(
-            target.kind,
-            TargetKind::Executable
-                | TargetKind::SharedLibrary
-                | TargetKind::ModuleLibrary
-                | TargetKind::StaticLibrary
-        )
-    {
-        let key = memo_key("missing-linker-language", target, config);
-        if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
-            ctx.error(
-                Vec::new(),
-                format!(
-                    "CMake can not determine linker language for target: {}",
-                    target.name
-                ),
-            );
+    compute_linker_language(ctx, target, config)
+}
+
+#[cfg(test)]
+mod corpus_tests {
+    //! Replays the oracle ground truth in tests/data/generator/target/*.json.
+    //! Each fixture describes a small project as a model; this harness rebuilds
+    //! that model in memory and compares artifact paths, object files, external
+    //! objects, linker languages, custom-command lines and diagnostics.
+
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::fs;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::generator::custom::{CustomCommandSpec, evaluate_spec};
+    use crate::interp::{Interp, Makefile, Mode};
+    use crate::props::Props;
+
+    /// Stands in for the oracle's CMAKE_COMMAND (fixtures record `<CMAKE>`).
+    const CMAKE: &str = "/opt/cmake-oracle/bin/cmake";
+
+    fn fixtures() -> Vec<(String, Value)> {
+        let dir = format!("{}/tests/data/generator/target", env!("CARGO_MANIFEST_DIR"));
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let json: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            if json.get("case").is_some() {
+                out.push((json["case"]["name"].as_str().unwrap().to_owned(), json));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    fn kind_from(name: &str) -> TargetKind {
+        match name {
+            "EXECUTABLE" => TargetKind::Executable,
+            "STATIC_LIBRARY" => TargetKind::StaticLibrary,
+            "SHARED_LIBRARY" => TargetKind::SharedLibrary,
+            "MODULE_LIBRARY" => TargetKind::ModuleLibrary,
+            "OBJECT_LIBRARY" => TargetKind::ObjectLibrary,
+            "INTERFACE_LIBRARY" => TargetKind::InterfaceLibrary,
+            "UNKNOWN_LIBRARY" => TargetKind::UnknownLibrary,
+            other => panic!("unknown kind {other}"),
         }
     }
-    language
+
+    fn strings(value: &Value) -> Vec<String> {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|v| v.as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    type SourceProps = Vec<(Vec<String>, BTreeMap<String, String>)>;
+
+    struct Project {
+        interp: Interp,
+        dirs: HashMap<String, usize>,
+        root: String,
+        source_props: SourceProps,
+    }
+
+    fn build_project(name: &str, json: &Value) -> Project {
+        let case = &json["case"];
+        let expected = &json["expected"];
+        // The oracle ran under a root of the same length, so object path length
+        // limits reproduce exactly.
+        let root_len = json["root_len"].as_u64().unwrap() as usize;
+        let prefix = format!("/tmp/gtr-{}", std::process::id());
+        let suffix = format!("/{name}");
+        assert!(
+            prefix.len() + suffix.len() <= root_len,
+            "root too long for {name}"
+        );
+        let root = format!(
+            "{prefix}{}{suffix}",
+            "x".repeat(root_len - prefix.len() - suffix.len())
+        );
+        let _ = fs::remove_dir_all(&root);
+        for file in strings(&case["files"]) {
+            let path = format!("{root}/{file}");
+            fs::create_dir_all(filename_path(&path)).unwrap();
+            fs::write(&path, "").unwrap();
+        }
+        fs::create_dir_all(format!("{root}/build")).unwrap();
+        let subst = |text: &str| text.replace("<ROOT>", &root);
+
+        let mut interp = Interp::new(
+            Mode::Project,
+            &format!("{root}/src"),
+            &format!("{root}/build"),
+            "",
+        );
+        interp.cmake_command = CMAKE.to_owned();
+        let config = case["config"].as_str().unwrap_or("Debug");
+        interp.set_def("CMAKE_BUILD_TYPE", config);
+
+        let mut paths: Vec<String> = case["dirs"].as_object().unwrap().keys().cloned().collect();
+        paths.sort();
+        let mut dirs = HashMap::new();
+        for path in &paths {
+            let index = if path.is_empty() {
+                0
+            } else {
+                let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+                let parent = dirs[parent];
+                interp.makefiles.push(Makefile {
+                    source_dir: format!("{root}/src/{path}"),
+                    binary_dir: format!("{root}/build/{path}"),
+                    parent: Some(parent),
+                    props: Props::default(),
+                    policies: interp.makefiles[0].policies.clone(),
+                    list_files: Vec::new(),
+                    targets: Vec::new(),
+                    children: Vec::new(),
+                    exclude_from_all: false,
+                    deferred: Vec::new(),
+                    defer_counter: 0,
+                });
+                let index = interp.makefiles.len() - 1;
+                interp.makefiles[parent].children.push(index);
+                index
+            };
+            dirs.insert(path.clone(), index);
+            let recorded = &expected["dirs"][path.as_str()];
+            let frame = interp.makefiles[index].policies.last_mut().unwrap();
+            for (id, status) in recorded["policies"].as_object().unwrap() {
+                let status = match status.as_str().unwrap() {
+                    "NEW" => PolicyStatus::New,
+                    "OLD" => PolicyStatus::Old,
+                    _ => PolicyStatus::Warn,
+                };
+                frame.map.set(policy::index_of(id).unwrap(), status);
+            }
+            if interp.dir_final_vars.len() <= index {
+                interp.dir_final_vars.resize(index + 1, HashMap::new());
+            }
+            interp.dir_final_vars[index] = recorded["vars"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(key, value)| (key.clone(), Some(subst(value.as_str().unwrap()))))
+                .collect();
+        }
+
+        let root_vars = &expected["dirs"][""]["vars"];
+        let languages = case["languages"].as_str().unwrap_or("C CXX");
+        for language in languages.split_whitespace() {
+            let var = |suffix: &str| root_vars[format!("CMAKE_{language}_{suffix}")].as_str();
+            for extension in expand_list(var("SOURCE_FILE_EXTENSIONS").unwrap_or_default(), false) {
+                interp
+                    .langs
+                    .extension_to_language
+                    .insert(extension, language.to_owned());
+            }
+            for extension in expand_list(var("IGNORE_EXTENSIONS").unwrap_or_default(), false) {
+                interp.langs.ignore_extensions.insert(extension);
+            }
+            if let Some(extension) = var("OUTPUT_EXTENSION") {
+                interp
+                    .langs
+                    .output_extension
+                    .insert(language.to_owned(), extension.to_owned());
+            }
+            if let Some(preference) = var("LINKER_PREFERENCE") {
+                interp
+                    .langs
+                    .linker_preference
+                    .insert(language.to_owned(), preference.parse().unwrap_or(0));
+            }
+        }
+
+        for target in case["targets"].as_array().unwrap() {
+            let mut props = Props::default();
+            for field in ["props", "rust_props"] {
+                if let Some(map) = target[field].as_object() {
+                    for (key, value) in map {
+                        props.set(key, subst(value.as_str().unwrap()));
+                    }
+                }
+            }
+            let name = target["name"].as_str().unwrap().to_owned();
+            let makefile = dirs[target["dir"].as_str().unwrap_or("")];
+            interp.makefiles[makefile].targets.push(name.clone());
+            interp.ext.target_order.push(name.clone());
+            interp.ext.targets.insert(
+                name.clone(),
+                Target {
+                    name,
+                    kind: kind_from(target["kind"].as_str().unwrap()),
+                    makefile,
+                    imported: target["imported"].as_bool().unwrap_or(false),
+                    imported_global: target["global"].as_bool().unwrap_or(false),
+                    alias_of: None,
+                    props,
+                    provenance: Default::default(),
+                    backtrace: Vec::new(),
+                },
+            );
+        }
+
+        let mut source_props = Vec::new();
+        for entry in case["source_props"].as_array().into_iter().flatten() {
+            let makefile = &interp.makefiles[dirs[entry["dir"].as_str().unwrap_or("")]];
+            let props: BTreeMap<String, String> = entry["props"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                .collect();
+            for file in strings(&entry["files"]) {
+                // cmSourceFileLocation: a relative name matches in either tree.
+                let candidates = vec![
+                    collapse_full_path(&file, &makefile.source_dir),
+                    collapse_full_path(&file, &makefile.binary_dir),
+                    file.clone(),
+                ];
+                source_props.push((candidates, props.clone()));
+            }
+        }
+        Project {
+            interp,
+            dirs,
+            root,
+            source_props,
+        }
+    }
+
+    fn install_source_props(props: &SourceProps) {
+        let props = props.clone();
+        TEST_SOURCE_PROPS.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |_dir, path, name| {
+                props
+                    .iter()
+                    .find(|(candidates, _)| candidates.iter().any(|c| c == path))
+                    .and_then(|(_, props)| props.get(name).cloned())
+            }));
+        });
+    }
+
+    /// Bodies of "CMake Error" diagnostics (the indented lines after the header).
+    fn error_bodies(stderr: &str) -> BTreeSet<String> {
+        let mut bodies = BTreeSet::new();
+        let lines: Vec<&str> = stderr.lines().collect();
+        let mut index = 0;
+        while index < lines.len() {
+            if let Some(text) = lines[index].strip_prefix("CMake Error: ") {
+                // cmSystemTools::Error: a single unindented line.
+                bodies.insert(text.to_owned());
+                index += 1;
+            } else if lines[index].starts_with("CMake Error") {
+                let mut body = Vec::new();
+                index += 1;
+                while index < lines.len()
+                    && (lines[index].starts_with("  ") || lines[index].is_empty())
+                {
+                    if lines[index].is_empty()
+                        && lines
+                            .get(index + 1)
+                            .is_none_or(|next| !next.starts_with("  "))
+                    {
+                        break;
+                    }
+                    body.push(lines[index]);
+                    index += 1;
+                }
+                bodies.insert(body.join("\n"));
+            } else {
+                index += 1;
+            }
+        }
+        bodies
+    }
+
+    fn check_case(name: &str, json: &Value) -> Vec<String> {
+        let project = build_project(name, json);
+        install_source_props(&project.source_props);
+        let root = project.root.clone();
+        let subst = |text: &str| text.replace("<ROOT>", &root).replace("<CMAKE>", CMAKE);
+        let interp = &project.interp;
+        let ctx = GenCtx::new(interp);
+        let config = ctx.config.clone();
+        let expected = &json["expected"];
+        let mut failures = Vec::new();
+        let mut check = |what: String, got: String, want: String| {
+            if got != want {
+                failures.push(format!("{name}: {what}\n    got:  {got}\n    want: {want}"));
+            }
+        };
+
+        for (target_name, want) in expected["targets"].as_object().unwrap() {
+            let target = &interp.ext.targets[target_name];
+            let found = sources(&ctx, target, &config);
+            let object_dir = object_directory(&ctx, target, &config);
+            let objects: Vec<String> = found
+                .iter()
+                .filter(|source| source.kind == SourceKind::ObjectSource)
+                .map(|source| {
+                    format!(
+                        "{object_dir}{} <- {} [{}]",
+                        source.object_name, source.path, source.language
+                    )
+                })
+                .collect();
+            let want_objects: Vec<String> = want["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| {
+                    subst(&format!(
+                        "{} <- {} [{}]",
+                        o["object"].as_str().unwrap(),
+                        o["source"].as_str().unwrap(),
+                        o["language"].as_str().unwrap()
+                    ))
+                })
+                .collect();
+            check(
+                format!("{target_name} objects"),
+                objects.join("\n          "),
+                want_objects.join("\n          "),
+            );
+            if let Some(output) = want["link_output"].as_str() {
+                let externals: Vec<String> = found
+                    .iter()
+                    .filter(|source| source.kind == SourceKind::ExternalObject)
+                    .map(|source| source.path.clone())
+                    .collect();
+                let want_externals: Vec<String> = strings(&want["externals"])
+                    .iter()
+                    .map(|e| subst(e))
+                    .collect();
+                check(
+                    format!("{target_name} externals"),
+                    externals.join(" "),
+                    want_externals.join(" "),
+                );
+                check(
+                    format!("{target_name} linker language"),
+                    linker_language(&ctx, target, &config),
+                    want["linker_language"].as_str().unwrap().to_owned(),
+                );
+                check(
+                    format!("{target_name} link output"),
+                    full_path(&ctx, target, &config, ArtifactType::Runtime, true),
+                    subst(output),
+                );
+            }
+        }
+
+        for (target_name, want) in expected["artifacts"].as_object().unwrap() {
+            let target = &interp.ext.targets[target_name];
+            if let Some(file) = want["file"].as_str() {
+                check(
+                    format!("{target_name} TARGET_FILE"),
+                    full_path(&ctx, target, &config, ArtifactType::Runtime, true),
+                    subst(file),
+                );
+            }
+            if let Some(file) = want["linker"].as_str() {
+                check(
+                    format!("{target_name} TARGET_LINKER_FILE"),
+                    full_path(&ctx, target, &config, ArtifactType::Runtime, false),
+                    subst(file),
+                );
+            }
+            if let Some(file) = want["soname"].as_str() {
+                let soname = if target.imported {
+                    import_info(target, &config)
+                        .map_or("", |info| info.soname)
+                        .to_owned()
+                } else {
+                    names(&ctx, target, &config).shared_object
+                };
+                check(
+                    format!("{target_name} TARGET_SONAME_FILE"),
+                    format!(
+                        "{}/{soname}",
+                        directory(&ctx, target, &config, ArtifactType::Runtime)
+                    ),
+                    subst(file),
+                );
+            }
+        }
+
+        let case = &json["case"];
+        let customs = expected["custom"].as_array().unwrap();
+        for spec_json in case["custom"].as_array().into_iter().flatten() {
+            let makefile = project.dirs[spec_json["dir"].as_str().unwrap_or("")];
+            let list = |field: &str| {
+                strings(&spec_json[field])
+                    .iter()
+                    .map(|v| subst(v))
+                    .collect::<Vec<_>>()
+            };
+            let mut depends = list("depends");
+            if let Some(main) = spec_json["main_dependency"].as_str() {
+                depends.insert(0, subst(main));
+            }
+            let spec = CustomCommandSpec {
+                makefile,
+                target: None,
+                command_lines: spec_json["commands"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|line| {
+                        strings(line)
+                            .iter()
+                            .map(|arg| subst(&arg.replace("${CMAKE_COMMAND}", CMAKE)))
+                            .collect()
+                    })
+                    .collect(),
+                outputs: list("outputs"),
+                byproducts: list("byproducts"),
+                depends,
+                working_directory: subst(spec_json["working_directory"].as_str().unwrap_or("")),
+                comment: spec_json["comment"].as_str().map(&subst),
+                depfile: subst(spec_json["depfile"].as_str().unwrap_or("")),
+                verbatim: spec_json["verbatim"].as_bool().unwrap_or(false),
+                command_expand_lists: spec_json["command_expand_lists"].as_bool().unwrap_or(false),
+                ..CustomCommandSpec::default()
+            };
+            let result = evaluate_spec(&ctx, &spec);
+            let first = result.outputs.first().cloned().unwrap_or_default();
+            let Some(want) = customs
+                .iter()
+                .find(|c| c["outputs"][0].as_str().map(&subst).as_deref() == Some(first.as_str()))
+            else {
+                check(
+                    "custom command output".to_owned(),
+                    first,
+                    "<none in oracle>".to_owned(),
+                );
+                continue;
+            };
+            let outputs: Vec<String> = result
+                .outputs
+                .iter()
+                .chain(&result.byproducts)
+                .cloned()
+                .collect();
+            let want_list = |field: &str| {
+                strings(&want[field])
+                    .iter()
+                    .map(|v| subst(v))
+                    .collect::<Vec<_>>()
+            };
+            check(
+                format!("{first} outputs"),
+                outputs.join(" "),
+                want_list("outputs").join(" "),
+            );
+            check(
+                format!("{first} depends"),
+                result.depends.join(" "),
+                want_list("inputs").join(" "),
+            );
+            check(
+                format!("{first} COMMAND"),
+                result.shell_lines(&ctx, makefile).join(" && "),
+                subst(want["command"].as_str().unwrap()),
+            );
+            check(
+                format!("{first} DESC"),
+                result.description(&ctx, makefile, ""),
+                subst(want["desc"].as_str().unwrap()),
+            );
+        }
+
+        if expected["exit"].as_i64() == Some(0) {
+            let errors = format!("{:?}", ctx.errors.borrow());
+            check("errors".to_owned(), errors, "[]".to_owned());
+        } else {
+            // Drive the queries generation performs for every target:
+            // cmGlobalGenerator::Compute, then the Ninja target generators.
+            let mut generator_errors = String::new();
+            let compute_failed = check_targets_for_missing_sources(&ctx);
+            for target in ctx.targets_in_order() {
+                if compute_failed {
+                    break;
+                }
+                if target.imported {
+                    continue;
+                }
+                sources(&ctx, target, &config);
+                if matches!(
+                    target.kind,
+                    TargetKind::Executable
+                        | TargetKind::StaticLibrary
+                        | TargetKind::SharedLibrary
+                        | TargetKind::ModuleLibrary
+                ) {
+                    if linker_language(&ctx, target, &config).is_empty() {
+                        // cmNinjaNormalTargetGenerator::Generate.
+                        generator_errors.push_str(&format!(
+                            "CMake Error: CMake can not determine linker language for target: {}\n",
+                            target.name
+                        ));
+                        continue;
+                    }
+                    full_path(&ctx, target, &config, ArtifactType::Runtime, true);
+                    for dep in expand_list(
+                        target.props.get("LINK_LIBRARIES").unwrap_or_default(),
+                        false,
+                    ) {
+                        if let Some(dep) = target_in_directory(&ctx, target.makefile, &dep)
+                            && dep.imported
+                        {
+                            full_path(&ctx, dep, &config, ArtifactType::Runtime, true);
+                        }
+                    }
+                }
+            }
+            let rendered: String = generator_errors
+                + &ctx
+                    .errors
+                    .borrow()
+                    .iter()
+                    .map(|(_, message)| {
+                        crate::messages::render(MessageType::FatalError, message, &[], None)
+                    })
+                    .collect::<String>();
+            let want = error_bodies(&subst(expected["stderr"].as_str().unwrap()));
+            let got = error_bodies(&rendered);
+            check("errors".to_owned(), format!("{got:?}"), format!("{want:?}"));
+        }
+        TEST_SOURCE_PROPS.with(|slot| slot.borrow_mut().take());
+        drop(ctx);
+        let _ = fs::remove_dir_all(filename_path(&project.root));
+        failures
+    }
+
+    #[test]
+    fn oracle_corpus() {
+        let fixtures = fixtures();
+        assert!(
+            fixtures.len() >= 40,
+            "corpus has {} projects",
+            fixtures.len()
+        );
+        let mut failures = Vec::new();
+        for (name, json) in &fixtures {
+            failures.extend(check_case(name, json));
+        }
+        assert!(
+            failures.is_empty(),
+            "{} mismatches:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1512,7 +2280,8 @@ pub(super) mod tests {
             .set(115, PolicyStatus::New);
         let ctx = GenCtx::new(&interp);
 
-        let cases: &[(&str, TargetKind, &[(&str, &str)])] = &[
+        type Case<'a> = (&'a str, TargetKind, &'a [(&'a str, &'a str)]);
+        let cases: &[Case<'_>] = &[
             (
                 "statik",
                 TargetKind::StaticLibrary,

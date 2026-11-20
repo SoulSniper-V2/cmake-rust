@@ -1,9 +1,16 @@
 //! cmCustomCommandGenerator. OWNER: generator-target worker.
 
+#![allow(
+    dead_code,
+    reason = "custom command APIs are consumed by the Ninja writer integration"
+)]
+
 use std::path::Path;
 
 use super::ctx::GenCtx;
-use super::target::{ArtifactType, full_path, source_prop, target_in_directory};
+use super::target::{
+    ArtifactType, force_to_relative_path, full_path, source_prop, target_in_directory,
+};
 use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};
 use crate::state::TargetKind;
 use crate::util::{
@@ -276,7 +283,8 @@ fn resolve_dependency<'a>(
                 let path = full_path(ctx, target, &ctx.config, ArtifactType::Runtime, false);
                 collapse_full_path(&filename_path(&path), "")
             });
-            if target_directory.as_deref() != Some(filename_path(dependency).as_str()) {
+            let dependency_directory = collapse_full_path(&filename_path(dependency), "");
+            if target_directory.as_deref() != Some(dependency_directory.as_str()) {
                 return (Some(dependency.to_owned()), None);
             }
         }
@@ -305,6 +313,48 @@ fn resolve_dependency<'a>(
     (Some(path), None)
 }
 
+fn path_eq_or_subdir(a: &str, b: &str) -> bool {
+    a == b || crate::util::is_subdirectory(a, b)
+}
+
+/// `cmOutputConverter::MaybeRelativeTo(local, remote)` for the output
+/// converter of directory `makefile` (relative-path tops computed as in
+/// ComputeRelativePathTopSource/Binary).
+pub fn maybe_relative_to(ctx: &GenCtx, makefile: usize, local: &str, remote: &str) -> String {
+    let makefiles = &ctx.interp.makefiles;
+    let top = |pick: fn(&crate::interp::Makefile) -> &str| {
+        let mut current = makefile;
+        let mut parent = makefiles[makefile].parent;
+        while let Some(index) = parent {
+            if crate::util::is_subdirectory(pick(&makefiles[current]), pick(&makefiles[index])) {
+                current = index;
+            }
+            parent = makefiles[index].parent;
+        }
+        pick(&makefiles[current]).to_owned()
+    };
+    let top_source = top(|m| &m.source_dir);
+    let top_binary = top(|m| &m.binary_dir);
+    let mut local_in_binary = path_eq_or_subdir(local, &top_binary);
+    let mut remote_in_binary = path_eq_or_subdir(remote, &top_binary);
+    let mut local_in_source = path_eq_or_subdir(local, &top_source);
+    let mut remote_in_source = path_eq_or_subdir(remote, &top_source);
+    if top_source == top_binary {
+        // TopRelation::InSource: checks are identical.
+    } else if crate::util::is_subdirectory(&top_binary, &top_source) {
+        local_in_source &= !local_in_binary;
+        remote_in_source &= !remote_in_binary;
+    } else if crate::util::is_subdirectory(&top_source, &top_binary) {
+        local_in_binary &= !local_in_source;
+        remote_in_binary &= !remote_in_source;
+    }
+    if (local_in_binary && remote_in_binary) || (local_in_source && remote_in_source) {
+        force_to_relative_path(local, remote)
+    } else {
+        remote.to_owned()
+    }
+}
+
 impl EvaluatedCommand {
     /// COMMENT, or the same default description used by the Ninja generator.
     pub fn description(&self, ctx: &GenCtx, makefile: usize, fallback: &str) -> String {
@@ -318,7 +368,7 @@ impl EvaluatedCommand {
         let paths = self
             .outputs
             .iter()
-            .map(|output| crate::util::relative_if_under(directory, output))
+            .map(|output| maybe_relative_to(ctx, makefile, directory, output))
             .collect::<Vec<_>>();
         format!("Generating {}", paths.join(", "))
     }
@@ -363,5 +413,175 @@ impl EvaluatedCommand {
             lines.push(line);
         }
         lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generator::target::tests::{fixture_interp, oracle_fixture, test_target};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn oracle_custom_command_and_verbatim_escaping() {
+        let interp = fixture_interp("/project");
+        let ctx = GenCtx::new(&interp);
+        let spec = CustomCommandSpec {
+            makefile: 1,
+            command_lines: vec![args(&[
+                "/opt/cmake-oracle/bin/cmake",
+                "-E",
+                "touch",
+                "gen/generated.c",
+                "a b",
+                "$literal",
+            ])],
+            outputs: args(&["gen/generated.c"]),
+            byproducts: args(&["gen/stamp"]),
+            verbatim: true,
+            ..CustomCommandSpec::default()
+        };
+        let evaluated = evaluate_spec(&ctx, &spec);
+        let fixture = oracle_fixture();
+        let expected = &fixture["custom"];
+        let outputs: Vec<_> = evaluated
+            .outputs
+            .iter()
+            .chain(&evaluated.byproducts)
+            .map(|path| path.strip_prefix("/project/build/").unwrap())
+            .collect();
+        assert_eq!(
+            outputs,
+            expected["outputs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|path| path.as_str().unwrap())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            evaluated.description(&ctx, 1, ""),
+            expected["description"].as_str().unwrap()
+        );
+        assert_eq!(
+            evaluated
+                .shell_lines(&ctx, 1)
+                .join(" && ")
+                .replace("/project/", "")
+                .replace("/opt/cmake-oracle/bin/cmake", "<cmake>"),
+            expected["command"].as_str().unwrap()
+        );
+        assert!(ctx.errors.borrow().is_empty());
+        assert!(evaluate(&ctx).shell_lines(&ctx, 0).is_empty());
+    }
+
+    #[test]
+    fn target_commands_dependencies_and_depfile() {
+        let mut interp = fixture_interp("/project");
+        interp.dir_final_vars[1].insert("CMAKE_CROSSCOMPILING".to_owned(), Some("ON".to_owned()));
+        interp.cmake_command = "/cmake".to_owned();
+        let tool = test_target(
+            "tool",
+            TargetKind::Executable,
+            1,
+            &[
+                ("LINKER_LANGUAGE", "C"),
+                ("VERSION", "2"),
+                (
+                    "CROSSCOMPILING_EMULATOR",
+                    "/bin/emulator;argument with spaces",
+                ),
+            ],
+        );
+        interp.ext.targets.insert(tool.name.clone(), tool);
+        let utility = test_target("prerequisite", TargetKind::Utility, 1, &[]);
+        interp.ext.targets.insert(utility.name.clone(), utility);
+        let mut external = test_target(
+            "external",
+            TargetKind::Executable,
+            0,
+            &[
+                ("IMPORTED_LOCATION", "/usr/bin/external"),
+                ("CROSSCOMPILING_EMULATOR", "/bin/unneeded"),
+            ],
+        );
+        external.imported = true;
+        interp.ext.targets.insert(external.name.clone(), external);
+
+        let ctx = GenCtx::new(&interp);
+        let spec = CustomCommandSpec {
+            makefile: 1,
+            command_lines: vec![
+                args(&["tool", "$<COMMAND_CONFIG:first;second>", ""]),
+                args(&["external", "$<OUTPUT_CONFIG:literal>"]),
+            ],
+            depends: args(&["tool.exe", "prerequisite", "/unrelated/tool", "such/file"]),
+            command_expand_lists: true,
+            working_directory: "../work/./here".to_owned(),
+            comment: Some(String::new()),
+            depfile: "path/../file.d".to_owned(),
+            internal_depfile: Some("/project/build/CMakeFiles/d/id.d".to_owned()),
+            job_pool: "lto".to_owned(),
+            uses_terminal: true,
+            ..CustomCommandSpec::default()
+        };
+        let evaluated = evaluate_spec(&ctx, &spec);
+        assert_eq!(
+            evaluated.command_lines[0],
+            args(&[
+                "/bin/emulator",
+                "argument with spaces",
+                "/project/build/nested/oldbin/tool",
+                "first",
+                "second"
+            ])
+        );
+        assert_eq!(
+            evaluated.command_lines[1],
+            args(&["/usr/bin/external", "literal"])
+        );
+        assert_eq!(
+            evaluated.target_dependencies,
+            args(&["tool", "external", "prerequisite"])
+        );
+        assert_eq!(
+            evaluated.depends,
+            args(&[
+                "/project/build/nested/oldbin/tool-2",
+                "/unrelated/tool",
+                "/project/build/nested/such/file"
+            ])
+        );
+        assert_eq!(evaluated.working_directory, "/project/build/work/here");
+        assert_eq!(evaluated.depfile, "path/../file.d");
+        assert_eq!(evaluated.full_depfile, "/project/build/nested/file.d");
+        assert_eq!(
+            &evaluated.command_lines[2],
+            &args(&[
+                "/cmake",
+                "-E",
+                "cmake_transform_depfile",
+                "Ninja",
+                "gccdepfile",
+                "/project/src",
+                "/project/src/nested",
+                "/project/build",
+                "/project/build/nested",
+                "/project/build/nested/file.d",
+                "/project/build/CMakeFiles/d/id.d",
+            ])
+        );
+        assert_eq!(evaluated.description(&ctx, 1, "fallback"), "");
+        assert_eq!(evaluated.job_pool, "lto");
+        assert!(evaluated.uses_terminal);
+        assert_eq!(
+            evaluated.shell_lines(&ctx, 1)[1],
+            r"/bin/emulator argument\ with\ spaces /project/build/nested/oldbin/tool first second"
+        );
+        assert_eq!(real_dependency(&ctx, 1, "prerequisite"), None);
+        assert!(ctx.errors.borrow().is_empty());
     }
 }

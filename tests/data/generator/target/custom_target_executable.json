@@ -1,0 +1,146 @@
+{
+ "case": {
+  "custom": [
+   {
+    "commands": [
+     [
+      "gen",
+      "arg"
+     ],
+     [
+      "lib",
+      "x"
+     ]
+    ],
+    "depends": [
+     "gen",
+     "lib",
+     "a.c",
+     "nonexist.txt"
+    ],
+    "driver": "drv",
+    "outputs": [
+     "gen.out"
+    ],
+    "verbatim": true
+   }
+  ],
+  "dirs": {
+   "": {}
+  },
+  "files": [
+   "src/a.c"
+  ],
+  "name": "custom_target_executable",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "EXECUTABLE",
+    "name": "gen",
+    "props": {
+     "OUTPUT_NAME": "g2",
+     "RUNTIME_OUTPUT_DIRECTORY": "bin",
+     "SOURCES": "a.c"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "SHARED_LIBRARY",
+    "name": "lib",
+    "props": {
+     "SOURCES": "a.c",
+     "VERSION": "1.0"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "gen": {
+    "file": "<ROOT>/build/bin/g2"
+   },
+   "lib": {
+    "file": "<ROOT>/build/liblib.so.1.0",
+    "linker": "<ROOT>/build/liblib.so",
+    "soname": "<ROOT>/build/liblib.so.1.0"
+   }
+  },
+  "custom": [
+   {
+    "command": "cd <ROOT>/build && <ROOT>/build/bin/g2 arg && lib x",
+    "desc": "Generating gen.out",
+    "inputs": [
+     "<ROOT>/build/bin/g2",
+     "<ROOT>/build/liblib.so.1.0",
+     "<ROOT>/src/a.c",
+     "<ROOT>/build/nonexist.txt"
+    ],
+    "outputs": [
+     "<ROOT>/build/gen.out"
+    ]
+   }
+  ],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "",
+  "targets": {
+   "gen": {
+    "externals": [],
+    "link_output": "<ROOT>/build/bin/g2",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/gen.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   },
+   "lib": {
+    "externals": [],
+    "link_output": "<ROOT>/build/liblib.so.1.0",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/lib.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 48
+}
