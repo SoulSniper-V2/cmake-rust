@@ -1,0 +1,1 @@
+try_compile(RESULT ${CMAKE_CURRENT_BINARY_DIR} source.c CMAKE_FLAGS -DFOO=1)

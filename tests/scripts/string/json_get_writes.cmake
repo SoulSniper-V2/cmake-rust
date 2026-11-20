@@ -1,0 +1,8 @@
+string(JSON a GET "{\"o\":{\"a\":1,\"b\":[1,2]}}" o)
+message("a=<${a}>")
+string(JSON b GET "{\"arr\":[1,2,3]}" arr)
+message("b=<${b}>")
+string(JSON c GET "[[[1]]]")
+message("c=<${c}>")
+string(JSON d GET "{\"e\":{}}" e)
+message("d=<${d}>")

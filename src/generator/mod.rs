@@ -25,6 +25,7 @@ pub mod custom;
 pub mod flags;
 pub mod install;
 pub mod link;
+pub mod ninja;
 pub mod target;
 pub mod tests;
 
