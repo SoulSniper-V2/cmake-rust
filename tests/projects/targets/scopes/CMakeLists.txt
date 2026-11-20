@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 4.1)
+project(x NONE)
+
+add_library(global INTERFACE)
+add_subdirectory(sub build-sub SYSTEM EXCLUDE_FROM_ALL)
+subdirs(late)
+set(late_var configured-last)
+
+get_property(libs TARGET global PROPERTY INTERFACE_LINK_LIBRARIES)
+string(REGEX REPLACE "::@\\([^)]*\\)" "::@<DIR>" libs "${libs}")
+message("global links=[${libs}]")
+if(TARGET local::import OR TARGET local::alias)
+  message(FATAL_ERROR "Local imported targets escaped their directory")
+endif()
+if(NOT TARGET global::import)
+  message(FATAL_ERROR "Global imported target is missing")
+endif()

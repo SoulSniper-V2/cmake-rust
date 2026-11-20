@@ -3,6 +3,10 @@
 use crate::interp::Interp;
 
 pub mod core;
+pub mod directory;
+pub mod targets;
+#[path = "../target.rs"]
+pub mod target;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -12,4 +16,6 @@ pub fn register_all(interp: &mut Interp) {
         interp.register_flow(name);
     }
     core::register(interp);
+    directory::register(interp);
+    targets::register(interp);
 }
