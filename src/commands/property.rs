@@ -468,6 +468,20 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
         );
         return false;
     }
+    if matches!(change, Change::Append(..)) {
+        let error = match property {
+            "C_STANDARD" | "CXX_STANDARD" | "CUDA_STANDARD" | "HIP_STANDARD" | "OBJC_STANDARD"
+            | "OBJCXX_STANDARD" => Some(format!("{property} property may not be appended.")),
+            property if property.starts_with("IMPORTED_LIBNAME") => {
+                Some(format!("{property} property may not be APPENDed."))
+            }
+            _ => None,
+        };
+        if let Some(error) = error {
+            interp.issue(MessageType::FatalError, &error);
+            return false;
+        }
+    }
     if property == "IMPORTED_GLOBAL" {
         let error = if matches!(change, Change::Append(_, _)) {
             format!(

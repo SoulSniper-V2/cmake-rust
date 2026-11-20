@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
-use crate::util::collapse_full_path;
+use crate::util::{collapse_full_path, is_subdirectory};
 
 pub fn register(interp: &mut Interp) {
     interp.register("execute_process", execute_process);
@@ -103,12 +103,6 @@ fn parse<'a>(
     }
     if let Some(arg) = unknown {
         return err(format!(" given unknown argument \"{arg}\"."));
-    }
-    if options.commands.is_empty() {
-        return err(" called with no COMMAND argument.");
-    }
-    if options.commands.iter().any(|cmd| cmd.is_empty()) {
-        return err(" given COMMAND argument with no value.");
     }
     Ok(Some(options))
 }
@@ -303,22 +297,39 @@ fn duplicate(file: Option<&File>) -> io::Result<Stdio> {
     )
 }
 
+fn filename(options: &Options<'_>, option: &str) -> String {
+    let path = options.get(option);
+    let cwd = options.get("WORKING_DIRECTORY");
+    if path.is_empty() || cwd.is_empty() {
+        path.to_owned()
+    } else {
+        collapse_full_path(path, &collapse_full_path(cwd, ""))
+    }
+}
+
+fn can_write_output(interp: &Interp, path: &str) -> bool {
+    if !interp.is_on("CMAKE_DISABLE_SOURCE_CHANGES") {
+        return true;
+    }
+    let source = std::fs::canonicalize(&interp.home_source).ok();
+    let binary = std::fs::canonicalize(&interp.home_binary).ok();
+    if interp.home_source == interp.home_binary || source.is_some() && source == binary {
+        return !interp.is_on("CMAKE_DISABLE_IN_SOURCE_BUILD");
+    }
+    !is_subdirectory(path, &interp.home_source)
+        || is_subdirectory(path, &interp.home_binary)
+        || path == interp.home_binary
+}
+
 fn run_pipeline(
     options: &Options<'_>,
     captures: &mut [Capture; 2],
     timeout: Option<Duration>,
 ) -> io::Result<Option<Vec<Status>>> {
     let cwd = options.get("WORKING_DIRECTORY");
-    let filename = |value: &str| {
-        if value.is_empty() || cwd.is_empty() {
-            value.to_owned()
-        } else {
-            collapse_full_path(value, cwd)
-        }
-    };
-    let input = filename(options.get("INPUT_FILE"));
-    let output = filename(options.get("OUTPUT_FILE"));
-    let error = filename(options.get("ERROR_FILE"));
+    let input = filename(options, "INPUT_FILE");
+    let output = filename(options, "OUTPUT_FILE");
+    let error = filename(options, "ERROR_FILE");
     let merged = !options.get("OUTPUT_VARIABLE").is_empty()
         && options.get("OUTPUT_VARIABLE") == options.get("ERROR_VARIABLE");
     let out_pipe = stream(&mut captures[0], &output)?;
@@ -434,6 +445,19 @@ fn execute_process(interp: &mut Interp, args: &[String]) -> CmdResult {
     let Some(options) = parse(interp, args)? else {
         return Ok(());
     };
+    let output = filename(&options, "OUTPUT_FILE");
+    if !can_write_output(interp, &output) {
+        interp.set_fatal();
+        return err(format!(
+            "attempted to output into a file: {output} into a source directory."
+        ));
+    }
+    if options.commands.is_empty() {
+        return err(" called with no COMMAND argument.");
+    }
+    if options.commands.iter().any(|cmd| cmd.is_empty()) {
+        return err(" given COMMAND argument with no value.");
+    }
     let mut seconds = -1.0_f64;
     if !options.get("TIMEOUT").is_empty() {
         let value = std::ffi::CString::new(options.get("TIMEOUT"))
