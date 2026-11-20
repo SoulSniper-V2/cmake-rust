@@ -615,10 +615,13 @@ fn touch(command: &str, args: &[String]) -> i32 {
             let path = CString::new(arg.as_str()).expect("argument cannot contain NUL");
             // SAFETY: path is a valid C string. A null times array selects
             // the current time for both timestamps.
-            let status = unsafe {
-                libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0)
-            };
-            if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+            let status =
+                unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) };
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
         } else if command == "touch" {
             OpenOptions::new()
                 .append(true)

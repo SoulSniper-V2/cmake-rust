@@ -58,5 +58,11 @@
   {"name": "cache-view-LAH", "argv": ["build", "-N", "-LAH"], "files": {"build/CMakeCache.txt": "# test\n//Display description.\nSHOW:STRING=displayed\n//Advanced description.\nMORE:STRING=advanced\nMORE-ADVANCED:INTERNAL=1\nSECRET:INTERNAL=yes\nCMAKE_HOME_DIRECTORY:INTERNAL={work}/src\n"}},
   {"name": "cache-view-LR", "argv": ["build", "-N", "-LR", "SHOW"], "files": {"build/CMakeCache.txt": "# test\n//Display description.\nSHOW:STRING=displayed\n//Advanced description.\nMORE:STRING=advanced\nMORE-ADVANCED:INTERNAL=1\nSECRET:INTERNAL=yes\nCMAKE_HOME_DIRECTORY:INTERNAL={work}/src\n"}},
   {"name": "cache-view-LRAH", "argv": ["build", "-N", "-LRAH", "SHOW"], "files": {"build/CMakeCache.txt": "# test\n//Display description.\nSHOW:STRING=displayed\n//Advanced description.\nMORE:STRING=advanced\nMORE-ADVANCED:INTERNAL=1\nSECRET:INTERNAL=yes\nCMAKE_HOME_DIRECTORY:INTERNAL={work}/src\n"}},
-  {"name": "view-cache-by-filename", "argv": ["build/CMakeCache.txt", "-N", "-LAH"], "files": {"build/CMakeCache.txt": "# test\n//Display description.\nSHOW:STRING=displayed\n//Advanced description.\nMORE:STRING=advanced\nMORE-ADVANCED:INTERNAL=1\nSECRET:INTERNAL=yes\nCMAKE_HOME_DIRECTORY:INTERNAL={work}/src\n"}}
+  {"name": "view-cache-by-filename", "argv": ["build/CMakeCache.txt", "-N", "-LAH"], "files": {"build/CMakeCache.txt": "# test\n//Display description.\nSHOW:STRING=displayed\n//Advanced description.\nMORE:STRING=advanced\nMORE-ADVANCED:INTERNAL=1\nSECRET:INTERNAL=yes\nCMAKE_HOME_DIRECTORY:INTERNAL={work}/src\n"}},
+  {"name": "view-cache-ordered-defines-and-unset", "argv": ["-N", "-L", "-DEXPORT1:BOOL=ON", "-DEXPORT2:BOOL=ON", "-UEXPORT[12]", "-DEXPORT2:BOOL=OFF"]},
+  {"name": "view-cache-preload", "argv": ["-N", "-LH", "-C", "init.cmake"], "files": {"init.cmake": "set(VISIBLE \"initial\" CACHE STRING \"Help text\")\n"}},
+  {"name": "view-implicit-trace-json", "argv": ["-N", "--trace-format=JSON-V1"]},
+  {"name": "trace-invalid-redirect", "argv": ["-S.", "--trace-redirect=missing/trace"]},
+  {"name": "trace-redirect-header", "argv": ["-N", "--trace-format=json-v1", "--trace-redirect=trace.jsonl"], "inspect": ["trace.jsonl"]},
+  {"name": "preload-missing-and-source-missing", "argv": ["-B", "build", "-C", "missing.cmake"]}
 ]

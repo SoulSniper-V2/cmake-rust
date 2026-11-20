@@ -16,5 +16,9 @@
   {"name": "p-bad-define", "argv": ["-Dno-value", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
   {"name": "p-fresh", "argv": ["-P", "s.cmake", "--fresh"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
   {"name": "p-exit-code", "argv": ["-P", "s.cmake"], "files": {"s.cmake": "cmake_language(EXIT 7)\n"}},
-  {"name": "p-log-level", "argv": ["--log-level=VERBOSE", "-P", "s.cmake"], "files": {"s.cmake": "message(VERBOSE visible)\nmessage(DEBUG hidden)\n"}}
+  {"name": "p-log-level", "argv": ["--log-level=VERBOSE", "-P", "s.cmake"], "files": {"s.cmake": "message(VERBOSE visible)\nmessage(DEBUG hidden)\n"}},
+  {"name": "p-empty-file-argument", "argv": ["-P", ""]},
+  {"name": "p-message-context", "argv": ["--log-context", "-P", "s.cmake"], "files": {"s.cmake": "set(CMAKE_MESSAGE_CONTEXT first second)\nmessage(STATUS hello)\n"}},
+  {"name": "p-typed-path-tilde", "argv": ["-DA:PATH=~/sub", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}\")\n"}},
+  {"name": "p-reject-fifo", "argv": ["-P", "/dev/stdin"], "stdin": "return()\n"}
 ]
