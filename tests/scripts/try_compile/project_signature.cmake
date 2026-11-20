@@ -1,0 +1,1 @@
+try_compile(RESULT PROJECT Proj SOURCE_DIR dir BINARY_DIR bin TARGET tgt)

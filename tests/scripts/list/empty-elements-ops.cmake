@@ -1,0 +1,7 @@
+set(l "a;;c")
+list(GET l 1 x)
+message(STATUS "x='${x}'")
+list(FIND l "" i)
+message(STATUS "i=${i}")
+list(LENGTH l n)
+message(STATUS "n=${n}")

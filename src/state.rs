@@ -204,6 +204,8 @@ pub struct Ext {
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
+    /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
+    pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
 }
 
 #[derive(Debug)]

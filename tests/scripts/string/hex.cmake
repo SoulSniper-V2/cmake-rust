@@ -1,0 +1,6 @@
+string(HEX "hello" a)
+message("a=${a}")
+string(HEX "" b)
+message("b=<${b}>")
+string(HEX "0123" c)
+message("c=${c}")
