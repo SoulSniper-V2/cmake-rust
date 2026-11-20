@@ -1,0 +1,74 @@
+{
+ "case": {
+  "dirs": {
+   "": {}
+  },
+  "files": [
+   "src/a.c"
+  ],
+  "name": "imported_missing_location",
+  "targets": [
+   {
+    "dir": "",
+    "imported": true,
+    "kind": "STATIC_LIBRARY",
+    "name": "miss",
+    "probe": false
+   },
+   {
+    "dir": "",
+    "kind": "EXECUTABLE",
+    "name": "e",
+    "props": {
+     "LINK_LIBRARIES": "miss",
+     "SOURCES": "a.c"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "e": {
+    "file": "<ROOT>/build/e"
+   }
+  },
+  "custom": [],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 1,
+  "stderr": "CMake Error in CMakeLists.txt:\n  IMPORTED_LOCATION not set for imported target \"miss\" configuration \"Debug\".\n\n\nCMake Generate step failed.  Build files cannot be regenerated correctly.\n",
+  "targets": {}
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 49
+}
