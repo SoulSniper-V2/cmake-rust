@@ -648,10 +648,10 @@ impl Package {
                 } else {
                     format!("{}/{dir}", interp.current_source_dir())
                 };
-                file = self.find_config_file(interp, &dir)?;
+                file = self.find_config_file(interp, &dir);
             }
             if file.is_none() {
-                file = self.search_config(interp)?;
+                file = self.search_config(interp);
                 let dir = file.as_ref().map_or_else(
                     || format!("{}-NOTFOUND", self.dir),
                     |file| filename_path(file),
@@ -660,7 +660,7 @@ impl Package {
             }
         }
 
-        let name = &self.name;
+        let name = self.name.clone();
         let found_var = format!("{name}_FOUND");
         let message_var = format!("{name}_NOT_FOUND_MESSAGE");
         let mut rejected = None;
@@ -730,7 +730,7 @@ impl Package {
             "The directory containing a CMake configuration file for {}.",
             self.name
         );
-        interp.add_cache_def(&self.dir, Some(value), Some(&doc), CacheType::Path, true);
+        cache_result(interp, &self.dir, value, &doc, CacheType::Path, true);
         if interp.policy_status("CMP0126") == PolicyStatus::New
             && interp.get_normal_def(&self.dir).is_some()
         {
@@ -738,7 +738,7 @@ impl Package {
         }
     }
 
-    fn report_missing(&self, interp: &mut Interp, file: Option<&str>, rejection: Option<&str>) {
+    fn report_missing(&mut self, interp: &mut Interp, file: Option<&str>, rejection: Option<&str>) {
         let name = &self.name;
         let required = self.requirement.required();
         if !required
@@ -775,10 +775,18 @@ impl Package {
                 "Could not find a configuration file for package \"{name}\" that {comparison} requested version {range}\"{}\".\nThe following configuration files were considered but not accepted:\n",
                 self.version.complete
             );
+            // cmRemoveDuplicates compacts the entries used for this
+            // diagnostic. The reported list variables keep the vector length.
             let mut seen = HashSet::new();
-            for (file, version) in &self.considered {
-                if seen.insert(file) {
+            let mut distinct = 0;
+            for index in 0..self.considered.len() {
+                if seen.insert(self.considered[index].0.clone()) {
+                    if index != distinct {
+                        self.considered[distinct] = std::mem::take(&mut self.considered[index]);
+                    }
+                    let (file, version) = &self.considered[distinct];
                     let _ = writeln!(text, "  {file}, version: {version}");
+                    distinct += 1;
                 }
             }
             text

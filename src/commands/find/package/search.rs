@@ -217,7 +217,7 @@ impl Package {
         paths.len()
     }
 
-    pub(super) fn search_config(&mut self, interp: &mut Interp) -> Result<Option<String>, CmdErr> {
+    pub(super) fn search_config(&mut self, interp: &mut Interp) -> Option<String> {
         let paths = self.search_prefixes(interp);
         let ignore = self
             .options
@@ -314,7 +314,7 @@ impl Package {
                 for pattern in patterns {
                     file = walk_layout(&layouts, path, pattern, &mut |dir| {
                         self.search_directory(interp, dir, &ignore)
-                    })?;
+                    });
                     if file.is_some() {
                         break;
                     }
@@ -332,7 +332,7 @@ impl Package {
         } else {
             self.append_debug("The file was not found.\n");
         }
-        Ok(file)
+        file
     }
 
     fn search_directory(
@@ -340,7 +340,7 @@ impl Package {
         interp: &mut Interp,
         dir: &str,
         ignored: &[String],
-    ) -> Result<Option<String>, CmdErr> {
+    ) -> Option<String> {
         let suffixes = self.suffixes.clone();
         for suffix in suffixes {
             let path = if suffix.is_empty() {
@@ -349,37 +349,33 @@ impl Package {
                 format!("{dir}{suffix}")
             };
             if !ignored.contains(&path)
-                && let Some(config) = self.find_config_file(interp, &path)?
+                && let Some(config) = self.find_config_file(interp, &path)
             {
-                return Ok(Some(config));
+                return Some(config);
             }
         }
-        Ok(None)
+        None
     }
 
-    pub(super) fn find_config_file(
-        &mut self,
-        interp: &mut Interp,
-        dir: &str,
-    ) -> Result<Option<String>, CmdErr> {
+    pub(super) fn find_config_file(&mut self, interp: &mut Interp, dir: &str) -> Option<String> {
         for config in self.configs.clone() {
             let file = format!("{dir}/{config}");
             if let Some(debug) = &mut self.debug {
                 let _ = writeln!(debug, "  {file}");
             }
-            if readable_file(&file) && self.check_version(interp, &file)? {
+            if readable_file(&file) && self.check_version(interp, &file) {
                 if interp.is_on("CMAKE_FIND_PACKAGE_RESOLVE_SYMLINKS")
                     && let Ok(real) = fs::canonicalize(&file)
                 {
-                    return Ok(Some(real.to_string_lossy().into_owned()));
+                    return Some(real.to_string_lossy().into_owned());
                 }
-                return Ok(Some(normalized(&file)));
+                return Some(normalized(&file));
             }
         }
-        Ok(None)
+        None
     }
 
-    fn check_version(&mut self, interp: &mut Interp, config: &str) -> Result<bool, CmdErr> {
+    fn check_version(&mut self, interp: &mut Interp, config: &str) -> bool {
         let base = config.strip_suffix(".cmake").unwrap_or(config);
         let version_file = [
             format!("{base}-version.cmake"),
@@ -389,7 +385,7 @@ impl Package {
         .find(|file| readable_file(file));
         let Some(version_file) = version_file else {
             self.considered.push((config.to_owned(), "unknown".into()));
-            return Ok(self.version.min.is_empty());
+            return self.version.min.is_empty();
         };
 
         interp.push_scope();
@@ -401,8 +397,15 @@ impl Package {
         for (key, value) in self.version.definitions("PACKAGE_FIND_VERSION") {
             interp.set_def(key, value);
         }
+        let fatal_before_read = interp.fatal;
         let read = self.read(interp, &version_file, true);
-        let suitable = !interp.is_on("PACKAGE_VERSION_UNSUITABLE")
+        if read.is_err() {
+            // A syntax error rejects the version file. The parser's error is
+            // retained, and the search proceeds to the next configuration.
+            interp.fatal = fatal_before_read;
+        }
+        let suitable = read.is_ok()
+            && !interp.is_on("PACKAGE_VERSION_UNSUITABLE")
             && (self.version.min.is_empty()
                 || interp.is_on("PACKAGE_VERSION_EXACT")
                 || (!self.version.exact && interp.is_on("PACKAGE_VERSION_COMPATIBLE")));
@@ -416,11 +419,10 @@ impl Package {
                 version.clone()
             },
         ));
-        read?;
         if suitable {
             self.selected_version = version;
         }
-        Ok(suitable)
+        suitable
     }
 }
 
@@ -428,17 +430,17 @@ fn walk_layout(
     layouts: &Layouts<'_>,
     path: &str,
     segments: &[Segment<'_>],
-    visit: &mut impl FnMut(&str) -> Result<Option<String>, CmdErr>,
-) -> Result<Option<String>, CmdErr> {
+    visit: &mut impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
     let Some((&first, rest)) = segments.split_first() else {
         return visit(path);
     };
     for path in layouts.candidates(path, first) {
-        if let Some(found) = walk_layout(layouts, &path, rest, visit)? {
-            return Ok(Some(found));
+        if let Some(found) = walk_layout(layouts, &path, rest, visit) {
+            return Some(found);
         }
     }
-    Ok(None)
+    None
 }
 
 fn user_registry(name: &str) -> Vec<String> {

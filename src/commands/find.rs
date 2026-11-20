@@ -211,6 +211,8 @@ impl Find {
                 },
             }
         }
+        self.required
+            .get_or_insert_with(|| interp.is_on("CMAKE_FIND_REQUIRED"));
         if self.doc.is_empty() {
             self.doc = match self.names.split_last() {
                 None => "Where can the (unknown) library be found".into(),
@@ -612,17 +614,23 @@ impl Find {
                 .unwrap_or_default()
                 .to_owned();
             if untyped {
-                interp.add_cache_def(
+                cache_result(
+                    interp,
                     &self.variable,
-                    Some(""),
-                    Some(&self.doc),
+                    "",
+                    &self.doc,
                     self.cache_type,
                     false,
                 );
                 if interp.policy_status("CMP0126") == PolicyStatus::New
                     && interp.get_normal_def(&self.variable).is_some()
                 {
-                    interp.set_def(&self.variable, &value);
+                    let value = interp
+                        .cache
+                        .value(&self.variable)
+                        .unwrap_or_default()
+                        .to_owned();
+                    interp.set_def(&self.variable, value);
                 }
             }
             value
@@ -642,10 +650,11 @@ impl Find {
                 value.to_owned()
             };
             let force = interp.policy_status("CMP0125") == PolicyStatus::New;
-            interp.add_cache_def(
+            cache_result(
+                interp,
                 &self.variable,
-                Some(&cached),
-                Some(&self.doc),
+                &cached,
+                &self.doc,
                 self.cache_type,
                 force,
             );
@@ -657,11 +666,7 @@ impl Find {
         } else {
             interp.set_def(&self.variable, value);
         }
-        if path.is_none()
-            && self
-                .required
-                .unwrap_or_else(|| interp.is_on("CMAKE_FIND_REQUIRED"))
-        {
+        if path.is_none() && self.required == Some(true) {
             let label = if matches!(self.kind, Kind::File | Kind::Path) {
                 "files"
             } else {
@@ -932,12 +937,14 @@ fn case_insensitive(dir: &str) -> bool {
     use std::os::fd::AsRawFd;
 
     const FS_CASEFOLD_FL: libc::c_int = 0x40000000;
-    std::fs::File::open(dir).is_ok_and(|file| {
-        let mut flags: libc::c_int = 0;
-        // FS_IOC_GETFLAGS reads the inode flags into a writable int.
-        let status = unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) };
-        status == 0 && flags & FS_CASEFOLD_FL != 0
-    })
+    Path::new(dir).is_dir()
+        && std::fs::File::open(dir).is_ok_and(|file| {
+            let mut flags: libc::c_int = 0;
+            // FS_IOC_GETFLAGS reads the inode flags into a writable int.
+            let status =
+                unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) };
+            status == 0 && flags & FS_CASEFOLD_FL != 0
+        })
 }
 
 #[cfg(not(target_os = "linux"))]
