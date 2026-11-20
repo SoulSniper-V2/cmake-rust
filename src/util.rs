@@ -267,13 +267,23 @@ pub fn collapse_full_path(path: &str, base: &str) -> String {
 
 /// `cmSystemTools::IsSubDirectory(cSubdir, cDir)`.
 pub fn is_subdirectory(sub: &str, dir: &str) -> bool {
+    // kwsys IsSubDirectory: both paths go through ConvertToUnixSlashes,
+    // which drops trailing slashes.
+    let trim = |path: &str| -> String {
+        let mut path = path.replace('\\', "/");
+        while path.len() > 1 && path.ends_with('/') {
+            path.pop();
+        }
+        path
+    };
+    let sub = trim(sub);
+    let dir = trim(dir);
     if dir.is_empty() || sub.len() <= dir.len() {
         return false;
     }
-    if dir == "/" {
-        return sub.starts_with('/');
-    }
-    sub.starts_with(dir) && sub.as_bytes()[dir.len()] == b'/'
+    let root = dir.ends_with('/');
+    let slash = if root { dir.len() - 1 } else { dir.len() };
+    sub.as_bytes()[slash] == b'/' && sub[..dir.len()] == dir[..]
 }
 
 /// `cmSystemTools::RelativeIfUnder`.

@@ -132,7 +132,8 @@ fn target_flags(inputs: &Flags<'_, '_>) -> String {
         append(&mut flags, raw);
     }
 
-    let options = target_options(inputs.usage("COMPILE_OPTIONS"));
+    // GetCompileOptions already de-duplicated and split SHELL: options.
+    let options = inputs.usage("COMPILE_OPTIONS");
     let raw = inputs.prop("COMPILE_FLAGS").unwrap_or_default();
     if let Some(pattern) = inputs.lang_var("FLAG_REGEX") {
         if let Ok(regex) = crate::cmregex::Regex::new(&pattern) {
@@ -295,8 +296,13 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
             );
         }
     }
-    // INTEGRATION: Add INTERFACE_SYSTEM_INCLUDE_DIRECTORIES and default
-    // system includes inherited from imported targets to the system set.
+    // System classification from usage requirements
+    // (INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, imported targets, SYSTEM).
+    for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
+        if item.system {
+            system.insert(unix_slashes(&item.value));
+        }
+    }
     let mut source_dirs = Vec::new();
     let mut seen = HashSet::new();
     if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {

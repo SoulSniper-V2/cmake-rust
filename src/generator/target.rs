@@ -267,11 +267,25 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
             versioned_name(soversion.or(version)),
         )
     };
+    // The import library names (GetLibraryNames): ComputeVersionedName of the
+    // import output with the effective SOVERSION.
+    let import_library = if matches!(target.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary) {
+        let import_output = full_name_components(ctx, target, config, ArtifactType::Import).filename();
+        let versioned = has_soname(ctx, target, config)
+            && !is_on_opt(ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME").as_deref());
+        let soversion = target.props.get("SOVERSION").or_else(|| target.props.get("VERSION"));
+        match soversion.filter(|_| versioned) {
+            Some(soversion) => format!("{import_output}.{soversion}"),
+            None => import_output,
+        }
+    } else {
+        String::new()
+    };
     Names {
         base: parts.base,
         output,
         real,
-        import_library: String::new(),
+        import_library,
         pdb: format!("{}{pdb_base}.pdb", parts.prefix),
         shared_object,
     }

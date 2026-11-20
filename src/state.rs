@@ -63,6 +63,8 @@ pub struct Target {
     /// `target_link_libraries` signature uses (keyword?, call site) for the
     /// plain/keyword signature mixing check.
     pub link_signatures: Vec<(bool, Frame)>,
+    /// `cmTarget::GetHaveInstallRule` (set by install(TARGETS)).
+    pub have_install_rule: bool,
 }
 
 impl Target {
@@ -86,6 +88,7 @@ impl Target {
             custom_commands: Vec::new(),
             file_sets: BTreeMap::new(),
             link_signatures: Vec::new(),
+            have_install_rule: false,
         }
     }
 }

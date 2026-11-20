@@ -48,11 +48,33 @@ impl Flags<'_, '_> {
     }
 
     fn usage(&self, property: &str) -> Vec<String> {
-        // INTEGRATION: Evaluate direct entries and collect linked targets'
-        // INTERFACE_* entries through target_usage, retaining entry order.
-        self.prop(property)
-            .map(|value| expand_list(&self.eval(value), false))
-            .unwrap_or_default()
+        match property {
+            "INCLUDE_DIRECTORIES" | "COMPILE_DEFINITIONS" | "COMPILE_OPTIONS" | "COMPILE_FEATURES"
+            | "LINK_OPTIONS" | "LINK_DIRECTORIES" => {
+                self.usage_items(property).into_iter().map(|item| item.value).collect()
+            }
+            _ => self
+                .prop(property)
+                .map(|value| expand_list(&self.eval(value), false))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Direct entries plus linked targets' INTERFACE_* entries
+    /// (cmGeneratorTarget::Get*Directories/Definitions/Options).
+    fn usage_items(&self, property: &str) -> Vec<crate::genex::UsageItem> {
+        let key = self.ctx.target_key(self.target);
+        let mut host = super::genex_host::CtxHost::new(self.ctx, self.target.makefile);
+        match crate::genex::target_usage(&mut host, &key, property, self.config, self.lang) {
+            Ok(items) => items,
+            Err(error) => {
+                if !error.quiet {
+                    let backtrace = self.ctx.backtrace(error.backtrace);
+                    self.ctx.error(backtrace, error.to_string());
+                }
+                Vec::new()
+            }
+        }
     }
 
     fn policy(&self, index: usize) -> PolicyStatus {

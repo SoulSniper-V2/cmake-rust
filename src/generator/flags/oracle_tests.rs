@@ -115,7 +115,6 @@ fn ninja_flag_assembly_matches_kitware() {
                 .map
                 .set(index, status);
         }
-        let ctx = GenCtx::new(&interp);
         let kind = match fixture.kind.as_str() {
             "EXECUTABLE" => TargetKind::Executable,
             "STATIC_LIBRARY" => TargetKind::StaticLibrary,
@@ -123,11 +122,14 @@ fn ninja_flag_assembly_matches_kitware() {
             "MODULE_LIBRARY" => TargetKind::ModuleLibrary,
             _ => panic!("unsupported fixture target {}", fixture.kind),
         };
-        let target = target(
+        let owned = target(
             &fixture.target_name,
             kind,
             properties(fixture.target_props.clone()),
         );
+        let key = crate::state::register_target(&mut interp, owned);
+        let ctx = GenCtx::new(&interp);
+        let target = interp.ext.targets.get(&key).expect("registered target");
         let source = SourceInfo {
             path: format!("{}/{}", fixture.source, fixture.source_file),
             language: fixture.language.clone(),
@@ -138,12 +140,12 @@ fn ninja_flag_assembly_matches_kitware() {
         };
         let source_props = properties(fixture.source_props.clone());
         let compile = if fixture.source_props.is_empty() {
-            compile_vars(&ctx, &target, &fixture.config, &source)
+            compile_vars(&ctx, target, &fixture.config, &source)
         } else {
-            compile_vars_with_source_props(&ctx, &target, &fixture.config, &source, &source_props)
+            compile_vars_with_source_props(&ctx, target, &fixture.config, &source, &source_props)
         };
-        let link = link_flag_vars(&ctx, &target, &fixture.config, &fixture.language);
-        let launcher = compiler_launcher(&ctx, &target, &fixture.language);
+        let link = link_flag_vars(&ctx, target, &fixture.config, &fixture.language);
+        let launcher = compiler_launcher(&ctx, target, &fixture.language);
         for (edge, name, actual) in [
             (&fixture.object_edge, "FLAGS", compile.flags),
             (&fixture.object_edge, "DEFINES", compile.defines),
@@ -160,7 +162,7 @@ fn ninja_flag_assembly_matches_kitware() {
             (
                 &fixture.link_edge,
                 "DEP_FILE",
-                link_dependency_file(&ctx, &target, &fixture.language).unwrap_or_default(),
+                link_dependency_file(&ctx, target, &fixture.language).unwrap_or_default(),
             ),
         ] {
             assert_eq!(
@@ -297,7 +299,7 @@ fn standards_inherit_from_paired_language() {
         props.set(&format!("{paired}_STANDARD"), inherited.to_owned());
         props.set(&format!("{paired}_EXTENSIONS"), "OFF".to_owned());
         props.set(&format!("{paired}_STANDARD_REQUIRED"), "ON".to_owned());
-        let target = target("x", TargetKind::Executable, props);
+        let key = crate::state::register_target(&mut interp, target("x", TargetKind::Executable, props));
         let source = SourceInfo {
             path: "/source/example".to_owned(),
             language: lang.to_owned(),
@@ -307,8 +309,9 @@ fn standards_inherit_from_paired_language() {
             object_library: None,
         };
         let ctx = GenCtx::new(&interp);
+        let target = interp.ext.targets.get(&key).expect("registered target");
         assert_eq!(
-            compile_vars(&ctx, &target, "", &source).flags,
+            compile_vars(&ctx, target, "", &source).flags,
             "-dialect",
             "{lang}"
         );

@@ -168,6 +168,8 @@ fn model(fixture: &Fixture) -> Interp {
             provenance: BTreeMap::new(),
             ..Target::new("", TargetKind::Executable, 0)
         };
+        let mut target = target;
+        target.have_install_rule = target.props.get("HAVE_INSTALL_RULE").is_some_and(crate::util::is_on);
         crate::state::register_target(&mut interp, target);
     }
     let active = |policy, old| {

@@ -395,13 +395,14 @@ impl<'a> NinjaGenerator<'a> {
             let Some(dep) = self.ctx.target(&dependency) else {
                 continue;
             };
-            if dep.kind == TargetKind::InterfaceLibrary {
+            if !is_in_build_system(dep) {
                 continue;
             }
             self.append_target_outputs(dep, &mut outs, depend);
         }
+        // cmGlobalNinjaGenerator::AppendTargetDepends sorts but keeps
+        // duplicates.
         outs.sort();
-        outs.dedup();
         out.extend(outs);
     }
 
@@ -1290,12 +1291,14 @@ impl<'a> NinjaGenerator<'a> {
         build.outputs.push(target_real.clone());
         build.explicit_deps = objects.to_vec();
         let link_vars = flags::link_flag_vars(self.ctx, target, &config, language);
+        let mut shared_symlinks: Vec<String> = Vec::new();
         let object_dir = self.ninja_path(&self.object_dir(target));
         if target.kind != TargetKind::StaticLibrary {
             let line = link::link_line(self.ctx, target, &config, language);
             build.variables.insert("LINK_LIBRARIES".into(), line.libraries);
             build.variables.insert("LINK_PATH".into(), line.link_path);
             build.implicit_deps = line.depends.iter().map(|dep| self.ninja_path(dep)).collect();
+            shared_symlinks = line.shared_symlinks.iter().map(|dep| self.ninja_path(dep)).collect();
         }
         if target.kind == TargetKind::Executable {
             build.variables.insert("FLAGS".into(), link_vars.flags);
@@ -1325,17 +1328,21 @@ impl<'a> NinjaGenerator<'a> {
                 .insert("SONAME_FLAG".into(), self.ctx.var_safe(makefile, &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG")));
             build.variables.insert("SONAME".into(), names.shared_object.clone());
         }
-        if matches!(target.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary | TargetKind::Executable) {
-            let implib_dir = gt::directory(self.ctx, target, &config, ArtifactType::Import);
-            build.variables.insert(
-                "TARGET_IMPLIB".into(),
-                format!("{}/{}", implib_dir, names.import_library),
-            );
+        if !names.import_library.is_empty() {
+            let implib = gt::full_path(self.ctx, target, &config, ArtifactType::Import, false);
+            build.variables.insert("TARGET_IMPLIB".into(), self.shell(&self.ninja_path(&implib)));
         }
         self.set_pdb_variables(target, &mut build.variables, false);
         // Order-only deps: other targets' outputs.
         let mut order = Vec::new();
         self.append_target_depends(target, &mut order, DependOn::TargetArtifact);
+        // Order-only dependencies on versioning symlinks of linked shared
+        // libraries (runtime binaries only).
+        for lib in shared_symlinks {
+            if !build.implicit_deps.contains(&lib) {
+                order.push(lib);
+            }
+        }
         build.order_only_deps = order;
         let limit = if use_rsp { -1 } else { command_line_length_limit() };
         let _ = write_build(&mut out, &build, limit);
@@ -1352,13 +1359,12 @@ impl<'a> NinjaGenerator<'a> {
             } else {
                 symlink.comment = format!("Create library symlink {target_output}");
                 let so = self.ninja_path(&format!("{directory}/{}", names.shared_object));
-                if !names.shared_object.is_empty() && names.shared_object != names.real {
+                if target_real == so || target_output == so {
+                    symlink.variables.insert("SONAME".into(), self.shell(&so));
+                } else {
                     symlink.outputs.push(so.clone());
                 }
-                if target_output != so {
-                    symlink.outputs.push(target_output.clone());
-                }
-                symlink.variables.insert("SONAME".into(), so);
+                symlink.outputs.push(target_output.clone());
             }
             symlink.explicit_deps.push(target_real.clone());
             symlink.variables.insert("POST_BUILD".into(), ":".into());

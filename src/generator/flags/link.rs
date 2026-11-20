@@ -105,7 +105,7 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         }
         append(&mut flags, &encode_literal(&raw));
 
-        let options = target_options(inputs.usage("LINK_OPTIONS"))
+        let options = inputs.usage("LINK_OPTIONS")
             .into_iter()
             .scan(false, |device_only, item| {
                 if item == "<DEVICE_LINK>" || item == "</DEVICE_LINK>" {

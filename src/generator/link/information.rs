@@ -659,7 +659,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         let mut list = list.join(&self.runtime_sep);
         if enabled
             && !for_install
-            && on(self.head, "HAVE_INSTALL_RULE")
+            && self.head.have_install_rule
             && !is_on(&self.var("CMAKE_NO_BUILTIN_CHRPATH"))
             && self.var("CMAKE_EXECUTABLE_FORMAT") == "ELF"
         {

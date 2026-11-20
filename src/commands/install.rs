@@ -230,6 +230,12 @@ fn with_destination(interp: &Interp, mut opts: InstallOptions, kind: &str) -> In
 
 fn add(interp: &mut Interp, options: InstallOptions, action: InstallAction) {
     let index = interp.mf_index();
+    if let InstallAction::Target { name, imported: false, .. } | InstallAction::Bmi(name) = &action
+        && let Some(key) = crate::state::find_target_key(interp, name)
+        && let Some(target) = interp.ext.targets.get_mut(&key)
+    {
+        target.have_install_rule = true;
+    }
     let preceding_children = interp.mf().children.len();
     let backtrace = interp.backtrace.clone();
     interp.ext.misc.insert("install-target-enabled".into(), "1".into());
