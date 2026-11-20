@@ -3,6 +3,7 @@
 use crate::interp::Interp;
 
 pub mod core;
+pub mod find;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -12,4 +13,5 @@ pub fn register_all(interp: &mut Interp) {
         interp.register_flow(name);
     }
     core::register(interp);
+    find::register(interp);
 }

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_INCLUDE_PATH "data/dir")
+set(CMAKE_FIND_USE_CMAKE_PATH FALSE)
+find_path(result NAMES needle.h PATHS data/fallback NO_SYSTEM_ENVIRONMENT_PATH)
+message("picked=[${result}], cache=[$CACHE{result}]")

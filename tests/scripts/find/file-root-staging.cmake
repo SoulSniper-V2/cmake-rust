@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_STAGING_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/data")
+set(CMAKE_SYSROOT "${CMAKE_CURRENT_SOURCE_DIR}/data/root")
+find_file(result NAMES needle.h PATHS data/dir NO_DEFAULT_PATH ONLY_CMAKE_FIND_ROOT_PATH)
+message("picked=[${result}], cache=[$CACHE{result}]")

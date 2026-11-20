@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+macro(reject)
+endmacro()
+find_path(result needle.h VALIDATOR ReJeCt NO_DEFAULT_PATH)
+message("picked=[${result}], cache=[$CACHE{result}]")
