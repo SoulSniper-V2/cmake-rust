@@ -258,48 +258,38 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let mut file = args[0].clone();
     if file.is_empty() {
-        return err("include() given empty file name (ignored).");
+        interp.issue(MessageType::AuthorWarning, "include() given empty file name (ignored).");
+        return Ok(());
     }
-    let is_module = !file.contains('/') && !file.contains('.');
-    if is_module {
-        // Check for module name in CMAKE_MODULE_PATH / root.
-        match find_module(interp, &file) {
-            Some(path) => file = path,
-            None => {
-                if !optional {
-                    // fall through to the error below with the original name
-                }
-            }
-        }
+    if !util::is_full_path(&file)
+        && let Some(path) = find_module(interp, &file)
+    {
+        // Not a path.  Maybe a module (<name>.cmake in CMAKE_MODULE_PATH
+        // or the CMake module directory).
+        file = path;
     }
     let full = util::collapse_full_path(&file, &interp.current_source_dir());
-    let exists = std::path::Path::new(&full).is_file();
-    if !exists {
+    let path = std::path::Path::new(&full);
+    let missing = !path.exists();
+    let directory = path.is_dir();
+    if missing || directory {
         if let Some(var) = &result_var {
             interp.set_def(var.clone(), "NOTFOUND");
         }
         if optional {
             return Ok(());
         }
-        let text = if is_module {
-            format!(
-                "include could not find requested file:\n  {}",
-                args[0]
-            )
-        } else {
-            format!("include could not find requested file:\n  {file}")
-        };
-        interp.issue(MessageType::FatalError, &text);
-        interp.set_fatal_if_script();
-        return Err(CmdErr::Reported);
-    }
-    if let Some(var) = &result_var {
-        interp.set_def(var.clone(), full.clone());
+        if missing {
+            return err(format!("could not find requested file:\n  {file}"));
+        }
+        return err(format!("requested file is a directory:\n  {file}"));
     }
     let ok = interp.read_dependent_file(&full, no_policy_scope);
-    if !ok && !interp.fatal {
-        let text = format!("could not load requested file:\n  {file}");
-        return err(text);
+    if let Some(var) = &result_var {
+        interp.set_def(var.clone(), if ok { full.clone() } else { "NOTFOUND".to_owned() });
+    }
+    if !optional && !ok && !interp.fatal {
+        return err(format!("could not load requested file:\n  {file}"));
     }
     Ok(())
 }
