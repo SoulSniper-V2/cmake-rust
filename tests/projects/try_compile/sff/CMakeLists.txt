@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(TC C)
+file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/orig.c "int main(void){return 0;}\n")
+try_compile(OK SOURCE_FROM_FILE copied.c ${CMAKE_CURRENT_SOURCE_DIR}/orig.c)
+message(STATUS "result=${OK}")

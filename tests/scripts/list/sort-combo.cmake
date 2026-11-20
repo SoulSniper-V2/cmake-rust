@@ -1,0 +1,3 @@
+set(l "X/f10.C";"y/F2.c")
+list(SORT l COMPARE NATURAL CASE INSENSITIVE ORDER DESCENDING)
+message(STATUS "l=${l}")

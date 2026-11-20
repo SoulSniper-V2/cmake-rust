@@ -1,0 +1,6 @@
+string(LENGTH "" a)
+message("a=${a}")
+string(LENGTH "hello world" b)
+message("b=${b}")
+string(LENGTH "a;b;c" c)
+message("c=${c}")
