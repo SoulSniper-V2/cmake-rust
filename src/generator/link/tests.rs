@@ -107,6 +107,7 @@ impl GeneratorQueries for FixtureGenerator {
             kind: target::SourceKind::ObjectSource,
             object_name: format!("{}{src}.o", if subdir { "__/" } else { "" }),
             generated: false,
+            object_library: None,
         }]
     }
 }
@@ -165,9 +166,9 @@ fn model(fixture: &Fixture) -> Interp {
             props,
             backtrace: Vec::new(),
             provenance: BTreeMap::new(),
+            ..Target::new("", TargetKind::Executable, 0)
         };
-        interp.ext.targets.insert(name.clone(), target);
-        interp.ext.target_order.push(name.clone());
+        crate::state::register_target(&mut interp, target);
     }
     let active = |policy, old| {
         (
