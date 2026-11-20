@@ -241,7 +241,10 @@ fn append<W: Write>(
     header.set_cksum();
     if metadata.is_file() {
         builder
-            .append(&header, File::open(path).map_err(entry_error)?.take(metadata.len()))
+            .append(
+                &header,
+                File::open(path).map_err(entry_error)?.take(metadata.len()),
+            )
             .map_err(entry_error)?;
     } else {
         builder.append(&header, io::empty()).map_err(entry_error)?;

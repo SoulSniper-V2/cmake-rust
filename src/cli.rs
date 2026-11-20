@@ -8,84 +8,6 @@ use crate::configure::{self, CacheDefinition, ConfigureOptions};
 use crate::interp::{self, Interp, Mode};
 use crate::{cmcmd, util};
 
-/// Locates the CMake data root (Modules/, Templates/).
-fn find_cmake_root() -> Option<String> {
-    if let Ok(root) = std::env::var("CMAKE_RUST_DATA_ROOT")
-        && std::path::Path::new(&root).join("Modules").is_dir()
-    {
-        return Some(root);
-    }
-    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
-    let bin = exe.parent()?;
-    let prefix = bin.parent()?;
-    let candidate = prefix.join(format!(
-        "share/cmake-{}.{}",
-        interp::VERSION.0,
-        interp::VERSION.1
-    ));
-    if candidate.join("Modules").is_dir() {
-        return Some(candidate.to_string_lossy().into_owned());
-    }
-    None
-}
-
-fn sibling_tool(interp: &Interp, name: &str) -> String {
-    let directory = util::filename_path(&interp.cmake_command);
-    format!("{directory}/{name}")
-}
-
-/// Variables every interpreter instance starts with (cmake::AddCMakePaths,
-/// cmMakefile defaults, cmStateSnapshot::SetDefaultDefinitions).
-fn add_default_definitions(interp: &mut Interp) {
-    let (major, minor, patch) = interp::VERSION;
-    interp.set_def("CMAKE_MAJOR_VERSION", major.to_string());
-    interp.set_def("CMAKE_MINOR_VERSION", minor.to_string());
-    interp.set_def("CMAKE_PATCH_VERSION", patch.to_string());
-    interp.set_def("CMAKE_TWEAK_VERSION", "0");
-    interp.set_def("CMAKE_VERSION", interp::VERSION_STRING);
-    interp.set_def("CMAKE_FILES_DIRECTORY", "/CMakeFiles");
-    interp.set_def("CMAKE_HOST_EXECUTABLE_SUFFIX", "");
-    if cfg!(target_os = "macos") {
-        interp.set_def("CMAKE_HOST_APPLE", "1");
-        interp.set_def("CMAKE_HOST_SYSTEM_NAME", "Darwin");
-        interp.set_def("APPLE", "1");
-    } else {
-        interp.set_def("CMAKE_HOST_LINUX", "1");
-        interp.set_def("CMAKE_HOST_SYSTEM_NAME", "Linux");
-        interp.set_def("LINUX", "1");
-    }
-    interp.set_def("CMAKE_HOST_UNIX", "1");
-    interp.set_def("UNIX", "1");
-    let command = interp.cmake_command.clone();
-    let cpack = sibling_tool(interp, "cpack");
-    let ctest = sibling_tool(interp, "ctest");
-    let root = interp.cmake_root.clone();
-    interp.cache.add(
-        "CMAKE_COMMAND",
-        Some(&command),
-        Some("Path to CMake executable."),
-        CacheType::Internal,
-    );
-    interp.cache.add(
-        "CMAKE_CPACK_COMMAND",
-        Some(&cpack),
-        Some("Path to cpack program executable."),
-        CacheType::Internal,
-    );
-    interp.cache.add(
-        "CMAKE_CTEST_COMMAND",
-        Some(&ctest),
-        Some("Path to ctest program executable."),
-        CacheType::Internal,
-    );
-    interp.cache.add(
-        "CMAKE_ROOT",
-        Some(&root),
-        Some("Path to CMake installation."),
-        CacheType::Internal,
-    );
-}
-
 const GENERATORS: &str = include_str!("cmcmd/generators.txt");
 const HELP: &str = include_str!("cmcmd/help.txt");
 const HELP_HINT: &str = "Run 'cmake --help' for all supported options.";
@@ -818,7 +740,13 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     }
     let result = if view_only {
         apply_cache_view_args(&mut cache, &cache_args, &options, cwd)
-    } else if !validate_project_source(&options, &cache_args) {
+    } else if !options.preload_scripts.is_empty()
+        && options
+            .preload_scripts
+            .iter()
+            .all(|path| !Path::new(path).is_file())
+        && !validate_project_source(&options, &cache_args)
+    {
         1
     } else {
         let result = configure::configure(&options);
@@ -1022,7 +950,13 @@ fn unset_cache_entries(cache: &mut Cache, pattern: &str) {
         };
         // KWSys cache globs treat backslashes literally and wildcards do
         // not cross slash boundaries.
-        unsafe { libc::fnmatch(pattern.as_ptr(), key.as_ptr(), libc::FNM_NOESCAPE | libc::FNM_PATHNAME) != 0 }
+        unsafe {
+            libc::fnmatch(
+                pattern.as_ptr(),
+                key.as_ptr(),
+                libc::FNM_NOESCAPE | libc::FNM_PATHNAME,
+            ) != 0
+        }
     });
 }
 
@@ -1079,7 +1013,7 @@ fn normalize_script_args(argv: &mut Vec<String>) {
 }
 
 fn make_script_interp(argv: &[String], cwd: &str) -> Option<Interp> {
-    let Some(root) = find_cmake_root() else {
+    let Some(root) = configure::find_cmake_root() else {
         cmcmd::error(format!(
             "Could not find CMAKE_ROOT !!!\nCMake has most likely not been installed correctly.\nModules directory not found in\n{}",
             std::env::current_exe().unwrap_or_default().display()
@@ -1087,7 +1021,8 @@ fn make_script_interp(argv: &[String], cwd: &str) -> Option<Interp> {
         return None;
     };
     let mut interp = Interp::new(Mode::Script, cwd, cwd, &root);
-    add_default_definitions(&mut interp);
+    configure::add_default_definitions(&mut interp);
+    configure::add_cmake_paths(&mut interp);
     interp.set_def("CMAKE_ARGC", argv.len().to_string());
     for (position, arg) in argv.iter().enumerate() {
         let value = if position == 0 {
@@ -1127,10 +1062,6 @@ fn read_script(interp: &mut Interp, script: &str, cwd: &str, script_mode: bool) 
         .unwrap_or_else(|| i32::from(interp.error || interp.fatal))
 }
 
-fn add_script_definition(interp: &mut Interp, definition: &CacheDefinition) {
-    add_definition(&mut interp.cache, definition);
-}
-
 fn add_definition(cache: &mut Cache, definition: &CacheDefinition) {
     cache.add(
         &definition.name,
@@ -1156,18 +1087,34 @@ fn apply_cache_view_args(
                 }
             }
             "-U" => unset_cache_entries(cache, value),
-            "--toolchain" => cache.add("CMAKE_TOOLCHAIN_FILE", Some(value), Some("No help, variable specified on the command line."), CacheType::Filepath),
-            "--install-prefix" => cache.add("CMAKE_INSTALL_PREFIX", Some(value), Some("No help, variable specified on the command line."), CacheType::Path),
+            "--toolchain" => cache.add(
+                "CMAKE_TOOLCHAIN_FILE",
+                Some(value),
+                Some("No help, variable specified on the command line."),
+                CacheType::Filepath,
+            ),
+            "--install-prefix" => cache.add(
+                "CMAKE_INSTALL_PREFIX",
+                Some(value),
+                Some("No help, variable specified on the command line."),
+                CacheType::Path,
+            ),
             "-C" => {
                 let file = util::collapse_full_path(value, cwd);
                 println!("loading initial cache file {value}");
-                let Some(root) = find_cmake_root() else {
+                let Some(root) = configure::find_cmake_root() else {
                     cmcmd::error("Could not find CMAKE_ROOT !!!");
                     return 1;
                 };
-                let mut interp = Interp::new(Mode::Project, &options.source_dir, &options.binary_dir, &root);
+                let mut interp = Interp::new(
+                    Mode::Project,
+                    &options.source_dir,
+                    &options.binary_dir,
+                    &root,
+                );
                 interp.cache = std::mem::take(cache);
-                add_default_definitions(&mut interp);
+                configure::add_default_definitions(&mut interp);
+                configure::add_cmake_paths(&mut interp);
                 result |= i32::from(read_script(&mut interp, &file, cwd, false) != 0);
                 *cache = interp.cache;
             }
@@ -1203,7 +1150,7 @@ fn run_script_mode(
     for CacheArg { name, value } in args {
         match *name {
             "-D" => match cache_definition(value) {
-                Ok(definition) => add_script_definition(&mut interp, &definition),
+                Ok(definition) => add_definition(&mut interp.cache, &definition),
                 Err(error) => {
                     cmcmd::error(error);
                     return cli_failure();
@@ -1399,8 +1346,18 @@ fn build(args: &[String], cwd: &str) -> i32 {
         ("CMAKE_GENERATOR_TOOLSET", "toolset"),
     ] {
         if let Some(value) = cache.value(key).filter(|value| !value.is_empty()) {
-            let message = format!("Generator\n  {generator}\ndoes not support {setting} specification, but {setting}\n  {value}\nwas specified.");
-            eprintln!("{}", crate::messages::render(crate::messages::MessageType::FatalError, &message, &[], None));
+            let message = format!(
+                "Generator\n  {generator}\ndoes not support {setting} specification, but {setting}\n  {value}\nwas specified."
+            );
+            eprintln!(
+                "{}",
+                crate::messages::render(
+                    crate::messages::MessageType::FatalError,
+                    &message,
+                    &[],
+                    None
+                )
+            );
             return 1;
         }
     }
@@ -1583,7 +1540,7 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
         .filter_map(|arg| arg.strip_prefix("-D"))
     {
         if let Ok(definition) = cache_definition(arg) {
-            add_script_definition(&mut interp, &definition);
+            add_definition(&mut interp.cache, &definition);
         }
     }
     i32::from(read_script(&mut interp, &script, cwd, true) != 0)
