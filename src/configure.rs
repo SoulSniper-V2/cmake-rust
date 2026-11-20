@@ -293,7 +293,7 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     let code = crate::generator::generate(interp, options);
     if code != 0 {
-        interp.stdout_line_raw("CMake Generate step failed.  Build files cannot be regenerated correctly.");
+        interp.stderr_line("CMake Generate step failed.  Build files cannot be regenerated correctly.");
         return code;
     }
     if !options.in_try_compile {

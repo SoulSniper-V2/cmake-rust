@@ -332,11 +332,11 @@ fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
             if crate::messages::is_error(kind) {
                 interp.error = true;
             }
-            eprintln!("{rendered}");
+            interp.stderr_line(&rendered);
         }
         LogLevel::Notice => {
             let text = indent_text(interp, &text);
-            eprintln!("{text}");
+            interp.stderr_line(&text);
         }
         LogLevel::Status => match check {
             Some("start") => {

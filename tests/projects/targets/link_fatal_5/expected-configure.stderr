@@ -1,0 +1,2 @@
+CMake Error at CMakeLists.txt:10 (target_link_libraries):
+  The "debug" argument must be followed by a library.

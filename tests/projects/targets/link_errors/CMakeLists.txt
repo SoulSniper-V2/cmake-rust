@@ -7,15 +7,15 @@ add_executable(exe CMakeLists.txt)
 add_custom_target(util)
 add_library(imp INTERFACE IMPORTED)
 add_library(impg INTERFACE IMPORTED GLOBAL)
-target_link_libraries(missing iface)
+
 target_link_libraries(iface PRIVATE stat)
 target_link_libraries(iface stat)
 target_link_libraries(iface INTERFACE stat)
-target_link_libraries(stat debug)
-target_link_libraries(stat optimized)
-target_link_libraries(stat general)
+
+
+
 target_link_libraries(stat debug optimized foo)
-target_link_libraries(stat PRIVATE debug)
+
 target_link_libraries(stat PUBLIC iface)
 target_link_libraries(stat iface)
 target_link_libraries(exe LINK_PUBLIC stat)

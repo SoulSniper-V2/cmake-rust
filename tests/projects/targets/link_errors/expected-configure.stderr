@@ -1,3 +1,84 @@
-CMake Error at CMakeLists.txt:10 (target_link_libraries):
-  Cannot specify link libraries for target "missing" which is not built by
-  this project.
+CMake Error at CMakeLists.txt:11 (target_link_libraries):
+  INTERFACE library can only be used with the INTERFACE keyword of
+  target_link_libraries
+
+
+CMake Error at CMakeLists.txt:12 (target_link_libraries):
+  INTERFACE library can only be used with the INTERFACE keyword of
+  target_link_libraries
+
+
+CMake Warning (dev) at CMakeLists.txt:17 (target_link_libraries):
+  Link library type specifier "debug" is followed by specifier "optimized"
+  instead of a library name.  The first specifier will be ignored.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Error at CMakeLists.txt:19 (target_link_libraries):
+  The plain signature for target_link_libraries has already been used with
+  the target "stat".  All uses of target_link_libraries with a target must be
+  either all-keyword or all-plain.
+
+  The uses of the plain signature are here:
+
+   * CMakeLists.txt:17 (target_link_libraries)
+
+
+
+CMake Error at CMakeLists.txt:20 (target_link_libraries):
+  The keyword signature for target_link_libraries has already been used with
+  the target "stat".  All uses of target_link_libraries with a target must be
+  either all-keyword or all-plain.
+
+  The uses of the keyword signature are here:
+
+   * CMakeLists.txt:19 (target_link_libraries)
+
+
+
+CMake Error at CMakeLists.txt:24 (target_link_libraries):
+  The keyword signature for target_link_libraries has already been used with
+  the target "exe".  All uses of target_link_libraries with a target must be
+  either all-keyword or all-plain.
+
+  The uses of the keyword signature are here:
+
+   * CMakeLists.txt:21 (target_link_libraries)
+   * CMakeLists.txt:22 (target_link_libraries)
+   * CMakeLists.txt:23 (target_link_libraries)
+
+
+
+CMake Error at CMakeLists.txt:26 (target_link_libraries):
+  Utility target "util" must not be used as the target of a
+  target_link_libraries call.
+
+
+CMake Error at CMakeLists.txt:28 (target_link_libraries):
+  INTERFACE library can only be used with the INTERFACE keyword of
+  target_link_libraries
+
+
+CMake Error at CMakeLists.txt:32 (target_link_libraries):
+  The plain signature for target_link_libraries has already been used with
+  the target "stat".  All uses of target_link_libraries with a target must be
+  either all-keyword or all-plain.
+
+  The uses of the plain signature are here:
+
+   * CMakeLists.txt:17 (target_link_libraries)
+   * CMakeLists.txt:20 (target_link_libraries)
+   * CMakeLists.txt:25 (target_link_libraries)
+
+
+
+CMake Error at CMakeLists.txt:33 (target_link_libraries):
+  Target "exe" of type EXECUTABLE may not be linked into another target.  One
+  may link only to INTERFACE, OBJECT, STATIC or SHARED libraries, or to
+  executables with the ENABLE_EXPORTS property set.
+
+
+iface: LL=[] ILL=[stat] LIL=[]
+stat: LL=[$<$<NOT:$<CONFIG:DEBUG>>:foo>;exe;stat;  -lm  ;$<1:genex>;-Wl,--as-needed;/abs/lib.a] ILL=[$<$<NOT:$<CONFIG:DEBUG>>:foo>;iface;$<LINK_ONLY:exe>;$<LINK_ONLY:stat>;  -lm  ;$<LINK_ONLY:$<1:genex>>;-Wl,--as-needed;/abs/lib.a] LIL=[]
+exe: LL=[stat;iface;obj] ILL=[stat] LIL=[]
+imp: LL=[] ILL=[iface] LIL=[]
+impg: LL=[] ILL=[stat] LIL=[]

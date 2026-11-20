@@ -658,20 +658,12 @@ impl LinkCall {
             }
         }
         let keyword = scope.keyword();
-        if target
+        // cmTarget::PushTLLCommandTrace: record this call first (even when
+        // it conflicts), then compare with the previous signature.
+        let conflict = target
             .link_signatures
             .last()
-            .is_some_and(|(previous, _)| *previous != keyword)
-        {
-            let existing = if keyword { "plain" } else { "keyword" };
-            let traces = format_signature_traces(interp, target, !keyword);
-            return report(
-                interp,
-                &format!(
-                    "The {existing} signature for target_link_libraries has already been used with the target \"{name}\".  All uses of target_link_libraries with a target must be either all-keyword or all-plain.\n{traces}"
-                ),
-            );
-        }
+            .is_some_and(|(previous, _)| *previous != keyword);
         let kind = target.kind;
         if let Some(frame) = interp.backtrace.last() {
             let target = interp.ext.targets.get_mut(&self.key).unwrap();
@@ -680,6 +672,17 @@ impl LinkCall {
             }) {
                 target.link_signatures.push((keyword, frame.clone()));
             }
+        }
+        if conflict {
+            let target = &interp.ext.targets[&self.key];
+            let existing = if keyword { "plain" } else { "keyword" };
+            let traces = format_signature_traces(interp, target, !keyword);
+            return report(
+                interp,
+                &format!(
+                    "The {existing} signature for target_link_libraries has already been used with the target \"{name}\".  All uses of target_link_libraries with a target must be either all-keyword or all-plain.\n{traces}"
+                ),
+            );
         }
         let (direct, mut interface) = link_expressions(interp, lib, link_type);
         let policy = interp.policy_status("CMP0079");
