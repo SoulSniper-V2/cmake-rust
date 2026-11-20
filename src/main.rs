@@ -9,6 +9,7 @@ mod flow;
 mod generator;
 mod languages;
 mod fsutil;
+mod install_model;
 mod interp;
 mod lexer;
 mod messages;

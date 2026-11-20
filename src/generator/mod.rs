@@ -22,6 +22,7 @@
 
 pub mod ctx;
 pub mod custom;
+pub mod export;
 pub mod flags;
 pub mod install;
 pub mod link;

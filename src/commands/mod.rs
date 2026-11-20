@@ -3,6 +3,8 @@
 use crate::interp::Interp;
 
 pub mod core;
+pub mod export;
+pub mod install;
 pub mod project;
 
 pub fn register_all(interp: &mut Interp) {
@@ -13,5 +15,7 @@ pub fn register_all(interp: &mut Interp) {
         interp.register_flow(name);
     }
     core::register(interp);
+    export::register(interp);
+    install::register(interp);
     project::register(interp);
 }

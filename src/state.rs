@@ -67,6 +67,7 @@ pub struct Test {
 /// Extension state for command implementations.
 #[derive(Debug, Default)]
 pub struct Ext {
+    pub install: crate::install_model::InstallState,
     pub targets: HashMap<String, Target>,
     /// Target names in creation order.
     pub target_order: Vec<String>,
