@@ -6,7 +6,7 @@ mod commands;
 mod configure;
 mod condition;
 mod flow;
-mod generate;
+mod generator;
 mod languages;
 mod fsutil;
 mod interp;

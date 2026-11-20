@@ -290,7 +290,7 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     if code != 0 {
         return code;
     }
-    let code = crate::generate::generate(interp, options);
+    let code = crate::generator::generate(interp, options);
     if code != 0 {
         interp.stdout_line_raw("CMake Generate step failed.  Build files cannot be regenerated correctly.");
         return code;
@@ -488,6 +488,7 @@ fn configure_root(interp: &mut Interp, list_file: &str) {
     interp.set_def("CMAKE_CURRENT_BINARY_DIR", binary.clone());
     let _ = std::fs::create_dir_all(format!("{binary}/CMakeFiles"));
     interp.run_root_list_file(list_file);
+    interp.record_directory_vars();
     if interp.root_check_cmp0000 && !interp.fatal {
         let (major, minor, _) = crate::interp::VERSION;
         let text = format!(
@@ -609,7 +610,7 @@ pub fn try_compile_project(
         restore(&previous_cwd);
         return (1, String::new());
     }
-    if crate::generate::generate(&mut inner, &options) != 0 {
+    if crate::generator::generate(&mut inner, &options) != 0 {
         outer.issue(MessageType::FatalError, "Failed to generate test project build system.");
         outer.set_fatal();
         restore(&previous_cwd);

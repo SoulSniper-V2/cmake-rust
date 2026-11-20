@@ -224,6 +224,9 @@ pub struct Interp {
     pub langs: crate::languages::LangState,
     /// Recursion depth inherited from an outer try_compile.
     pub recursion_depth_base: usize,
+    /// Final variable bindings of each directory scope (index = makefile),
+    /// captured when the directory finishes configuring, for generation.
+    pub dir_final_vars: Vec<HashMap<String, Option<String>>>,
 }
 
 impl Interp {
@@ -263,6 +266,7 @@ impl Interp {
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,
+            dir_final_vars: Vec::new(),
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -372,6 +376,26 @@ impl Interp {
         parent
             .vars
             .insert(name.to_owned(), value.map(str::to_owned));
+    }
+
+    /// Flattened view of all visible normal-variable bindings.
+    pub fn flatten_scopes(&self) -> HashMap<String, Option<String>> {
+        let mut out: HashMap<String, Option<String>> = HashMap::new();
+        for scope in &self.scopes {
+            for (name, value) in &scope.vars {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+        out
+    }
+
+    /// Records the final variable state of the current directory.
+    pub fn record_directory_vars(&mut self) {
+        let index = self.mf_index();
+        if self.dir_final_vars.len() <= index {
+            self.dir_final_vars.resize(index + 1, HashMap::new());
+        }
+        self.dir_final_vars[index] = self.flatten_scopes();
     }
 
     pub fn push_scope(&mut self) {
@@ -563,6 +587,7 @@ impl Interp {
         let list = format!("{source}/CMakeLists.txt");
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
+        self.record_directory_vars();
         self.pop_scope();
         self.mf_stack.pop();
         ok
