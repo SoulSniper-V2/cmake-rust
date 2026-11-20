@@ -1,51 +1,211 @@
-//! cmLocalGenerator flag assembly and rule-variable expansion. OWNER: flags
-//! worker. Spec: cmLocalGenerator.cxx (AddLanguageFlags, AddCompileOptions,
-//! AddFeatureFlags, AddArchitectureFlags, AddVisibilityPresetFlags,
-//! AddConfigVariableFlags, AddCMP0018Flags/PIC, GetIncludeFlags,
-//! GetTargetDefines/JoinDefines/AppendDefines, GetTargetCompileFlags,
-//! GetStaticLibraryFlags, GetTargetFlags (link flags), AppendFlags/
-//! AppendFlagEscape), cmStandardLevelResolver.cxx, cmRulePlaceholderExpander.cxx,
-//! cmNinjaTargetGenerator::ComputeFlagsForObject/ComputeDefines/ComputeIncludes.
+//! Linux single-config Ninja flag assembly (cmLocalGenerator,
+//! cmCommonTargetGenerator, cmNinjaTargetGenerator).
+
+mod compile;
+mod link;
+mod rule;
+mod standard;
+
+pub use compile::{CompileVars, compile_vars, compile_vars_with_source_props, object_dependencies};
+pub use link::{LinkFlagVars, link_dependency_file, link_flag_vars};
+pub use rule::{RuleStep, compiler_launcher, expand_rule, expand_rule_for_step};
 
 use super::ctx::GenCtx;
-use super::target::SourceInfo;
+use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};
+use crate::policy::PolicyStatus;
 use crate::state::Target;
+use crate::util::expand_list;
 
-/// Per-object compile variables as written into build.ninja
-/// (`FLAGS`, `DEFINES`, `INCLUDES`).
-#[derive(Clone, Debug, Default)]
-pub struct CompileVars {
-    pub flags: String,
-    pub defines: String,
-    pub includes: String,
+struct Flags<'a, 'i> {
+    ctx: &'a GenCtx<'i>,
+    target: &'a Target,
+    config: &'a str,
+    lang: &'a str,
 }
 
-/// `cmNinjaTargetGenerator::ComputeFlagsForObject` +
-/// `ComputeDefines` + `ComputeIncludes` for one source.
-pub fn compile_vars(ctx: &GenCtx, target: &Target, config: &str, source: &SourceInfo) -> CompileVars {
-    let _ = (ctx, target, config, source);
-    todo!("generator::flags::compile_vars")
+impl Flags<'_, '_> {
+    fn var(&self, name: &str) -> Option<String> {
+        self.ctx.var(self.target.makefile, name)
+    }
+
+    fn lang_var(&self, suffix: &str) -> Option<String> {
+        self.var(&format!("CMAKE_{}_{}", self.lang, suffix))
+    }
+
+    fn prop(&self, name: &str) -> Option<&str> {
+        self.target.props.get(name)
+    }
+
+    fn eval(&self, value: &str) -> String {
+        self.ctx.genex(value, Some(self.target), Some(self.lang))
+    }
+
+    fn usage(&self, property: &str) -> Vec<String> {
+        // INTEGRATION: Evaluate direct entries and collect linked targets'
+        // INTERFACE_* entries through target_usage, retaining entry order.
+        self.prop(property)
+            .map(|value| expand_list(&self.eval(value), false))
+            .unwrap_or_default()
+    }
+
+    fn policy(&self, index: usize) -> PolicyStatus {
+        // INTEGRATION: Use the target's creation-time snapshot for policies
+        // queried through cmGeneratorTarget (CMP0069/0083/0119/0181).
+        self.ctx.interp.makefiles[self.target.makefile]
+            .policies
+            .iter()
+            .rev()
+            .find_map(|frame| frame.map.get(index))
+            .unwrap_or(PolicyStatus::Warn)
+    }
+
+    fn error(&self, text: impl Into<String>) {
+        // INTEGRATION: Supply the target/property backtrace when available.
+        self.ctx.error(Vec::new(), text);
+    }
+
+    fn config_flags(&self, name: &str) -> String {
+        let mut result = self.var(name).unwrap_or_default();
+        if result.trim().is_empty() {
+            result.clear();
+        }
+        if !self.config.is_empty()
+            && let Some(value) = self.var(&format!("{name}_{}", self.config.to_ascii_uppercase()))
+        {
+            append(&mut result, &value);
+        }
+        result
+    }
+
+    fn language_flags(&self, linking: bool) -> String {
+        let mut flags = self.config_flags(&format!("CMAKE_{}_FLAGS", self.lang));
+        if !linking
+            || self
+                .lang_var("LINK_WITH_STANDARD_COMPILE_OPTION")
+                .is_some_and(|value| crate::util::is_on(&value))
+        {
+            standard::append_standard(self, &mut flags);
+        }
+        if self.ipo_enabled() {
+            self.append_feature(&mut flags, "IPO");
+        }
+        flags
+    }
+
+    fn append_feature(&self, flags: &mut String, feature: &str) {
+        if let Some(options) = self.lang_var(&format!("COMPILE_OPTIONS_{feature}")) {
+            append_options(flags, expand_list(&options, false));
+        }
+    }
+
+    fn ipo_enabled(&self) -> bool {
+        let configured = format!(
+            "INTERPROCEDURAL_OPTIMIZATION_{}",
+            self.config.to_ascii_uppercase()
+        );
+        let enabled = self
+            .prop(&configured)
+            .filter(|_| !self.config.is_empty())
+            .or_else(|| self.prop("INTERPROCEDURAL_OPTIMIZATION"));
+        crate::util::is_on_opt(enabled)
+            && matches!(self.lang, "C" | "CXX" | "CUDA" | "Fortran")
+            && self
+                .var(&format!("_CMAKE_{}_IPO_SUPPORTED_BY_CMAKE", self.lang))
+                .is_some_and(|value| crate::util::is_on(&value))
+            && self
+                .var(&format!(
+                    "_CMAKE_{}_IPO_MAY_BE_SUPPORTED_BY_COMPILER",
+                    self.lang
+                ))
+                .is_some_and(|value| crate::util::is_on(&value))
+            && self.policy(69) == PolicyStatus::New
+    }
+
+    fn pic(&self) -> Option<bool> {
+        // INTEGRATION: Resolve INTERFACE_POSITION_INDEPENDENT_CODE and
+        // diagnose incompatible values using compatible interface properties.
+        self.prop("POSITION_INDEPENDENT_CODE")
+            .map(crate::util::is_on)
+            .or_else(|| {
+                matches!(
+                    self.target.kind,
+                    crate::state::TargetKind::SharedLibrary
+                        | crate::state::TargetKind::ModuleLibrary
+                )
+                .then_some(true)
+            })
+    }
 }
 
-/// Expands a rule template (e.g. `CMAKE_C_COMPILE_OBJECT`) with
-/// `cmRulePlaceholderExpander`; `vars` maps placeholder names
-/// (`<FLAGS>`, `<SOURCE>`...) to replacement text (Ninja `$VAR` refs).
-pub fn expand_rule(ctx: &GenCtx, target: &Target, template: &str, vars: &[(&str, String)]) -> String {
-    let _ = (ctx, target, template, vars);
-    todo!("generator::flags::expand_rule")
+fn append(flags: &mut String, text: &str) {
+    if !text.trim().is_empty() {
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
+        flags.push_str(text);
+    }
 }
 
-/// Link-step flag variables for the link statement: `FLAGS`/
-/// `LANGUAGE_COMPILE_FLAGS`, `LINK_FLAGS`, `ARCH_FLAGS`.
-#[derive(Clone, Debug, Default)]
-pub struct LinkFlagVars {
-    pub flags: String,
-    pub language_compile_flags: String,
-    pub link_flags: String,
-    pub arch_flags: String,
+fn shell(text: &str) -> String {
+    escape_for_shell(text, NINJA_UNIX)
 }
 
-pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> LinkFlagVars {
-    let _ = (ctx, target, config, language);
-    todo!("generator::flags::link_flag_vars")
+fn shell_with_make_vars(text: &str) -> String {
+    escape_for_shell(text, NINJA_UNIX | FLAG_ALLOW_MAKE_VARIABLES)
 }
+
+fn append_options(flags: &mut String, options: impl IntoIterator<Item = String>) {
+    for option in options {
+        append(flags, &shell(&option));
+    }
+}
+
+fn target_options(options: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    options
+        .into_iter()
+        .filter(|item| seen.insert(item.clone()))
+        .flat_map(|item| match item.strip_prefix("SHELL:") {
+            Some(shell) => unix_command_line(shell),
+            None => vec![item],
+        })
+        .collect()
+}
+
+/// kwsys SystemTools::ParseUnixCommandLine uses the process argument parser.
+fn unix_command_line(text: &str) -> Vec<String> {
+    // kwsys accepts unfinished quotes and treats backslash as an escape
+    // in every quote context.
+    let mut args = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (None, ch) if ch.is_ascii_whitespace() => {
+                if started {
+                    args.push(std::mem::take(&mut word));
+                    started = false;
+                }
+                continue;
+            }
+            (None, '\'' | '"') => quote = Some(ch),
+            (Some(active), ch) if active == ch => quote = None,
+            (_, '\\') => {
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            _ => word.push(ch),
+        }
+        started = true;
+    }
+    if started {
+        args.push(word);
+    }
+    args
+}
+
+#[cfg(test)]
+mod oracle_tests;
