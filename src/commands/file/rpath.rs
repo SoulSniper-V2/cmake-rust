@@ -708,11 +708,9 @@ fn read_elf(interp: &mut Interp, args: &[String]) -> CmdResult {
         );
     }
     let file = args[1].clone();
-    // Unrecognized arguments are dropped (unparsedArguments is nullptr).
+    // Unrecognized arguments are dropped (unparsedArguments is nullptr)
+    // and keyword errors are never reported (no MaybeReportError call).
     let parsed = parse(&args[1..], &["RPATH", "RUNPATH", "CAPTURE_ERROR"], &[]);
-    if maybe_report_error(interp, &parsed) {
-        return Ok(());
-    }
     if !file_exists(&file) {
         return err(format!(
             "READ_ELF given FILE \"{file}\" that does not exist."
