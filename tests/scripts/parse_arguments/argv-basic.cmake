@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 0 P "O1" "S1" "M1")
+  message(STATUS "O1=${P_O1} S1=${P_S1} M1=${P_M1} U=${P_UNPARSED_ARGUMENTS}-D")
+endfunction()
+f(O1 S1 sv M1 m1 m2 rest)

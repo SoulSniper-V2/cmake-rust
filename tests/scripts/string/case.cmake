@@ -1,0 +1,8 @@
+string(TOLOWER "HeLLo WoRld 123!" a)
+message("a=${a}")
+string(TOUPPER "HeLLo WoRld 123!" b)
+message("b=${b}")
+string(TOLOWER "" c)
+message("c=<${c}>")
+string(TOUPPER "with_under-scores.dots" d)
+message("d=${d}")

@@ -4,6 +4,7 @@ mod cache;
 mod cmregex;
 mod commands;
 mod configure;
+mod configure_log;
 mod condition;
 mod flow;
 mod generator;
@@ -227,6 +228,8 @@ fn run() -> i32 {
             }
         } else if arg == "--fresh" {
             options.fresh = true;
+        } else if arg == "--debug-trycompile" {
+            options.debug_trycompile = true;
         }
         position += 1;
     }

@@ -1,0 +1,5 @@
+function(f)
+  cmake_parse_arguments(PARSE_ARGV 9 P "" "" "")
+  message(STATUS "U=${P_UNPARSED_ARGUMENTS}-D")
+endfunction()
+f(a b)
