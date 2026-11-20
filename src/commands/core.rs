@@ -726,6 +726,10 @@ const ADVICE_UPDATE_VERSION_ARGUMENT: &str = "Update the VERSION argument <min> 
 
 /// `cmPolicies::ApplyPolicyVersion`.
 pub fn apply_policy_version(interp: &mut Interp, min: &str, max: &str) -> bool {
+    apply_policy_version_ex(interp, min, max, true)
+}
+
+pub fn apply_policy_version_ex(interp: &mut Interp, min: &str, max: &str, warn_compat: bool) -> bool {
     let (parts, count) = scan_version(min);
     if count < 2 {
         let text = format!(
@@ -798,7 +802,7 @@ pub fn apply_policy_version(interp: &mut Interp, min: &str, max: &str) -> bool {
         interp.issue(MessageType::FatalError, &text);
         interp.set_fatal();
         return false;
-    } else if major == 3 && minor < 10 {
+    } else if major == 3 && minor < 10 && warn_compat {
         let text = format!(
             "Compatibility with CMake < 3.10 will be removed from a future version of CMake.\n{ADVICE_UPDATE_VERSION_ARGUMENT}"
         );

@@ -162,16 +162,13 @@ impl Cache {
             entry.value = value.to_owned();
             entry.initialized = true;
         }
-        if let Some(help) = help {
-            entry.properties.insert("HELPSTRING".into(), help.to_owned());
-        } else if !entry.properties.contains_key("HELPSTRING") {
-            entry
-                .properties
-                .insert("HELPSTRING".into(), "(This variable does not exist and should not be used)".into());
-        }
+        entry.properties.insert(
+            "HELPSTRING".into(),
+            help.unwrap_or("(This variable does not exist and should not be used)").to_owned(),
+        );
         // Normalize paths for PATH/FILEPATH entries (`cmSystemTools::ConvertToUnixSlashes`
         // of each list element).
-        if matches!(kind, CacheType::Path | CacheType::Filepath) && entry.value.contains('\\') {
+        if matches!(kind, CacheType::Path | CacheType::Filepath) {
             let items: Vec<String> = crate::util::expand_list(&entry.value, false)
                 .into_iter()
                 .map(|item| convert_to_unix_slashes(&item))

@@ -216,6 +216,12 @@ pub struct Interp {
     pub stdout_log: Option<Vec<u8>>,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
+    /// Configuring a try_compile project.
+    pub in_try_compile: bool,
+    /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
+    pub root_check_cmp0000: bool,
+    /// Language-enablement state (cmGlobalGenerator language maps).
+    pub langs: crate::languages::LangState,
 }
 
 impl Interp {
@@ -251,6 +257,9 @@ impl Interp {
             parsed: HashMap::new(),
             stdout_log: None,
             request_return: false,
+            in_try_compile: false,
+            root_check_cmp0000: false,
+            langs: crate::languages::LangState::default(),
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -665,6 +674,71 @@ impl Interp {
             self.error = true;
         }
         eprintln!("{rendered}");
+    }
+
+    /// `cmSystemTools::Message` to stdout without prefix.
+    pub fn stdout_line_raw(&mut self, text: &str) {
+        self.stdout_line(text);
+    }
+
+    /// Runs the top-level CMakeLists.txt with the root-directory rules of
+    /// `cmMakefile::Configure` (CMP0000 detection and implicit project()).
+    pub fn run_root_list_file(&mut self, path: &str) {
+        self.backtrace.push(Frame {
+            file: Rc::from(path),
+            line: 0,
+            name: None,
+            deferred: false,
+        });
+        self.set_def("CMAKE_PARENT_LIST_FILE", path);
+        let saved = self.push_list_file_vars(path);
+        if let Some(parsed) = self.parse_file(path) {
+            let mut commands = parsed.commands.clone();
+            let has_version = commands.iter().any(|c| c.lname == "cmake_minimum_required");
+            if !has_version {
+                const ALLOWED: [&str; 11] = [
+                    "project", "set", "if", "endif", "else", "elseif", "add_executable",
+                    "add_library", "target_link_libraries", "option", "message",
+                ];
+                let problem = commands.len() >= 30
+                    || commands.iter().any(|c| !ALLOWED.contains(&c.lname.as_str()));
+                if problem {
+                    self.root_check_cmp0000 = true;
+                    crate::commands::core::apply_policy_version_ex(self, "3.5", "", false);
+                }
+            }
+            if !commands.iter().any(|c| c.lname == "project") {
+                self.issue(
+                    MessageType::AuthorWarning,
+                    "No project() command is present.  The top-level CMakeLists.txt file must contain a literal, direct call to the project() command.  Add a line of code such as\n  project(ProjectName)\nnear the top of the file, but after cmake_minimum_required().\nCMake is pretending there is a \"project(Project)\" command on the first line.",
+                );
+                commands.insert(
+                    0,
+                    Command {
+                        name: "project".into(),
+                        lname: "project".into(),
+                        line: 0,
+                        line_end: 0,
+                        args: vec![Arg {
+                            value: "Project".into(),
+                            delim: Delim::Unquoted,
+                            line: 0,
+                        }],
+                    },
+                );
+            }
+            let parsed = Rc::new(ParsedFile::new(parsed.path.clone(), commands));
+            self.mf_mut().list_files.push(path.to_owned());
+            self.run_file_body(&parsed);
+            self.run_deferred(path);
+        }
+        let depth = self.mf().policies.len();
+        if depth > 1 && !self.fatal {
+            self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+            self.mf_mut().policies.truncate(1);
+        }
+        self.pop_list_file_vars(saved);
+        self.backtrace.pop();
     }
 
     /// Writes a line to stdout (message STATUS etc.).

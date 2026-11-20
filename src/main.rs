@@ -6,6 +6,8 @@ mod commands;
 mod configure;
 mod condition;
 mod flow;
+mod generate;
+mod languages;
 mod fsutil;
 mod interp;
 mod lexer;
@@ -195,8 +197,42 @@ fn run() -> i32 {
         }
         return 0;
     }
-    eprintln!("CMake Error: configure mode is not yet available in this build of cmake-rust");
-    1
+    // Minimal configure-mode argument handling (the full CLI port replaces this).
+    let mut options = configure::ConfigureOptions::default();
+    let mut position = 1;
+    while position < argv.len() {
+        let arg = &argv[position];
+        let mut take = |flag: &str| -> Option<String> {
+            if arg == flag {
+                position += 1;
+                argv.get(position).cloned()
+            } else {
+                arg.strip_prefix(flag).map(str::to_owned)
+            }
+        };
+        if let Some(value) = take("-S") {
+            options.source_dir = util::collapse_full_path(&value, &cwd);
+        } else if let Some(value) = take("-B") {
+            options.binary_dir = util::collapse_full_path(&value, &cwd);
+        } else if let Some(value) = take("-G") {
+            options.generator = Some(value);
+        } else if let Some(value) = take("-D") {
+            if let Some((name, value, kind)) = cache::parse_entry(&value) {
+                options.definitions.push(configure::CacheDefinition {
+                    name,
+                    value,
+                    kind: (kind != CacheType::Uninitialized).then_some(kind),
+                });
+            }
+        } else if arg == "--fresh" {
+            options.fresh = true;
+        }
+        position += 1;
+    }
+    if options.binary_dir.is_empty() {
+        options.binary_dir = cwd.clone();
+    }
+    configure::configure(&options)
 }
 
 fn main() -> ExitCode {
