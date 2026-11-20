@@ -1,0 +1,1 @@
+prefix #cmakedefine DEF @DEF@ suffix

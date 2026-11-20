@@ -1,0 +1,6 @@
+file(LOCK path RESULT_VARIABLE result TIMEOUT 0)
+file(LOCK path RESULT_VARIABLE duplicate TIMEOUT 0)
+file(LOCK path RELEASE RESULT_VARIABLE release)
+file(LOCK path RESULT_VARIABLE out TIMEOUT 0)
+message("${result}:${duplicate}:${release}")
+message("[${out}]")

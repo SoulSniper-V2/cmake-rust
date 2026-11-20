@@ -1,0 +1,8 @@
+file(MAKE_DIRECTORY a/b)
+file(CREATE_LINK a/b link SYMBOLIC)
+cmake_policy(SET CMP0152 OLD)
+file(REAL_PATH link/.. old)
+cmake_policy(SET CMP0152 NEW)
+file(REAL_PATH link/.. out)
+message("${old}")
+message("[${out}]")

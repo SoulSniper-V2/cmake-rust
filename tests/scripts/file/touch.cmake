@@ -1,0 +1,6 @@
+file(TOUCH one two)
+file(TOUCH_NOCREATE missing)
+file(SIZE one bytes)
+file(GLOB out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" "*")
+message("size=${bytes}")
+message("[${out}]")

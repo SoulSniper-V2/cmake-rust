@@ -1,0 +1,5 @@
+file(WRITE source value)
+file(INSTALL DESTINATION prefix TYPE PROGRAM FILES source RENAME replacement)
+file(READ prefix/replacement out)
+message("${CMAKE_INSTALL_MANIFEST_FILES}")
+message("[${out}]")

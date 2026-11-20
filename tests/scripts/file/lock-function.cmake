@@ -1,0 +1,8 @@
+function(acquire)
+  file(LOCK path GUARD FUNCTION TIMEOUT 0)
+  file(LOCK path RESULT_VARIABLE duplicate TIMEOUT 0)
+  message("${duplicate}")
+endfunction()
+acquire()
+file(LOCK path TIMEOUT 0 RESULT_VARIABLE out)
+message("[${out}]")

@@ -1,0 +1,6 @@
+file(WRITE a first)
+file(CREATE_LINK a b RESULT result)
+file(APPEND b second)
+file(READ a out)
+message(${result})
+message("[${out}]")

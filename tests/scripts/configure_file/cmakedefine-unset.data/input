@@ -1,0 +1,2 @@
+#cmakedefine UNSET trailing
+#cmakedefine01 UNSET

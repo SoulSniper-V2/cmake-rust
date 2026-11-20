@@ -1,0 +1,5 @@
+set(ENV{CMAKE_INSTALL_MODE} REL_SYMLINK)
+file(WRITE input/child/value content)
+file(INSTALL DESTINATION prefix TYPE FILE FILES input/child/value)
+file(READ_SYMLINK prefix/value out)
+message("[${out}]")

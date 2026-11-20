@@ -1,0 +1,5 @@
+file(WRITE input/child/value content)
+file(INSTALL DESTINATION prefix TYPE DIRECTORY FILES input/)
+file(GLOB_RECURSE out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}/prefix" "prefix/*")
+message("${CMAKE_INSTALL_MANIFEST_FILES}")
+message("[${out}]")

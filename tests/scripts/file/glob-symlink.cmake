@@ -1,0 +1,6 @@
+file(WRITE tree/real/v.txt value)
+file(CREATE_LINK real tree/link SYMBOLIC)
+file(GLOB_RECURSE skipped RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" "tree/*")
+file(GLOB_RECURSE out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" FOLLOW_SYMLINKS "tree/*")
+message("${skipped}")
+message("[${out}]")

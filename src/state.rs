@@ -78,6 +78,10 @@ pub struct Ext {
     pub languages: Vec<String>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
+    pub configure_dependencies: std::collections::BTreeSet<String>,
+    pub configure_outputs: std::collections::BTreeSet<String>,
+    pub glob_dependencies: Vec<crate::commands::file::GlobDependency>,
+    pub file_locks: crate::commands::file::LockPool,
 }
 
 /// `cmMakefile::FindTargetToUse`: aliases, then targets visible from the
@@ -145,20 +149,5 @@ pub fn store_matches(interp: &mut Interp, text: &str, found: &crate::cmregex::Ma
 
 /// `cmCMakePath ==` comparison (lexical, component-wise).
 pub fn path_equal(lhs: &str, rhs: &str) -> bool {
-    fn components(path: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        if path.starts_with('/') {
-            parts.push("/");
-        }
-        for part in path.split('/') {
-            if !part.is_empty() {
-                parts.push(part);
-            }
-        }
-        if path.len() > 1 && path.ends_with('/') {
-            parts.push("");
-        }
-        parts
-    }
-    components(lhs) == components(rhs)
+    crate::commands::path::equal(lhs, rhs)
 }

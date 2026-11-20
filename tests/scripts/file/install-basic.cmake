@@ -1,0 +1,6 @@
+file(WRITE source value)
+file(INSTALL DESTINATION prefix TYPE FILE FILES source)
+file(INSTALL DESTINATION prefix TYPE FILE FILES source)
+file(READ prefix/source out)
+message("${CMAKE_INSTALL_MANIFEST_FILES}")
+message("[${out}]")
