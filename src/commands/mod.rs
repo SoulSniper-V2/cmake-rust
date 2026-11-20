@@ -4,12 +4,14 @@ use crate::interp::Interp;
 
 pub mod configure_file;
 pub mod core;
+pub mod export;
 pub mod find;
 pub mod custom_actions;
 pub mod directory;
 pub mod targets;
 #[path = "../target.rs"]
 pub mod target;
+pub mod install;
 pub mod project;
 pub mod string;
 pub mod language;
@@ -34,6 +36,7 @@ pub fn register_all(interp: &mut Interp) {
         interp.register_flow(name);
     }
     core::register(interp);
+    export::register(interp);
     find::register(interp);
     directory::register(interp);
     targets::register(interp);
@@ -41,6 +44,7 @@ pub fn register_all(interp: &mut Interp) {
     file::register(interp);
     legacy_fs::register(interp);
     path::register(interp);
+    install::register(interp);
     project::register(interp);
     string::register(interp);
     language::register(interp);

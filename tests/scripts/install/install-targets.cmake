@@ -1,0 +1,1 @@
+install(TARGETS foo ARCHIVE DESTINATION lib)

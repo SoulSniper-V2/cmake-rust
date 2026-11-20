@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"@BINARY@/cmake_install.cmake",
+		"@BINARY@/sub/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -12,6 +12,7 @@ mod configure_log;
 mod flow;
 mod fsutil;
 mod generator;
+mod install_model;
 mod interp;
 mod languages;
 mod lexer;
