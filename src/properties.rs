@@ -186,7 +186,9 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                     languages.sort_unstable();
                     return Some(languages.join(";"));
                 }
-                "IN_TRY_COMPILE" => return Some("0".into()),
+                "IN_TRY_COMPILE" => {
+                    return Some(if interp.in_try_compile { "1" } else { "0" }.into());
+                }
                 "GENERATOR_IS_MULTI_CONFIG" => {
                     return Some(
                         if interp.get_def("CMAKE_GENERATOR") == Some("Ninja Multi-Config") {
