@@ -36,6 +36,9 @@ fn launcher(inputs: &Flags<'_, '_>, suffix: &str) -> String {
         return String::new();
     };
     let evaluated = inputs.eval(raw);
+    if suffix == "COMPILER_LAUNCHER" && evaluated.is_empty() {
+        return String::new();
+    }
     let mut args = expand_list(&evaluated, true).into_iter();
     let Some(exe) = args.next() else {
         return String::new();
@@ -134,7 +137,7 @@ fn replacement(
                     .to_owned();
             }
             "TARGET_VERSION_MAJOR" | "TARGET_VERSION_MINOR" => return "0".to_owned(),
-            "TARGET_IMPLIB" => return String::new(),
+            "TARGET_IMPLIB" => return "$TARGET_IMPLIB".to_owned(),
             _ => {}
         }
     }

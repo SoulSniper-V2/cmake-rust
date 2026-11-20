@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use super::rule::{RuleStep, expand_rule_for_step};
-use super::{Flags, append, append_options, shell_with_make_vars, target_options, unix_command_line};
+use super::{
+    Flags, append, append_options, cmake_space, shell_with_make_vars, target_options,
+    unix_command_line,
+};
 use crate::generator::ctx::GenCtx;
 use crate::policy::PolicyStatus;
 use crate::state::{Target, TargetKind};
@@ -156,13 +159,16 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         }
     }
 
-    let language_flags = inputs.language_flags(true).trim().to_owned();
+    let language_flags = inputs
+        .language_flags(true)
+        .trim_matches(cmake_space)
+        .to_owned();
     if target.kind == TargetKind::Executable {
         result.flags = language_flags;
     } else {
         result.language_compile_flags = language_flags;
     }
-    result.link_flags = flags.trim().to_owned();
+    result.link_flags = flags.trim_matches(cmake_space).to_owned();
     result
 }
 

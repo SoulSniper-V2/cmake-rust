@@ -12,6 +12,18 @@ use crate::state::TargetKind;
 type Strings = BTreeMap<String, String>;
 
 #[derive(Deserialize)]
+struct Corpus {
+    common: BTreeMap<String, SharedInputs>,
+    projects: Vec<Fixture>,
+}
+
+#[derive(Deserialize)]
+struct SharedInputs {
+    cache: Strings,
+    variables: Strings,
+}
+
+#[derive(Deserialize)]
 struct Fixture {
     name: String,
     language: String,
@@ -41,18 +53,35 @@ fn properties(values: Strings) -> Props {
     props
 }
 
+fn target(name: &str, kind: TargetKind, props: Props) -> Target {
+    Target {
+        name: name.to_owned(),
+        kind,
+        makefile: 0,
+        imported: false,
+        imported_global: false,
+        alias_of: None,
+        props,
+        provenance: Default::default(),
+        backtrace: Vec::new(),
+    }
+}
+
 fn value<'a>(items: &'a Strings, key: &str) -> &'a str {
     items.get(key).map(String::as_str).unwrap_or_default()
 }
 
 #[test]
 fn ninja_flag_assembly_matches_kitware() {
-    let fixtures: Vec<Fixture> = serde_json::from_str(include_str!(
+    let fixtures: Corpus = serde_json::from_str(include_str!(
         "../../../tests/data/generator/flags/oracle.json"
     ))
     .unwrap();
-    assert!(fixtures.len() >= 60);
-    for fixture in fixtures {
+    assert!(fixtures.projects.len() >= 60);
+    for mut fixture in fixtures.projects {
+        let shared = &fixtures.common[&fixture.language];
+        fixture.cache.extend(shared.cache.clone());
+        fixture.variables.extend(shared.variables.clone());
         let mut interp = Interp::new(Mode::Project, &fixture.source, &fixture.binary, "");
         interp.cmake_command = fixture.variables["CMAKE_COMMAND"].clone();
         interp.ext.languages.push(fixture.language.clone());
@@ -86,23 +115,18 @@ fn ninja_flag_assembly_matches_kitware() {
                 .set(index, status);
         }
         let ctx = GenCtx::new(&interp);
-        let target = Target {
-            name: fixture.target_name.clone(),
-            kind: match fixture.kind.as_str() {
-                "EXECUTABLE" => TargetKind::Executable,
-                "STATIC_LIBRARY" => TargetKind::StaticLibrary,
-                "SHARED_LIBRARY" => TargetKind::SharedLibrary,
-                "MODULE_LIBRARY" => TargetKind::ModuleLibrary,
-                _ => panic!("unsupported fixture target {}", fixture.kind),
-            },
-            makefile: 0,
-            imported: false,
-            imported_global: false,
-            alias_of: None,
-            props: properties(fixture.target_props.clone()),
-            provenance: Default::default(),
-            backtrace: Vec::new(),
+        let kind = match fixture.kind.as_str() {
+            "EXECUTABLE" => TargetKind::Executable,
+            "STATIC_LIBRARY" => TargetKind::StaticLibrary,
+            "SHARED_LIBRARY" => TargetKind::SharedLibrary,
+            "MODULE_LIBRARY" => TargetKind::ModuleLibrary,
+            _ => panic!("unsupported fixture target {}", fixture.kind),
         };
+        let target = target(
+            &fixture.target_name,
+            kind,
+            properties(fixture.target_props.clone()),
+        );
         let source = SourceInfo {
             path: format!("{}/{}", fixture.source, fixture.source_file),
             language: fixture.language.clone(),
@@ -246,5 +270,45 @@ fn check_rules(fixture: &Fixture, ctx: &GenCtx, target: &Target) {
             "{}",
             fixture.name
         );
+    }
+}
+
+#[test]
+fn standards_inherit_from_paired_language() {
+    // CMake's pairing pass uses the C/C++ target property even when only
+    // the Objective-C, HIP, or CUDA language is enabled.
+    for (lang, paired, default, inherited, effective) in [
+        ("OBJC", "C", "17", "99", "99"),
+        ("OBJCXX", "CXX", "17", "14", "14"),
+        ("HIP", "CXX", "17", "14", "14"),
+        ("CUDA", "CXX", "17", "98", "03"),
+    ] {
+        let mut interp = Interp::new(Mode::Project, "/source", "/build", "");
+        interp.ext.languages.push(lang.to_owned());
+        interp.set_def(format!("CMAKE_{lang}_STANDARD_DEFAULT"), default);
+        interp.set_def(
+            format!("CMAKE_{lang}{effective}_STANDARD_COMPILE_OPTION"),
+            "-dialect",
+        );
+        interp.record_directory_vars();
+        let mut props = Props::default();
+        props.set(&format!("{paired}_STANDARD"), inherited.to_owned());
+        props.set(&format!("{paired}_EXTENSIONS"), "OFF".to_owned());
+        props.set(&format!("{paired}_STANDARD_REQUIRED"), "ON".to_owned());
+        let target = target("x", TargetKind::Executable, props);
+        let source = SourceInfo {
+            path: "/source/example".to_owned(),
+            language: lang.to_owned(),
+            kind: SourceKind::ObjectSource,
+            object_name: "example.o".to_owned(),
+            generated: false,
+        };
+        let ctx = GenCtx::new(&interp);
+        assert_eq!(
+            compile_vars(&ctx, &target, "", &source).flags,
+            "-dialect",
+            "{lang}"
+        );
+        assert!(ctx.errors.borrow().is_empty(), "{lang}");
     }
 }

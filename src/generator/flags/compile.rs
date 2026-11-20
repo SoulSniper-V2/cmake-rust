@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-use super::{Flags, append, append_options, shell_with_make_vars, target_options};
+use super::{Flags, append, append_options, cmake_space, shell_with_make_vars, target_options};
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
@@ -59,8 +59,10 @@ pub fn compile_vars_with_source_props(
         append_options(&mut flags, expand_list(&inputs.eval(options), false));
     }
     CompileVars {
-        flags: flags.trim().to_owned(),
-        defines: defines(&inputs, properties).trim().to_owned(),
+        flags: flags.trim_matches(cmake_space).to_owned(),
+        defines: defines(&inputs, properties)
+            .trim_matches(cmake_space)
+            .to_owned(),
         includes: includes(&inputs, source, properties),
     }
 }
@@ -157,14 +159,14 @@ fn windows_command_line(raw: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut input = raw.chars().peekable();
     while input.peek().is_some() {
-        while input.next_if(|c| c.is_ascii_whitespace()).is_some() {}
+        while input.next_if(|c| cmake_space(*c)).is_some() {}
         if input.peek().is_none() {
             break;
         }
         let mut arg = String::new();
         let mut quoted = false;
         while let Some(c) = input.peek().copied() {
-            if !quoted && c.is_ascii_whitespace() {
+            if !quoted && cmake_space(c) {
                 break;
             }
             let mut slashes = 0;
@@ -487,7 +489,7 @@ fn include_flags(inputs: &Flags<'_, '_>, dirs: &[String], system: &HashSet<Strin
     {
         flags.pop();
     }
-    flags.trim().to_owned()
+    flags.trim_matches(cmake_space).to_owned()
 }
 
 /// Implicit dependencies from OBJECT_DEPENDS, before mapping to Ninja paths.
