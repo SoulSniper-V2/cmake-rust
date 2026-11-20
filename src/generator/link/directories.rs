@@ -12,7 +12,7 @@ pub(super) struct Directories {
     users: Vec<String>,
     languages: Vec<String>,
     constraints: Vec<Constraint>,
-    known: HashSet<(String, String)>,
+    known: HashSet<(String, bool)>,
 }
 
 struct Constraint {
@@ -55,7 +55,10 @@ impl Directories {
     fn add(&mut self, path: &str, kind: ConstraintKind) {
         let directory = filename_path(path);
         let name = filename_name(path);
-        if self.known.insert((directory.clone(), name.clone())) {
+        if self
+            .known
+            .insert((path.to_owned(), matches!(kind, ConstraintKind::Runtime(_))))
+        {
             self.constraints.push(Constraint {
                 path: path.to_owned(),
                 directory,
@@ -139,11 +142,11 @@ impl Constraint {
 /// Read DT_SONAME without invoking a platform tool. Translate DT_STRTAB
 /// through a PT_LOAD segment so stripped shared libraries are supported.
 pub(super) fn elf_soname(path: &str) -> Option<String> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let bytes = fs::read(path).ok()?;
+    let bytes = if fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        fs::read(path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     if bytes.get(..4) != Some(b"\x7fELF") {
         let link = fs::read_link(path).ok()?;
         let name = link.file_name()?.to_str()?;
@@ -226,4 +229,36 @@ pub(super) fn elf_soname(path: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_conflicts_reorder_search_directories() {
+        let mut directories = Directories::new(vec![
+            "/probe/user".into(),
+            "/probe/other".into(),
+            "/probe/implicit".into(),
+        ]);
+        directories.runtime("/probe/runtime/liba.so.1.0", Some("liba.so.1".into()));
+        directories.library("/probe/link/libb.so", vec!["libb.a".into()]);
+        directories.add_language(vec!["/probe/language".into()]);
+        let implicit = HashSet::from(["/probe/implicit".to_owned()]);
+        let artifacts = HashSet::from([
+            "/probe/user/liba.so.1".to_owned(),
+            "/probe/user/libb.a".to_owned(),
+        ]);
+        assert_eq!(
+            directories.ordered(&implicit, &artifacts),
+            [
+                "/probe/runtime",
+                "/probe/link",
+                "/probe/user",
+                "/probe/other",
+                "/probe/language",
+            ]
+        );
+    }
 }

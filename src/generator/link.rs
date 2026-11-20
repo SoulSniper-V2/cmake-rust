@@ -31,6 +31,28 @@ pub struct LinkLine {
     /// Extra order-only dependencies, appended after target artifacts.
     #[allow(dead_code, reason = "The Ninja writer will append version symlinks")]
     pub shared_symlinks: Vec<String>,
+    /// ELF rpath substitution for an installed target, before shell escaping.
+    #[allow(
+        dead_code,
+        reason = "The install writer consumes this after integration"
+    )]
+    pub rpath_change: Option<(String, String)>,
+    /// Linker flag and optional checker for LINK_WHAT_YOU_USE.
+    #[allow(
+        dead_code,
+        reason = "The Ninja writer consumes the linker flag and checker"
+    )]
+    pub link_what_you_use: Option<LinkUsageCheck>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(
+    dead_code,
+    reason = "The Ninja writer consumes the linker flag and checker"
+)]
+pub struct LinkUsageCheck {
+    pub flag: String,
+    pub checker: Option<String>,
 }
 
 pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> LinkLine {
@@ -122,40 +144,7 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn resolve(&self, directory: usize, name: &str) -> Option<&'i Target> {
-        // Local imported names can have more than one internal storage key.
-        let targets = &self.ctx.interp.ext.targets;
-        // INTEGRATION: Resolve directory-scoped aliases through the target
-        // model's directory-aware target lookup when integrated.
-        let mut scope = Some(directory);
-        let mut resolved = self.ctx.target(name);
-        while let Some(index) = scope {
-            if let Some(local) = targets.get(&format!("[{index}]{name}")) {
-                return Some(local);
-            }
-            if let Some(local) = resolved
-                .filter(|target| target.imported && target.makefile == index)
-                .or_else(|| {
-                    targets.values().find(|target| {
-                        target.imported
-                            && !target.imported_global
-                            && target.makefile == index
-                            && target.name == name
-                    })
-                })
-            {
-                return Some(local);
-            }
-            scope = self
-                .ctx
-                .interp
-                .makefiles
-                .get(index)
-                .and_then(|mf| mf.parent);
-        }
-        if let Some(alias) = resolved.and_then(|target| target.alias_of.as_deref()) {
-            resolved = self.ctx.target(alias);
-        }
-        resolved.filter(|target| !target.imported || target.imported_global)
+        self.ctx.target_at(directory, name)
     }
 
     fn error(&self, message: impl Into<String>) {
