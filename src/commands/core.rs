@@ -4,6 +4,10 @@
 use crate::cache::CacheType;
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
+
+// Existing configure and generator callers import message helpers from here.
+#[allow(unused_imports)]
+pub use super::message::{LogLevel, current_log_level, parse_log_level, status_line};
 use crate::policy::{self, PolicyStatus};
 use crate::policy_table::POLICIES;
 use crate::util;
@@ -12,7 +16,6 @@ pub fn register(interp: &mut Interp) {
     interp.register("set", set);
     interp.register("unset", unset);
     interp.register("option", option);
-    interp.register("message", message);
     interp.register("include", include);
     interp.register("include_guard", include_guard);
     interp.register("cmake_policy", cmake_policy);
@@ -197,214 +200,6 @@ fn option(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-fn indent_text(interp: &Interp, text: &str) -> String {
-    let indent = interp
-        .get_def("CMAKE_MESSAGE_INDENT")
-        .map(|value| util::expand_list(value, false).concat())
-        .unwrap_or_default();
-    if indent.is_empty() {
-        return text.to_owned();
-    }
-    let mut out = String::new();
-    for (index, line) in text.split('\n').enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        out.push_str(&indent);
-        out.push_str(line);
-    }
-    out
-}
-
-/// Log levels (`Message::LogLevel`).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum LogLevel {
-    Error = 1,
-    Warning,
-    Notice,
-    Status,
-    Verbose,
-    Debug,
-    Trace,
-}
-
-pub fn parse_log_level(text: &str) -> Option<LogLevel> {
-    Some(match text.to_ascii_uppercase().as_str() {
-        "ERROR" => LogLevel::Error,
-        "WARNING" => LogLevel::Warning,
-        "NOTICE" => LogLevel::Notice,
-        "STATUS" => LogLevel::Status,
-        "VERBOSE" => LogLevel::Verbose,
-        "DEBUG" => LogLevel::Debug,
-        "TRACE" => LogLevel::Trace,
-        _ => return None,
-    })
-}
-
-/// `cmMakefile::GetCurrentLogLevel`: command-line level wins, then
-/// CMAKE_MESSAGE_LOG_LEVEL.
-pub fn current_log_level(interp: &Interp) -> LogLevel {
-    if let Some(level) = interp.ext.misc.get("log-level").and_then(|level| parse_log_level(level)) {
-        return level;
-    }
-    interp
-        .get_def("CMAKE_MESSAGE_LOG_LEVEL")
-        .and_then(parse_log_level)
-        .unwrap_or(LogLevel::Status)
-}
-
-fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
-    if args.is_empty() {
-        return err("called with incorrect number of arguments");
-    }
-    let mut index = 1;
-    let mut kind = MessageType::Message;
-    let mut fatal = false;
-    let mut check: Option<&str> = None;
-    let level = match args[0].as_str() {
-        "SEND_ERROR" => {
-            kind = MessageType::FatalError;
-            LogLevel::Error
-        }
-        "FATAL_ERROR" => {
-            fatal = true;
-            kind = MessageType::FatalError;
-            LogLevel::Error
-        }
-        "WARNING" => {
-            kind = MessageType::Warning;
-            LogLevel::Warning
-        }
-        "AUTHOR_WARNING" => {
-            if interp.is_set("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
-                && !interp.is_on("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
-            {
-                fatal = true;
-                kind = MessageType::AuthorError;
-                LogLevel::Error
-            } else if !interp.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") {
-                kind = MessageType::AuthorWarning;
-                LogLevel::Warning
-            } else {
-                return Ok(());
-            }
-        }
-        "CHECK_START" | "CHECK_PASS" | "CHECK_FAIL" => {
-            check = Some(match args[0].as_str() {
-                "CHECK_START" => "start",
-                "CHECK_PASS" => "pass",
-                _ => "fail",
-            });
-            LogLevel::Status
-        }
-        "CONFIGURE_LOG" => return Ok(()),
-        "STATUS" => LogLevel::Status,
-        "VERBOSE" => LogLevel::Verbose,
-        "DEBUG" => LogLevel::Debug,
-        "TRACE" => LogLevel::Trace,
-        "DEPRECATION" => {
-            if interp.is_on("CMAKE_ERROR_DEPRECATED") {
-                fatal = true;
-                kind = MessageType::DeprecationError;
-                LogLevel::Error
-            } else if !interp.is_set("CMAKE_WARN_DEPRECATED") || interp.is_on("CMAKE_WARN_DEPRECATED") {
-                kind = MessageType::DeprecationWarning;
-                LogLevel::Warning
-            } else {
-                return Ok(());
-            }
-        }
-        "NOTICE" => LogLevel::Notice,
-        _ => {
-            index = 0;
-            LogLevel::Notice
-        }
-    };
-    if current_log_level(interp) < level {
-        return Ok(());
-    }
-    let text = args[index..].concat();
-    match level {
-        LogLevel::Error | LogLevel::Warning => {
-            // Displayed directly with the overridden type (no suppression).
-            let backtrace = interp.backtrace.clone();
-            let rendered = crate::messages::render(kind, &text, &backtrace, interp.top_source());
-            if crate::messages::is_error(kind) {
-                interp.error = true;
-            }
-            eprintln!("{rendered}");
-        }
-        LogLevel::Notice => {
-            let text = indent_text(interp, &text);
-            eprintln!("{text}");
-        }
-        LogLevel::Status => match check {
-            Some("start") => {
-                let shown = indent_text(interp, &text);
-                status_line(interp, &shown);
-                let stack = interp.ext.misc.entry("check-stack".into()).or_default();
-                if !stack.is_empty() {
-                    stack.push('\u{1}');
-                }
-                stack.push_str(&text);
-            }
-            Some(_) => {
-                let stack = interp.ext.misc.entry("check-stack".into()).or_default();
-                let started = match stack.rfind('\u{1}') {
-                    Some(position) => {
-                        let started = stack[position + 1..].to_owned();
-                        stack.truncate(position);
-                        Some(started)
-                    }
-                    None if !stack.is_empty() => Some(std::mem::take(stack)),
-                    None => None,
-                };
-                match started {
-                    Some(started) => {
-                        let shown = indent_text(interp, &format!("{started} - {text}"));
-                        status_line(interp, &shown);
-                    }
-                    None => {
-                        let text = format!(
-                            "Ignored {} without CHECK_START",
-                            if check == Some("pass") { "CHECK_PASS" } else { "CHECK_FAIL" }
-                        );
-                        interp.issue(MessageType::AuthorWarning, &text);
-                    }
-                }
-            }
-            None => {
-                let shown = indent_text(interp, &text);
-                status_line(interp, &shown);
-            }
-        },
-        _ => {
-            let shown = indent_text(interp, &text);
-            status_line(interp, &shown);
-        }
-    }
-    if fatal {
-        interp.set_fatal();
-    }
-    Ok(())
-}
-
-/// `cmMakefile::DisplayStatus`: "-- " prefixed lines on stdout, with the
-/// CMAKE_MESSAGE_CONTEXT prefix when enabled.
-pub fn status_line(interp: &mut Interp, text: &str) {
-    let mut prefix = String::from("-- ");
-    if interp.ext.misc.get("log-context").is_some_and(|value| value == "1")
-        && let Some(context) = interp.get_def("CMAKE_MESSAGE_CONTEXT")
-    {
-        let parts = util::expand_list(context, false);
-        if !parts.is_empty() {
-            prefix = format!("-- [{}] ", parts.join("."));
-        }
-    }
-    let line = format!("{prefix}{text}");
-    interp.stdout_line(&line);
-}
-
 /// Resolves a module name to a file in CMAKE_MODULE_PATH or the CMake root.
 pub fn find_module(interp: &Interp, name: &str) -> Option<String> {
     let file = format!("{name}.cmake");
@@ -463,48 +258,38 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let mut file = args[0].clone();
     if file.is_empty() {
-        return err("include() given empty file name (ignored).");
+        interp.issue(MessageType::AuthorWarning, "include() given empty file name (ignored).");
+        return Ok(());
     }
-    let is_module = !file.contains('/') && !file.contains('.');
-    if is_module {
-        // Check for module name in CMAKE_MODULE_PATH / root.
-        match find_module(interp, &file) {
-            Some(path) => file = path,
-            None => {
-                if !optional {
-                    // fall through to the error below with the original name
-                }
-            }
-        }
+    if !util::is_full_path(&file)
+        && let Some(path) = find_module(interp, &file)
+    {
+        // Not a path.  Maybe a module (<name>.cmake in CMAKE_MODULE_PATH
+        // or the CMake module directory).
+        file = path;
     }
     let full = util::collapse_full_path(&file, &interp.current_source_dir());
-    let exists = std::path::Path::new(&full).is_file();
-    if !exists {
+    let path = std::path::Path::new(&full);
+    let missing = !path.exists();
+    let directory = path.is_dir();
+    if missing || directory {
         if let Some(var) = &result_var {
             interp.set_def(var.clone(), "NOTFOUND");
         }
         if optional {
             return Ok(());
         }
-        let text = if is_module {
-            format!(
-                "include could not find requested file:\n  {}",
-                args[0]
-            )
-        } else {
-            format!("include could not find requested file:\n  {file}")
-        };
-        interp.issue(MessageType::FatalError, &text);
-        interp.set_fatal_if_script();
-        return Err(CmdErr::Reported);
-    }
-    if let Some(var) = &result_var {
-        interp.set_def(var.clone(), full.clone());
+        if missing {
+            return err(format!("could not find requested file:\n  {file}"));
+        }
+        return err(format!("requested file is a directory:\n  {file}"));
     }
     let ok = interp.read_dependent_file(&full, no_policy_scope);
-    if !ok && !interp.fatal {
-        let text = format!("could not load requested file:\n  {file}");
-        return err(text);
+    if let Some(var) = &result_var {
+        interp.set_def(var.clone(), if ok { full.clone() } else { "NOTFOUND".to_owned() });
+    }
+    if !optional && !ok && !interp.fatal {
+        return err(format!("could not load requested file:\n  {file}"));
     }
     Ok(())
 }

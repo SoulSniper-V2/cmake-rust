@@ -1,0 +1,8 @@
+file(WRITE a/b/file data)
+file(CREATE_LINK a l SYMBOLIC)
+file(REMOVE_RECURSE l)
+file(GLOB_RECURSE before RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" "a/*")
+file(REMOVE_RECURSE a)
+file(GLOB out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" "a")
+message("before=[${before}]")
+message("[${out}]")

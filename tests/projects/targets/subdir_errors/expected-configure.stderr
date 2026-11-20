@@ -1,0 +1,67 @@
+CMake Error at CMakeLists.txt:3 (add_subdirectory):
+  add_subdirectory called with incorrect number of arguments
+
+
+CMake Error at CMakeLists.txt:4 (add_subdirectory):
+  add_subdirectory given source "missing" which is not an existing directory.
+
+
+CMake Error at CMakeLists.txt:5 (add_subdirectory):
+  add_subdirectory given source "/nonexistent/absolute" which is not an
+  existing directory.
+
+
+CMake Error at CMakeLists.txt:6 (add_subdirectory):
+  The source directory
+
+    <WORK_DIR>
+
+  does not contain a CMakeLists.txt file.
+
+
+CMake Error at CMakeLists.txt:7 (add_subdirectory):
+  add_subdirectory not given a binary directory but the given source
+  directory "<WORK_DIR>" is not a subdirectory of
+  "<SOURCE_DIR>".  When specifying an out-of-tree source a binary
+  directory must be explicitly specified.
+
+
+in sub <BINARY_DIR>/sub
+CMake Error at CMakeLists.txt:9 (add_subdirectory):
+  The binary directory
+
+    <BINARY_DIR>/sub
+
+  is already used to build a source directory.  It cannot be used to build
+  source directory
+
+    <SOURCE_DIR>/sub
+
+  Specify a unique binary directory name.
+
+
+CMake Error at CMakeLists.txt:10 (add_subdirectory):
+  The binary directory
+
+    <BINARY_DIR>/sub
+
+  is already used to build a source directory.  It cannot be used to build
+  source directory
+
+    <SOURCE_DIR>/sub2
+
+  Specify a unique binary directory name.
+
+
+CMake Error at CMakeLists.txt:11 (add_subdirectory):
+  add_subdirectory called with incorrect number of arguments
+
+
+in sub3 <BINARY_DIR>/bin3b e=[TRUE] s=[TRUE]
+CMake Error at CMakeLists.txt:13 (subdirs):
+  subdirs called with incorrect number of arguments
+
+
+end of top
+in sub4 e=[]
+in sub5 e=[TRUE]

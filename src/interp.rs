@@ -47,6 +47,7 @@ impl From<&str> for CmdErr {
 
 pub type CmdResult = Result<(), CmdErr>;
 pub type Builtin = fn(&mut Interp, &[String]) -> CmdResult;
+pub type RawBuiltin = fn(&mut Interp, &Rc<ParsedFile>, &Command, Option<&MacroSubst>) -> (bool, Ctl);
 
 /// Shorthand for returning a `SetError` failure.
 pub fn err<T>(message: impl Into<String>) -> Result<T, CmdErr> {
@@ -107,7 +108,9 @@ pub struct Callable {
 
 #[derive(Clone)]
 pub enum CommandDef {
+    Raw(RawBuiltin),
     Builtin(Builtin),
+    Unexpected(&'static str),
     /// Commands handled directly by the run loop (`if`, `foreach`, ...).
     Flow,
     User(Rc<Callable>),
@@ -130,7 +133,7 @@ pub struct MacroSubst {
 }
 
 impl MacroSubst {
-    fn apply(&self, text: &str) -> String {
+    pub(crate) fn apply(&self, text: &str) -> String {
         let mut value = text.to_owned();
         for (from, to) in &self.pairs {
             if value.contains(from.as_str()) {
@@ -219,6 +222,9 @@ pub struct Interp {
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
+    /// When set, diagnostics and `message()` stderr lines are appended here
+    /// instead of written to the process stderr (used by in-process tests).
+    pub stderr_capture: Option<String>,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
     /// Configuring a try_compile project.
@@ -267,6 +273,7 @@ impl Interp {
             deprecated_as_errors: false,
             recursion_depth: 0,
             stdout_log: None,
+            stderr_capture: None,
             request_return: false,
             in_try_compile: false,
             debug_trycompile: false,
@@ -299,7 +306,8 @@ impl Interp {
     // ------------------------------------------------------------------
     // Variables
 
-    /// `cmMakefile::GetDefinition`: normal variable, else cache value.
+    /// Looks up a normal binding or a cache value without running callbacks.
+    /// Use read_definition for language reads that dispatch variable watches.
     pub fn get_def(&self, name: &str) -> Option<&str> {
         for scope in self.scopes.iter().rev() {
             if let Some(entry) = scope.vars.get(name) {
@@ -345,13 +353,33 @@ impl Interp {
     }
 
     pub fn set_def(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let name = name.into();
+        let value = value.into();
+        let watched = self.ext.variable_watches.contains_key(&name);
+        let notice = watched.then(|| (name.clone(), value.clone()));
         let top = self.scopes.last_mut().expect("scope");
-        top.vars.insert(name.into(), Some(value.into()));
+        top.vars.insert(name, Some(value));
+        if let Some((name, value)) = notice {
+            crate::commands::sysinfo::notify_variable(self, &name, "MODIFIED_ACCESS", &value);
+        }
     }
 
     pub fn unset_def(&mut self, name: &str) {
         let top = self.scopes.last_mut().expect("scope");
         top.vars.insert(name.to_owned(), None);
+        crate::commands::sysinfo::notify_variable(self, name, "REMOVED_ACCESS", "");
+    }
+
+    /// Reads an expanded variable and invokes registered watch callbacks.
+    /// Read the binding again after the callback, since it can change scope state.
+    pub fn read_definition(&mut self, name: &str) -> Option<String> {
+        let value = self.get_def(name).map(str::to_owned);
+        if !self.ext.variable_watches.contains_key(name) {
+            return value;
+        }
+        let access = if value.is_some() { "READ_ACCESS" } else { "UNKNOWN_READ_ACCESS" };
+        crate::commands::sysinfo::notify_variable(self, name, access, value.as_deref().unwrap_or_default());
+        self.get_def(name).map(str::to_owned)
     }
 
     /// Visible normal binding (Some(None) = explicitly unset tombstone).
@@ -383,6 +411,7 @@ impl Interp {
         parent
             .vars
             .insert(name.to_owned(), value.map(str::to_owned));
+        crate::commands::sysinfo::notify_variable(self, name, "MODIFIED_ACCESS", value.unwrap_or_default());
     }
 
     /// Flattened view of all visible normal-variable bindings.
@@ -537,7 +566,12 @@ impl Interp {
     /// Creates a child directory and runs its CMakeLists.txt
     /// (`add_subdirectory`).
     pub fn run_subdirectory(&mut self, source: &str, binary: &str, exclude_from_all: bool) -> bool {
+        self.run_subdirectory_with_system(source, binary, exclude_from_all, false)
+    }
+
+    pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
         let parent = self.mf_index();
+        self.save_directory_definitions(parent);
         let flattened = self.effective_policies();
         let index = self.makefiles.len();
         let mut props = Props::default();
@@ -550,7 +584,6 @@ impl Interp {
             "LINK_OPTIONS",
             "LINK_DIRECTORIES",
             "INCLUDE_REGULAR_EXPRESSION",
-            "SYSTEM",
         ] {
             if let Some(value) = parent_props.get(key) {
                 props.set(key, value.to_owned());
@@ -562,7 +595,7 @@ impl Interp {
             }
         }
         let exclude = exclude_from_all || self.makefiles[parent].exclude_from_all;
-        if exclude {
+        if exclude_from_all {
             props.set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
         }
         self.makefiles.push(Makefile {
@@ -581,6 +614,7 @@ impl Interp {
             deferred: Vec::new(),
             defer_counter: 0,
         });
+        crate::commands::directory::initialize_subdirectory(self, parent, index, system);
         self.makefiles[parent].children.push(index);
         self.mf_stack.push(index);
         self.push_scope();
@@ -594,23 +628,35 @@ impl Interp {
         let list = format!("{source}/CMakeLists.txt");
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
+        self.save_directory_definitions(index);
         self.record_directory_vars();
         self.pop_scope();
         self.mf_stack.pop();
         ok
     }
 
+    fn save_directory_definitions(&mut self, index: usize) {
+        let definitions = self.normal_definition_names().into_iter()
+            .filter_map(|name| self.get_normal_def(&name).map(|value| (name, value.to_owned())))
+            .collect();
+        self.ext.directory_definitions.insert(index, definitions);
+    }
+
     // ------------------------------------------------------------------
     // Policies
 
     pub fn policy_status(&self, id: &str) -> PolicyStatus {
+        self.policy_status_at(self.mf_index(), id)
+    }
+
+    pub fn policy_status_at(&self, dir: usize, id: &str) -> PolicyStatus {
         let Some(index) = crate::policy::index_of(id) else {
             return PolicyStatus::Warn;
         };
         if crate::policy_table::POLICIES[index].removed {
             return PolicyStatus::New;
         }
-        for frame in self.mf().policies.iter().rev() {
+        for frame in self.makefiles[dir].policies.iter().rev() {
             if let Some(status) = frame.map.get(index) {
                 return status;
             }
@@ -635,8 +681,12 @@ impl Interp {
             self.issue(MessageType::FatalError, &message);
             return false;
         }
+        // Policies set by cmCoreTryCompile::TryCompileCode are exempt from the
+        // deprecation warning inside try_compile projects.
+        let try_compile_exempt = self.in_try_compile && matches!(index, 83 | 91 | 104 | 123 | 126 | 128 | 136 | 141);
         if status == PolicyStatus::Old
             && index <= 142
+            && !try_compile_exempt
             && (!self.is_set("CMAKE_WARN_DEPRECATED") || self.is_on("CMAKE_WARN_DEPRECATED"))
         {
             let message = crate::policy::deprecated_warning(index);
@@ -704,11 +754,38 @@ impl Interp {
             }
             other => other,
         };
-        let rendered = messages::render(kind, text, backtrace, self.top_source());
+        let mut rendered = messages::render(kind, text, backtrace, self.top_source());
+        // A deferred execution placeholder denotes a location, even though it
+        // has no numeric line. Other contexts without a line use "in".
+        if backtrace.last().is_some_and(|frame| frame.deferred)
+            && let Some(index) = rendered.find(" in ")
+        {
+            rendered.replace_range(index..index + 4, " at ");
+        }
         if messages::is_error(kind) {
             self.error = true;
         }
-        eprintln!("{rendered}");
+        self.stderr_line(&rendered);
+    }
+
+    /// Displays a diagnostic whose category was already selected by the caller.
+    pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
+        let rendered = messages::render(kind, text, &self.backtrace, self.top_source());
+        if messages::is_error(kind) {
+            self.error = true;
+        }
+        self.stderr_line(&rendered);
+    }
+
+    /// Writes one line to stderr (or to `stderr_capture`).
+    pub fn stderr_line(&mut self, text: &str) {
+        match &mut self.stderr_capture {
+            Some(capture) => {
+                capture.push_str(text);
+                capture.push('\n');
+            }
+            None => eprintln!("{text}"),
+        }
     }
 
     /// `cmSystemTools::Message` to stdout without prefix.
@@ -766,6 +843,7 @@ impl Interp {
             self.mf_mut().list_files.push(path.to_owned());
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            crate::commands::directory::finish_directory(self);
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
@@ -834,6 +912,7 @@ impl Interp {
     }
 
     fn push_list_file_vars(&mut self, path: &str) -> (Option<String>, String) {
+        self.ext.execution_files.push(path.to_owned());
         let old_parent = self.get_def("CMAKE_PARENT_LIST_FILE").map(str::to_owned);
         let old_current = self.get_def("CMAKE_CURRENT_LIST_FILE").map(str::to_owned);
         if let Some(current) = &old_current {
@@ -845,6 +924,7 @@ impl Interp {
     }
 
     fn pop_list_file_vars(&mut self, saved: (Option<String>, String)) {
+        self.ext.execution_files.pop();
         match saved.0 {
             Some(parent) => self.set_def("CMAKE_PARENT_LIST_FILE", parent),
             None => self.unset_def("CMAKE_PARENT_LIST_FILE"),
@@ -906,6 +986,7 @@ impl Interp {
             self.mf_mut().list_files.push(path.to_owned());
             self.run_file_body(&parsed);
             self.run_deferred(path);
+            crate::commands::directory::finish_directory(self);
         }
         // Directory-level end-of-file checks.
         let depth = self.mf().policies.len();
@@ -959,9 +1040,11 @@ impl Interp {
     }
 
     fn run_file_body(&mut self, parsed: &Rc<ParsedFile>) {
+        self.ext.file_locks.files.push(Default::default());
         self.loop_depth.push(0);
         let ctl = self.run_range(parsed, 0, parsed.commands.len(), None);
         self.loop_depth.pop();
+        self.ext.file_locks.files.pop();
         if let Ctl::Return(Some(vars)) = ctl {
             self.propagate(&vars);
         }
@@ -989,19 +1072,21 @@ impl Interp {
                 name: None,
                 deferred: true,
             });
-            self.backtrace.push(Frame {
-                file: deferred.file.clone(),
-                line: 0,
-                name: None,
-                deferred: false,
-            });
+            self.ext.execution_files.push(deferred.file.to_string());
+            let depth = self.mf().policies.len();
             let parsed = Rc::new(ParsedFile::new(deferred.file.clone(), vec![deferred.command]));
             self.ext.defer_current_id = Some(deferred.id);
             self.loop_depth.push(0);
             self.run_range(&parsed, 0, 1, None);
             self.loop_depth.pop();
             self.ext.defer_current_id = None;
-            self.backtrace.pop();
+            self.ext.execution_files.pop();
+            if self.mf().policies.len() > depth {
+                if !self.fatal {
+                    self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+                }
+                self.mf_mut().policies.truncate(depth);
+            }
             self.backtrace.pop();
         }
     }
@@ -1155,6 +1240,12 @@ impl Interp {
         }
         match def {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
+            CommandDef::Raw(function) => function(self, file, command, subst),
+            CommandDef::Unexpected(message) => {
+                self.issue(MessageType::FatalError, &format!("{} {message}", command.name));
+                self.command_failed();
+                (false, Ctl::Normal)
+            }
             CommandDef::Builtin(function) => {
                 let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
                     return (true, Ctl::Normal);
@@ -1216,6 +1307,7 @@ impl Interp {
             self.command_failed();
             return (false, Ctl::Normal);
         }
+        self.ext.execution_files.push(callable.file.path.to_string());
         let argn = util::join_list(&args[callable.params.len()..]);
         let argv = util::join_list(args);
         if callable.is_macro {
@@ -1233,6 +1325,7 @@ impl Interp {
             let depth = self.mf().policies.len();
             let ctl = self.run_body(callable, Some(&subst));
             self.end_policy_scope(depth - 1);
+            self.ext.execution_files.pop();
             match ctl {
                 BodyResult::Error => (false, Ctl::Normal),
                 BodyResult::Ctl(ctl) => (true, ctl),
@@ -1258,7 +1351,9 @@ impl Interp {
             );
             self.set_def("CMAKE_CURRENT_FUNCTION_LIST_LINE", callable.line.to_string());
             self.loop_depth.push(0);
+            self.ext.file_locks.functions.push(Default::default());
             let result = self.run_body(callable, None);
+            self.ext.file_locks.functions.pop();
             self.loop_depth.pop();
             if let BodyResult::Ctl(Ctl::Return(Some(vars))) = &result {
                 let vars = vars.clone();
@@ -1266,6 +1361,7 @@ impl Interp {
             }
             self.end_policy_scope(depth - 1);
             self.pop_scope();
+            self.ext.execution_files.pop();
             match result {
                 BodyResult::Error => (false, Ctl::Normal),
                 BodyResult::Ctl(_) => (true, Ctl::Normal),
@@ -1384,6 +1480,9 @@ impl Interp {
     /// definition to `_<name>`.
     pub fn add_user_command(&mut self, name: &str, callable: Rc<Callable>) {
         let lname = name.to_ascii_lowercase();
+        if callable.is_macro {
+            self.mf_mut().props.append("MACROS", name, false);
+        }
         if let Some(old) = self.commands.get(&lname).cloned()
             && !matches!(old, CommandDef::Flow)
         {
@@ -1710,12 +1809,15 @@ impl Interp {
     /// `configure_file`/`string(CONFIGURE)` style expansion: `no_escapes`
     /// and optional `@ONLY`.
     pub fn expand_configure(&mut self, source: &str, at_only: bool, escape_quotes: bool) -> Result<String, String> {
-        self.expand_impl(source, None, escape_quotes, at_only, true, true)
+        let frame = self.backtrace.last().map(|frame| (frame.file.clone(), frame.line));
+        let location = frame.as_ref().map(|(file, line)| (file.as_ref(), *line));
+        let source = source.split_once('\0').map_or(source, |(text, _)| text);
+        self.expand_impl(source, location, escape_quotes, at_only, true, true)
             .map_err(|(_, message)| message)
     }
 
     fn expand_impl(
-        &self,
+        &mut self,
         source: &str,
         location: Option<(&str, usize)>,
         escape_quotes: bool,
@@ -1744,12 +1846,13 @@ impl Interp {
                         let value: Option<String> = match domain {
                             b'N' => {
                                 if location.is_some() && lookup == "CMAKE_CURRENT_LIST_LINE" {
+                                    let deferred = self.backtrace.iter().rev().nth(1).is_some_and(|frame| frame.deferred);
                                     match &self.ext.defer_current_id {
-                                        Some(id) => Some(format!("DEFERRED:{id}")),
-                                        None => Some(line.to_string()),
+                                        Some(id) if deferred => Some(format!("DEFERRED:{id}")),
+                                        _ => Some(line.to_string()),
                                     }
                                 } else {
-                                    self.get_def(&lookup).map(str::to_owned)
+                                    self.read_definition(&lookup)
                                 }
                             }
                             b'E' => std::env::var_os(&lookup)
@@ -1859,7 +1962,7 @@ impl Interp {
                         let value = if location.is_some() && name == "CMAKE_CURRENT_LIST_LINE" {
                             line.to_string()
                         } else {
-                            self.get_def(&name).unwrap_or_default().to_owned()
+                            self.read_definition(&name).unwrap_or_default()
                         };
                         let value = if escape_quotes {
                             value.replace('"', "\\\"")
@@ -1914,9 +2017,18 @@ enum BodyResult {
 }
 
 impl Interp {
+    /// Registers a command that controls when its arguments are expanded.
+    pub fn register_raw(&mut self, name: &str, function: RawBuiltin) {
+        self.commands.insert(name.to_owned(), CommandDef::Raw(function));
+    }
+
     /// Registers a builtin command.
     pub fn register(&mut self, name: &str, function: Builtin) {
         self.commands.insert(name.to_owned(), CommandDef::Builtin(function));
+    }
+
+    pub fn register_unexpected(&mut self, name: &str, message: &'static str) {
+        self.commands.insert(name.to_owned(), CommandDef::Unexpected(message));
     }
 
     pub fn register_flow(&mut self, name: &str) {
@@ -1945,8 +2057,13 @@ impl Interp {
                     false
                 }
             },
+            CommandDef::Unexpected(message) => {
+                self.issue(MessageType::FatalError, &format!("{name} {message}"));
+                self.command_failed();
+                false
+            }
             CommandDef::User(callable) => self.invoke_callable(&callable, args, name).0,
-            CommandDef::Flow => {
+            CommandDef::Raw(_) | CommandDef::Flow => {
                 // Build a synthetic command so flow commands work through CALL.
                 let command = Command {
                     name: name.to_owned(),
@@ -1969,7 +2086,7 @@ impl Interp {
                     .unwrap_or_else(|| Rc::from(""));
                 let parsed = Rc::new(ParsedFile::new(file, vec![command]));
                 let command = parsed.commands[0].clone();
-                self.run_flow_command(&parsed, &command, None).0
+                self.execute(&parsed, &command, None).0
             }
         }
     }

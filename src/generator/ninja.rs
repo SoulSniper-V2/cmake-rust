@@ -675,7 +675,9 @@ impl<'a> NinjaGenerator<'a> {
                         continue;
                     }
                     command.push(' ');
-                    command.push_str(&outconv::escape_for_shell(arg, outconv::NINJA_UNIX));
+                    // Global targets use old-style escaping
+                    // (cmCustomCommandGenerator escapeForShellOldStyle).
+                    command.push_str(&arg.replace(' ', "\\ "));
                 }
                 lines.push(command);
             }
@@ -752,46 +754,61 @@ impl<'a> NinjaGenerator<'a> {
 
     /// `cmGlobalNinjaGenerator::WriteFolderTargets`: per-directory `all`
     /// phony targets.
+    /// `cmGlobalNinjaGenerator::WriteFolderTargets` with
+    /// `cmGlobalCommonGenerator::ComputeDirectoryTargets` (directories in
+    /// sorted binary-path order, as std::map iterates).
     fn write_folder_targets(&mut self) {
         let interp = self.ctx.interp;
         let mut out = String::new();
         write_divider(&mut out);
         out.push_str("# Folder targets.\n\n");
-        // For each directory, its "all" depends on its own targets that are
-        // not EXCLUDE_FROM_ALL, plus children's "all" unless excluded.
         let count = interp.makefiles.len();
-        let mut folder_outputs: Vec<Vec<String>> = vec![Vec::new(); count];
+        // Per directory: (targets that are not excluded, in order).
+        let mut dir_targets: Vec<Vec<&Target>> = vec![Vec::new(); count];
         for index in 0..count {
-            for target in self.ctx.targets_in_order() {
-                if target.makefile != index || target.imported || target.alias_of.is_some() {
+            for name in &interp.makefiles[index].targets {
+                let Some(target) = interp.ext.targets.get(name) else {
+                    continue;
+                };
+                if target.imported || target.kind == TargetKind::GlobalTarget || !is_in_build_system(target) {
                     continue;
                 }
-                if matches!(target.kind, TargetKind::InterfaceLibrary | TargetKind::GlobalTarget) {
-                    continue;
+                match target.props.get("EXCLUDE_FROM_ALL") {
+                    Some(value) => {
+                        let value = self.ctx.genex(value, Some(target), None);
+                        if !util::is_on(&value) {
+                            // Explicitly un-excluded: every enclosing
+                            // directory's rule depends on it too.
+                            let mut parent = interp.makefiles[index].parent;
+                            while let Some(dir) = parent {
+                                dir_targets[dir].push(target);
+                                parent = interp.makefiles[dir].parent;
+                            }
+                            dir_targets[index].push(target);
+                        }
+                    }
+                    None => dir_targets[index].push(target),
                 }
-                if is_excluded_from_all(target) {
-                    continue;
-                }
-                let mut outputs = Vec::new();
-                self.append_target_outputs(target, &mut outputs, DependOn::TargetArtifact);
-                folder_outputs[index].extend(outputs);
             }
         }
-        // Write in directory order (DFS like the C++ which iterates
-        // LocalGenerators and adds children's all).
-        for index in 0..count {
+        let mut order: Vec<usize> = (0..count).collect();
+        order.sort_by(|a, b| interp.makefiles[*a].binary_dir.cmp(&interp.makefiles[*b].binary_dir));
+        for index in order {
             let makefile = &interp.makefiles[index];
+            write_divider(&mut out);
             let mut build = Build::new("phony");
             build.comment = format!("Folder: {}", makefile.binary_dir);
-            let prefix = self.target_dir_prefix(index);
-            build.outputs.push(format!("{prefix}all"));
-            build.explicit_deps.extend(folder_outputs[index].iter().cloned());
+            build.outputs.push(self.ninja_path(&format!("{}/all", makefile.binary_dir)));
+            for target in &dir_targets[index] {
+                self.append_target_outputs(target, &mut build.explicit_deps, DependOn::TargetArtifact);
+            }
             for &child in &makefile.children {
-                if interp.makefiles[child].exclude_from_all && !makefile.exclude_from_all {
-                    continue;
+                let excluded = interp.makefiles[child].props.get("EXCLUDE_FROM_ALL").is_some_and(util::is_on);
+                if !excluded {
+                    build
+                        .explicit_deps
+                        .push(self.ninja_path(&format!("{}/all", interp.makefiles[child].binary_dir)));
                 }
-                let child_prefix = self.target_dir_prefix(child);
-                build.explicit_deps.push(format!("{child_prefix}all"));
             }
             write_build(&mut out, &build, 0);
         }
@@ -871,11 +888,20 @@ impl<'a> NinjaGenerator<'a> {
     /// each directory's cmake_install.cmake and CTestTestfile.cmake, in the
     /// order the C++ adds them (per local generator: install, then test).
     fn order_rebuild_outputs(&self, _outputs: Vec<String>) -> Vec<String> {
+        // AddRebuildManifestOutputs: build.ninja, then
+        // cmGlobalGenerator::AddCMakeFilesToRebuild (install scripts of all
+        // directories, then test files of directories with testing on).
         let mut outputs = vec!["build.ninja".to_owned()];
-        for makefile in &self.ctx.interp.makefiles {
-            outputs.push(format!("{}/cmake_install.cmake", makefile.binary_dir));
-            if self.ctx.interp.ext.misc.contains_key("testing-enabled") || true {
-                outputs.push(format!("{}/CTestTestfile.cmake", makefile.binary_dir));
+        let skip_install = self.ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").is_some_and(|value| util::is_on(&value));
+        let count = self.ctx.interp.makefiles.len();
+        if !skip_install {
+            for index in 0..count {
+                outputs.push(format!("{}/cmake_install.cmake", self.ctx.interp.makefiles[index].binary_dir));
+            }
+        }
+        for index in 0..count {
+            if self.ctx.var(index, "CMAKE_TESTING_ENABLED").is_some_and(|value| util::is_on(&value)) {
+                outputs.push(format!("{}/CTestTestfile.cmake", self.ctx.interp.makefiles[index].binary_dir));
             }
         }
         outputs
@@ -910,6 +936,16 @@ impl<'a> NinjaGenerator<'a> {
         build.outputs.push("help".into());
         write_build(out, &build, 0);
     }
+}
+
+/// `cmGeneratorTarget::IsInBuildSystem`.
+pub fn is_in_build_system(target: &Target) -> bool {
+    !target.imported
+        && match target.kind {
+            TargetKind::InterfaceLibrary => false,
+            TargetKind::UnknownLibrary => false,
+            _ => true,
+        }
 }
 
 /// `cmGeneratorTarget::GetPropertyAsBool("EXCLUDE_FROM_ALL")`.
@@ -1088,6 +1124,10 @@ impl<'a> NinjaGenerator<'a> {
             if depfile_format != "msvc" {
                 build.variables.insert("DEP_FILE".into(), format!("{object}.d"));
             }
+            build.variables.insert(
+                "LAUNCHER".into(),
+                flags::compiler_launcher(self.ctx, target, &source.language),
+            );
             let object_dir_rel = self.ninja_path(&object_dir);
             build.variables.insert("OBJECT_DIR".into(), object_dir_rel);
             build.variables.insert("OBJECT_FILE_DIR".into(), object_file_dir);
@@ -1150,14 +1190,15 @@ impl<'a> NinjaGenerator<'a> {
             TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
             _ => String::new(),
         };
-        let has_link_depfile = link_depfile_supported(self.ctx, target, language);
+        // cmGeneratorTarget::HasLinkDependencyFile.
+        let link_depfile = flags::link_dependency_file(self.ctx, target, language);
         let use_rsp = false;
         if !self.has_rule(&rule_name) {
             let mut rule = Rule {
                 name: rule_name.clone(),
                 ..Rule::default()
             };
-            if has_link_depfile {
+            if link_depfile.is_some() {
                 rule.deptype = self.ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
                 rule.depfile = "$DEP_FILE".into();
             }
@@ -1262,13 +1303,15 @@ impl<'a> NinjaGenerator<'a> {
             build.variables.insert("LANGUAGE_COMPILE_FLAGS".into(), link_vars.language_compile_flags);
             build.variables.insert("ARCH_FLAGS".into(), link_vars.arch_flags);
         }
-        let mut link_flags = link_vars.link_flags;
-        if has_link_depfile {
-            let depfile = format!("{object_dir}/link.d");
-            build.variables.insert("DEP_FILE".into(), depfile);
-            let _ = &mut link_flags;
+        // cmNinjaTargetGenerator::AddDepfileBinding.
+        if let Some(depfile) = &link_depfile {
+            let depfile_shell = self.shell(depfile);
+            if depfile_shell != *depfile {
+                build.variables.insert("depfile".into(), depfile.clone());
+            }
+            build.variables.insert("DEP_FILE".into(), depfile_shell);
         }
-        build.variables.insert("LINK_FLAGS".into(), link_flags);
+        build.variables.insert("LINK_FLAGS".into(), link_vars.link_flags);
         build.variables.insert("CONFIG".into(), config.clone());
         build.variables.insert("OBJECT_DIR".into(), object_dir.clone());
         build.variables.insert("TARGET_FILE".into(), target_real.clone());
@@ -1381,18 +1424,4 @@ fn rule_launcher(ctx: &GenCtx, target: &Target, property: &str) -> String {
     }
 }
 
-/// `cmGeneratorTarget::HasLinkDependencyFile`.
-fn link_depfile_supported(ctx: &GenCtx, target: &Target, language: &str) -> bool {
-    if !matches!(target.kind, TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary) {
-        return false;
-    }
-    let makefile = target.makefile;
-    let depfile_flags = ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FLAGS"));
-    let format = ctx.var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
-    if depfile_flags.is_empty() || format.is_empty() {
-        return false;
-    }
-    let supported = ctx.var(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_SUPPORTED"));
-    let use_linker = ctx.var(makefile, "CMAKE_LINK_DEPENDS_USE_LINKER");
-    supported.is_some_and(|value| util::is_on(&value)) && use_linker.is_none_or(|value| util::is_on(&value))
-}
+

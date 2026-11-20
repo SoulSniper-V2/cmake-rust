@@ -110,6 +110,18 @@ def main():
     parser.add_argument("-v", action="store_true")
     parser.add_argument("cases", nargs="*")
     args = parser.parse_args()
+    # Stage the candidate as <prefix>/bin/cmake (with the oracle's ctest and
+    # cpack beside it) so tool paths normalize identically on both sides.
+    stage = Path(tempfile.mkdtemp(prefix="projdiff.stage.")) / "bin"
+    stage.mkdir(parents=True)
+    shutil.copy2(args.candidate.resolve(), stage / "cmake")
+    for tool in ("ctest", "cpack"):
+        (stage / tool).symlink_to(ORACLE.parent / tool)
+    share = stage.parent / "share" / "cmake-4.1"
+    share.mkdir(parents=True)
+    for sub in ("Modules", "Templates"):
+        (share / sub).symlink_to(Path(DATA_ROOT) / sub)
+    args.candidate = stage / "cmake"
     roots = [Path(c) for c in args.cases] or [ROOT / "tests/projects"]
     cases = []
     for root in roots:

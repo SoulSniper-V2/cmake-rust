@@ -26,6 +26,7 @@ cmake-rust is an independent Rust implementation of the `cmake` executable that 
 | `src/messages.rs` | `cmMessenger` diagnostics and the `cmDocumentationFormatter` text wrapper |
 | `src/props.rs` | Generic property maps |
 | `src/state.rs` | Targets, tests, and shared extension state (`interp.ext`) |
+| `src/target.rs`, `src/commands/{targets,directory,custom_actions}.rs` | Configure-time target/source/custom-command/test model; see `docs/target-model.md` |
 | `src/util.rs` | `cmList` expansion, `IsOn`/`IsOff`, C number parsing, version compare, path helpers |
 | `src/cmregex.rs` | Port of kwsys `RegularExpression` (the CMake regex dialect) |
 | `src/commands/<family>.rs` | Builtin commands; each module has `pub fn register(interp: &mut Interp)` |

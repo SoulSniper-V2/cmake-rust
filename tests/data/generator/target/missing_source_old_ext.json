@@ -1,0 +1,90 @@
+{
+ "case": {
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0115": "OLD"
+    }
+   }
+  },
+  "files": [
+   "src/a.c",
+   "src/b.cpp"
+  ],
+  "name": "missing_source_old_ext",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "STATIC_LIBRARY",
+    "name": "t",
+    "props": {
+     "SOURCES": "a;b"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "t": {
+    "file": "<ROOT>/build/libt.a",
+    "linker": "<ROOT>/build/libt.a"
+   }
+  },
+  "custom": [],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "OLD",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "CMake Deprecation Warning at CMakeLists.txt:5 (cmake_policy):\n  The OLD behavior for policy CMP0115 will be removed from a future version\n  of CMake.\n\n  The cmake-policies(7) manual explains that the OLD behaviors of all\n  policies are deprecated and that a policy should be set to OLD only under\n  specific short-term circumstances.  Projects should be ported to the NEW\n  behavior and not rely on setting a policy to OLD.\n\n\n",
+  "targets": {
+   "t": {
+    "externals": [],
+    "link_output": "<ROOT>/build/libt.a",
+    "linker_language": "CXX",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/t.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     },
+     {
+      "language": "CXX",
+      "object": "<ROOT>/build/CMakeFiles/t.dir/b.cpp.o",
+      "source": "<ROOT>/src/b.cpp"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 46
+}

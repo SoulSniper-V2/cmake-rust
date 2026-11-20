@@ -1,0 +1,2 @@
+set(CMAKE_EXECUTE_PROCESS_COMMAND_ECHO BAD)
+execute_process(COMMAND /bin/true)

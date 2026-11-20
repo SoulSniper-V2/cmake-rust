@@ -1,0 +1,5 @@
+file(WRITE a source)
+file(COPY_FILE a b RESULT result ONLY_IF_DIFFERENT INPUT_MAY_BE_RECENT)
+file(READ b out)
+message(${result})
+message("[${out}]")

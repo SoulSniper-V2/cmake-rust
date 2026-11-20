@@ -1,0 +1,7 @@
+file(WRITE src/a.txt a)
+file(WRITE src/b.log b)
+file(WRITE src/sub/c.txt c)
+file(WRITE src/sub/d.txt d)
+file(COPY src/ DESTINATION dst FILES_MATCHING PATTERN "*.txt" REGEX [=[/c\.txt$]=] EXCLUDE)
+file(GLOB_RECURSE out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}/dst" "dst/*")
+message("[${out}]")

@@ -63,7 +63,24 @@ impl<'a> GenCtx<'a> {
 
     pub fn target(&self, name: &str) -> Option<&'a Target> {
         let real = self.interp.ext.aliases.get(name).map(String::as_str).unwrap_or(name);
-        self.interp.ext.targets.get(real)
+        self.interp
+            .ext
+            .targets
+            .get(real)
+            .or_else(|| self.target_at(0, name))
+    }
+
+    /// Target lookup as seen from directory `dir` (imported targets are
+    /// directory-scoped; `cmLocalGenerator::FindGeneratorTargetToUse`).
+    pub fn target_at(&self, dir: usize, name: &str) -> Option<&'a Target> {
+        let mut current = Some(dir);
+        while let Some(index) = current {
+            if let Some(key) = crate::state::find_target_key_at(self.interp, index, name) {
+                return self.interp.ext.targets.get(&key);
+            }
+            current = self.interp.makefiles.get(index).and_then(|mf| mf.parent);
+        }
+        None
     }
 
     /// Evaluates generator expressions in `text` for `target`/`config`/
@@ -84,8 +101,15 @@ impl<'a> GenCtx<'a> {
         if let Err(error) = ninja.generate() {
             self.error(Vec::new(), format!("Unable to write build files: {error}"));
         }
-        // INTEGRATION: install::write_install_scripts and
-        // tests::write_test_files once their ports land.
+        for result in [
+            super::install::write_install_scripts(self),
+            super::tests::write_test_files(self),
+            super::export::write_build_exports(self),
+        ] {
+            if let Err(error) = result {
+                self.error(Vec::new(), format!("Unable to write build files: {error}"));
+            }
+        }
         let errors = self.errors.borrow().clone();
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }

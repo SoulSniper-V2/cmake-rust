@@ -1,0 +1,6 @@
+file(WRITE a source)
+file(RENAME a b NO_REPLACE RESULT result)
+file(READ a source)
+file(READ b out)
+message(${result}:${source})
+message("[${out}]")

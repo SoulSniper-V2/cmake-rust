@@ -1,0 +1,3 @@
+set(CMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE "73194a1d-c0b5-41b9-9190-a4512925e192")
+cmake_language(GET_EXPERIMENTAL_FEATURE_ENABLED ExportBuildDatabase out)
+message("out=${out}")

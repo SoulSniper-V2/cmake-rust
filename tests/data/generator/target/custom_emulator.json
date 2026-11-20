@@ -1,0 +1,111 @@
+{
+ "case": {
+  "custom": [
+   {
+    "commands": [
+     [
+      "tool",
+      "--go"
+     ]
+    ],
+    "driver": "drv",
+    "outputs": [
+     "emu.out"
+    ],
+    "verbatim": true
+   }
+  ],
+  "dirs": {
+   "": {
+    "cmake": [
+     "set(CMAKE_CROSSCOMPILING ON)"
+    ]
+   }
+  },
+  "extra_vars": [
+   "CMAKE_CROSSCOMPILING"
+  ],
+  "files": [
+   "src/a.c"
+  ],
+  "name": "custom_emulator",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "EXECUTABLE",
+    "name": "tool",
+    "props": {
+     "CROSSCOMPILING_EMULATOR": "qemu-arm;-L;/sysroot",
+     "SOURCES": "a.c"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "tool": {
+    "file": "<ROOT>/build/tool"
+   }
+  },
+  "custom": [
+   {
+    "command": "cd <ROOT>/build && qemu-arm -L /sysroot <ROOT>/build/tool --go",
+    "desc": "Generating emu.out",
+    "inputs": [],
+    "outputs": [
+     "<ROOT>/build/emu.out"
+    ]
+   }
+  ],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "ON",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "",
+  "targets": {
+   "tool": {
+    "externals": [],
+    "link_output": "<ROOT>/build/tool",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/tool.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 39
+}

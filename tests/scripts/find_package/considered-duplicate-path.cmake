@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(Acme_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/one")
+find_package(Acme 4.1 EXACT CONFIG PATHS data/one data/two NO_DEFAULT_PATH)
+message("paths=${Acme_CONSIDERED_CONFIGS}")
+message("versions=${Acme_CONSIDERED_VERSIONS}")

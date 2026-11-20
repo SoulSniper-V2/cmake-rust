@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_REQUIRED ON)
+find_path(result NAMES needle.h NO_DEFAULT_PATH)
+message("unreachable")
+message("picked=[${result}], cache=[$CACHE{result}]")

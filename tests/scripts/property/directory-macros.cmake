@@ -1,0 +1,7 @@
+macro(Zebra)
+endmacro()
+macro(Aardvark)
+endmacro()
+get_directory_property(a MACROS)
+get_cmake_property(b MACROS)
+message("${a}|${b}")

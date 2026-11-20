@@ -1,0 +1,1 @@
+execute_process(COMMAND /bin/sleep 1 TIMEOUT 0.05 COMMAND_ERROR_IS_FATAL LAST)

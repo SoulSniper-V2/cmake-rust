@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_NO_INSTALL_PREFIX TRUE)
+set(CMAKE_FIND_USE_INSTALL_PREFIX TRUE)
+set(CMAKE_INSTALL_PREFIX "data/install")
+find_package(Acme CONFIG NO_SYSTEM_ENVIRONMENT_PATH)
+message("config=${Acme_CONFIG}")

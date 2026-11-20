@@ -1,0 +1,2 @@
+lib features=[cxx_std_17;c_std_99;cxx_constexpr;bogus_feature;$<1:cxx_std_20>;cxx_constexpr;cxx_std_11;cxx_std_23;cxx_lambdas;cuda_std_11]
+imp features=[cxx_std_11]

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_LIBRARY_ARCHITECTURE triplet)
+set(CMAKE_PREFIX_PATH data/prefix)
+find_library(result NAMES trial NO_SYSTEM_ENVIRONMENT_PATH)
+message("${result}")

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(Acme_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/data/prefix")
+set(CMAKE_MODULE_PATH "data/modules")
+find_package(Acme MODULE)
+message("nested=${Helper_FOUND}|${helper_header}")

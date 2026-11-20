@@ -1,0 +1,3 @@
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON)
+message(AUTHOR_WARNING warning)
+message(ok)

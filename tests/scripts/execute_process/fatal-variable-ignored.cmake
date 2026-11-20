@@ -1,0 +1,3 @@
+set(CMAKE_EXECUTE_PROCESS_COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND /bin/false RESULTS_VARIABLE x)
+message("${x}")

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.1)
+set(input [=[before;$<BUILD_INTERFACE:/build>;$<INSTALL_INTERFACE:/install>;;$<IF:1,$<JOIN:a;b,->,other>;after;]=])
+string(GENEX_STRIP "${input}" output)
+message(STATUS "${output}")
+string(GENEX_STRIP [=[left;$<0:ignored>;$<unclosed:value;;]=] output)
+message(STATUS "${output}")

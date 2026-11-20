@@ -1,0 +1,5 @@
+file(WRITE a/k.txt a)
+file(WRITE b/k.txt b)
+file(WRITE c/k.txt c)
+file(GLOB out RELATIVE "${CMAKE_CURRENT_BINARY_DIR}" "[!b]/?.txt")
+message("[${out}]")

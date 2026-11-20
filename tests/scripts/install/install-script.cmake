@@ -1,0 +1,1 @@
+install(SCRIPT hook.cmake)

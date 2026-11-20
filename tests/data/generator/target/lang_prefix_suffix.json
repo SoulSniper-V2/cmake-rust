@@ -1,0 +1,141 @@
+{
+ "case": {
+  "dirs": {
+   "": {
+    "vars": {
+     "CMAKE_SHARED_LIBRARY_PREFIX_C": "nope",
+     "CMAKE_SHARED_LIBRARY_SUFFIX_CXX": "",
+     "CMAKE_STATIC_LIBRARY_PREFIX_CXX": "cxx",
+     "CMAKE_STATIC_LIBRARY_SUFFIX_CXX": ".cxa"
+    }
+   }
+  },
+  "files": [
+   "src/a.c",
+   "src/b.cpp"
+  ],
+  "name": "lang_prefix_suffix",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "STATIC_LIBRARY",
+    "name": "c",
+    "props": {
+     "SOURCES": "a.c"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "STATIC_LIBRARY",
+    "name": "x",
+    "props": {
+     "SOURCES": "b.cpp"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "SHARED_LIBRARY",
+    "name": "y",
+    "props": {
+     "SOURCES": "b.cpp"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "c": {
+    "file": "<ROOT>/build/libc.a",
+    "linker": "<ROOT>/build/libc.a"
+   },
+   "x": {
+    "file": "<ROOT>/build/cxxx.cxa",
+    "linker": "<ROOT>/build/cxxx.cxa"
+   },
+   "y": {
+    "file": "<ROOT>/build/liby",
+    "linker": "<ROOT>/build/liby",
+    "soname": "<ROOT>/build/liby"
+   }
+  },
+  "custom": [],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_PREFIX_C": "nope",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_LIBRARY_SUFFIX_CXX": "",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_PREFIX_CXX": "cxx",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a",
+     "CMAKE_STATIC_LIBRARY_SUFFIX_CXX": ".cxa"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "",
+  "targets": {
+   "c": {
+    "externals": [],
+    "link_output": "<ROOT>/build/libc.a",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/c.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   },
+   "x": {
+    "externals": [],
+    "link_output": "<ROOT>/build/cxxx.cxa",
+    "linker_language": "CXX",
+    "objects": [
+     {
+      "language": "CXX",
+      "object": "<ROOT>/build/CMakeFiles/x.dir/b.cpp.o",
+      "source": "<ROOT>/src/b.cpp"
+     }
+    ]
+   },
+   "y": {
+    "externals": [],
+    "link_output": "<ROOT>/build/liby",
+    "linker_language": "CXX",
+    "objects": [
+     {
+      "language": "CXX",
+      "object": "<ROOT>/build/CMakeFiles/y.dir/b.cpp.o",
+      "source": "<ROOT>/src/b.cpp"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 42
+}

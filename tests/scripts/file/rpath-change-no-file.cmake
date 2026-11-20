@@ -1,0 +1,1 @@
+file(RPATH_CHANGE OLD_RPATH "/a" NEW_RPATH "/b")

@@ -1,0 +1,1 @@
+variable_watch(CMAKE_CURRENT_LIST_FILE)

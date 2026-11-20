@@ -1,0 +1,5 @@
+{
+  "oracle": "Kitware CMake 4.1.0, Linux Ninja, Debug, CMP0111 NEW",
+  "missing_shared": "IMPORTED_LOCATION or IMPORTED_IMPLIB not set for imported target \"missing_shared\" configuration \"Debug\".",
+  "missing_static": "IMPORTED_LOCATION not set for imported target \"missing_static\" configuration \"Debug\"."
+}

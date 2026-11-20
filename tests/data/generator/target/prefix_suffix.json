@@ -1,0 +1,137 @@
+{
+ "case": {
+  "dirs": {
+   "": {}
+  },
+  "files": [
+   "src/a.c"
+  ],
+  "name": "prefix_suffix",
+  "targets": [
+   {
+    "dir": "",
+    "kind": "EXECUTABLE",
+    "name": "e",
+    "props": {
+     "PREFIX": "pre_",
+     "SOURCES": "a.c",
+     "SUFFIX": ".run"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "STATIC_LIBRARY",
+    "name": "s",
+    "props": {
+     "PREFIX": "",
+     "SOURCES": "a.c",
+     "SUFFIX": ".lib"
+    }
+   },
+   {
+    "dir": "",
+    "kind": "SHARED_LIBRARY",
+    "name": "d",
+    "props": {
+     "IMPORT_PREFIX": "imp",
+     "IMPORT_SUFFIX": ".imp",
+     "PREFIX": "x",
+     "SOURCES": "a.c",
+     "SUFFIX": ".plugin",
+     "VERSION": "2"
+    }
+   }
+  ]
+ },
+ "expected": {
+  "artifacts": {
+   "d": {
+    "file": "<ROOT>/build/xd.plugin.2",
+    "linker": "<ROOT>/build/xd.plugin",
+    "soname": "<ROOT>/build/xd.plugin.2"
+   },
+   "e": {
+    "file": "<ROOT>/build/pre_e.run"
+   },
+   "s": {
+    "file": "<ROOT>/build/s.lib",
+    "linker": "<ROOT>/build/s.lib"
+   }
+  },
+  "custom": [],
+  "dirs": {
+   "": {
+    "policies": {
+     "CMP0111": "NEW",
+     "CMP0115": "NEW",
+     "CMP0118": "NEW",
+     "CMP0163": "NEW"
+    },
+    "vars": {
+     "CMAKE_BUILD_TYPE": "Debug",
+     "CMAKE_CROSSCOMPILING": "FALSE",
+     "CMAKE_CXX_IGNORE_EXTENSIONS": "inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_CXX_LINKER_PREFERENCE": "30",
+     "CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES": "1",
+     "CMAKE_CXX_OUTPUT_EXTENSION": ".o",
+     "CMAKE_CXX_SOURCE_FILE_EXTENSIONS": "C;M;c++;cc;cpp;cxx;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m",
+     "CMAKE_C_IGNORE_EXTENSIONS": "h;H;o;O;obj;OBJ;def;DEF;rc;RC",
+     "CMAKE_C_LINKER_PREFERENCE": "10",
+     "CMAKE_C_OUTPUT_EXTENSION": ".o",
+     "CMAKE_C_SOURCE_FILE_EXTENSIONS": "c;m",
+     "CMAKE_EXECUTABLE_SUFFIX": "",
+     "CMAKE_SHARED_LIBRARY_PREFIX": "lib",
+     "CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SONAME_C_FLAG": "-Wl,-soname,",
+     "CMAKE_SHARED_LIBRARY_SUFFIX": ".so",
+     "CMAKE_SHARED_MODULE_PREFIX": "lib",
+     "CMAKE_SHARED_MODULE_SUFFIX": ".so",
+     "CMAKE_STATIC_LIBRARY_PREFIX": "lib",
+     "CMAKE_STATIC_LIBRARY_SUFFIX": ".a"
+    }
+   }
+  },
+  "exit": 0,
+  "stderr": "",
+  "targets": {
+   "d": {
+    "externals": [],
+    "link_output": "<ROOT>/build/xd.plugin.2",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/d.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   },
+   "e": {
+    "externals": [],
+    "link_output": "<ROOT>/build/pre_e.run",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/e.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   },
+   "s": {
+    "externals": [],
+    "link_output": "<ROOT>/build/s.lib",
+    "linker_language": "C",
+    "objects": [
+     {
+      "language": "C",
+      "object": "<ROOT>/build/CMakeFiles/s.dir/a.c.o",
+      "source": "<ROOT>/src/a.c"
+     }
+    ]
+   }
+  }
+ },
+ "oracle": "Kitware CMake 4.1.0, Linux, Ninja",
+ "root_len": 37
+}
