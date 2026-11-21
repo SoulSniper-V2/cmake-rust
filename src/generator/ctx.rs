@@ -38,6 +38,24 @@ impl<'a> GenCtx<'a> {
         }
     }
 
+    /// An AUTHOR_WARNING issued during generation (cmake::IssueMessage).
+    pub fn warning(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
+        let message = message.into();
+        if self.interp.dev_warnings_as_errors {
+            self.error(backtrace, message);
+            return;
+        }
+        if self.interp.suppress_dev_warnings {
+            return;
+        }
+        eprintln!("{}", crate::messages::render(
+            crate::messages::MessageType::AuthorWarning,
+            &message,
+            &backtrace,
+            Some(&self.interp.home_source),
+        ));
+    }
+
     pub fn error(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
         self.errors.borrow_mut().push((backtrace, message.into()));
     }
@@ -207,6 +225,65 @@ impl<'a> GenCtx<'a> {
                 if !error.quiet {
                     let backtrace = self.backtrace(error.backtrace);
                     self.error(backtrace, error.to_string());
+                }
+                String::new()
+            }
+        }
+    }
+
+    /// `EvaluateSplitConfigGenex` of cmCustomCommandGenerator.cxx (single
+    /// config): evaluates `text` as `cge->Evaluate(lg, config, target)` per
+    /// top-level expression and records the targets the expressions depend
+    /// on (`cge->GetTargets()`) with their cross flag into `utilities`.
+    pub fn genex_command(
+        &self,
+        text: &str,
+        dir: usize,
+        target: Option<&str>,
+        use_output_config: bool,
+        backtrace: &[Frame],
+        utilities: Option<&mut Vec<(String, bool)>>,
+    ) -> String {
+        if !text.contains("$<") {
+            return text.to_owned();
+        }
+        let mut ectx = crate::genex::EvalContext {
+            config: &self.config,
+            head_target: target,
+            current_target: target,
+            ..crate::genex::EvalContext::default()
+        };
+        let mut host = super::genex_host::CtxHost::new(self, dir);
+        let mut dependencies = std::collections::BTreeSet::new();
+        let result = crate::genex::evaluate_custom_command(
+            text,
+            &mut ectx,
+            &mut host,
+            &self.config,
+            &self.config,
+            use_output_config,
+            &mut dependencies,
+        );
+        if let Some(utilities) = utilities {
+            for dependency in dependencies {
+                let name = self
+                    .target_at(dir, &dependency.target)
+                    .map_or(dependency.target.clone(), |target| target.name.clone());
+                if !utilities.iter().any(|(existing, cross)| *existing == name && *cross == dependency.cross) {
+                    utilities.push((name, dependency.cross));
+                }
+            }
+        }
+        match result {
+            Ok(value) => value,
+            Err(error) => {
+                if !error.quiet {
+                    let frames = error
+                        .backtrace
+                        .map(|id| self.backtrace(Some(id)))
+                        .filter(|frames| !frames.is_empty())
+                        .unwrap_or_else(|| backtrace.to_vec());
+                    self.error(frames, error.to_string());
                 }
                 String::new()
             }

@@ -239,16 +239,21 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
         }
         Object::Source(index, path) => {
             let mf = &interp.makefiles[index];
-            let location = SourceLocation::new(interp, index, path);
-            let source = find_source(interp, index, &location);
-            let location = source.map_or(&location, |source| &source.location);
+            let source = crate::commands::target::find_source(interp, index, path);
+            let location = source.map_or_else(
+                || SourceLocation::new(interp, index, path),
+                |source| SourceLocation::from_state(&source.location),
+            );
+            let location = &location;
             let value = source.and_then(|source| source.props.get(name));
             match name {
                 "GENERATED" => {
                     let generated = [mf.binary_dir.as_str(), mf.source_dir.as_str()]
                         .into_iter()
                         .map(|directory| collapse_full_path(path, directory))
-                        .any(|path| interp.ext.generated_sources.contains(&path));
+                        .any(|path| interp.ext.generated_sources.contains(&path))
+                        // cmSourceFile::MarkAsGenerated (CreateSource(name, true)).
+                        || source.is_some_and(|source| source.generated);
                     return Some(
                         if generated || value.is_some_and(is_on) {
                             "1"
@@ -420,6 +425,15 @@ struct SourceLocation {
 }
 
 impl SourceLocation {
+    fn from_state(location: &crate::state::SourceFileLocation) -> Self {
+        Self {
+            directory: location.directory.clone(),
+            name: location.name.clone(),
+            ambiguous_directory: location.ambiguous_directory,
+            ambiguous_extension: location.ambiguous_extension,
+        }
+    }
+
     fn new(interp: &Interp, index: usize, path: &str) -> Self {
         let mf = &interp.makefiles[index];
         let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
@@ -498,30 +512,6 @@ impl SourceLocation {
     }
 }
 
-#[derive(Debug)]
-pub struct SourceFile {
-    location: SourceLocation,
-    props: Props,
-}
-
-fn find_source<'a>(
-    interp: &'a Interp,
-    index: usize,
-    location: &SourceLocation,
-) -> Option<&'a SourceFile> {
-    let mf = &interp.makefiles[index];
-    interp
-        .ext
-        .source_properties
-        .get(&index)?
-        .iter()
-        .find(|source| {
-            source
-                .location
-                .matches(location, &mf.source_dir, &mf.binary_dir)
-        })
-}
-
 fn source_full_path(interp: &Interp, index: usize, location: &SourceLocation) -> Option<String> {
     let mf = &interp.makefiles[index];
     for dir in [&mf.source_dir, &mf.binary_dir] {
@@ -561,42 +551,16 @@ fn language(path: &str) -> &'static str {
     }
 }
 
-fn source_mut<'a>(interp: &'a mut Interp, index: usize, path: &str) -> &'a mut SourceFile {
-    let location = SourceLocation::new(interp, index, path);
-    let mf = &interp.makefiles[index];
-    let sources = interp.ext.source_properties.entry(index).or_default();
-    if let Some(position) = sources.iter().position(|source| {
-        source
-            .location
-            .matches(&location, &mf.source_dir, &mf.binary_dir)
-    }) {
-        let source = &mut sources[position];
-        source.location.update(location);
-        source
-    } else {
-        sources.push(SourceFile {
-            location,
-            props: Props::default(),
-        });
-        sources.last_mut().expect("created source")
-    }
-}
-
 pub fn ensure_source(interp: &mut Interp, index: usize, path: &str) {
-    source_mut(interp, index, path);
+    crate::commands::target::get_or_create_source(interp, index, path);
 }
 
 pub fn has_source(interp: &Interp, index: usize, path: &str) -> bool {
-    find_source(interp, index, &SourceLocation::new(interp, index, path)).is_some()
+    crate::commands::target::find_source(interp, index, path).is_some()
 }
 
 pub fn mark_generated(interp: &mut Interp, index: usize, path: &str) {
-    let binary = interp.makefiles[index].binary_dir.clone();
-    let location = &mut source_mut(interp, index, path).location;
-    let full_path = location.path(&binary);
-    location.directory = crate::util::filename_path(&full_path);
-    location.ambiguous_directory = false;
-    interp.ext.generated_sources.insert(full_path);
+    crate::commands::target::mark_generated(interp, index, path);
 }
 
 fn storage<'a>(interp: &'a mut Interp, object: Object<'_>) -> Option<&'a mut Props> {
@@ -607,7 +571,7 @@ fn storage<'a>(interp: &'a mut Interp, object: Object<'_>) -> Option<&'a mut Pro
             let key = crate::state::find_target_key(interp, name)?;
             &mut interp.ext.targets.get_mut(&key)?.props
         }
-        Object::Source(index, path) => &mut source_mut(interp, index, path).props,
+        Object::Source(index, path) => &mut crate::commands::target::get_or_create_source(interp, index, path).props,
         Object::Test(index, name) => {
             &mut interp
                 .ext

@@ -65,6 +65,10 @@ pub struct Target {
     pub link_signatures: Vec<(bool, Frame)>,
     /// `cmTarget::GetHaveInstallRule` (set by install(TARGETS)).
     pub have_install_rule: bool,
+    /// `cmTarget::AddUtility` from dependency tracing (name, cross).
+    pub traced_utilities: Vec<(String, bool)>,
+    /// `cmTarget::AddCodegenDependency`.
+    pub codegen_dependencies: BTreeSet<String>,
 }
 
 impl Target {
@@ -89,6 +93,8 @@ impl Target {
             file_sets: BTreeMap::new(),
             link_signatures: Vec::new(),
             have_install_rule: false,
+            traced_utilities: Vec::new(),
+            codegen_dependencies: BTreeSet::new(),
         }
     }
 }
@@ -310,7 +316,6 @@ pub struct Ext {
     pub message_checks: Vec<String>,
 
     pub property_definitions: crate::properties::Definitions,
-    pub source_properties: HashMap<usize, Vec<crate::properties::SourceFile>>,
     pub install_properties: HashMap<String, Props>,
     pub directory_definitions: HashMap<usize, BTreeMap<String, String>>,
     pub variable_watches: HashMap<String, Vec<String>>,

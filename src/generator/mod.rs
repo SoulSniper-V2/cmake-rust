@@ -31,6 +31,7 @@ pub mod link;
 pub mod ninja;
 pub mod target;
 pub mod tests;
+pub mod trace;
 
 #[cfg(test)]
 mod oracle_tests;
@@ -45,10 +46,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     finalize_target_configuration(interp);
     // cmGlobalGenerator::Compute -> cmMakefile::Generate: deferred custom
     // command actions attach to sources/targets before anything is computed.
-    crate::commands::custom_actions::run_generator_actions(
-        interp,
-        &mut crate::commands::custom_actions::unsupported_output_genex,
-    );
+    crate::commands::custom_actions::run_generator_actions(interp, &mut expand_output_genex);
+    // cmLocalGenerator::TraceDependencies for every directory.
+    trace::trace_dependencies(interp);
     let result = {
         let ctx = ctx::GenCtx::new(interp);
         ctx.check_and_generate()
@@ -127,4 +127,28 @@ fn finalize_target_configuration(interp: &mut Interp) {
                 .push((value, backtrace));
         }
     }
+}
+
+/// `cmLocalGenerator::ExpandCustomCommandOutputGenex` (single config): the
+/// unique full paths of a genex custom command output.
+fn expand_output_genex(
+    interp: &Interp,
+    dir: usize,
+    output: &str,
+    backtrace: &[crate::messages::Frame],
+) -> Result<Vec<String>, String> {
+    let ctx = ctx::GenCtx::new(interp);
+    let value = ctx.genex_command(output, dir, None, true, backtrace, None);
+    if let Some((_, message)) = ctx.errors.borrow().first() {
+        return Err(message.clone());
+    }
+    let binary = &interp.makefiles[dir].binary_dir;
+    let mut paths: Vec<String> = Vec::new();
+    for path in crate::util::expand_list(&value, false) {
+        let path = crate::util::collapse_full_path(&path, binary);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
 }

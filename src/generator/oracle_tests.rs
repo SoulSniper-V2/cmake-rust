@@ -166,10 +166,19 @@ fn add_test(
         name: name.to_owned(),
         makefile,
         command: command.iter().map(|arg| (*arg).to_owned()).collect(),
-        props: props(entries),
+        // The add_test CONFIGURATIONS / COMMAND_EXPAND_LISTS arguments.
+        props: props(&entries
+            .iter()
+            .copied()
+            .filter(|(key, _)| !matches!(*key, "CONFIGURATIONS" | "COMMAND_EXPAND_LISTS"))
+            .collect::<Vec<_>>()),
         old_style,
-        configurations: Vec::new(),
-        command_expand_lists: false,
+        configurations: entries
+            .iter()
+            .find(|(key, _)| *key == "CONFIGURATIONS")
+            .map(|(_, value)| crate::util::expand_list(value, false))
+            .unwrap_or_default(),
+        command_expand_lists: entries.iter().any(|(key, _)| *key == "COMMAND_EXPAND_LISTS"),
         empty_argument_policy: crate::policy::PolicyStatus::New,
         emulator_policy: crate::policy::PolicyStatus::New,
         backtrace: vec![
@@ -594,7 +603,7 @@ fn oracle_fixtures() {
         ("test-config", Box::new(|i| {
             run(i, "cmake_policy(SET CMP0110 NEW)");
             add_test(i, 0, "test", &["echo"],
-                     &[("_CMAKE_RUST_CONFIGURATIONS", "Release;Debug")], false, 4);
+                     &[("CONFIGURATIONS", "Release;Debug")], false, 4);
             c_vars(i, 0);
             vars(i, 0, &[("CMAKE_TESTING_ENABLED", "1")]);
         })),
@@ -607,7 +616,7 @@ fn oracle_fixtures() {
         ("test-expand", Box::new(|i| {
             run(i, "cmake_policy(SET CMP0110 NEW)");
             add_test(i, 0, "test", &["cmd", "x;;y;"],
-                     &[("_CMAKE_RUST_COMMAND_EXPAND_LISTS", "TRUE")], false, 4);
+                     &[("COMMAND_EXPAND_LISTS", "TRUE")], false, 4);
             c_vars(i, 0);
             vars(i, 0, &[("CMAKE_TESTING_ENABLED", "1")]);
         })),

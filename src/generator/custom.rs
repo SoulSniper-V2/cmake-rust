@@ -25,7 +25,14 @@ pub struct EvaluatedCommand {
     pub command_lines: Vec<Vec<String>>,
     pub outputs: Vec<String>,
     pub byproducts: Vec<String>,
+    /// `cmLocalNinjaGenerator::AppendCustomCommandDeps`: the real (file)
+    /// dependency of each evaluated DEPENDS entry (`GetRealDependency`).
     pub depends: Vec<String>,
+    /// `cmCustomCommandGenerator::GetDepends`: evaluated DEPENDS entries.
+    pub raw_depends: Vec<String>,
+    /// `cmCustomCommandGenerator::GetUtilities`: (target, cross) referenced
+    /// by command lines (argv0 executables and genex targets).
+    pub utilities: Vec<(String, bool)>,
     pub working_directory: String,
     pub comment: Option<String>,
     /// Evaluated DEPFILE as configured, before CMP0116 transformation.
@@ -65,6 +72,8 @@ pub struct CustomCommandSpec {
     /// With CMP0116 NEW, the Ninja writer supplies its computed CMakeFiles/d
     /// path and uses that same path for the Ninja depfile binding.
     pub internal_depfile: Option<String>,
+    /// The command's backtrace (diagnostics).
+    pub backtrace: Vec<crate::messages::Frame>,
 }
 
 impl Default for EvaluatedCommand {
@@ -74,6 +83,8 @@ impl Default for EvaluatedCommand {
             outputs: Vec::new(),
             byproducts: Vec::new(),
             depends: Vec::new(),
+            raw_depends: Vec::new(),
+            utilities: Vec::new(),
             working_directory: String::new(),
             comment: None,
             depfile: String::new(),
@@ -92,14 +103,17 @@ pub fn evaluate(ctx: &GenCtx) -> EvaluatedCommand {
     evaluate_spec(ctx, &CustomCommandSpec::default())
 }
 
-/// Evaluate and resolve a custom command for single-config Ninja.
+/// Evaluate and resolve a custom command for single-config Ninja
+/// (`cmCustomCommandGenerator` constructor + accessors).
 pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand {
-    let directory = &ctx.interp.makefiles[spec.makefile];
+    let dir = spec.makefile;
+    let directory = &ctx.interp.makefiles[dir];
     let target = spec
         .target
         .as_deref()
-        .and_then(|name| target_in_directory(ctx, spec.makefile, name));
-    let cross_compiling = is_on_opt(ctx.var(spec.makefile, "CMAKE_CROSSCOMPILING").as_deref());
+        .and_then(|name| target_in_directory(ctx, dir, name));
+    let target_key = target.map(|target| ctx.target_key(target));
+    let cross_compiling = is_on_opt(ctx.var(dir, "CMAKE_CROSSCOMPILING").as_deref());
     let mut result = EvaluatedCommand {
         job_pool: spec.job_pool.clone(),
         uses_terminal: spec.uses_terminal,
@@ -107,10 +121,18 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         escape_allow_make_vars: spec.escape_allow_make_vars,
         ..EvaluatedCommand::default()
     };
+    let mut utilities = Vec::new();
     for line in &spec.command_lines {
         let mut argv = Vec::new();
         for argument in line {
-            let value = evaluate_split_config(ctx, argument, target);
+            let value = ctx.genex_command(
+                argument,
+                dir,
+                target_key.as_deref(),
+                false,
+                &spec.backtrace,
+                Some(&mut utilities),
+            );
             if spec.command_expand_lists {
                 argv.extend(expand_list(&value, false));
             } else {
@@ -119,10 +141,14 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         }
         if argv.is_empty() {
             argv.push(String::new());
-        } else if let Some(executable) = target_in_directory(ctx, spec.makefile, &argv[0])
+        } else if let Some(executable) = target_in_directory(ctx, dir, &argv[0])
             .filter(|target| target.kind == TargetKind::Executable)
         {
+            if !utilities.iter().any(|(name, cross)| *name == executable.name && *cross) {
+                utilities.push((executable.name.clone(), true));
+            }
             add_target_dependency(&mut result.target_dependencies, &executable.name);
+            // GetArgv0Location / emulator handling.
             let emulator = executable.props.get("CROSSCOMPILING_EMULATOR");
             if executable.imported || !cross_compiling || emulator.is_some() {
                 argv[0] = full_path(ctx, executable, &ctx.config, ArtifactType::Runtime, false);
@@ -140,44 +166,62 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         }
         result.command_lines.push(argv);
     }
+    for (name, _) in &utilities {
+        add_target_dependency(&mut result.target_dependencies, name);
+    }
+    result.utilities = utilities;
 
+    // EvaluateOutputs: ExpandCustomCommandOutputPaths.
     let output_paths = |paths: &[String]| {
         paths
             .iter()
-            .flat_map(|path| expand_list(&ctx.genex(path, None, None), false))
-            .map(|path| unix_full_path(&path, &directory.binary_dir))
+            .flat_map(|path| {
+                expand_list(&ctx.genex_command(path, dir, None, true, &spec.backtrace, None), false)
+            })
+            .map(|path| collapse_full_path(&path, &directory.binary_dir))
             .collect()
     };
     result.outputs = output_paths(&spec.outputs);
     result.byproducts = output_paths(&spec.byproducts);
 
+    // EvaluateDepends.
     for dependency in &spec.depends {
-        let value = evaluate_split_config(ctx, dependency, None);
+        let value = ctx.genex_command(dependency, dir, None, true, &spec.backtrace, None);
         for dependency in expand_list(&value, false) {
             let dependency = if is_full_path(&dependency) {
-                unix_full_path(&dependency, "")
+                collapse_full_path(&dependency, "")
             } else {
                 dependency.replace('\\', "/")
             };
-            let (path, target) = resolve_dependency(ctx, spec.makefile, &dependency);
-            if let Some(path) = path {
-                result.depends.push(path);
-            }
-            if let Some(target) = target {
-                add_target_dependency(&mut result.target_dependencies, target);
-            }
+            result.raw_depends.push(dependency);
+        }
+    }
+    for dependency in &result.raw_depends {
+        let (path, target) = resolve_dependency(ctx, dir, dependency);
+        if let Some(path) = path {
+            result.depends.push(path);
+        }
+        if let Some(target) = target {
+            add_target_dependency(&mut result.target_dependencies, target);
         }
     }
 
-    let working_directory = evaluate_split_config(ctx, &spec.working_directory, target);
+    let working_directory = ctx.genex_command(
+        &spec.working_directory,
+        dir,
+        target_key.as_deref(),
+        true,
+        &spec.backtrace,
+        None,
+    );
     if !working_directory.is_empty() {
         result.working_directory = unix_full_path(&working_directory, &directory.binary_dir);
     }
     result.comment = spec
         .comment
         .as_ref()
-        .map(|comment| ctx.genex(comment, None, None));
-    result.depfile = ctx.genex(&spec.depfile, None, None);
+        .map(|comment| ctx.genex_command(comment, dir, None, true, &spec.backtrace, None));
+    result.depfile = ctx.genex_command(&spec.depfile, dir, None, true, &spec.backtrace, None);
     if !result.depfile.is_empty() {
         result.full_depfile = unix_full_path(&result.depfile, &directory.binary_dir);
     }
@@ -200,6 +244,45 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         ]);
     }
     result
+}
+
+/// `cmCustomCommandGenerator::GetInternalDepfileName` (gcc depfile format).
+pub fn internal_depfile_name(ctx: &GenCtx, full_depfile: &str) -> String {
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(full_depfile.as_bytes());
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{}/CMakeFiles/d/{hash}.d", ctx.interp.home_binary)
+}
+
+/// A configured custom command as the generator's input.
+pub fn spec_from_command(ctx: &GenCtx, command: &crate::state::CustomCommand) -> CustomCommandSpec {
+    let mut spec = CustomCommandSpec {
+        makefile: command.makefile,
+        target: command.target.clone(),
+        command_lines: command.command_lines.clone(),
+        outputs: command.outputs.clone(),
+        byproducts: command.byproducts.clone(),
+        depends: command.depends.clone(),
+        working_directory: command.working_directory.clone(),
+        comment: command.comment.clone(),
+        depfile: command.depfile.clone(),
+        job_pool: command.job_pool.clone(),
+        uses_terminal: command.uses_terminal,
+        verbatim: command.verbatim,
+        escape_allow_make_vars: command.escape_allow_make_vars,
+        command_expand_lists: command.command_expand_lists,
+        internal_depfile: None,
+        backtrace: command.backtrace.clone(),
+    };
+    // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW.
+    let cmp0116 = crate::policy::index_of("CMP0116").and_then(|index| command.policies.get(index));
+    if cmp0116 == Some(crate::policy::PolicyStatus::New) && !command.depfile.is_empty() {
+        let depfile = ctx.genex_command(&command.depfile, command.makefile, None, true, &command.backtrace, None);
+        if !depfile.is_empty() {
+            let full = unix_full_path(&depfile, &ctx.interp.makefiles[command.makefile].binary_dir);
+            spec.internal_depfile = Some(internal_depfile_name(ctx, &full));
+        }
+    }
+    spec
 }
 
 fn add_target_dependency(deps: &mut Vec<String>, name: &str) {
@@ -297,20 +380,31 @@ fn resolve_dependency<'a>(
     }
 
     let directory = &ctx.interp.makefiles[makefile];
+    // cmMakefile::GetSource + cmSourceFile::ResolveFullPath.
     let source = collapse_full_path(dependency, &directory.source_dir);
     let binary = collapse_full_path(dependency, &directory.binary_dir);
-    // INTEGRATION: resolve known dependency sources through the SourceFile
-    // registry before falling back to a path under the source or binary tree.
-    let generated =
-        |path: &str| is_on_opt(source_prop(ctx, makefile, path, "GENERATED").as_deref());
-    let path = if generated(dependency) || generated(&binary) {
-        binary
-    } else if generated(&source) || Path::new(&source).exists() {
-        source
+    if crate::commands::target::find_source_index(ctx.interp, makefile, dependency).is_some() {
+        let generated =
+            |path: &str| is_on_opt(source_prop(ctx, makefile, path, "GENERATED").as_deref());
+        // cmSourceFile::FindFullPath: generated files are located in the
+        // binary directory without checking the disk.
+        if generated(&binary) || generated(dependency) {
+            return (Some(binary), None);
+        }
+        if Path::new(&source).exists() {
+            return (Some(source), None);
+        }
+        if Path::new(&binary).exists() {
+            return (Some(binary), None);
+        }
+    }
+    // Relative to the source directory in which it was given, else assume it
+    // lives in the binary directory.
+    if Path::new(&source).exists() {
+        (Some(source), None)
     } else {
-        binary
-    };
-    (Some(path), None)
+        (Some(binary), None)
+    }
 }
 
 fn path_eq_or_subdir(a: &str, b: &str) -> bool {

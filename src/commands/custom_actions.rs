@@ -373,7 +373,9 @@ fn add_custom_command(
                 }
                 return Some(index);
             }
+            // CreateSource(outName, /*generated=*/true, Known).
             let index = source_index(interp, dir, &rule, true);
+            super::target::mark_generated(interp, dir, &rule);
             interp.ext.sources.get_mut(&dir).unwrap()[index]
                 .props
                 .set("__CMAKE_RULE", "1".to_owned());

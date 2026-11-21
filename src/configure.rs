@@ -504,6 +504,7 @@ fn configure_root(interp: &mut Interp, list_file: &str) {
         interp.issue_at(MessageType::FatalError, &text, &[frame]);
         interp.set_fatal();
     }
+    reserve_global_target_codegen(interp);
     let count = interp.makefiles.len().to_string();
     interp.cache.add(
         "CMAKE_NUMBER_OF_MAKEFILES",
@@ -693,4 +694,35 @@ fn os_pipe() -> std::io::Result<(i32, i32)> {
         return Err(std::io::Error::last_os_error());
     }
     Ok((fds[0], fds[1]))
+}
+
+/// `cmGlobalGenerator::ReserveGlobalTargetCodegen`: CMP0171 as set at the
+/// end of the top-level CMakeLists.txt enables the per-directory `codegen`
+/// targets, which reserves the target name.
+fn reserve_global_target_codegen(interp: &mut Interp) {
+    use crate::policy::PolicyStatus;
+    let status = interp.policy_status_at(0, "CMP0171");
+    if status == PolicyStatus::New {
+        interp.ext.misc.insert("allow-global-target-codegen".to_owned(), "1".to_owned());
+    }
+    let Some(key) = crate::state::find_global_target_key(interp, "codegen") else {
+        return;
+    };
+    let backtrace = interp.ext.targets[&key].backtrace.clone();
+    let policy = crate::policy::index_of("CMP0171").expect("CMP0171");
+    match status {
+        PolicyStatus::Warn => interp.issue_at(
+            MessageType::AuthorWarning,
+            &format!(
+                "{}\nThe target name \"codegen\" is reserved.",
+                crate::policy::policy_warning(policy)
+            ),
+            &backtrace,
+        ),
+        PolicyStatus::Old => {}
+        PolicyStatus::New => {
+            interp.issue_at(MessageType::FatalError, "The target name \"codegen\" is reserved.", &backtrace);
+            interp.set_fatal();
+        }
+    }
 }

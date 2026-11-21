@@ -9,7 +9,7 @@ use crate::commands::install::unix_slashes;
 use crate::fsutil::write_if_different;
 use crate::policy::PolicyStatus;
 use crate::state::{TargetKind, Test};
-use crate::util::{escape_for_cmake, expand_list, is_on, is_on_opt};
+use crate::util::{escape_for_cmake, expand_list, is_on_opt};
 
 pub fn write_test_files(ctx: &GenCtx) -> std::io::Result<()> {
     for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
@@ -60,9 +60,7 @@ fn quote_name(name: &str) -> String {
 }
 
 fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
-    // INTEGRATION: the add_test command stores generator metadata in these
-    // internal entries until Test has dedicated fields for it.
-    let configs = expand_list(test.props.get("_CMAKE_RUST_CONFIGURATIONS").unwrap_or(""), false);
+    let configs = &test.configurations;
     let indent = if configs.is_empty() { "" } else { "  " };
     if !configs.is_empty() {
         writeln!(out, "if({})", config_test("CTEST_CONFIGURATION_TYPE", &configs)).unwrap();
@@ -79,11 +77,11 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
             }
         }
     } else {
-        let expand = test.props.get("_CMAKE_RUST_COMMAND_EXPAND_LISTS").is_some_and(is_on);
+        let expand = test.command_expand_lists;
         let mut args = Vec::new();
         for arg in &test.command {
-            // INTEGRATION: evaluate with the test's directory and configuration.
-            let value = ctx.genex(arg, None, None);
+            // cmGeneratorExpression::Evaluate(LG, config) in the test's directory.
+            let value = ctx.genex_full(arg, test.makefile, None, None, false);
             if expand { args.extend(expand_list(&value, true)); } else { args.push(value); }
         }
         let exe = args.first().map_or("", String::as_str);

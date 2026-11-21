@@ -43,6 +43,9 @@ def normalize(text, work, binary):
     text = text.replace(str(binary.parent.parent), "<PREFIX>")
     text = text.replace(DATA_ROOT, "<ROOT>")
     text = text.replace(str(ORACLE.parent.parent), "<PREFIX>")
+    # CMP0116 internal depfile names hash the absolute depfile path, which
+    # differs between the two work directories.
+    text = re.sub(r"CMakeFiles/d/[0-9a-f]{64}\.d", "CMakeFiles/d/<SHA256>.d", text)
     return text
 
 

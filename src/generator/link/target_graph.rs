@@ -361,13 +361,14 @@ impl<'i> Collector<'_, '_, 'i> {
         {
             return;
         }
-        // INTEGRATION: Feed target dependencies inferred by custom command
-        // evaluation, including executable argv[0] and target genex uses.
-        for property in [
-            "MANUALLY_ADDED_DEPENDENCIES",
-            "CUSTOM_COMMAND_TARGET_DEPENDS",
-        ] {
-            let mut deps = expand_list(target.props.get(property).unwrap_or_default(), false);
+        // cmGeneratorTarget::GetUtilityItems: add_dependencies plus the
+        // utilities found by dependency tracing.
+        {
+            let mut deps = expand_list(
+                target.props.get("MANUALLY_ADDED_DEPENDENCIES").unwrap_or_default(),
+                false,
+            );
+            deps.extend(target.traced_utilities.iter().map(|(name, _)| name.clone()));
             deps.sort_unstable();
             deps.dedup();
             for name in deps {
