@@ -42,7 +42,7 @@ candidate. The pinned Kitware `ctest` is the independent test runner.
   - The configure log, `CMakeCache.txt`, `rules.ninja` and `build.ninja` (41 MB, 21,997 statements) are byte-identical to the oracle's. Tool paths are normalized, and the regeneration-dependency list sorts differently because the prefix paths differ.
   - `ninja check-clang` on the candidate's build: 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed.
   - Times: configure about 5 s, generate about 6 s (oracle 1.8 s).
-- **Kitware CMake 4.1.0**: the configure log is identical to the oracle's, as are `CMakeCache.txt` and `rules.ninja`. `build.ninja` differs only in the regeneration-dependency list. The build and the upstream CTest run are in progress.
+- **Kitware CMake 4.1.0**: the configure log, `CMakeCache.txt` and `rules.ninja` are identical to the oracle's, and `build.ninja` differs only in the regeneration-dependency list. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 684/684 passed. The oracle-configured build gets the same result.
 - **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
 
 Harnesses:
