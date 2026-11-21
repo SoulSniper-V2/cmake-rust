@@ -40,8 +40,11 @@ pub fn trace_dependencies(interp: &mut Interp) {
                 let Some(target) = interp.ext.targets.get(&key) else {
                     continue;
                 };
-                // CMake-generated targets have no dependencies to trace.
-                if target.kind == TargetKind::GlobalTarget || target.imported {
+                // cmLocalGenerator::TraceDependencies: only targets in the
+                // build system; CMake-generated targets have nothing to trace.
+                if target.kind == TargetKind::GlobalTarget
+                    || !super::ninja::is_in_build_system(target)
+                {
                     continue;
                 }
                 // Diagnostics from source resolution are reported again by
