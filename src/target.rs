@@ -622,6 +622,7 @@ pub fn register_target(interp: &mut Interp, target: Target) -> String {
     let key =
         if target.imported && !target.imported_global || interp.ext.targets.contains_key(&name) {
             let key = format!("[{dir}]{name}");
+            interp.ext.scoped_keys_by_name.entry(name.clone()).or_default().push(key.clone());
             interp.ext.scoped_targets.insert((dir, name), key.clone());
             key
         } else {
@@ -1327,6 +1328,34 @@ pub fn get_or_create_source<'a>(
     &mut interp.ext.sources.get_mut(&dir_index).unwrap()[index]
 }
 
+/// The lookup key of a source name: `cmSourceFileLocation::Matches` only
+/// pairs names that are equal or differ by a known source extension, so the
+/// name without a known extension groups every possible match.
+fn source_key(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if SOURCE_EXTENSIONS.contains(&ext) => stem,
+        _ => name,
+    }
+}
+
+/// The first source of directory `dir` matching `location`, by insertion
+/// order (`cmMakefile::GetSource` iterates the name-indexed candidates).
+fn matching_source(interp: &Interp, dir: usize, location: &SourceFileLocation) -> Option<usize> {
+    let sources = interp.ext.sources.get(&dir)?;
+    let mf = &interp.makefiles[dir];
+    let matches = |index: &usize| {
+        sources[*index]
+            .location
+            .matches(location, &mf.source_dir, &mf.binary_dir)
+    };
+    match interp.ext.source_name_index.get(&(dir, source_key(&location.name).to_owned())) {
+        Some(candidates) => candidates.iter().copied().find(|index| matches(index)),
+        // Sources inserted directly (test fixtures) are not indexed.
+        None if interp.ext.source_name_index.is_empty() => (0..sources.len()).find(matches),
+        None => None,
+    }
+}
+
 /// `cmMakefile::GetOrCreateSource` returning the index into
 /// `ext.sources[dir_index]`.  `known` is `cmSourceFileLocationKind::Known`
 /// (the name's extension is not ambiguous).
@@ -1335,14 +1364,8 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
     if known {
         location.ambiguous_extension = false;
     }
-    let mf = &interp.makefiles[dir_index];
-    let sources = interp.ext.sources.entry(dir_index).or_default();
-    if let Some(index) = sources.iter().position(|entry| {
-        entry
-            .location
-            .matches(&location, &mf.source_dir, &mf.binary_dir)
-    }) {
-        let source = &mut sources[index];
+    if let Some(index) = matching_source(interp, dir_index, &location) {
+        let source = &mut interp.ext.sources.get_mut(&dir_index).unwrap()[index];
         if source.location.ambiguous_directory && !location.ambiguous_directory {
             source.location.directory = location.directory;
             source.location.ambiguous_directory = false;
@@ -1353,6 +1376,8 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
         }
         return index;
     }
+    let key = (dir_index, source_key(&location.name).to_owned());
+    let sources = interp.ext.sources.entry(dir_index).or_default();
     sources.push(SourceFile {
         makefile: dir_index,
         props: Default::default(),
@@ -1360,40 +1385,27 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
         generated: false,
         custom_command: None,
     });
-    sources.len() - 1
+    let index = sources.len() - 1;
+    interp.ext.source_name_index.entry(key).or_default().push(index);
+    index
 }
 
 /// `cmMakefile::GetSource` with `cmSourceFileLocationKind::Known`.
 pub fn find_known_source(interp: &Interp, dir: usize, path: &str) -> Option<usize> {
     let mut location = SourceFileLocation::new(interp, dir, path);
     location.ambiguous_extension = false;
-    let mf = &interp.makefiles[dir];
-    interp.ext.sources.get(&dir)?.iter().position(|entry| {
-        entry
-            .location
-            .matches(&location, &mf.source_dir, &mf.binary_dir)
-    })
+    matching_source(interp, dir, &location)
 }
 
 /// `cmMakefile::GetSource` (ambiguous location) returning the index.
 pub fn find_source_index(interp: &Interp, dir: usize, path: &str) -> Option<usize> {
     let location = SourceFileLocation::new(interp, dir, path);
-    let mf = &interp.makefiles[dir];
-    interp.ext.sources.get(&dir)?.iter().position(|entry| {
-        entry
-            .location
-            .matches(&location, &mf.source_dir, &mf.binary_dir)
-    })
+    matching_source(interp, dir, &location)
 }
 
 pub fn find_source<'a>(interp: &'a Interp, dir: usize, path: &str) -> Option<&'a SourceFile> {
-    let location = SourceFileLocation::new(interp, dir, path);
-    let mf = &interp.makefiles[dir];
-    interp.ext.sources.get(&dir)?.iter().find(|entry| {
-        entry
-            .location
-            .matches(&location, &mf.source_dir, &mf.binary_dir)
-    })
+    let index = find_source_index(interp, dir, path)?;
+    Some(&interp.ext.sources[&dir][index])
 }
 
 /// A source file's stored property (`cmSourceFile::GetProperty` for plain

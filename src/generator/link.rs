@@ -140,12 +140,18 @@ impl<'a, 'i> Query<'a, 'i> {
             if let Some(local) = resolved
                 .filter(|target| target.imported && target.makefile == index)
                 .or_else(|| {
-                    targets.values().find(|target| {
-                        target.imported
-                            && !target.imported_global
-                            && target.makefile == index
-                            && target.name == name
-                    })
+                    // Directory-scoped imported targets are registered under
+                    // scoped keys (indexed by name).
+                    self.ctx
+                        .interp
+                        .ext
+                        .scoped_keys_by_name
+                        .get(name)?
+                        .iter()
+                        .filter_map(|key| targets.get(key))
+                        .find(|target| {
+                            target.imported && !target.imported_global && target.makefile == index
+                        })
                 })
             {
                 return Some(local);

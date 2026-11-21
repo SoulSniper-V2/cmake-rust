@@ -305,6 +305,12 @@ pub struct Ext {
     /// time by `run_generator_actions`.
     pub output_to_source: BTreeMap<usize, HashMap<String, OutputSource>>,
     pub scoped_targets: HashMap<(usize, String), String>,
+    /// Keys of directory-scoped targets by target name, in registration
+    /// order (index for global lookups of promoted imported targets).
+    pub scoped_keys_by_name: HashMap<String, Vec<String>>,
+    /// `ext.sources` indices by (directory, name without a known source
+    /// extension) for cmSourceFileLocation lookups.
+    pub source_name_index: HashMap<(usize, String), Vec<usize>>,
     pub scoped_aliases: HashMap<(usize, String), String>,
     pub target_property_initializers: BTreeMap<String, String>,
     pub defer_current_id: Option<String>,
@@ -385,12 +391,10 @@ pub fn find_global_target_key(interp: &Interp, name: &str) -> Option<String> {
     }
     interp
         .ext
-        .target_order
+        .scoped_keys_by_name
+        .get(name)?
         .iter()
-        .find(|key| {
-            let target = &interp.ext.targets[*key];
-            target.name == name && target.imported_global
-        })
+        .find(|key| interp.ext.targets.get(*key).is_some_and(|target| target.imported_global))
         .cloned()
 }
 

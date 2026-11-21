@@ -119,6 +119,9 @@ fn find_make_program(interp: &mut Interp) -> bool {
 
 /// `cmGlobalGenerator::EnableLanguage`.
 pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool) {
+    // cmMakefile::EnableLanguage: cmGlobalGenerator::GetCMakeCFGIntDir is "."
+    // for single-configuration generators.
+    interp.set_def("CMAKE_CFG_INTDIR", ".");
     if !interp.in_try_compile
         && interp.get_def("CMAKE_BUILD_TYPE").is_none()
         && let Ok(build_type) = std::env::var("CMAKE_BUILD_TYPE")
