@@ -20,6 +20,7 @@ pub fn register(interp: &mut Interp) {
         ("include_regular_expression", include_regular_expression),
         ("cmake_file_api", file_api),
         ("exec_program", exec_program),
+        ("build_command", build_command),
     ] {
         interp.register(name, function);
     }
@@ -837,4 +838,115 @@ fn registry_query(interp: &mut Interp, result: &str, args: &[String]) -> CmdResu
         interp.set_def(*error, "No Registry on this platform.");
     }
     Ok(())
+}
+
+/// `cmBuildCommand`.
+fn build_command(interp: &mut Interp, args: &[String]) -> CmdResult {
+    // Support the legacy signature of the command.
+    if args.len() == 2 {
+        let define = &args[0];
+        let config = std::env::var("CMAKE_CONFIG_TYPE")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Release".to_owned());
+        let command = generate_cmake_build_command(interp, "", &config, "");
+        if interp.get_def(define).is_some() {
+            return Ok(());
+        }
+        interp.add_cache_def(
+            define,
+            Some(&command),
+            Some("Command used to build entire project from the command line."),
+            CacheType::String,
+            false,
+        );
+        return Ok(());
+    }
+    let Some(variable) = args.first() else {
+        return err("requires at least one argument naming a CMake variable");
+    };
+    #[derive(PartialEq)]
+    enum Doing {
+        None,
+        Configuration,
+        ProjectName,
+        Target,
+        Parallel,
+    }
+    let mut doing = Doing::None;
+    let (mut configuration, mut project_name, mut target, mut parallel) =
+        (String::new(), String::new(), String::new(), String::new());
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "CONFIGURATION" => doing = Doing::Configuration,
+            "PROJECT_NAME" => doing = Doing::ProjectName,
+            "TARGET" => doing = Doing::Target,
+            "PARALLEL_LEVEL" => doing = Doing::Parallel,
+            _ => {
+                let slot = match doing {
+                    Doing::Configuration => &mut configuration,
+                    Doing::ProjectName => &mut project_name,
+                    Doing::Target => &mut target,
+                    Doing::Parallel => &mut parallel,
+                    Doing::None => return err(format!("unknown argument \"{arg}\"")),
+                };
+                *slot = arg.clone();
+                doing = Doing::None;
+            }
+        }
+    }
+    if configuration.is_empty() {
+        configuration = std::env::var("CMAKE_CONFIG_TYPE").unwrap_or_default();
+    }
+    if configuration.is_empty() {
+        configuration = "Release".to_owned();
+    }
+    if !project_name.is_empty() {
+        interp.issue(
+            MessageType::AuthorWarning,
+            "Ignoring PROJECT_NAME option because it has no effect.",
+        );
+    }
+    let command = generate_cmake_build_command(interp, &target, &configuration, &parallel);
+    interp.set_def(variable, command);
+    Ok(())
+}
+
+/// `cmGlobalGenerator::GenerateCMakeBuildCommand` (no native options).
+fn generate_cmake_build_command(interp: &Interp, target: &str, config: &str, parallel: &str) -> String {
+    let mut command = format!("{} --build .", convert_to_unix_output_path(&interp.cmake_command));
+    if !config.is_empty() {
+        command.push_str(&format!(" --config \"{config}\""));
+    }
+    if !parallel.is_empty() {
+        command.push_str(&format!(" --parallel \"{parallel}\""));
+    }
+    if !target.is_empty() {
+        command.push_str(&format!(" --target \"{target}\""));
+    }
+    command
+}
+
+/// `kwsys::SystemTools::ConvertToUnixOutputPath`.
+fn convert_to_unix_output_path(path: &str) -> String {
+    // Remove "//" except at the beginning.
+    let mut ret = path.to_owned();
+    let mut pos = 1;
+    while let Some(found) = ret.get(pos..).and_then(|rest| rest.find("//")) {
+        ret.remove(pos + found);
+        pos += found;
+    }
+    if !ret.contains(' ') {
+        return ret;
+    }
+    let mut result = String::with_capacity(ret.len());
+    let mut last = '\u{1}';
+    for ch in ret.chars() {
+        if ch == ' ' && last != '\\' {
+            result.push('\\');
+        }
+        result.push(ch);
+        last = ch;
+    }
+    result
 }

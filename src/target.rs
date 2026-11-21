@@ -463,25 +463,8 @@ pub fn create_target(
     target.imported_global = imported && global;
     target.backtrace.clone_from(&interp.backtrace);
     target.policies = interp.effective_policies();
-    for prop in [
-        "TYPE",
-        "NAME",
-        "SOURCE_DIR",
-        "BINARY_DIR",
-        "IMPORTED",
-        "IMPORTED_GLOBAL",
-        "HEADER_SETS",
-        "INTERFACE_HEADER_SETS",
-        "CXX_MODULE_SETS",
-        "INTERFACE_CXX_MODULE_SETS",
-    ] {
-        target.props.set(
-            prop,
-            computed_property(interp, &target, prop)
-                .unwrap()
-                .into_owned(),
-        );
-    }
+    // TYPE, NAME, SOURCE_DIR, BINARY_DIR, IMPORTED[_GLOBAL] and the file
+    // set lists are computed on read (cmTargetPropertyComputer), not stored.
     if !imported {
         for prop in [
             "INCLUDE_DIRECTORIES",

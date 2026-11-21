@@ -76,20 +76,7 @@ impl Evaluator<'_, '_> {
             "QUOTE" => "\"".to_owned(),
             "LOWER_CASE" => input.to_ascii_lowercase(),
             "UPPER_CASE" => input.to_ascii_uppercase(),
-            "MAKE_C_IDENTIFIER" => {
-                let mut result = String::with_capacity(input.len() + 1);
-                if input.as_bytes().first().is_some_and(u8::is_ascii_digit) {
-                    result.push('_');
-                }
-                for byte in input.bytes() {
-                    result.push(if byte.is_ascii_alphanumeric() || byte == b'_' {
-                        char::from(byte)
-                    } else {
-                        '_'
-                    });
-                }
-                result
-            }
+            "MAKE_C_IDENTIFIER" => crate::util::make_c_identifier(input),
             "JOIN" => cm_list(input, false).join(&args[1]),
             "IN_LIST" => {
                 let policy = self.host.local_policy_status("CMP0085");

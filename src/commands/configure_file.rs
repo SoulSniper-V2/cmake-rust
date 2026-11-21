@@ -16,6 +16,7 @@ use super::legacy_fs::{can_write, collapse, fatal, mode, raw_error, system_error
 
 pub fn register(interp: &mut Interp) {
     interp.register("configure_file", configure_file);
+    interp.register("create_test_sourcelist", create_test_sourcelist);
 }
 
 pub(super) fn newline_style(args: &[String]) -> Result<Option<&'static str>, &'static str> {
@@ -244,6 +245,23 @@ fn configure_file(interp: &mut Interp, args: &[String]) -> CmdResult {
             return err(format!(" given invalid permission {}.", invalid.join(",")));
         }
     }
+    configure_file_core(interp, &input, &output, copy_only, newline, at_only, escape_quotes, bits)
+}
+
+/// `cmMakefile::ConfigureFile` after argument handling.
+#[allow(clippy::too_many_arguments, reason = "mirrors cmMakefile::ConfigureFile")]
+pub(super) fn configure_file_core(
+    interp: &mut Interp,
+    input: &str,
+    output: &str,
+    copy_only: bool,
+    newline: Option<&str>,
+    at_only: bool,
+    escape_quotes: bool,
+    mut bits: u32,
+) -> CmdResult {
+    let input = input.to_owned();
+    let output = output.to_owned();
     let data = match fs::read(&input) {
         Ok(data) => data,
         Err(error) => {
@@ -305,4 +323,101 @@ fn configure_file(interp: &mut Interp, args: &[String]) -> CmdResult {
         return err("Problem configuring file");
     }
     Ok(())
+}
+
+/// `cmCreateTestSourceList`.
+fn create_test_sourcelist(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.len() < 3 {
+        return err("called with wrong number of arguments.");
+    }
+    let mut extra_include = String::new();
+    let mut function = String::new();
+    let mut tests: Vec<String> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "EXTRA_INCLUDE" => {
+                let Some(value) = iter.next() else {
+                    return err("incorrect arguments to EXTRA_INCLUDE");
+                };
+                extra_include = format!("#include \"{value}\"\n");
+            }
+            "FUNCTION" => {
+                let Some(value) = iter.next() else {
+                    return err("incorrect arguments to FUNCTION");
+                };
+                function = format!("{value}(&ac, &av);\n");
+            }
+            _ => tests.push(arg.clone()),
+        }
+    }
+    // The source list name and the test driver.
+    let source_list = tests[0].clone();
+    let Some(driver_name) = tests.get(1).cloned() else {
+        return err("You must specify a file extension for the test driver file.");
+    };
+    // GetFilenameExtension: from the first '.' of the file name.
+    let file_name = crate::util::filename_name(&driver_name);
+    if file_name.find('.').map_or(0, |dot| file_name.len() - dot) < 2 {
+        return err("You must specify a file extension for the test driver file.");
+    }
+    let driver = format!("{}/{driver_name}", interp.current_binary_dir());
+    let config_file = format!("{}/Templates/TestDriver.cxx.in", interp.cmake_root);
+    let listed = &tests[2..];
+    let func_base = |test: &str| {
+        let name = crate::util::filename_name(test);
+        let stem = name.rfind('.').map_or(name.as_str(), |dot| &name[..dot]).to_owned();
+        let path = crate::util::filename_path(test);
+        if path.is_empty() { stem } else { format!("{path}/{stem}") }
+    };
+    let mut forward_declare = String::new();
+    let mut func_names: Vec<String> = Vec::new();
+    for test in listed {
+        if test == "EXTRA_INCLUDE" {
+            break;
+        }
+        let func_name = crate::util::make_c_identifier(&func_base(test).replace('\\', "/"));
+        if !func_names.contains(&func_name) {
+            forward_declare.push_str(&format!("extern int {func_name}(int, char*[]);\n"));
+        }
+        func_names.push(func_name);
+    }
+    let mut function_map = String::new();
+    for (test, func_name) in listed.iter().zip(&func_names) {
+        function_map.push_str(&format!("  {{\n    \"{}\",\n    {func_name}\n  }},\n", func_base(test)));
+    }
+    if !extra_include.is_empty() {
+        interp.set_def("CMAKE_TESTDRIVER_EXTRA_INCLUDES", extra_include);
+    }
+    if !function.is_empty() {
+        interp.set_def("CMAKE_TESTDRIVER_ARGVC_FUNCTION", function);
+    }
+    interp.set_def("CMAKE_FORWARD_DECLARE_TESTS", forward_declare);
+    interp.set_def("CMAKE_FUNCTION_TABLE_ENTRIES", function_map);
+    // cmMakefile::ConfigureFile(configFile, driver, false, true, false).
+    let mut result = Ok(());
+    if !can_write(interp, &driver) {
+        raw_error(interp, &format!("Attempt to write file: {driver} into a source directory."));
+        result = Err(CmdErr::Reported);
+    } else if !Path::new(&config_file).exists() {
+        raw_error(interp, &format!("File {config_file} does not exist."));
+        result = Err(CmdErr::Reported);
+    } else if configure_file_core(interp, &config_file, &driver, false, None, true, false, 0).is_err() {
+        result = Err(CmdErr::Reported);
+    }
+    // Construct the source list.
+    let dir = interp.mf_index();
+    let mut value = driver.clone();
+    crate::commands::target::get_or_create_source(interp, dir, &driver)
+        .props
+        .set("ABSTRACT", "0".to_owned());
+    for test in listed {
+        crate::commands::target::get_or_create_source(interp, dir, test)
+            .props
+            .set("ABSTRACT", "0".to_owned());
+        value.push(';');
+        value.push_str(test);
+    }
+    interp.set_def(&source_list, value);
+    result
 }

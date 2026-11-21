@@ -569,19 +569,7 @@ fn handle_make_c_identifier(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 3 {
         return err("sub-command MAKE_C_IDENTIFIER requires two arguments.");
     }
-    let input = args[1].as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(input.len() + 1);
-    if input.first().is_some_and(u8::is_ascii_digit) {
-        out.push(b'_');
-    }
-    for &byte in input {
-        if byte.is_ascii_alphanumeric() || byte == b'_' {
-            out.push(byte);
-        } else {
-            out.push(b'_');
-        }
-    }
-    interp.set_def(args[2].clone(), String::from_utf8_lossy(&out).into_owned());
+    interp.set_def(args[2].clone(), crate::util::make_c_identifier(&args[1]));
     Ok(())
 }
 

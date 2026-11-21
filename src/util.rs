@@ -211,6 +211,22 @@ pub fn escape_for_cmake(value: &str) -> String {
     out
 }
 
+/// `cmSystemTools::MakeCidentifier`.
+pub fn make_c_identifier(input: &str) -> String {
+    let mut result = String::with_capacity(input.len() + 1);
+    if input.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+        result.push('_');
+    }
+    for byte in input.bytes() {
+        result.push(if byte.is_ascii_alphanumeric() || byte == b'_' {
+            char::from(byte)
+        } else {
+            '_'
+        });
+    }
+    result
+}
+
 /// `cmSystemTools::GetFilenamePath`: directory part using `/`.
 pub fn filename_path(path: &str) -> String {
     match path.rfind('/') {
