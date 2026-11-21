@@ -383,6 +383,93 @@ pub fn full_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifact
     full_name_components(ctx, target, config, artifact).filename()
 }
 
+/// `cmGeneratorTarget::ComputePDBOutputDir(kind, config, out)`: `None`
+/// when no `<kind>_OUTPUT_DIRECTORY[_<CONFIG>]` property selects one.
+fn pdb_output_dir(ctx: &GenCtx, target: &Target, config: &str, kind: &str) -> Option<String> {
+    let config_upper = config.to_ascii_uppercase();
+    let out = if let Some(value) = target.props.get(&format!("{kind}_OUTPUT_DIRECTORY_{config_upper}")) {
+        ctx.genex(value, None, None)
+    } else if let Some(value) = target.props.get(&format!("{kind}_OUTPUT_DIRECTORY")) {
+        ctx.genex(value, None, None)
+    } else {
+        String::new()
+    };
+    if out.is_empty() {
+        return None;
+    }
+    // AppendDirectoryForConfig is a no-op for the single-config Ninja generator.
+    Some(collapse_full_path(&out, &ctx.interp.makefiles[target.makefile].binary_dir))
+}
+
+/// `cmGeneratorTarget::GetPDBDirectory`.
+pub fn pdb_directory(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    pdb_output_dir(ctx, target, config, "PDB")
+        .unwrap_or_else(|| directory(ctx, target, config, ArtifactType::Runtime))
+}
+
+/// `cmGeneratorTarget::GetCompilePDBName`.
+pub fn compile_pdb_name(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    let per_config = format!("COMPILE_PDB_NAME_{}", config.to_ascii_uppercase());
+    let name = target
+        .props
+        .get(&per_config)
+        .filter(|value| !value.is_empty())
+        .or_else(|| target.props.get("COMPILE_PDB_NAME").filter(|value| !value.is_empty()));
+    match name {
+        Some(name) => {
+            let pdb = ctx.genex(name, Some(target), None);
+            let prefix = full_name_components(ctx, target, config, ArtifactType::Runtime).prefix;
+            format!("{prefix}{pdb}.pdb")
+        }
+        None => String::new(),
+    }
+}
+
+/// `cmGeneratorTarget::GetCompilePDBPath`.
+pub fn compile_pdb_path(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    let mut dir = pdb_output_dir(ctx, target, config, "COMPILE_PDB").unwrap_or_default();
+    let name = compile_pdb_name(ctx, target, config);
+    // HaveWellDefinedOutputFiles: true for every non-imported buildable
+    // target type that reaches here.
+    if dir.is_empty() && !name.is_empty() {
+        dir = pdb_directory(ctx, target, config);
+    }
+    if !dir.is_empty() {
+        dir.push('/');
+    }
+    dir + &name
+}
+
+/// `cmGeneratorTarget::GetSupportDirectory`.
+pub fn support_directory(ctx: &GenCtx, target: &Target) -> String {
+    object_directory(ctx, target, "").trim_end_matches('/').to_owned()
+}
+
+/// `cmCommonTargetGenerator::ComputeTargetCompilePDB` (single-config).
+pub fn target_compile_pdb(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    if !matches!(
+        target.kind,
+        TargetKind::Executable
+            | TargetKind::StaticLibrary
+            | TargetKind::SharedLibrary
+            | TargetKind::ModuleLibrary
+            | TargetKind::ObjectLibrary
+    ) {
+        return String::new();
+    }
+    let path = compile_pdb_path(ctx, target, config);
+    if !path.is_empty() {
+        return path;
+    }
+    let mut path = support_directory(ctx, target);
+    path.push('/');
+    if target.kind == TargetKind::StaticLibrary {
+        path.push_str(&target.name);
+        path.push_str(".pdb");
+    }
+    path
+}
+
 /// `cmGeneratorTarget::GetObjectDirectory` (absolute, with trailing '/').
 pub fn object_directory(ctx: &GenCtx, target: &Target, _config: &str) -> String {
     let binary_dir = ctx.interp.makefiles[target.makefile]

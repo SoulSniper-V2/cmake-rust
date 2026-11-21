@@ -1115,7 +1115,9 @@ impl<'a> NinjaGenerator<'a> {
             let vars = flags::compile_vars(self.ctx, target, &config, source);
             let mut build = Build::new(&self.compiler_rule_name(&source.language, target));
             build.outputs.push(object.clone());
-            build.explicit_deps.push(self.ninja_path(&source.path));
+            // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
+            // passed to the compiler by absolute path.
+            build.explicit_deps.push(self.ninja_abs_path(&source.path));
             build.order_only_deps.push(order_target.clone());
             build.variables.insert("FLAGS".into(), vars.flags);
             build.variables.insert("DEFINES".into(), vars.defines);
@@ -1132,7 +1134,7 @@ impl<'a> NinjaGenerator<'a> {
             let object_dir_rel = self.ninja_path(&object_dir);
             build.variables.insert("OBJECT_DIR".into(), object_dir_rel);
             build.variables.insert("OBJECT_FILE_DIR".into(), object_file_dir);
-            self.set_pdb_variables(target, &mut build.variables, true);
+            self.set_msvc_target_pdb_variable(target, &mut build.variables);
             write_build(&mut out, &build, 0);
             objects.push(object);
         }
@@ -1152,26 +1154,31 @@ impl<'a> NinjaGenerator<'a> {
         self.write_link_statement(target, &link_language, &objects);
     }
 
-    fn set_pdb_variables(&self, target: &Target, vars: &mut BTreeMap<String, String>, compile: bool) {
-        // MSVC-style PDB variables are written for every target type that
-        // has a PDB name (cmNinjaTargetGenerator::SetMsvcTargetPdbVariable
-        // writes them for non-MSVC too when the rule has <TARGET_PDB>).
-        let config = self.config.clone();
-        let names = gt::names(self.ctx, target, &config);
-        if names.pdb.is_empty() {
-            return;
+    /// `cmNinjaTargetGenerator::SetMsvcTargetPdbVariable`. The gate is the
+    /// mere definition of `MSVC_<LANG>_ARCHITECTURE_ID`: compiler
+    /// identification raises it (possibly empty) into the enabling scope.
+    fn set_msvc_target_pdb_variable(&self, target: &Target, vars: &mut BTreeMap<String, String>) -> bool {
+        let makefile = target.makefile;
+        let defined = ["MSVC_C_ARCHITECTURE_ID", "MSVC_CXX_ARCHITECTURE_ID", "MSVC_CUDA_ARCHITECTURE_ID"]
+            .iter()
+            .any(|name| self.ctx.var(makefile, name).is_some());
+        if !defined {
+            return false;
         }
-        let object_dir = self.ninja_path(&self.object_dir(target));
-        let compile_pdb = if target.kind == TargetKind::StaticLibrary {
-            format!("{object_dir}/{}.pdb", names.base.trim_start_matches("lib"))
+        let config = self.config.clone();
+        let compile_pdb = gt::target_compile_pdb(self.ctx, target, &config);
+        let pdb = if matches!(
+            target.kind,
+            TargetKind::Executable | TargetKind::StaticLibrary | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
+            let names = gt::names(self.ctx, target, &config);
+            format!("{}/{}", gt::pdb_directory(self.ctx, target, &config), names.pdb)
         } else {
-            format!("{object_dir}/")
+            String::new()
         };
-        let _ = compile;
-        let dir = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let pdb = self.ninja_path(&format!("{dir}/{}", names.pdb));
-        vars.insert("TARGET_PDB".into(), pdb);
-        vars.insert("TARGET_COMPILE_PDB".into(), compile_pdb);
+        vars.insert("TARGET_PDB".into(), self.shell(&self.ninja_path(&pdb)));
+        vars.insert("TARGET_COMPILE_PDB".into(), self.shell(&self.ninja_path(&compile_pdb)));
+        true
     }
 
     /// `cmNinjaNormalTargetGenerator::WriteLinkRule` +
@@ -1332,7 +1339,18 @@ impl<'a> NinjaGenerator<'a> {
             let implib = gt::full_path(self.ctx, target, &config, ArtifactType::Import, false);
             build.variables.insert("TARGET_IMPLIB".into(), self.shell(&self.ninja_path(&implib)));
         }
-        self.set_pdb_variables(target, &mut build.variables, false);
+        if !self.set_msvc_target_pdb_variable(target, &mut build.variables) {
+            // It is common to place debug symbols at a specific place, so a
+            // plain target name is made available to the rule.
+            let parts = gt::full_name_components(self.ctx, target, &config, ArtifactType::Runtime);
+            let suffix = self
+                .ctx
+                .var(makefile, "CMAKE_DEBUG_SYMBOL_SUFFIX")
+                .unwrap_or_else(|| ".dbg".to_owned());
+            build
+                .variables
+                .insert("TARGET_PDB".into(), format!("{}{}{suffix}", parts.base, parts.suffix));
+        }
         // Order-only deps: other targets' outputs.
         let mut order = Vec::new();
         self.append_target_depends(target, &mut order, DependOn::TargetArtifact);

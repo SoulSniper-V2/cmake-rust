@@ -42,6 +42,7 @@ use crate::interp::Interp;
 /// success.
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let start = std::time::Instant::now();
+    finalize_target_configuration(interp);
     // cmGlobalGenerator::Compute -> cmMakefile::Generate: deferred custom
     // command actions attach to sources/targets before anything is computed.
     crate::commands::custom_actions::run_generator_actions(
@@ -67,4 +68,63 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         return -1;
     }
     0
+}
+
+/// `cmGlobalGenerator::FinalizeTargetConfiguration` +
+/// `cmTarget::FinalizeTargetConfiguration`: append each directory's
+/// COMPILE_DEFINITIONS to its targets and the current-dir interface
+/// includes when CMAKE_INCLUDE_CURRENT_DIR_IN_INTERFACE is on.
+fn finalize_target_configuration(interp: &mut Interp) {
+    use crate::state::TargetKind;
+    let keys: Vec<String> = interp.ext.target_order.clone();
+    for key in keys {
+        let Some(target) = interp.ext.targets.get(&key) else {
+            continue;
+        };
+        if target.imported || target.kind == TargetKind::GlobalTarget {
+            continue;
+        }
+        let dir = target.makefile;
+        let kind = target.kind;
+        let exports = target.props.get("ENABLE_EXPORTS").is_some_and(crate::util::is_on);
+        // AppendBuildInterfaceIncludes
+        let interface_includes = matches!(
+            kind,
+            TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::ModuleLibrary | TargetKind::InterfaceLibrary
+        ) || (kind == TargetKind::Executable && exports);
+        let include_current = interp
+            .dir_final_vars
+            .get(dir)
+            .and_then(|vars| vars.get("CMAKE_INCLUDE_CURRENT_DIR_IN_INTERFACE").cloned().flatten())
+            .is_some_and(|value| crate::util::is_on(&value));
+        let definitions = crate::commands::target::directory_entries(interp, dir, "COMPILE_DEFINITIONS");
+        let binary = interp.makefiles[dir].binary_dir.clone();
+        let source = interp.makefiles[dir].source_dir.clone();
+        let Some(target) = interp.ext.targets.get_mut(&key) else {
+            continue;
+        };
+        if interface_includes && include_current {
+            let value = format!("$<BUILD_INTERFACE:{binary};{source}>");
+            target.props.append("INTERFACE_INCLUDE_DIRECTORIES", &value, false);
+            target
+                .provenance
+                .entry("INTERFACE_INCLUDE_DIRECTORIES".into())
+                .or_default()
+                .push((value, Vec::new()));
+        }
+        if kind == TargetKind::InterfaceLibrary {
+            continue;
+        }
+        for (value, backtrace) in definitions {
+            if value.is_empty() {
+                continue;
+            }
+            target.props.append("COMPILE_DEFINITIONS", &value, false);
+            target
+                .provenance
+                .entry("COMPILE_DEFINITIONS".into())
+                .or_default()
+                .push((value, backtrace));
+        }
+    }
 }
