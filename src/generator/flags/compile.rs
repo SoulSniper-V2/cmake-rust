@@ -287,7 +287,7 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
         .collect();
     // cmGlobalGenerator::FinalizeTargetConfiguration marks the standard
     // include paths for every enabled language as system paths.
-    for language in &inputs.ctx.interp.ext.languages {
+    for language in &inputs.ctx.interp.langs.enabled {
         if let Some(value) = inputs.var(&format!("CMAKE_{language}_STANDARD_INCLUDE_DIRECTORIES")) {
             system.extend(
                 expand_list(&value, false)

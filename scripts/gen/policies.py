@@ -7,7 +7,7 @@ body = src[src.index("#define CM_FOR_EACH_POLICY_TABLE"):]
 body = body[:body.index("\n\n")]
 body = body.replace("\\\n", " ")
 entries = []
-for m in re.finditer(r'SELECT\(\s*POLICY,\s*(CMP\d{4}),\s*((?:"(?:[^"\\]|\\.)*"\s*)+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(NEW|WARN)\s*\)', body):
+for m in re.finditer(r'SELECT\(\s*POLICY,\s*(CMP\d+),\s*((?:"(?:[^"\\]|\\.)*"\s*)+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(NEW|WARN)\s*\)', body):
     pid, desc, a, b, c, status = m.groups()
     text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', desc))
     entries.append((pid, text, int(a), int(b), int(c), status))

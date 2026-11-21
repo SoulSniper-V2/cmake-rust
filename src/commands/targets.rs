@@ -1408,7 +1408,7 @@ fn add_feature(interp: &mut Interp, key: &str, feature: &str) -> CmdResult {
             "specified unknown feature \"{feature}\" for target \"{name}\"."
         ));
     };
-    if interp.ext.languages.iter().any(|language| language == lang) {
+    if interp.langs.enabled.iter().any(|language| language == lang) {
         let features = interp
             .get_def(&format!("CMAKE_{lang}_COMPILE_FEATURES"))
             .unwrap_or_default();
@@ -2245,7 +2245,7 @@ add_library(system_lib INTERFACE)
     #[test]
     fn imported_location_mapping_and_compiler_feature_validation() {
         let mut interp = interpreter();
-        interp.ext.languages.push("CXX".to_owned());
+        interp.langs.enabled.push("CXX".to_owned());
         configure(
             &mut interp,
             r#"
@@ -2392,7 +2392,7 @@ add_test(NAME "new test" COMMAND echo "" CONFIGURATIONS Debug Release
         let tree = Tree::new();
         tree.write("unit.c", "");
         let mut interp = tree.interp();
-        interp.ext.languages.push("C".to_owned());
+        interp.langs.enabled.push("C".to_owned());
         interp.set_def("CMAKE_C_SOURCE_FILE_EXTENSIONS", "c");
         let resolved = resolve_source(&interp, 0, "unit").unwrap();
         assert_eq!(resolved.path, tree.0.join("unit.c").to_str().unwrap());

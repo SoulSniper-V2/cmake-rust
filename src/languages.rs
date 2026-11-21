@@ -41,13 +41,10 @@ fn read(interp: &mut Interp, path: &str) -> bool {
 }
 
 fn set_language_enabled_flag(interp: &mut Interp, lang: &str) {
-    if !interp.langs.enabled.iter().any(|existing| existing == lang) {
-        interp.langs.enabled.push(lang.to_owned());
-        let mut sorted = interp.langs.enabled.clone();
-        sorted.sort();
-        let _ = sorted;
-        let value = util::join_list(&interp.langs.enabled);
-        interp.global_props.set("ENABLED_LANGUAGES", value);
+    // cmState::EnableLanguage keeps EnabledLanguages sorted; the
+    // ENABLED_LANGUAGES global property is computed from it on read.
+    if let Err(position) = interp.langs.enabled.binary_search_by(|existing| existing.as_str().cmp(lang)) {
+        interp.langs.enabled.insert(position, lang.to_owned());
     }
 }
 

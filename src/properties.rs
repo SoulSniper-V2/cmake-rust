@@ -182,9 +182,7 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                     );
                 }
                 "ENABLED_LANGUAGES" => {
-                    let mut languages = interp.ext.languages.clone();
-                    languages.sort_unstable();
-                    return Some(languages.join(";"));
+                    return Some(crate::util::join_list(&interp.langs.enabled));
                 }
                 "IN_TRY_COMPILE" => {
                     return Some(if interp.in_try_compile { "1" } else { "0" }.into());
@@ -265,7 +263,7 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                     return Some(
                         value
                             .unwrap_or_else(|| {
-                                if interp.ext.languages.iter().any(|name| name == computed) {
+                                if interp.langs.enabled.iter().any(|name| name == computed) {
                                     computed
                                 } else {
                                     ""
@@ -435,8 +433,8 @@ impl SourceLocation {
         let extension = name.rsplit_once('.').map_or("", |(_, ext)| ext);
         if SOURCE_EXTENSIONS.contains(&extension)
             || interp
-                .ext
-                .languages
+                .langs
+                .enabled
                 .iter()
                 .any(|enabled| enabled == language(name))
         {

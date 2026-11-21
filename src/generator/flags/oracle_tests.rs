@@ -85,7 +85,7 @@ fn ninja_flag_assembly_matches_kitware() {
         fixture.variables.extend(shared.variables.clone());
         let mut interp = Interp::new(Mode::Project, &fixture.source, &fixture.binary, "");
         interp.cmake_command = fixture.variables["CMAKE_COMMAND"].clone();
-        interp.ext.languages.push(fixture.language.clone());
+        interp.langs.enabled.push(fixture.language.clone());
         interp.set_def("CMAKE_BUILD_TYPE", &fixture.config);
         for (name, val) in &fixture.cache {
             interp
@@ -288,7 +288,7 @@ fn standards_inherit_from_paired_language() {
         ("CUDA", "CXX", "17", "98", "03"),
     ] {
         let mut interp = Interp::new(Mode::Project, "/source", "/build", "");
-        interp.ext.languages.push(lang.to_owned());
+        interp.langs.enabled.push(lang.to_owned());
         interp.set_def(format!("CMAKE_{lang}_STANDARD_DEFAULT"), default);
         interp.set_def(
             format!("CMAKE_{lang}{effective}_STANDARD_COMPILE_OPTION"),

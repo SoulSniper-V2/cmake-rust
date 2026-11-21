@@ -38,13 +38,22 @@ impl PolicyMap {
 }
 
 /// Parses `CMPnnnn` into a table index.
+/// `stringToId` in cmPolicies.cxx: the id is positional, so the number in
+/// the string selects the policy regardless of its declared name (4.1.0
+/// declares policy 194 as `CMP194`, which `CMP0194` still resolves to).
 pub fn index_of(id: &str) -> Option<usize> {
+    if id.len() != 7 {
+        return None;
+    }
     let digits = id.strip_prefix("CMP")?;
-    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    if digits.ends_with("0000") {
+        return Some(0);
+    }
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
     let number: usize = digits.parse().ok()?;
-    (number < POLICIES.len() && POLICIES[number].id == id).then_some(number)
+    (number < POLICIES.len()).then_some(number)
 }
 
 fn version_text(index: usize) -> String {

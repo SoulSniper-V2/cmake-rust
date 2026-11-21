@@ -73,13 +73,13 @@ pub fn expand_rule(
     let lang = lang
         .or_else(|| {
             ctx.interp
-                .ext
-                .languages
+                .langs
+                .enabled
                 .iter()
                 .find(|lang| template.contains(&format!("<CMAKE_{lang}_COMPILER>")))
                 .map(String::as_str)
         })
-        .or_else(|| ctx.interp.ext.languages.first().map(String::as_str))
+        .or_else(|| ctx.interp.langs.enabled.first().map(String::as_str))
         .unwrap_or_default();
     expand_rule_for_step(ctx, target, lang, step, template, vars)
 }
@@ -181,8 +181,8 @@ fn replacement(
     let languages = inputs
         .ctx
         .interp
-        .ext
-        .languages
+        .langs
+        .enabled
         .iter()
         .map(String::as_str)
         .chain(std::iter::once(inputs.lang))

@@ -6,7 +6,9 @@ use crate::util;
 
 pub struct ForeachPlan {
     pub vars: Vec<String>,
-    pub iterations: Vec<Vec<String>>,
+    /// Per iteration, the value of each loop variable; `None` removes the
+    /// definition (an exhausted ZIP_LISTS list).
+    pub iterations: Vec<Vec<Option<String>>>,
 }
 
 /// Computes the loop variables and per-iteration values for `foreach`
@@ -69,7 +71,7 @@ pub fn foreach_plan(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan>
             if (step > 0 && value > stop) || (step < 0 && value < stop) {
                 break;
             }
-            iterations.push(vec![value.to_string()]);
+            iterations.push(vec![Some(value.to_string())]);
             value += step;
         }
         return Some(ForeachPlan {
@@ -77,91 +79,99 @@ pub fn foreach_plan(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan>
             iterations,
         });
     }
-    // IN [LISTS ...] [ITEMS ...] [ZIP_LISTS ...]
-    let in_position = args.iter().position(|arg| arg == "IN");
-    if let Some(position) = in_position {
-        let vars: Vec<String> = args[..position].to_vec();
-        let rest = &args[position + 1..];
-        if rest.first().map(String::as_str) == Some("ZIP_LISTS") {
-            let lists: Vec<Vec<String>> = rest[1..]
-                .iter()
-                .map(|name| {
-                    interp
-                        .get_def(name)
-                        .map(|value| util::expand_list(value, true))
-                        .unwrap_or_default()
-                })
-                .collect();
-            if vars.len() != 1 && vars.len() != lists.len() {
-                interp.issue(
-                    MessageType::FatalError,
-                    "foreach Expected 1 or 2 loop variables, but got more.",
-                );
-                interp.set_fatal_if_script();
-                return None;
-            }
-            let longest = lists.iter().map(Vec::len).max().unwrap_or(0);
-            let mut iterations = Vec::new();
-            for index in 0..longest {
-                if vars.len() == 1 {
-                    // Single variable: VAR_0, VAR_1, ...
-                    iterations.push(
-                        lists
-                            .iter()
-                            .map(|list| list.get(index).cloned().unwrap_or_default())
-                            .collect(),
-                    );
-                } else {
-                    iterations.push(
-                        lists
-                            .iter()
-                            .map(|list| list.get(index).cloned().unwrap_or_default())
-                            .collect(),
-                    );
-                }
-            }
-            let names = if vars.len() == 1 {
-                (0..lists.len()).map(|index| format!("{}_{index}", vars[0])).collect()
-            } else {
-                vars
-            };
-            return Some(ForeachPlan {
-                vars: names,
-                iterations,
-            });
-        }
-        if vars.len() != 1 {
-            interp.issue(
-                MessageType::FatalError,
-                "foreach ITEMS or LISTS require ZIP_LISTS if more than one loop variable is used.",
-            );
-            interp.set_fatal_if_script();
-            return None;
-        }
-        let mut items = Vec::new();
-        let mut mode = 0; // 0 = items (before keyword), 1 = LISTS, 2 = ITEMS
-        for arg in rest {
-            if mode != 2 && arg == "LISTS" {
-                mode = 1;
-            } else if arg == "ITEMS" && mode != 2 {
-                mode = 2;
-            } else if mode == 1 {
-                if let Some(value) = interp.get_def(arg) {
-                    items.extend(util::expand_list(value, true));
-                }
-            } else {
-                items.push(arg.clone());
-            }
-        }
-        return Some(ForeachPlan {
-            vars,
-            iterations: items.into_iter().map(|item| vec![item]).collect(),
-        });
+    // HandleInMode: IN [LISTS ...] [ITEMS ...] | IN ZIP_LISTS ...
+    if let Some(position) = args.iter().position(|arg| arg == "IN") {
+        return foreach_in_mode(interp, &args[..position], &args[position + 1..]);
     }
     Some(ForeachPlan {
         vars: vec![args[0].clone()],
-        iterations: args[1..].iter().map(|item| vec![item.clone()]).collect(),
+        iterations: args[1..].iter().map(|item| vec![Some(item.clone())]).collect(),
     })
+}
+
+/// `HandleInMode` + `ReplayItems`/`ReplayZipLists` in cmForEachCommand.cxx.
+fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Option<ForeachPlan> {
+    #[derive(PartialEq)]
+    enum Doing {
+        None,
+        Lists,
+        Items,
+        ZipLists,
+    }
+    let fatal = |interp: &mut Interp, text: &str| {
+        interp.issue(MessageType::FatalError, text);
+        interp.set_fatal_if_script();
+        None
+    };
+    let vars_count = vars.len();
+    let mut doing = Doing::None;
+    let mut zip = false;
+    let mut args: Vec<String> = Vec::new();
+    for arg in rest {
+        if arg == "LISTS" || arg == "ITEMS" {
+            if doing == Doing::ZipLists {
+                return fatal(interp, "ZIP_LISTS can not be used with LISTS or ITEMS");
+            }
+            if vars_count != 1 {
+                return fatal(interp, "ITEMS or LISTS require exactly one iteration variable");
+            }
+            doing = if arg == "LISTS" { Doing::Lists } else { Doing::Items };
+        } else if arg == "ZIP_LISTS" {
+            if doing != Doing::None {
+                return fatal(interp, "ZIP_LISTS can not be used with LISTS or ITEMS");
+            }
+            doing = Doing::ZipLists;
+            zip = true;
+        } else if doing == Doing::Lists {
+            let value = interp.get_def(arg).unwrap_or_default().to_owned();
+            if !value.is_empty() {
+                util::expand_list_into(&value, true, &mut args);
+            }
+        } else if doing == Doing::Items || doing == Doing::ZipLists {
+            args.push(arg.clone());
+        } else {
+            return fatal(interp, &format!("Unknown argument:\n  {arg}\n"));
+        }
+    }
+    if doing == Doing::ZipLists && vars_count > 1 && vars_count != args.len() {
+        return fatal(
+            interp,
+            &format!("Expected {vars_count} list variables, but given {}", args.len()),
+        );
+    }
+    if !zip {
+        // ReplayItems asserts exactly one variable; with none of the keywords
+        // given (`foreach(a b IN)`) there is nothing to iterate.
+        return Some(ForeachPlan {
+            vars: vars.iter().take(1).cloned().collect(),
+            iterations: if vars_count == 1 {
+                args.into_iter().map(|item| vec![Some(item)]).collect()
+            } else {
+                Vec::new()
+            },
+        });
+    }
+    let lists: Vec<Vec<String>> = args
+        .iter()
+        .map(|name| {
+            let value = interp.get_def(name).unwrap_or_default();
+            if value.is_empty() {
+                Vec::new()
+            } else {
+                util::expand_list(value, true)
+            }
+        })
+        .collect();
+    let longest = lists.iter().map(Vec::len).max().unwrap_or(0);
+    let names: Vec<String> = if vars_count > 1 {
+        vars.to_vec()
+    } else {
+        (0..lists.len()).map(|index| format!("{}_{index}", vars[0])).collect()
+    };
+    let iterations = (0..longest)
+        .map(|index| lists.iter().map(|list| list.get(index).cloned()).collect())
+        .collect();
+    Some(ForeachPlan { vars: names, iterations })
 }
 
 pub struct BlockOptions {

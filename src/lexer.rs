@@ -48,8 +48,9 @@ pub struct ParseDiag {
     pub message: String,
     /// When true, the diagnostic is an AUTHOR_WARNING and parsing continued.
     pub warning: bool,
-    /// The diagnostic carries no command name in its context.
-    pub flow_nesting: bool,
+    /// Command name for the diagnostic's context (`cmListFileContext::
+    /// FromListFileFunction` for nesting errors).
+    pub command: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,7 +464,7 @@ pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
                         token.text
                     ),
                     warning: false,
-                    flow_nesting: false,
+                    command: None,
                 });
                 return (None, diags);
             }
@@ -476,18 +477,18 @@ pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
                         token.text
                     ),
                     warning: false,
-                    flow_nesting: false,
+                    command: None,
                 });
                 return (None, diags);
             }
         }
     }
-    if let Some(line) = check_nesting(&commands) {
+    if let Some((line, name)) = check_nesting(&commands) {
         diags.push(ParseDiag {
             line,
             message: "Flow control statements are not properly nested.".into(),
             warning: false,
-            flow_nesting: true,
+            command: Some(name),
         });
         return (None, diags);
     }
@@ -519,7 +520,7 @@ fn parse_function(
             message: "Unexpected end of file.\nParse error.  Function missing opening \"(\"."
                 .into(),
             warning: false,
-            flow_nesting: false,
+            command: None,
         });
         return None;
     };
@@ -532,7 +533,7 @@ fn parse_function(
                 token.text
             ),
             warning: false,
-            flow_nesting: false,
+            command: None,
         });
         return None;
     }
@@ -562,7 +563,7 @@ fn parse_function(
                 token.column
             ),
             warning: !error,
-            flow_nesting: false,
+            command: None,
         });
         !error
     };
@@ -622,7 +623,7 @@ fn parse_function(
                         token.text
                     ),
                     warning: false,
-                    flow_nesting: false,
+                    command: None,
                 });
                 return None;
             }
@@ -632,14 +633,16 @@ fn parse_function(
         line,
         message: "Parse error.  Function missing ending \")\".  End of file reached.".into(),
         warning: false,
-        flow_nesting: false,
+        command: None,
     });
     None
 }
 
 /// Mirrors `cmListFileParser::CheckNesting`: returns the line of the first
 /// badly nested flow-control command.
-fn check_nesting(commands: &[Command]) -> Option<usize> {
+/// `cmListFileParser::CheckNesting`: the (line, original name) of the
+/// offending command, or of the innermost unclosed block.
+fn check_nesting(commands: &[Command]) -> Option<(usize, String)> {
     #[derive(PartialEq, Clone, Copy)]
     enum Kind {
         If,
@@ -650,67 +653,66 @@ fn check_nesting(commands: &[Command]) -> Option<usize> {
         Macro,
         Block,
     }
-    let mut stack: Vec<(Kind, usize)> = Vec::new();
+    let mut stack: Vec<(Kind, &Command)> = Vec::new();
+    let here = |command: &Command| Some((command.line, command.name.clone()));
     for command in commands {
-        let line = command.line;
+        let top = stack.last().map(|(kind, _)| *kind);
+        let close = |stack: &mut Vec<(Kind, &Command)>, kinds: &[Kind]| {
+            if top.is_some_and(|kind| kinds.contains(&kind)) {
+                stack.pop();
+                true
+            } else {
+                false
+            }
+        };
         match command.lname.as_str() {
-            "if" => stack.push((Kind::If, line)),
-            "elseif" => match stack.last() {
-                Some((Kind::If, _)) => {}
-                _ => return Some(line),
-            },
-            "else" => match stack.last() {
-                Some((Kind::If, _)) => {
-                    stack.pop();
-                    stack.push((Kind::Else, line));
+            "if" => stack.push((Kind::If, command)),
+            "elseif" | "else" => {
+                if top != Some(Kind::If) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "endif" => match stack.last() {
-                Some((Kind::If | Kind::Else, _)) => {
-                    stack.pop();
+                let kind = if command.lname == "else" { Kind::Else } else { Kind::If };
+                *stack.last_mut().expect("top") = (kind, command);
+            }
+            "endif" => {
+                if !close(&mut stack, &[Kind::If, Kind::Else]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "while" => stack.push((Kind::While, line)),
-            "endwhile" => match stack.last() {
-                Some((Kind::While, _)) => {
-                    stack.pop();
+            }
+            "while" => stack.push((Kind::While, command)),
+            "endwhile" => {
+                if !close(&mut stack, &[Kind::While]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "foreach" => stack.push((Kind::Foreach, line)),
-            "endforeach" => match stack.last() {
-                Some((Kind::Foreach, _)) => {
-                    stack.pop();
+            }
+            "foreach" => stack.push((Kind::Foreach, command)),
+            "endforeach" => {
+                if !close(&mut stack, &[Kind::Foreach]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "function" => stack.push((Kind::Function, line)),
-            "endfunction" => match stack.last() {
-                Some((Kind::Function, _)) => {
-                    stack.pop();
+            }
+            "function" => stack.push((Kind::Function, command)),
+            "endfunction" => {
+                if !close(&mut stack, &[Kind::Function]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "macro" => stack.push((Kind::Macro, line)),
-            "endmacro" => match stack.last() {
-                Some((Kind::Macro, _)) => {
-                    stack.pop();
+            }
+            "macro" => stack.push((Kind::Macro, command)),
+            "endmacro" => {
+                if !close(&mut stack, &[Kind::Macro]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
-            "block" => stack.push((Kind::Block, line)),
-            "endblock" => match stack.last() {
-                Some((Kind::Block, _)) => {
-                    stack.pop();
+            }
+            "block" => stack.push((Kind::Block, command)),
+            "endblock" => {
+                if !close(&mut stack, &[Kind::Block]) {
+                    return here(command);
                 }
-                _ => return Some(line),
-            },
+            }
             _ => {}
         }
     }
-    stack.last().map(|(_, line)| *line)
+    stack.last().and_then(|(_, command)| here(command))
 }
 
 pub type SharedCommands = Rc<Vec<Command>>;

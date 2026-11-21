@@ -318,8 +318,6 @@ pub struct Ext {
     pub host_information: Option<crate::commands::sysinfo::HostInformation>,
     pub distribution: Option<BTreeMap<String, String>>,
     pub file_api_queries: BTreeMap<String, (u32, u32)>,
-    /// Enabled languages.
-    pub languages: Vec<String>,
     /// file(GENERATE) requests, evaluated at generate time.
     pub evaluation_files: Vec<EvaluationFile>,
     /// Free-form registry for command modules that need global state.

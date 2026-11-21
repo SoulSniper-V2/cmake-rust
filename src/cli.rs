@@ -1068,7 +1068,9 @@ fn read_script(interp: &mut Interp, script: &str, cwd: &str, script_mode: bool) 
         cmcmd::error(format!("Error processing file: {script}"));
         return 1;
     }
-    interp.read_list_file(&path);
+    if !interp.read_list_file(&path) {
+        cmcmd::error(format!("Error processing file: {script}"));
+    }
     interp
         .exit_code
         .unwrap_or_else(|| i32::from(interp.error || interp.fatal))

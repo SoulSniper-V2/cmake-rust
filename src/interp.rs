@@ -895,7 +895,7 @@ impl Interp {
             backtrace.push(Frame {
                 file: path.clone(),
                 line: diag.line,
-                name: None,
+                name: diag.command.as_deref().map(Rc::from),
                 deferred: false,
             });
             let kind = if diag.warning {
@@ -1669,16 +1669,29 @@ impl Interp {
             return Ctl::Normal;
         };
         // Save the loop variables (restored afterwards unless fatal).
+        // CMP0124: OLD restores the loop variables to their (possibly
+        // empty) prior values instead of unsetting undefined ones.
+        let cmp0124_new = self.policy_status("CMP0124") == PolicyStatus::New;
         let saved: Vec<(String, Option<String>)> = plan
             .vars
             .iter()
-            .map(|name| (name.clone(), self.get_normal_def(name).map(str::to_owned)))
+            .map(|name| {
+                let value = if cmp0124_new {
+                    self.get_normal_def(name).map(str::to_owned)
+                } else {
+                    Some(self.get_def(name).unwrap_or_default().to_owned())
+                };
+                (name.clone(), value)
+            })
             .collect();
         let mut result = Ctl::Normal;
         *self.loop_depth.last_mut().expect("loop depth") += 1;
         for iteration in &plan.iterations {
             for (name, value) in plan.vars.iter().zip(iteration) {
-                self.set_def(name.clone(), value.clone());
+                match value {
+                    Some(value) => self.set_def(name.clone(), value.clone()),
+                    None => self.unset_def(name),
+                }
             }
             let ctl = self.run_range(file, index + 1, end, subst);
             if self.fatal {
@@ -1698,6 +1711,8 @@ impl Interp {
             }
         }
         *self.loop_depth.last_mut().expect("loop depth") -= 1;
+        // The blocker restores only after an iteration ran.
+        let saved = if plan.iterations.is_empty() { Vec::new() } else { saved };
         for (name, value) in saved {
             match value {
                 Some(value) => self.set_def(name, value),

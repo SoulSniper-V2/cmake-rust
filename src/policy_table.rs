@@ -2,7 +2,7 @@
 
 pub struct PolicyInfo { pub id: &'static str, pub doc: &'static str, pub version: (u32, u32, u32), pub removed: bool }
 
-pub const POLICIES: [PolicyInfo; 197] = [
+pub const POLICIES: [PolicyInfo; 198] = [
     PolicyInfo { id: "CMP0000", doc: "A minimum required CMake version must be specified.", version: (2, 6, 0), removed: true },
     PolicyInfo { id: "CMP0001", doc: "CMAKE_BACKWARDS_COMPATIBILITY should no longer be used.", version: (2, 6, 0), removed: true },
     PolicyInfo { id: "CMP0002", doc: "Logical target names must be globally unique.", version: (2, 6, 0), removed: true },
@@ -197,6 +197,7 @@ pub const POLICIES: [PolicyInfo; 197] = [
     PolicyInfo { id: "CMP0191", doc: "The FindCABLE module is removed.", version: (4, 1, 0), removed: false },
     PolicyInfo { id: "CMP0192", doc: "GNUInstallDirs uses absolute SYSCONFDIR, LOCALSTATEDIR, and RUNSTATEDIR in special prefixes.", version: (4, 1, 0), removed: false },
     PolicyInfo { id: "CMP0193", doc: "GNUInstallDirs caches CMAKE_INSTALL_* with leading 'usr/' for install prefix '/'.", version: (4, 1, 0), removed: false },
+    PolicyInfo { id: "CMP194", doc: "MSVC is not an assembler for language ASM.", version: (4, 1, 0), removed: false },
     PolicyInfo { id: "CMP0195", doc: "Swift modules in build trees use the Swift module directory structure.", version: (4, 1, 0), removed: false },
     PolicyInfo { id: "CMP0196", doc: "The CMakeDetermineVSServicePack module is removed.", version: (4, 1, 0), removed: false },
     PolicyInfo { id: "CMP0197", doc: "MSVC link -machine: flag is not in CMAKE_*_LINKER_FLAGS.", version: (4, 1, 0), removed: false },

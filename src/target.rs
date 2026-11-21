@@ -1303,7 +1303,7 @@ impl SourceFileLocation {
         };
         let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
         let known_extension = SOURCE_EXTENSIONS.contains(&ext)
-            || interp.ext.languages.iter().any(|lang| {
+            || interp.langs.enabled.iter().any(|lang| {
                 expand_list(
                     interp
                         .get_def(&format!("CMAKE_{lang}_SOURCE_FILE_EXTENSIONS"))
@@ -1497,8 +1497,8 @@ pub fn resolve_source(interp: &Interp, dir: usize, path: &str) -> Result<Resolve
             .map(str::to_owned)
             .or_else(|| {
                 interp
-                    .ext
-                    .languages
+                    .langs
+                    .enabled
                     .iter()
                     .find(|lang| {
                         expand_list(
