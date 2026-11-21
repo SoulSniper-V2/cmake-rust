@@ -648,6 +648,22 @@ pub fn import_info<'a>(target: &'a Target, config: &str) -> Option<ImportInfo<'a
     })
 }
 
+/// `CM_FOR_EACH_TARGET_POLICY`: policies recorded on the target when it is
+/// created (cmTarget's PolicyMap).
+const TARGET_POLICIES: &[usize] = &[3, 4, 8, 20, 21, 22, 27, 37, 38, 41, 42, 46, 52, 60, 63, 65, 68, 69, 73, 76, 81, 83, 95, 99, 104, 105, 108, 112, 113, 119, 131, 142, 154, 155, 156, 157, 160, 162, 179, 181, 182, 195];
+
+/// `cmGeneratorTarget::GetPolicyStatus*`: target policies come from the
+/// target's creation-time snapshot; others from its directory's final state.
+pub fn target_policy(ctx: &GenCtx, target: &Target, index: usize) -> PolicyStatus {
+    if crate::policy_table::POLICIES[index].removed {
+        return PolicyStatus::New;
+    }
+    if TARGET_POLICIES.contains(&index) {
+        return target.policies.get(index).unwrap_or(PolicyStatus::Warn);
+    }
+    directory_policy(ctx, target.makefile, index)
+}
+
 fn directory_policy(ctx: &GenCtx, makefile: usize, index: usize) -> PolicyStatus {
     ctx.interp.makefiles[makefile]
         .policies
@@ -743,9 +759,8 @@ fn imported_full_path(
                 "{property} not set for imported target \"{}\"{configuration}.",
                 target.name
             );
-            // INTEGRATION: read the target's creation-time policy and backtrace
-            // from the target model when those are exposed to the generator.
-            match directory_policy(ctx, target.makefile, 111) {
+            // INTEGRATION: the target's creation backtrace.
+            match target_policy(ctx, target, 111) {
                 PolicyStatus::New => ctx.error(
                     vec![Frame {
                         file: format!(

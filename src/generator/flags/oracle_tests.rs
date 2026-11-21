@@ -132,6 +132,9 @@ fn ninja_flag_assembly_matches_kitware() {
             kind,
             properties(fixture.target_props.clone()),
         );
+        let mut owned = owned;
+        // cmTarget records the directory's policies when it is created.
+        owned.policies = interp.effective_policies();
         let key = crate::state::register_target(&mut interp, owned);
         let ctx = GenCtx::new(&interp);
         let target = interp.ext.targets.get(&key).expect("registered target");

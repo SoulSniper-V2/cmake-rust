@@ -183,17 +183,10 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn policy(&self, target: &Target, id: &str) -> PolicyStatus {
-        // INTEGRATION: Use the target's policy snapshot once exposed by the
-        // target model, since policies can change after target creation.
         let Some(index) = index_of(id) else {
             return PolicyStatus::Warn;
         };
-        self.ctx.interp.makefiles[target.makefile]
-            .policies
-            .iter()
-            .rev()
-            .find_map(|frame| frame.map.get(index))
-            .unwrap_or(PolicyStatus::Warn)
+        target::target_policy(self.ctx, target, index)
     }
 
     fn top_binary(&self) -> &str {

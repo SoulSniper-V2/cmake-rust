@@ -192,6 +192,14 @@ fn model(fixture: &Fixture) -> Interp {
             frame.map.set(index, status);
         }
     }
+    // cmTarget records the directory's policies when the target is created.
+    for target in interp.ext.targets.values_mut() {
+        let mut map = crate::policy::PolicyMap::default();
+        for frame in &interp.makefiles[target.makefile].policies {
+            map.overlay(&frame.map);
+        }
+        target.policies = map;
+    }
     let vars = fixture
         .variables
         .iter()

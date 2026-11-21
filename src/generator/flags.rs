@@ -84,14 +84,7 @@ impl Flags<'_, '_> {
     }
 
     fn policy(&self, index: usize) -> PolicyStatus {
-        // INTEGRATION: Use the target's creation-time snapshot for policies
-        // queried through cmGeneratorTarget (CMP0069/0083/0119/0181).
-        self.ctx.interp.makefiles[self.target.makefile]
-            .policies
-            .iter()
-            .rev()
-            .find_map(|frame| frame.map.get(index))
-            .unwrap_or(PolicyStatus::Warn)
+        super::target::target_policy(self.ctx, self.target, index)
     }
 
     fn error(&self, text: impl Into<String>) {
