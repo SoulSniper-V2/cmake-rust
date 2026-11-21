@@ -123,12 +123,9 @@ fn target_flags(inputs: &Flags<'_, '_>) -> String {
         );
     }
 
-    // INTEGRATION: The target model must expose cmMakefile::GetDefineFlags
-    // (the raw arguments of add_definitions left after -D or /D extraction).
-    if let Some(raw) = inputs.ctx.interp.makefiles[inputs.target.makefile]
-        .props
-        .get("DEFINE_FLAGS")
-    {
+    // cmMakefile::GetDefineFlags: add_definitions arguments that are not
+    // -D/-/D definitions (initially " ").
+    if let Some(raw) = inputs.ctx.interp.ext.directory_define_flags.get(&inputs.target.makefile) {
         append(&mut flags, raw);
     }
 

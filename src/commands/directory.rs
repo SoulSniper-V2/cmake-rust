@@ -373,7 +373,8 @@ fn define_flags(interp: &mut Interp, args: &[String], remove: bool) {
                     .insert("COMPILE_DEFINITIONS".to_owned(), entries);
             }
         } else {
-            let flags = interp.ext.directory_define_flags.entry(dir).or_default();
+            // cmMakefile initializes DefineFlags to " ".
+            let flags = interp.ext.directory_define_flags.entry(dir).or_insert_with(|| " ".to_owned());
             if !remove {
                 flags.push(' ');
                 flags.push_str(&flag.replace(['\n', '\r'], " "));

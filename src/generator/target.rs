@@ -674,6 +674,29 @@ fn warning(ctx: &GenCtx, kind: MessageType, text: &str) {
     );
 }
 
+/// The non-diagnosing part of `cmTarget::ImportedGetFullPath` (shared by
+/// configure-time LOCATION reads and generation).
+pub fn imported_artifact_path<'a>(target: &'a Target, config: &str, artifact: ArtifactType) -> Option<&'a str> {
+    if target.kind == TargetKind::InterfaceLibrary {
+        return None;
+    }
+    let found = mapped_import_config(target, config)?;
+    let implib = || {
+        can_have_imported_implib(target)
+            .then(|| import_prop(target, "IMPORTED_IMPLIB", &found.suffix))
+            .flatten()
+    };
+    match artifact {
+        ArtifactType::Runtime => found.location.or(found.implib).or_else(|| {
+            import_prop(target, "IMPORTED_LOCATION", &found.suffix)
+                .filter(|path| !path.is_empty())
+                .or_else(implib)
+        }),
+        ArtifactType::Import => found.implib.or_else(implib),
+    }
+    .filter(|value| !value.is_empty())
+}
+
 fn imported_full_path(
     ctx: &GenCtx,
     target: &Target,

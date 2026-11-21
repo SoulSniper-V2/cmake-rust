@@ -334,9 +334,19 @@ fn get_property(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         Scope::CachedVariable => unreachable!(),
     };
-    let value = prop::get(interp, object, property);
+    let value = match object {
+        Object::Target(name) => target_value(interp, name, property),
+        _ => prop::get(interp, object, property),
+    };
     store(interp, output, query, value);
     Ok(())
+}
+
+/// `cmTarget::GetProperty` (with its computed properties and diagnostics),
+/// falling back to INHERITED property definitions.
+fn target_value(interp: &mut Interp, name: &str, property: &str) -> Option<String> {
+    crate::commands::target::read_target_property(interp, name, property)
+        .or_else(|| prop::get(interp, Object::Target(name), property))
 }
 
 fn store(interp: &mut Interp, output: &str, query: Query, value: Option<String>) {
@@ -427,9 +437,10 @@ fn handle_generated(interp: &mut Interp, index: usize, path: &str, change: Chang
 }
 
 fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Change<'_>) -> bool {
-    let Some(target) = interp.ext.targets.get(name) else {
+    let Some(key) = crate::state::find_target_key(interp, name) else {
         return false;
     };
+    let target = &interp.ext.targets[&key];
     let policy = interp.policy_status("CMP0160");
     let read_only = match property {
         "NAME"
@@ -491,7 +502,7 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
             format!("IMPORTED_GLOBAL property can't be set to FALSE on targets (\"{name}\")\n")
         } else {
             let current = interp.mf_index();
-            let target = interp.ext.targets.get_mut(name).expect("resolved target");
+            let target = interp.ext.targets.get_mut(&key).expect("resolved target");
             target.imported_global = true;
             if target.makefile == current {
                 return false;
@@ -894,8 +905,7 @@ fn get_target_property(interp: &mut Interp, args: &[String]) -> CmdResult {
         );
         return Err(CmdErr::Reported);
     }
-    let value = prop::get(interp, Object::Target(target), property)
-        .unwrap_or_else(|| format!("{output}-NOTFOUND"));
+    let value = target_value(interp, target, property).unwrap_or_else(|| format!("{output}-NOTFOUND"));
     interp.set_def(output, value);
     Ok(())
 }

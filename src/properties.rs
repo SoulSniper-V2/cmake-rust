@@ -318,21 +318,23 @@ fn inherited(interp: &Interp, scope: Scope, index: usize, name: &str) -> Option<
 fn directory(interp: &Interp, index: usize, name: &str, chain: bool) -> Option<String> {
     let mf = &interp.makefiles[index];
     let target_names = |imported: bool| {
-        let order = if mf.targets.is_empty() {
+        // Imported targets are owned by the directory but are not in its
+        // buildsystem target list.
+        let order = if imported || mf.targets.is_empty() {
             &interp.ext.target_order
         } else {
             &mf.targets
         };
         order
             .iter()
-            .filter(|name| {
-                interp.ext.targets.get(*name).is_some_and(|target| {
+            .filter_map(|key| {
+                interp.ext.targets.get(key).filter(|target| {
                     target.makefile == index
                         && target.imported == imported
                         && target.alias_of.is_none()
                 })
             })
-            .cloned()
+            .map(|target| target.name.clone())
             .collect::<Vec<_>>()
             .join(";")
     };
@@ -601,7 +603,10 @@ fn storage<'a>(interp: &'a mut Interp, object: Object<'_>) -> Option<&'a mut Pro
     Some(match object {
         Object::Global => &mut interp.global_props,
         Object::Directory(index) => &mut interp.makefiles[index].props,
-        Object::Target(name) => &mut interp.ext.targets.get_mut(name)?.props,
+        Object::Target(name) => {
+            let key = crate::state::find_target_key(interp, name)?;
+            &mut interp.ext.targets.get_mut(&key)?.props
+        }
         Object::Source(index, path) => &mut source_mut(interp, index, path).props,
         Object::Test(index, name) => {
             &mut interp
@@ -647,7 +652,8 @@ fn target_entries(name: &str) -> bool {
 pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&str>) {
     if let Object::Target(target) = object
         && target_entries(name)
-        && let Some(target) = interp.ext.targets.get_mut(target)
+        && let Some(key) = crate::state::find_target_key(interp, target)
+        && let Some(target) = interp.ext.targets.get_mut(&key)
     {
         if let Some(value) = value {
             target.provenance.insert(
@@ -685,7 +691,8 @@ pub fn append(interp: &mut Interp, object: Object<'_>, name: &str, value: &str, 
         && target_entries(name)
     {
         if (name == "SOURCES" || !value.is_empty())
-            && let Some(target) = interp.ext.targets.get_mut(target)
+            && let Some(key) = crate::state::find_target_key(interp, target)
+            && let Some(target) = interp.ext.targets.get_mut(&key)
         {
             let combined = target
                 .props

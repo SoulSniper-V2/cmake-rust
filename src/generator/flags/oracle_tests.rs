@@ -99,7 +99,12 @@ fn ninja_flag_assembly_matches_kitware() {
             }
         }
         interp.record_directory_vars();
-        interp.mf_mut().props = properties(fixture.directory_props.clone());
+        let mut directory_props = fixture.directory_props.clone();
+        // The capture records cmMakefile::GetDefineFlags under this key.
+        if let Some(flags) = directory_props.remove("DEFINE_FLAGS") {
+            interp.ext.directory_define_flags.insert(0, format!(" {flags}"));
+        }
+        interp.mf_mut().props = properties(directory_props);
         for index in [69, 83, 119, 128, 181] {
             let key = format!("CMP{index:04}");
             let status = if value(&fixture.policies, &key) == "OLD" {

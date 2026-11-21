@@ -809,54 +809,7 @@ fn location_config(kind: TargetKind, prop: &str) -> Option<&str> {
 }
 
 fn imported_location<'a>(target: &'a Target, config: &str) -> Option<&'a str> {
-    let config = if config.is_empty() {
-        "NOCONFIG".to_owned()
-    } else {
-        config.to_ascii_uppercase()
-    };
-    let allow_implib = target.kind == TargetKind::SharedLibrary
-        || target.kind == TargetKind::Executable
-            && target.props.get("ENABLE_EXPORTS").is_some_and(is_on);
-    let locate = |config: &str| {
-        let suffix = if config.is_empty() {
-            String::new()
-        } else {
-            format!("_{}", config.to_ascii_uppercase())
-        };
-        target
-            .props
-            .get(&format!("IMPORTED_LOCATION{suffix}"))
-            .or_else(|| {
-                allow_implib
-                    .then(|| target.props.get(&format!("IMPORTED_IMPLIB{suffix}")))
-                    .flatten()
-            })
-    };
-    let mapping = target
-        .props
-        .get(&format!("MAP_IMPORTED_CONFIG_{config}"))
-        .map(|mapping| expand_list(mapping, true))
-        .unwrap_or_default();
-    if !mapping.is_empty() {
-        return mapping
-            .iter()
-            .find_map(|mapped| locate(mapped))
-            .filter(|value| !value.is_empty());
-    }
-    locate(&config)
-        .or_else(|| locate(""))
-        .or_else(|| {
-            expand_list(
-                target
-                    .props
-                    .get("IMPORTED_CONFIGURATIONS")
-                    .unwrap_or_default(),
-                false,
-            )
-            .iter()
-            .find_map(|candidate| locate(candidate))
-        })
-        .filter(|value| !value.is_empty())
+    crate::generator::target::imported_artifact_path(target, config, crate::generator::target::ArtifactType::Runtime)
 }
 
 fn file_set_property(prop: &str) -> Option<(&str, &str, bool)> {
@@ -927,7 +880,6 @@ pub fn target_property<'a>(interp: &'a Interp, name: &str, prop: &str) -> Option
 }
 
 /// Retrieve a property whose computation may issue a diagnostic.
-#[allow(dead_code, reason = "used by the property command integration")]
 pub fn read_target_property(interp: &mut Interp, name: &str, prop: &str) -> Option<String> {
     let target = find_target_to_use(interp, name)?;
     if let Some(config) = location_config(target.kind, prop) {
