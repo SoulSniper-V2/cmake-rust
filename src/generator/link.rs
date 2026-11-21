@@ -44,11 +44,16 @@ pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<S
 }
 
 trait GeneratorQueries {
-    fn eval(&self, ctx: &GenCtx, text: &str, head: &Target, language: Option<&str>) -> String {
-        // INTEGRATION: Evaluate in link mode, retaining LINK_ONLY payloads and
-        // emitting Kitware's LINK_LIBRARY/LINK_GROUP markers. Evaluation needs
-        // the containing target/directory as well as the consuming head.
-        ctx.genex(text, Some(head), language)
+    fn eval(
+        &self,
+        ctx: &GenCtx,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        language: Option<&str>,
+    ) -> String {
+        ctx.genex_with_dag(text, owner, head, property, language)
     }
 
     fn artifact(&self, ctx: &GenCtx, target: &Target, config: &str, real: bool) -> String {
@@ -109,13 +114,13 @@ impl<'a, 'i> Query<'a, 'i> {
 
     fn property(&self, owner: &Target, head: &Target, property: &str) -> String {
         let raw = owner.props.get(property).unwrap_or_default();
-        self.eval(raw, head)
+        self.eval(raw, owner, head, property)
     }
 
-    fn eval(&self, raw: &str, head: &Target) -> String {
+    fn eval(&self, raw: &str, owner: &Target, head: &Target, property: &str) -> String {
         if raw.contains("$<") {
             let language = (!self.language.is_empty()).then_some(self.language);
-            self.generator.eval(self.ctx, raw, head, language)
+            self.generator.eval(self.ctx, raw, owner, head, property, language)
         } else {
             raw.to_owned()
         }
@@ -321,12 +326,16 @@ fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], int
 }
 
 fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interface<'i> {
-    let value = owner.props.get("INTERFACE_LINK_LIBRARIES").or_else(|| {
-        (owner.imported && owner.kind != TargetKind::InterfaceLibrary)
-            .then(|| import_property(owner, query.config, "IMPORTED_LINK_INTERFACE_LIBRARIES"))
-            .flatten()
-    });
-    let mut libraries = plain_items(query, owner, &query.eval(value.unwrap_or_default(), head));
+    let (value, property) = match owner.props.get("INTERFACE_LINK_LIBRARIES") {
+        Some(value) => (Some(value), "INTERFACE_LINK_LIBRARIES"),
+        None => (
+            (owner.imported && owner.kind != TargetKind::InterfaceLibrary)
+                .then(|| import_property(owner, query.config, "IMPORTED_LINK_INTERFACE_LIBRARIES"))
+                .flatten(),
+            "IMPORTED_LINK_INTERFACE_LIBRARIES",
+        ),
+    };
+    let mut libraries = plain_items(query, owner, &query.eval(value.unwrap_or_default(), owner, head, property));
     libraries.retain(|item| {
         item.target
             .is_none_or(|target| !std::ptr::eq(target, owner))

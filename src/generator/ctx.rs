@@ -20,6 +20,9 @@ pub struct GenCtx<'a> {
     pub memo: RefCell<HashMap<String, String>>,
     /// Backtrace table referenced by generator-expression provenance ids.
     pub backtraces: RefCell<Vec<Vec<Frame>>>,
+    /// `cmMakefile::AddTargetObject`: object files named by
+    /// `$<TARGET_OBJECTS:...>`, as (referencing directory, path) -> library.
+    pub target_objects: RefCell<HashMap<(usize, String), String>>,
 }
 
 impl<'a> GenCtx<'a> {
@@ -31,6 +34,7 @@ impl<'a> GenCtx<'a> {
             errors: RefCell::new(Vec::new()),
             memo: RefCell::new(HashMap::new()),
             backtraces: RefCell::new(Vec::new()),
+            target_objects: RefCell::new(HashMap::new()),
         }
     }
 
@@ -140,6 +144,63 @@ impl<'a> GenCtx<'a> {
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, dir);
+        match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
+            Ok(value) => value,
+            Err(error) => {
+                if !error.quiet {
+                    let backtrace = self.backtrace(error.backtrace);
+                    self.error(backtrace, error.to_string());
+                }
+                String::new()
+            }
+        }
+    }
+
+    /// Evaluates `text` from `owner`'s `property` for consumer `head` under
+    /// a cmGeneratorExpressionDAGChecker rooted at (owner, property), as
+    /// cmGeneratorTarget does for link implementation/interface items and
+    /// other per-target properties.
+    pub fn genex_with_dag(
+        &self,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        language: Option<&str>,
+    ) -> String {
+        if !text.contains("$<") {
+            return text.to_owned();
+        }
+        let owner_key = self.target_key(owner);
+        let head_key = self.target_key(head);
+        let link = matches!(
+            property,
+            "LINK_LIBRARIES"
+                | "INTERFACE_LINK_LIBRARIES"
+                | "INTERFACE_LINK_LIBRARIES_DIRECT"
+                | "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE"
+        ) || property.starts_with("IMPORTED_LINK_INTERFACE_LIBRARIES");
+        let host_policy = super::genex_host::CtxHost::new(self, owner.makefile);
+        let transitive = link
+            && !property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
+            && crate::genex::GenexHost::local_policy_status(&host_policy, "CMP0189")
+                == crate::policy::PolicyStatus::New;
+        let root = crate::genex::DagChecker {
+            computing_link_libraries: link,
+            transitive,
+            ..crate::genex::DagChecker::new(&owner_key, property)
+        };
+        let compiled = crate::genex::parse(text);
+        let mut ectx = crate::genex::EvalContext {
+            config: &self.config,
+            head_target: Some(&head_key),
+            current_target: Some(&owner_key),
+            language,
+            evaluate_for_buildsystem: true,
+            dag: Some(&root),
+            ..crate::genex::EvalContext::default()
+        };
+        let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
         match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
             Ok(value) => value,
             Err(error) => {

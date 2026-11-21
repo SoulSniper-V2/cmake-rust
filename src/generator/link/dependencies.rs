@@ -48,7 +48,7 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
             && !item.is_empty()
             && !value.is_empty()
         {
-            overrides.insert(item.to_owned(), query.eval(value, head));
+            overrides.insert(item.to_owned(), query.eval(value, head, head, key));
         }
     }
     let combined = query.property(head, head, "LINK_LIBRARY_OVERRIDE");

@@ -803,11 +803,11 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-// INTEGRATION: Look up the SourceFile in the named directory, including the
-// global GENERATED registry. For CUSTOM_COMMAND return ON when the rule is
-// attached to this source (a generated output can instead be an ObjectSource).
+/// A property of the cmSourceFile for `path` in directory `dir_index`
+/// (including the global GENERATED registry and `$<TARGET_OBJECTS>` files).
+/// `CUSTOM_COMMAND` is ON when a rule is attached to the source.
 pub(super) fn source_prop(
-    _ctx: &GenCtx,
+    ctx: &GenCtx,
     dir_index: usize,
     path: &str,
     name: &str,
@@ -820,8 +820,24 @@ pub(super) fn source_prop(
     }) {
         return value;
     }
-    let _ = (dir_index, path, name);
-    None
+    if matches!(name, "GENERATED" | "EXTERNAL_OBJECT")
+        && ctx.target_objects.borrow().contains_key(&(dir_index, path.to_owned()))
+    {
+        return Some("1".to_owned());
+    }
+    if name == "CUSTOM_COMMAND" {
+        let index = crate::commands::target::find_known_source(ctx.interp, dir_index, path)?;
+        return ctx.interp.ext.sources[&dir_index][index]
+            .custom_command
+            .as_ref()
+            .map(|_| "1".to_owned());
+    }
+    crate::properties::get(ctx.interp, crate::properties::Object::Source(dir_index, path), name)
+}
+
+/// The OBJECT library whose `$<TARGET_OBJECTS>` named `path` in `dir`.
+fn target_object_library(ctx: &GenCtx, dir: usize, path: &str) -> Option<String> {
+    ctx.target_objects.borrow().get(&(dir, path.to_owned())).cloned()
 }
 
 const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
@@ -1217,15 +1233,23 @@ fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a 
             continue;
         }
         closure.push(dep);
-        let property = if dep.imported {
-            import_info(dep, config).map_or("", |info| info.link_interface)
+        let (value, property) = if dep.imported {
+            (
+                import_info(dep, config).map_or("", |info| info.link_interface),
+                if dep.props.contains("INTERFACE_LINK_LIBRARIES") {
+                    "INTERFACE_LINK_LIBRARIES"
+                } else {
+                    "IMPORTED_LINK_INTERFACE_LIBRARIES"
+                },
+            )
         } else {
-            dep.props
-                .get("INTERFACE_LINK_LIBRARIES")
-                .unwrap_or_default()
+            (
+                dep.props.get("INTERFACE_LINK_LIBRARIES").unwrap_or_default(),
+                "INTERFACE_LINK_LIBRARIES",
+            )
         };
         pending.extend(
-            expand_list(&ctx.genex(property, Some(target), None), false)
+            expand_list(&ctx.genex_with_dag(value, dep, target, property, None), false)
                 .into_iter()
                 .rev()
                 .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
@@ -1236,11 +1260,7 @@ fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a 
 
 fn evaluated_links(ctx: &GenCtx, provider: &Target, head: &Target, property: &str) -> Vec<String> {
     expand_list(
-        &ctx.genex(
-            provider.props.get(property).unwrap_or_default(),
-            Some(head),
-            None,
-        ),
+        &ctx.genex_with_dag(provider.props.get(property).unwrap_or_default(), provider, head, property, None),
         false,
     )
 }
@@ -1438,7 +1458,8 @@ fn collect_sources(
                         );
                             continue 'groups;
                         }
-                        (path, generated, source, None)
+                        let library = target_object_library(ctx, target.makefile, &path);
+                        (path, generated, source, library)
                     }
                 };
                 resolved.push((path, generated, listed, object_library));

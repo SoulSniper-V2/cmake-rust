@@ -170,12 +170,25 @@ impl GenexHost for CtxHost<'_, '_> {
 
     fn target_objects(&self, name: &str, config: &str) -> Result<Vec<String>, String> {
         let target = self.find(name).ok_or_else(|| format!("No target \"{name}\""))?;
-        let dir = gt::object_directory(self.ctx, target, config);
-        Ok(gt::sources(self.ctx, target, config)
-            .into_iter()
-            .filter(|source| source.kind == SourceKind::ObjectSource)
-            .map(|source| format!("{}/{}", dir.trim_end_matches('/'), source.object_name))
-            .collect())
+        let objects: Vec<String> = if target.imported {
+            gt::mapped_import_config(target, config)
+                .and_then(|info| info.location)
+                .map(|list| crate::util::expand_list(list, false))
+                .unwrap_or_default()
+        } else {
+            let dir = gt::object_directory(self.ctx, target, config);
+            gt::sources(self.ctx, target, config)
+                .into_iter()
+                .filter(|source| source.kind == SourceKind::ObjectSource)
+                .map(|source| format!("{}/{}", dir.trim_end_matches('/'), source.object_name))
+                .collect()
+        };
+        // cmMakefile::AddTargetObject in the referencing directory.
+        let mut registry = self.ctx.target_objects.borrow_mut();
+        for object in &objects {
+            registry.insert((self.dir, object.clone()), target.name.clone());
+        }
+        Ok(objects)
     }
 
     fn variable(&self, name: &str) -> Option<String> {
