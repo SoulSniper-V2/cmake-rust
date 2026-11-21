@@ -16,14 +16,13 @@ pub struct CompileVars {
     pub includes: String,
 }
 
+#[cfg(test)]
 pub fn compile_vars(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
     source: &SourceInfo,
 ) -> CompileVars {
-    // INTEGRATION: Pass the directory-scoped source properties from the
-    // source model through compile_vars_with_source_props.
     compile_vars_with_source_props(ctx, target, config, source, &Props::default())
 }
 

@@ -6,14 +6,14 @@ mod link;
 mod rule;
 mod standard;
 
-pub use compile::compile_vars;
+pub use compile::compile_vars_with_source_props;
 pub use link::{link_dependency_file, link_flag_vars};
 pub use rule::{compiler_launcher, expand_rule};
 
 // API pending the source-property and linked-target integrations below;
 // kept visible to the oracle replay tests.
 #[cfg(test)]
-pub use compile::{compile_vars_with_source_props, object_dependencies};
+pub use compile::{compile_vars, object_dependencies};
 #[cfg(test)]
 pub use rule::{RuleStep, expand_rule_for_step};
 
