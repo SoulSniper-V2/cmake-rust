@@ -570,12 +570,46 @@ impl Interp {
     }
 
     pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
+        let index = self.create_subdirectory(source, binary, exclude_from_all);
+        self.configure_subdirectory(index, system)
+    }
+
+    /// `cmMakefile::AddSubDirectory`: the child cmMakefile (and its place in
+    /// the parent's children and the global makefile order) is created when
+    /// the directory is added, even when its configure is deferred.
+    pub fn create_subdirectory(&mut self, source: &str, binary: &str, exclude_from_all: bool) -> usize {
+        let parent = self.mf_index();
+        let index = self.makefiles.len();
+        let mut props = Props::default();
+        if exclude_from_all {
+            props.set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
+        }
+        let exclude = exclude_from_all || self.makefiles[parent].exclude_from_all;
+        self.makefiles.push(Makefile {
+            source_dir: source.to_owned(),
+            binary_dir: binary.to_owned(),
+            parent: Some(parent),
+            props,
+            policies: Vec::new(),
+            list_files: Vec::new(),
+            targets: Vec::new(),
+            children: Vec::new(),
+            exclude_from_all: exclude,
+            deferred: Vec::new(),
+            defer_counter: 0,
+        });
+        self.makefiles[parent].children.push(index);
+        let _ = std::fs::create_dir_all(binary);
+        index
+    }
+
+    /// `cmMakefile::ConfigureSubDirectory`: InitializeFromParent, then run
+    /// the child's CMakeLists.txt.
+    pub fn configure_subdirectory(&mut self, index: usize, system: bool) -> bool {
         let parent = self.mf_index();
         self.save_directory_definitions(parent);
         let flattened = self.effective_policies();
-        let index = self.makefiles.len();
-        let mut props = Props::default();
-        // Directory properties inherited at creation (cmMakefile::InitializeFromParent).
+        // Directory properties inherited at configure (InitializeFromParent).
         let parent_props = self.makefiles[parent].props.clone();
         for key in [
             "INCLUDE_DIRECTORIES",
@@ -586,41 +620,25 @@ impl Interp {
             "INCLUDE_REGULAR_EXPRESSION",
         ] {
             if let Some(value) = parent_props.get(key) {
-                props.set(key, value.to_owned());
+                self.makefiles[index].props.set(key, value.to_owned());
             }
         }
         for (key, value) in parent_props.iter() {
             if key.starts_with("COMPILE_DEFINITIONS_") {
-                props.set(key, value.to_owned());
+                self.makefiles[index].props.set(key, value.to_owned());
             }
         }
-        let exclude = exclude_from_all || self.makefiles[parent].exclude_from_all;
-        if exclude_from_all {
-            props.set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
-        }
-        self.makefiles.push(Makefile {
-            source_dir: source.to_owned(),
-            binary_dir: binary.to_owned(),
-            parent: Some(parent),
-            props,
-            policies: vec![PolicyFrame {
-                map: flattened,
-                weak: false,
-            }],
-            list_files: Vec::new(),
-            targets: Vec::new(),
-            children: Vec::new(),
-            exclude_from_all: exclude,
-            deferred: Vec::new(),
-            defer_counter: 0,
-        });
+        self.makefiles[index].policies = vec![PolicyFrame {
+            map: flattened,
+            weak: false,
+        }];
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
-        self.makefiles[parent].children.push(index);
+        let source = self.makefiles[index].source_dir.clone();
+        let binary = self.makefiles[index].binary_dir.clone();
         self.mf_stack.push(index);
         self.push_scope();
-        self.set_def("CMAKE_CURRENT_SOURCE_DIR", source);
-        self.set_def("CMAKE_CURRENT_BINARY_DIR", binary);
-        let _ = std::fs::create_dir_all(binary);
+        self.set_def("CMAKE_CURRENT_SOURCE_DIR", &source);
+        self.set_def("CMAKE_CURRENT_BINARY_DIR", &binary);
         let saved_backtrace = std::mem::take(&mut self.backtrace);
         // Directory backtraces start fresh at the child's list file but the
         // call stack keeps the add_subdirectory call (cmMakefile::Configure).

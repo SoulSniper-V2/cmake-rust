@@ -343,6 +343,8 @@ pub struct Ext {
 
 #[derive(Debug)]
 pub struct PendingSubdirectory {
+    /// The cmMakefile created when the directory was added.
+    pub index: usize,
     pub source: String,
     pub binary: String,
     pub exclude_from_all: bool,

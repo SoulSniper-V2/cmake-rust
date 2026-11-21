@@ -292,6 +292,13 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
             );
         }
     }
+    // cmTarget::GetSystemIncludeDirectories: include_directories(SYSTEM) and
+    // target_include_directories(SYSTEM) entries of the target itself.
+    for entry in &inputs.target.system_include_directories {
+        for dir in expand_list(&inputs.eval(entry), false) {
+            system.insert(unix_slashes(&dir));
+        }
+    }
     // System classification from usage requirements
     // (INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, imported targets, SYSTEM).
     for item in inputs.usage_items("INCLUDE_DIRECTORIES") {

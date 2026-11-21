@@ -200,13 +200,14 @@ fn subdirs(interp: &mut Interp, args: &[String]) -> CmdResult {
                 let binary =
                     collapse_full_path(&format!("{}/{suffix}", interp.current_binary_dir()), "");
                 if can_add_subdirectory(interp, &source, &binary).is_ok() {
-                    let _ = std::fs::create_dir_all(&binary);
+                    let index = interp.create_subdirectory(&source, &binary, exclude);
                     interp
                         .ext
                         .pending_subdirs
                         .entry(dir)
                         .or_default()
                         .push(PendingSubdirectory {
+                            index,
                             source,
                             binary,
                             exclude_from_all: exclude,
@@ -236,13 +237,17 @@ pub fn finish_directory(interp: &mut Interp) {
     };
     for dir in dirs {
         let saved = std::mem::replace(&mut interp.backtrace, dir.backtrace);
-        let _ = configure_subdirectory(
-            interp,
-            &dir.source,
-            &dir.binary,
-            dir.exclude_from_all,
-            false,
-        );
+        if Path::new(&dir.source).join("CMakeLists.txt").is_file() {
+            interp.configure_subdirectory(dir.index, false);
+        } else {
+            let _: CmdResult = report(
+                interp,
+                &format!(
+                    "The source directory\n  {}\ndoes not contain a CMakeLists.txt file.",
+                    dir.source
+                ),
+            );
+        }
         interp.backtrace = saved;
     }
 }

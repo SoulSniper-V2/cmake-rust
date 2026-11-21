@@ -64,8 +64,12 @@ impl Flags<'_, '_> {
     /// (cmGeneratorTarget::Get*Directories/Definitions/Options).
     fn usage_items(&self, property: &str) -> Vec<crate::genex::UsageItem> {
         let key = self.ctx.target_key(self.target);
+        let memo = format!("{key}\u{0}{property}\u{0}{}\u{0}{}", self.config, self.lang);
+        if let Some(items) = self.ctx.usage.borrow().get(&memo) {
+            return items.as_ref().clone();
+        }
         let mut host = super::genex_host::CtxHost::new(self.ctx, self.target.makefile);
-        match crate::genex::target_usage(&mut host, &key, property, self.config, self.lang) {
+        let items = match crate::genex::target_usage(&mut host, &key, property, self.config, self.lang) {
             Ok(items) => items,
             Err(error) => {
                 if !error.quiet {
@@ -74,7 +78,9 @@ impl Flags<'_, '_> {
                 }
                 Vec::new()
             }
-        }
+        };
+        self.ctx.usage.borrow_mut().insert(memo, std::rc::Rc::new(items.clone()));
+        items
     }
 
     fn policy(&self, index: usize) -> PolicyStatus {

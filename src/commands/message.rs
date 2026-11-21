@@ -209,7 +209,12 @@ fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 /// `cmMakefile::DisplayStatus` writes one status prefix per message.
+/// `cmMakefile::DisplayStatus` -> `cmake::UpdateProgress`: no progress
+/// output while configuring a try_compile project.
 pub fn status_line(interp: &mut Interp, text: &str) {
+    if interp.in_try_compile {
+        return;
+    }
     interp.stdout_line(&format!("-- {text}"));
 }
 

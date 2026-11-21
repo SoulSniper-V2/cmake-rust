@@ -103,6 +103,13 @@ impl GenexHost for CtxHost<'_, '_> {
             .collect()
     }
 
+    /// `cmTarget::GetSystemIncludeDirectories`.
+    fn system_include_directories(&self, name: &str) -> Vec<String> {
+        self.find(name)
+            .map(|target| target.system_include_directories.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     fn is_imported(&self, name: &str) -> bool {
         self.find(name).is_some_and(|target| target.imported)
     }

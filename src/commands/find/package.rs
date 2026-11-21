@@ -747,7 +747,7 @@ impl Package {
                 || (self.use_config && !self.use_module && self.considered.is_empty()))
         {
             if !self.quiet {
-                interp.stdout_line(&format!("-- Could NOT find {name} (missing: {name}_DIR)"));
+                crate::commands::message::status_line(interp, &format!("Could NOT find {name} (missing: {name}_DIR)"));
             }
             return;
         }

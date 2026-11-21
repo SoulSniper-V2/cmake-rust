@@ -534,7 +534,7 @@ fn maybe_report_error(interp: &mut Interp, parsed: &Parsed) -> bool {
 fn status_line(interp: &mut Interp, message: &str) {
     // cmMakefile::DisplayStatus -> cmake::UpdateProgress prints
     // "-- <message>" unconditionally outside find-package mode.
-    interp.stdout_line(&format!("-- {message}"));
+    crate::commands::message::status_line(interp, message);
 }
 
 /// `HandleRPathChangeCommand` (RPATH_CHANGE and CHRPATH).

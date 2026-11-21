@@ -412,25 +412,18 @@ impl<'a> NinjaGenerator<'a> {
         out.extend(outs);
     }
 
+    /// `cmGlobalNinjaGenerator::AddTargetAlias`: the target's own outputs
+    /// are marked ambiguous so no other target aliases them, then the alias
+    /// is inserted if absent (the first target to claim a name keeps it).
     pub fn add_target_alias(&mut self, alias: &str, target: &Target) {
         let mut outputs = Vec::new();
         self.append_target_outputs(target, &mut outputs, DependOn::TargetArtifact);
-        // Don't write an alias that is the same as the output.
-        if outputs.len() == 1 && outputs[0] == alias {
-            return;
+        for output in outputs {
+            self.target_aliases.insert(output, None);
         }
-        if alias == "all" || alias == "clean" || alias == "help" {
-            return;
-        }
-        match self.target_aliases.get(alias) {
-            Some(existing) if existing.as_deref() != Some(target.name.as_str()) => {
-                self.target_aliases.insert(alias.to_owned(), None);
-            }
-            Some(_) => {}
-            None => {
-                self.target_aliases.insert(alias.to_owned(), Some(target.name.clone()));
-            }
-        }
+        self.target_aliases
+            .entry(alias.to_owned())
+            .or_insert_with(|| Some(target.name.clone()));
     }
 
     // ------------------------------------------------------------------
@@ -680,7 +673,16 @@ impl<'a> NinjaGenerator<'a> {
             if self.ctx.var(0, "CMAKE_SKIP_INSTALL_ALL_DEPENDENCY").is_none_or(|value| util::is_off(&value)) {
                 depends.push("all".to_owned());
             }
-            let base = vec![cmake.clone(), "-P".to_owned(), "cmake_install.cmake".to_owned()];
+            // We are building CMake itself: the original executable cannot
+            // install over itself, so the in-tree `cmake` target is used.
+            let install_cmake = if self.ctx.var(0, "CMake_BINARY_DIR").is_some()
+                && !self.ctx.var(0, "CMAKE_CROSSCOMPILING").is_some_and(|value| util::is_on(&value))
+            {
+                "cmake".to_owned()
+            } else {
+                cmake.clone()
+            };
+            let base = vec![install_cmake, "-P".to_owned(), "cmake_install.cmake".to_owned()];
             infos.push(("install".into(), "Install the project...".into(), vec![base.clone()], depends.clone(), true));
             let mut local = base.clone();
             local.insert(1, "-DCMAKE_INSTALL_LOCAL_ONLY=1".into());
@@ -730,7 +732,15 @@ impl<'a> NinjaGenerator<'a> {
         if !real_lines.is_empty() {
             lines.push(format!("cd {}", self.shell(&binary_dir)));
             for line in real_lines {
-                let mut command = self.shell(&line[0]);
+                // cmCustomCommandGenerator: an executable target named by
+                // argv[0] runs from its build location.
+                let argv0 = match gt::target_in_directory(self.ctx, global.makefile, &line[0])
+                    .filter(|target| target.kind == TargetKind::Executable)
+                {
+                    Some(target) => gt::full_path(self.ctx, target, &self.config, ArtifactType::Runtime, false),
+                    None => line[0].clone(),
+                };
+                let mut command = self.shell(&argv0);
                 for arg in &line[1..] {
                     // Make-style variable references like $(ARGS) are dropped
                     // by the Ninja generator.
@@ -923,6 +933,20 @@ impl<'a> NinjaGenerator<'a> {
         self.write_target_help(&mut out);
         write_comment(&mut out, "Make the all target the default.");
         out.push_str("default all\n");
+        if self.install_target_enabled
+            && self.ctx.interp.global_props.get("INSTALL_PARALLEL").is_some_and(util::is_on)
+            && !self.ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").is_some_and(|value| util::is_on(&value))
+        {
+            let mut build = Build::new("phony");
+            build.comment = "Install every subdirectory in parallel".into();
+            build.outputs.push("install/parallel".into());
+            for makefile in &self.ctx.interp.makefiles {
+                build
+                    .explicit_deps
+                    .push(self.ninja_path(&format!("{}/install/local", makefile.binary_dir)));
+            }
+            write_build(&mut out, &build, 0);
+        }
         self.build.push_str(&out);
     }
 

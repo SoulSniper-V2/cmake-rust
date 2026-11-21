@@ -26,6 +26,9 @@ pub struct GenCtx<'a> {
     /// `cmGeneratorTarget::KindedSourcesMap`: computed sources per target
     /// and configuration.
     pub sources: RefCell<HashMap<String, std::rc::Rc<Vec<super::target::SourceInfo>>>>,
+    /// Usage requirements per (target, property, config, language), as
+    /// cmGeneratorTarget caches its evaluated property entries.
+    pub usage: RefCell<HashMap<String, std::rc::Rc<Vec<crate::genex::UsageItem>>>>,
 }
 
 impl<'a> GenCtx<'a> {
@@ -39,6 +42,7 @@ impl<'a> GenCtx<'a> {
             backtraces: RefCell::new(Vec::new()),
             target_objects: RefCell::new(HashMap::new()),
             sources: RefCell::new(HashMap::new()),
+            usage: RefCell::new(HashMap::new()),
         }
     }
 

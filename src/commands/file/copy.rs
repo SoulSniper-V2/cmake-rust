@@ -487,7 +487,7 @@ impl Copier {
         };
         if !installer.message_never && (copy || !installer.message_lazy) {
             let action = if copy { "Installing" } else { "Up-to-date" };
-            interp.stdout_line(&format!("-- {action}: {destination}"));
+            crate::commands::message::status_line(interp, &format!("{action}: {destination}"));
         }
         if !directory {
             if !installer.manifest.is_empty() {
