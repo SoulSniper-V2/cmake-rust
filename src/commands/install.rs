@@ -636,6 +636,7 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }
         let mut export_artifact = None;
+        let mut export_namelink = None;
         if !artifact.destination.is_empty() {
             if !namelink_only {
                 let namelink = if !imported && (kind == TargetKind::SharedLibrary || artifact_args.namelink_skip) {
@@ -650,7 +651,8 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
             if !imported && !artifact_args.namelink_skip &&
                 (kind == TargetKind::SharedLibrary || namelink_only) {
                 artifact.component = nonempty(&artifact.namelink_component, &artifact.component).to_owned();
-                add(interp, artifact, InstallAction::Target { name: name.clone(), namelink: Namelink::Only, imported });
+                add(interp, artifact.clone(), InstallAction::Target { name: name.clone(), namelink: Namelink::Only, imported });
+                export_namelink = Some(artifact);
             }
         }
         if imported { continue; }
@@ -686,7 +688,7 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                 (name.clone(), with_destination(interp, opts.clone(), "INCLUDE").destination)
             }).collect();
             interp.ext.install.export_sets.entry(export_set.to_owned()).or_default().targets.push(
-                ExportTarget { name: name.clone(), artifact: export_artifact, includes: includes.clone(), file_sets, namelink_only }
+                ExportTarget { name: name.clone(), artifact: export_artifact, includes: includes.clone(), file_sets, namelink: export_namelink, namelink_only }
             );
         }
     }

@@ -441,6 +441,7 @@ impl Package {
             .entry(directory)
             .or_default()
             .push(self.name.clone(), roots);
+        interp.ext.find_package_stack.push(self.name.clone());
         let saved: Vec<_> = self
             .request_definitions()
             .into_iter()
@@ -455,6 +456,7 @@ impl Package {
             restore(interp, &key, value);
         }
         interp.ext.find_package.entry(directory).or_default().pop();
+        interp.ext.find_package_stack.pop();
         if let Some(debug) = &self.debug
             && !debug.is_empty()
         {

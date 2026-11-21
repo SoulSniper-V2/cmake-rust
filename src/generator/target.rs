@@ -1220,7 +1220,11 @@ fn object_file_name(
 
 /// Default link discovery until the generator's compile/link usage closures
 /// are available. The public *_with_link_closure queries accept those closures.
-fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a Target> {
+pub(super) fn link_closure<'a>(
+    ctx: &GenCtx<'a>,
+    target: &Target,
+    config: &str,
+) -> Vec<&'a Target> {
     let mut seen = HashSet::from([(target.makefile, target.name.as_str())]);
     let mut pending = evaluated_links(ctx, target, target, "LINK_LIBRARIES")
         .into_iter()
@@ -1258,7 +1262,12 @@ fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a 
     closure
 }
 
-fn evaluated_links(ctx: &GenCtx, provider: &Target, head: &Target, property: &str) -> Vec<String> {
+pub(super) fn evaluated_links(
+    ctx: &GenCtx,
+    provider: &Target,
+    head: &Target,
+    property: &str,
+) -> Vec<String> {
     expand_list(
         &ctx.genex_with_dag(provider.props.get(property).unwrap_or_default(), provider, head, property, None),
         false,
@@ -1566,6 +1575,19 @@ pub fn check_targets_for_missing_sources(ctx: &GenCtx) -> bool {
         }
     }
     failed
+}
+
+/// `cmLinkImplementation::Languages`: sorted languages of the target's own
+/// compiled sources, including `$<TARGET_OBJECTS>` libraries.
+pub(super) fn link_implementation_languages(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+) -> Vec<String> {
+    let found = sources(ctx, target, config);
+    let mut languages = BTreeSet::new();
+    target_languages(ctx, target, config, &found, &mut languages);
+    languages.into_iter().collect()
 }
 
 /// `cmGeneratorTarget::GetLanguages`: languages of all sources plus those of

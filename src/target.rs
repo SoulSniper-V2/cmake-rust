@@ -462,6 +462,9 @@ pub fn create_target(
     target.imported = imported;
     target.imported_global = imported && global;
     target.backtrace.clone_from(&interp.backtrace);
+    target
+        .find_package_stack
+        .clone_from(&interp.ext.find_package_stack);
     target.policies = interp.effective_policies();
     for prop in [
         "TYPE",
