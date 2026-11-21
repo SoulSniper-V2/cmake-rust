@@ -43,6 +43,10 @@ def normalize(text, work, binary):
     text = text.replace(str(binary.parent.parent), "<PREFIX>")
     text = text.replace(DATA_ROOT, "<ROOT>")
     text = text.replace(str(ORACLE.parent.parent), "<PREFIX>")
+    # try_compile scratch directories and generated test targets carry random
+    # names (mkdtemp / cmSystemTools::RandomNumber).
+    text = re.sub(r"TryCompile-[0-9A-Za-z]+", "TryCompile-<RAND>", text)
+    text = re.sub(r"cmTC_[0-9a-f]+", "cmTC_<RAND>", text)
     return text
 
 

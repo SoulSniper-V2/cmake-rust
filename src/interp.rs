@@ -240,6 +240,10 @@ pub struct Interp {
     /// Final variable bindings of each directory scope (index = makefile),
     /// captured when the directory finishes configuring, for generation.
     pub dir_final_vars: Vec<HashMap<String, Option<String>>>,
+    /// The messenger's top source for path relativization; an inner
+    /// try_compile project inherits the outer project's root because the
+    /// `cmake` instance is shared (`cmMessenger::TopSource`).
+    pub top_source_root: Option<String>,
 }
 
 impl Interp {
@@ -281,6 +285,7 @@ impl Interp {
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,
             dir_final_vars: Vec::new(),
+            top_source_root: None,
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -569,7 +574,9 @@ impl Interp {
         self.run_subdirectory_with_system(source, binary, exclude_from_all, false)
     }
 
-    pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
+    /// `cmMakefile::AddSubDirectory`: registers the child makefile (counted
+    /// toward CMAKE_NUMBER_OF_MAKEFILES) before the CMakeLists.txt check.
+    pub fn create_subdirectory(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> usize {
         let parent = self.mf_index();
         self.save_directory_definitions(parent);
         let flattened = self.effective_policies();
@@ -616,15 +623,20 @@ impl Interp {
         });
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
         self.makefiles[parent].children.push(index);
+        let _ = std::fs::create_dir_all(binary);
+        index
+    }
+
+    /// `cmMakefile::ConfigureSubDirectory` -> child `cmMakefile::Configure`.
+    /// The child's backtrace is independent of the parent's call stack.
+    pub fn run_created_subdirectory(&mut self, index: usize) -> bool {
+        let source = self.makefiles[index].source_dir.clone();
+        let binary = self.makefiles[index].binary_dir.clone();
         self.mf_stack.push(index);
         self.push_scope();
-        self.set_def("CMAKE_CURRENT_SOURCE_DIR", source);
+        self.set_def("CMAKE_CURRENT_SOURCE_DIR", source.clone());
         self.set_def("CMAKE_CURRENT_BINARY_DIR", binary);
-        let _ = std::fs::create_dir_all(binary);
         let saved_backtrace = std::mem::take(&mut self.backtrace);
-        // Directory backtraces start fresh at the child's list file but the
-        // call stack keeps the add_subdirectory call (cmMakefile::Configure).
-        self.backtrace = saved_backtrace.clone();
         let list = format!("{source}/CMakeLists.txt");
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
@@ -633,6 +645,11 @@ impl Interp {
         self.pop_scope();
         self.mf_stack.pop();
         ok
+    }
+
+    pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
+        let index = self.create_subdirectory(source, binary, exclude_from_all, system);
+        self.run_created_subdirectory(index)
     }
 
     fn save_directory_definitions(&mut self, index: usize) {
@@ -721,7 +738,7 @@ impl Interp {
     pub fn top_source(&self) -> Option<&str> {
         // cmake::SetHomeDirectory sets the messenger's top source for both
         // project and script mode (normal project kind).
-        Some(&self.home_source)
+        self.top_source_root.as_deref().or(Some(&self.home_source))
     }
 
     /// `cmMakefile::IssueMessage` at the current backtrace.

@@ -215,6 +215,13 @@ impl<'a> GenCtx<'a> {
 
     /// Runs the whole generate step.
     pub fn check_and_generate(&self) -> Result<(), Vec<Diagnostic>> {
+        // cmGlobalGenerator::Compute: source resolution diagnostics surface
+        // during the pre-generation target computations, and
+        // CheckTargetsForMissingSources stops generation before any build
+        // files are written.
+        if super::target::check_targets_for_missing_sources(self) {
+            return Err(std::mem::take(&mut *self.errors.borrow_mut()));
+        }
         super::evaluation_files::generate(self);
         let mut ninja = super::ninja::NinjaGenerator::new(self);
         if let Err(error) = ninja.generate() {
