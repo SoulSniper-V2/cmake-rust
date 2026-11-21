@@ -29,6 +29,26 @@ The harness checks the generated header, normalized per-target compiler argument
 
 ## Compatibility milestones
 
-- zlib v1.3.1 configures, builds, tests, and installs on Linux x86-64 with GCC and macOS arm64 with Apple Clang.
-- LLVM and Clang 20.1.8 and Kitware CMake 4.1.0 are the next acceptance gates. Each requires a clean configure, successful build, and its own upstream test suite. Both remain incomplete.
-- `-DCMAKE_ROOT=/path/to/cmake/share` allows the interpreter to read supplementary distribution modules and templates from a directory with `Modules/` and `Templates/`. These are script inputs. The build does not invoke the Kitware `cmake` executable.
+Differential results are measured against Kitware CMake 4.1.0 (commit
+`2a2c2e0b`) built from source, with the same flags and Ninja. The candidate is
+staged as an installed CMake (`scripts/stage-prefix.sh`: `bin/cmake` plus
+`share/cmake-4.1` holding the pinned 4.1.0 distribution modules, which are
+read as data). The Kitware `cmake` executable is never invoked by the
+candidate. The pinned Kitware `ctest` is the independent test runner.
+
+- **LLVM + Clang 20.1.8** (`87f0227c`, Release, `LLVM_ENABLE_PROJECTS=clang`,
+  `LLVM_TARGETS_TO_BUILD=X86`, `LLVM_INCLUDE_BENCHMARKS=OFF`):
+  - Configure and generate succeed.
+  - The configure log, `CMakeCache.txt`, `rules.ninja` and `build.ninja` (41 MB, 21,997 statements) are byte-identical to the oracle's. Tool paths are normalized, and the regeneration-dependency list sorts differently because the prefix paths differ.
+  - `ninja check-clang` on the candidate's build: 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed.
+  - Times: configure about 5 s, generate about 6 s (oracle 1.8 s).
+- **Kitware CMake 4.1.0**: the configure log is identical to the oracle's, as are `CMakeCache.txt` and `rules.ninja`. `build.ninja` differs only in the regeneration-dependency list. The build and the upstream CTest run are in progress.
+- **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
+
+Harnesses:
+- `scripts/difftest.py`: script mode, 1239 cases.
+- `scripts/clitest.py`: command line, 329 cases.
+- `scripts/projdiff.py`: project mode, generated files byte-compared.
+- `scripts/ninjadiff.py`: structural `build.ninja` comparison.
+- `scripts/llvm-configure.sh` and `scripts/kitware-configure.sh`: oracle/candidate configure runners.
+- `scripts/conformance/`: upstream RunCMake.
