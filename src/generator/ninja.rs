@@ -878,7 +878,7 @@ impl<'a> NinjaGenerator<'a> {
                 build.comment = format!("Folder: {}", makefile.binary_dir);
                 build.outputs.push(self.ninja_path(&format!("{}/codegen", makefile.binary_dir)));
                 for target in &dir_targets[index] {
-                    for source in gt::sources(self.ctx, target, &self.config) {
+                    for source in gt::sources(self.ctx, target, &self.config).iter() {
                         if source.kind != SourceKind::CustomCommandOutput {
                             continue;
                         }
@@ -1187,7 +1187,7 @@ impl<'a> NinjaGenerator<'a> {
         let sources = gt::sources(self.ctx, target, &config);
         // WriteLanguagesRules: compile rules for every object language.
         let mut languages: Vec<String> = Vec::new();
-        for source in &sources {
+        for source in sources.iter() {
             if source.kind == SourceKind::ObjectSource && !languages.contains(&source.language) {
                 languages.push(source.language.clone());
             }
@@ -1207,7 +1207,7 @@ impl<'a> NinjaGenerator<'a> {
         );
         // GetCustomCommands: register each attached command with this target.
         let mut custom_outputs: Vec<String> = Vec::new();
-        for source in &sources {
+        for source in sources.iter() {
             if source.kind != SourceKind::CustomCommandOutput {
                 continue;
             }
@@ -1244,7 +1244,7 @@ impl<'a> NinjaGenerator<'a> {
             .filter(|source| source.kind == SourceKind::ExternalObject)
             .map(|source| self.ninja_path(&source.path))
             .collect();
-        for source in &sources {
+        for source in sources.iter() {
             if source.kind != SourceKind::ObjectSource {
                 continue;
             }
@@ -1604,7 +1604,7 @@ impl<'a> NinjaGenerator<'a> {
                 uses_terminal |= command.uses_terminal;
             }
         }
-        for source in gt::sources(self.ctx, target, &config) {
+        for source in gt::sources(self.ctx, target, &config).iter() {
             let Some(cc) = self.attached_command(makefile, &source.path) else {
                 continue;
             };

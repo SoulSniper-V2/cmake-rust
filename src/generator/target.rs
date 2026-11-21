@@ -1413,7 +1413,7 @@ fn collect_sources(
             } else {
                 let object_dir = object_directory(ctx, library, config);
                 sources(ctx, library, config)
-                    .into_iter()
+                    .iter()
                     .filter(|source| source.kind == SourceKind::ObjectSource)
                     .map(|source| format!("{object_dir}{}", source.object_name))
                     .collect()
@@ -1546,13 +1546,18 @@ fn collect_sources(
 }
 
 /// `GetSourceFiles` and `ComputeObjectMapping`.
-pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
+pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<SourceInfo>> {
     let key = memo_key("sources", target, config);
     if let Some(cached) = ctx.sources.borrow().get(&key) {
-        return cached.as_ref().clone();
+        return cached.clone();
     }
-    let computed = sources_with_link_closure(ctx, target, config, &link_closure(ctx, target, config));
-    ctx.sources.borrow_mut().insert(key, std::rc::Rc::new(computed.clone()));
+    let computed = std::rc::Rc::new(sources_with_link_closure(
+        ctx,
+        target,
+        config,
+        &link_closure(ctx, target, config),
+    ));
+    ctx.sources.borrow_mut().insert(key, computed.clone());
     computed
 }
 
@@ -2531,7 +2536,7 @@ pub(super) mod tests {
                 assert_objects(
                     &ctx,
                     &target,
-                    sources(&ctx, &target, &ctx.config),
+                    sources(&ctx, &target, &ctx.config).as_ref().clone(),
                     &fixture,
                     root_str,
                 );

@@ -76,7 +76,7 @@ trait GeneratorQueries {
     }
 
     fn sources(&self, ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
-        target::sources(ctx, target, config)
+        target::sources(ctx, target, config).as_ref().clone()
     }
 
     fn object_dir(&self, ctx: &GenCtx, target: &Target, config: &str) -> String {

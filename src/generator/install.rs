@@ -360,9 +360,9 @@ pub(super) fn object_subdir(tgt: &Target, config: &str) -> String {
 }
 
 pub(super) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
-    target::sources(ctx, tgt, &ctx.config).into_iter()
+    target::sources(ctx, tgt, &ctx.config).iter()
         .filter(|source| matches!(source.kind, target::SourceKind::ObjectSource))
-        .map(|source| source.object_name).collect()
+        .map(|source| source.object_name.clone()).collect()
 }
 
 fn render_target(

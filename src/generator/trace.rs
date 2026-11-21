@@ -96,9 +96,9 @@ impl<'c, 'a> Tracer<'c, 'a> {
         };
         // Queue all the source files already specified for the target.
         let mut emitted = HashSet::new();
-        for source in gt::sources(ctx, target, &ctx.config) {
+        for source in gt::sources(ctx, target, &ctx.config).iter() {
             if emitted.insert(source.path.clone()) && tracer.queued.insert(source.path.clone()) {
-                tracer.queue.push_back(source.path);
+                tracer.queue.push_back(source.path.clone());
             }
         }
         // Queue pre-build, pre-link, and post-build rule dependencies.

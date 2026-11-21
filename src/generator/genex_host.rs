@@ -185,7 +185,7 @@ impl GenexHost for CtxHost<'_, '_> {
         } else {
             let dir = gt::object_directory(self.ctx, target, config);
             gt::sources(self.ctx, target, config)
-                .into_iter()
+                .iter()
                 .filter(|source| source.kind == SourceKind::ObjectSource)
                 .map(|source| format!("{}/{}", dir.trim_end_matches('/'), source.object_name))
                 .collect()
