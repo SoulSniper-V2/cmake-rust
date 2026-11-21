@@ -1532,7 +1532,13 @@ fn collect_sources(
 
 /// `GetSourceFiles` and `ComputeObjectMapping`.
 pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
-    sources_with_link_closure(ctx, target, config, &link_closure(ctx, target, config))
+    let key = memo_key("sources", target, config);
+    if let Some(cached) = ctx.sources.borrow().get(&key) {
+        return cached.as_ref().clone();
+    }
+    let computed = sources_with_link_closure(ctx, target, config, &link_closure(ctx, target, config));
+    ctx.sources.borrow_mut().insert(key, std::rc::Rc::new(computed.clone()));
+    computed
 }
 
 /// `cmTarget::CanCompileSources`.
@@ -1709,7 +1715,7 @@ fn compute_linker_language(ctx: &GenCtx, target: &Target, config: &str) -> Strin
     ctx.memo.borrow_mut().insert(key.clone(), String::new());
     let compute = || {
         let closure = link_closure(ctx, target, config);
-        let sources = sources_with_link_closure(ctx, target, config, &closure);
+        let sources = sources(ctx, target, config);
         let sensitive = std::iter::once(target)
             .chain(closure.iter().copied())
             .any(|provider| {

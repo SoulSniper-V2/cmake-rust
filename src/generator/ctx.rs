@@ -23,6 +23,9 @@ pub struct GenCtx<'a> {
     /// `cmMakefile::AddTargetObject`: object files named by
     /// `$<TARGET_OBJECTS:...>`, as (referencing directory, path) -> library.
     pub target_objects: RefCell<HashMap<(usize, String), String>>,
+    /// `cmGeneratorTarget::KindedSourcesMap`: computed sources per target
+    /// and configuration.
+    pub sources: RefCell<HashMap<String, std::rc::Rc<Vec<super::target::SourceInfo>>>>,
 }
 
 impl<'a> GenCtx<'a> {
@@ -35,6 +38,7 @@ impl<'a> GenCtx<'a> {
             memo: RefCell::new(HashMap::new()),
             backtraces: RefCell::new(Vec::new()),
             target_objects: RefCell::new(HashMap::new()),
+            sources: RefCell::new(HashMap::new()),
         }
     }
 
