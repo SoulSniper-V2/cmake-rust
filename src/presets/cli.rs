@@ -315,7 +315,7 @@ pub fn apply_configure_preset(
 impl ConfigurePresetState {
     /// `cmake::PrintPresetVariables` + `PrintPresetEnvironment`, after the
     /// command-line cache arguments removed overridden entries.
-    pub fn print(&self, overridden: &dyn Fn(&str) -> bool) {
+    pub fn render(&self, overridden: &dyn Fn(&str) -> bool) -> String {
         let mut out = String::new();
         let mut first = true;
         for (name, kind, value) in &self.variables {
@@ -348,7 +348,7 @@ impl ConfigurePresetState {
         if !first {
             out.push('\n');
         }
-        print!("{out}");
+        out
     }
 }
 

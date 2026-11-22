@@ -34,6 +34,9 @@ pub struct ConfigureOptions {
     pub preload_scripts: Vec<String>,
     /// The `-C` values as given, for "loading initial cache file".
     pub preload_script_args: Vec<String>,
+    /// `cmake::PrintPresetVariables`/`PrintPresetEnvironment` output,
+    /// printed after the cache arguments (with `-C`) are processed.
+    pub preset_report: Option<String>,
     pub fresh: bool,
     pub log_level: Option<String>,
     pub log_context: bool,
@@ -410,6 +413,12 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         }
         let path = util::collapse_full_path(script, &util_cwd());
         read_temporary_list_file(interp, &path);
+    }
+    if let Some(report) = &options.preset_report {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(report.as_bytes());
+        let _ = out.flush();
     }
     // cmake::Run: MAKEFLAGS would leak into try_compile builds.
     if std::env::var_os("MAKEFLAGS").is_some() {

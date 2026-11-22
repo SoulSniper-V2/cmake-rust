@@ -780,10 +780,15 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 _ => false,
             })
         };
-        state.print(&overridden);
+        // cmake::Run prints them after SetCacheArgs ran the -C scripts.
+        options.preset_report = Some(state.render(&overridden));
     }
     let result = if view_only {
-        apply_cache_view_args(&mut cache, &cache_args, &options, cwd)
+        let result = apply_cache_view_args(&mut cache, &cache_args, &options, cwd);
+        if let Some(report) = &options.preset_report {
+            print!("{report}");
+        }
+        result
     } else if !options.preload_scripts.is_empty()
         && options
             .preload_scripts
