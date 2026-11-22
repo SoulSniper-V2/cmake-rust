@@ -251,7 +251,9 @@ fn render_rule(ctx: &GenCtx, out: &mut String, index: usize, rule: &InstallRule)
         InstallAction::Bmi(name) => {
             if let Some(tgt) = ctx.target_at(index, name) {
                 let objects = target::object_directory(ctx, tgt, &ctx.config);
-                let config = export::config_suffix(&ctx.config);
+                // cmInstallCxxModuleBmiGenerator::GetScriptLocation: the
+                // configuration as given, or "noconfig".
+                let config = if ctx.config.is_empty() { "noconfig" } else { ctx.config.as_str() };
                 writeln!(out, "{indent}include(\"{objects}install-cxx-module-bmi-{config}.cmake\" OPTIONAL)").unwrap();
             }
         }

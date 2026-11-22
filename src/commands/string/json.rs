@@ -14,7 +14,7 @@ use super::{cm_join, str_to_ulong};
 // same as byte-order on `Vec<u8>`)
 
 #[derive(Clone, Debug)]
-enum Json {
+pub enum Json {
     Null,
     Int(i64),
     UInt(u64),
@@ -239,6 +239,7 @@ const INDENTATION: &[u8] = b"  ";
 const RIGHT_MARGIN: usize = 74;
 
 struct Writer {
+    indentation: &'static [u8],
     out: Vec<u8>,
     child_values: Vec<Vec<u8>>,
     indent_string: Vec<u8>,
@@ -248,7 +249,12 @@ struct Writer {
 
 impl Writer {
     fn write(root: &Json) -> Vec<u8> {
+        Self::write_indented(root, INDENTATION)
+    }
+
+    fn write_indented(root: &Json, indentation: &'static [u8]) -> Vec<u8> {
         let mut writer = Writer {
+            indentation,
             out: Vec::new(),
             child_values: Vec::new(),
             indent_string: Vec::new(),
@@ -398,11 +404,11 @@ impl Writer {
     }
 
     fn indent(&mut self) {
-        self.indent_string.extend_from_slice(INDENTATION);
+        self.indent_string.extend_from_slice(self.indentation);
     }
 
     fn unindent(&mut self) {
-        let new_len = self.indent_string.len() - INDENTATION.len();
+        let new_len = self.indent_string.len() - self.indentation.len();
         self.indent_string.truncate(new_len);
     }
 }
@@ -1083,6 +1089,12 @@ fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
             error_path: None,
         }),
     }
+}
+
+/// `operator<<(std::ostream&, Json::Value const&)`: the default
+/// StreamWriterBuilder (tab indentation).
+pub fn write_json_stream(value: &Json) -> String {
+    String::from_utf8_lossy(&Writer::write_indented(value, b"\t")).into_owned()
 }
 
 fn write_json(value: &Json) -> String {

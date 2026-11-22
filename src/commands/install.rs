@@ -239,10 +239,13 @@ fn add(interp: &mut Interp, options: InstallOptions, action: InstallAction) {
     let preceding_children = interp.mf().children.len();
     let backtrace = interp.backtrace.clone();
     interp.ext.misc.insert("install-target-enabled".into(), "1".into());
+    // cmGlobalGenerator::AddInstallComponent: a sorted set of names.
     if !options.component.is_empty() {
         let components = interp.ext.misc.entry("install-components".into()).or_default();
-        if !components.is_empty() { components.push(';'); }
-        components.push_str(&options.component);
+        let mut set: std::collections::BTreeSet<String> =
+            crate::util::expand_list(components, false).into_iter().collect();
+        set.insert(options.component.clone());
+        *components = set.into_iter().collect::<Vec<_>>().join(";");
     }
     interp.ext.install.rules.entry(index).or_default().push(InstallRule {
         options, action, preceding_children, backtrace,

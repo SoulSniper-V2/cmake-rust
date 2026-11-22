@@ -336,8 +336,11 @@ fn try_run_sources_spec() -> Spec {
     }
 }
 
+/// `TryRunOldArgParser = makeTryRunParser(TryCompileOldArgParser)`: the
+/// legacy try_run also accepts try_compile's OUTPUT_VARIABLE.
 fn try_run_old_spec() -> Spec {
     let mut keywords = sources_keywords();
+    keywords.extend_from_slice(&try_compile_keywords());
     keywords.extend_from_slice(&try_run_keywords());
     Spec {
         keywords,

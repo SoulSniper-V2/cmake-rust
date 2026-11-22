@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(x C)
+try_run(RA CA ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/a.c OUTPUT_VARIABLE OUT)
+string(REGEX MATCH "[a-z]+\\.c\\.o" m "${OUT}")
+message("A=${m} RA=${RA}")
+try_run(RB CB ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/b.c OUTPUT_VARIABLE OUT)
+string(REGEX MATCH "[a-z]+\\.c\\.o" m "${OUT}")
+message("B=${m} RB=${RB}")

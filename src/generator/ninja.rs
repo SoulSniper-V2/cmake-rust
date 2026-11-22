@@ -468,7 +468,9 @@ impl<'a> NinjaGenerator<'a> {
         for index in 0..interp.makefiles.len() {
             for target in self.ctx.targets_in_order() {
                 if target.makefile == index && is_in_build_system(target) && target.kind != TargetKind::GlobalTarget {
-                    summary.push_str(&gt::support_directory(self.ctx, target));
+                    let directory = gt::support_directory(self.ctx, target);
+                    self.write_labels(target, &directory)?;
+                    summary.push_str(&directory);
                     summary.push('\n');
                 }
             }
@@ -1667,6 +1669,78 @@ impl<'a> NinjaGenerator<'a> {
             escape(&util::collapse_full_path(&source.path, home)),
             escape(&util::collapse_full_path(object, home)),
         ));
+    }
+
+    /// `cmGlobalGenerator::WriteSummary(target)`: Labels.txt/Labels.json in
+    /// the target's support directory when any labels apply.
+    fn write_labels(&self, target: &Target, directory: &str) -> std::io::Result<()> {
+        use crate::commands::string::json::{Json, write_json_stream};
+        let interp = self.ctx.interp;
+        let file = format!("{directory}/Labels.txt");
+        let json_file = format!("{directory}/Labels.json");
+        let target_labels = target.props.get("LABELS");
+        let directory_labels = interp.makefiles[target.makefile].props.get("LABELS");
+        let cmake_directory_labels = self.ctx.var(target.makefile, "CMAKE_DIRECTORY_LABELS");
+        if target_labels.is_none() && directory_labels.is_none() && cmake_directory_labels.is_none() {
+            let _ = std::fs::remove_file(&file);
+            let _ = std::fs::remove_file(&json_file);
+            return Ok(());
+        }
+        let text = |value: &str| Json::Str(value.as_bytes().to_vec());
+        let mut out = String::new();
+        let mut all_labels = Vec::new();
+        let labels = util::expand_list(target_labels.unwrap_or_default(), false);
+        if !labels.is_empty() {
+            out.push_str("# Target labels\n");
+            for label in labels {
+                out.push_str(&format!(" {label}\n"));
+                all_labels.push(text(&label));
+            }
+        }
+        let directory_list = util::expand_list(directory_labels.unwrap_or_default(), false);
+        let cmake_list = util::expand_list(cmake_directory_labels.as_deref().unwrap_or_default(), false);
+        if !directory_list.is_empty() || !cmake_list.is_empty() {
+            out.push_str("# Directory labels\n");
+        }
+        for label in directory_list.iter().chain(&cmake_list) {
+            out.push_str(&format!(" {label}\n"));
+            all_labels.push(text(label));
+        }
+        out.push_str("# Source files and their labels\n");
+        let mut sources = Vec::new();
+        let mut seen = HashSet::new();
+        for source in gt::sources(self.ctx, target, &self.config).iter() {
+            if !seen.insert(source.path.clone()) {
+                continue;
+            }
+            out.push_str(&source.path);
+            out.push('\n');
+            let mut entry = std::collections::BTreeMap::new();
+            entry.insert(b"file".to_vec(), text(&source.path));
+            let labels = crate::commands::target::find_known_source(interp, target.makefile, &source.path)
+                .and_then(|index| interp.ext.sources[&target.makefile][index].props.get("LABELS").map(str::to_owned));
+            if let Some(labels) = labels {
+                let mut list = Vec::new();
+                for label in util::expand_list(&labels, false) {
+                    out.push_str(&format!(" {label}\n"));
+                    list.push(text(&label));
+                }
+                entry.insert(b"labels".to_vec(), Json::Array(list));
+            }
+            sources.push(Json::Object(entry));
+        }
+        let mut target_json = std::collections::BTreeMap::new();
+        target_json.insert(b"labels".to_vec(), Json::Array(all_labels));
+        target_json.insert(b"name".to_vec(), text(&target.name));
+        let mut root = std::collections::BTreeMap::new();
+        root.insert(b"sources".to_vec(), Json::Array(sources));
+        root.insert(b"target".to_vec(), Json::Object(target_json));
+        let _ = std::fs::create_dir_all(directory);
+        crate::fsutil::write_if_different(std::path::Path::new(&file), out.as_bytes())?;
+        crate::fsutil::write_if_different(
+            std::path::Path::new(&json_file),
+            write_json_stream(&Json::Object(root)).as_bytes(),
+        )
     }
 
     /// `cmNinjaUtilityTargetGenerator::WriteUtilBuildStatements`.

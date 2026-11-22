@@ -2,7 +2,7 @@
 //! `cmStringReplaceHelper`, `cmTimestamp`, `cmUuid`, `cmCryptoHash`, and
 //! `cmGeneratorExpression::Preprocess`).
 
-mod json;
+pub mod json;
 mod misc;
 mod regex_replace;
 
