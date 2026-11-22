@@ -508,8 +508,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     let mut unsupported = None;
     let mut bad_generator = false;
     let mut trace_file_failed = false;
-    let mut trace_json = false;
-    let mut trace_output = None;
     let mut preset_name = String::new();
     let mut list_presets = None;
     let mut have_b_arg = false;
@@ -572,8 +570,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 // cmSystemTools::ToNormalizedPathOnDisk
                 "--graphviz" => options.graphviz = Some(util::collapse_full_path(&value, cwd)),
                 "-B" => have_b_arg = true,
-                "--trace-format" => trace_json = value.eq_ignore_ascii_case("json-v1"),
-                "--trace-redirect" => trace_output = Some(cache::convert_to_unix_slashes(&value)),
                 _ => {}
             }
             if matches!(
@@ -628,6 +624,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     };
                     println!("{message}");
                     options.trace = true;
+                    options.trace_expand = arg == "--trace-expand";
                 }
                 "--warn-uninitialized" => {
                     println!("Warn about uninitialized values.");
@@ -704,17 +701,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     if bad_generator || trace_file_failed {
         return Ok(1);
     }
-    if trace_json {
-        use std::io::Write;
-        let header = "{\"version\":{\"major\":1,\"minor\":2}}";
-        if let Some(path) = trace_output {
-            if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path) {
-                let _ = writeln!(file, "{header}");
-            }
-        } else {
-            eprintln!("{header}");
-        }
-    }
     if options.binary_dir.is_empty() {
         options.binary_dir = cwd.to_owned();
     }
@@ -736,6 +722,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             Err(code) => return Ok(code),
         }
     }
+    crate::configure::print_trace_format_version(&options);
     let mut cache = Cache::default();
     if !script_mode && (!options.fresh || regenerate) {
         if let Err(error) = cache.load(Path::new(&options.binary_dir)) {
@@ -869,15 +856,22 @@ fn set_option<'a>(
         }
         "--trace-format" => {
             println!("Put cmake in trace mode and sets the trace output format.");
-            if !matches!(value.to_ascii_lowercase().as_str(), "human" | "json-v1") {
-                return Err("Invalid format specified for --trace-format. Valid formats are human, json-v1.".to_owned());
-            }
             options.trace = true;
+            match value.to_ascii_lowercase().as_str() {
+                "human" => options.trace_json = false,
+                "json-v1" => options.trace_json = true,
+                _ => {
+                    return Err("Invalid format specified for --trace-format. Valid formats are human, json-v1.".to_owned());
+                }
+            }
         }
         "--trace-source" => {
             println!(
                 "Put cmake in trace mode, but output only lines of a specified file. Multiple options are allowed."
             );
+            for file in value.split(';') {
+                options.trace_sources.push(cache::convert_to_unix_slashes(file));
+            }
             options.trace = true;
         }
         "--trace-redirect" => {
@@ -892,6 +886,7 @@ fn set_option<'a>(
                 ));
             } else {
                 println!("Trace will be written to {file}");
+                options.trace_redirect = Some(file.clone());
             }
             options.trace = true;
         }
@@ -1211,6 +1206,7 @@ fn run_script_mode(
     let Some(mut interp) = make_script_interp(argv, cwd) else {
         return 1;
     };
+    crate::configure::install_trace(&mut interp, options);
     if let Some(level) = &options.log_level {
         interp
             .ext

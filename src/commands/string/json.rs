@@ -1101,6 +1101,54 @@ fn write_json(value: &Json) -> String {
     String::from_utf8_lossy(&Writer::write(value)).into_owned()
 }
 
+/// `Json::writeString` with `indentation = ""`: BuiltStyledStreamWriter
+/// writes no newlines and uses ":" and "," without spaces.
+pub fn write_json_compact(value: &Json) -> String {
+    fn write(value: &Json, out: &mut Vec<u8>) {
+        match value {
+            Json::Null => out.extend_from_slice(b"null"),
+            Json::Int(v) => out.extend_from_slice(v.to_string().as_bytes()),
+            Json::UInt(v) => out.extend_from_slice(v.to_string().as_bytes()),
+            Json::Real(v) => out.extend_from_slice(double_to_string(*v).as_bytes()),
+            Json::Str(s) => out.extend_from_slice(&quoted_string(s)),
+            Json::Bool(b) => out.extend_from_slice(if *b { b"true" } else { b"false" }),
+            Json::Array(items) => {
+                if items.is_empty() {
+                    out.extend_from_slice(b"[]");
+                    return;
+                }
+                out.push(b'[');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(b',');
+                    }
+                    write(item, out);
+                }
+                out.push(b']');
+            }
+            Json::Object(map) => {
+                if map.is_empty() {
+                    out.extend_from_slice(b"{}");
+                    return;
+                }
+                out.push(b'{');
+                for (i, (name, child)) in map.iter().enumerate() {
+                    if i > 0 {
+                        out.push(b',');
+                    }
+                    out.extend_from_slice(&quoted_string(name));
+                    out.push(b':');
+                    write(child, out);
+                }
+                out.push(b'}');
+            }
+        }
+    }
+    let mut out = Vec::new();
+    write(value, &mut out);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 // ---------------------------------------------------------------------
 // HandleJSONCommand
 

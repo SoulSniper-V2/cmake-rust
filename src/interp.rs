@@ -193,6 +193,15 @@ pub enum Mode {
     Script,
 }
 
+/// List-file tracing (`cmake::SetTrace`, `SetTraceExpand`,
+/// `SetTraceFormat`, `AddTraceSource`, `SetTraceFile`).
+pub struct TraceConfig {
+    pub expand: bool,
+    pub json: bool,
+    pub sources: Vec<String>,
+    pub file: Option<std::cell::RefCell<std::fs::File>>,
+}
+
 pub struct Interp {
     pub mode: Mode,
     pub cache: Cache,
@@ -244,6 +253,12 @@ pub struct Interp {
     /// try_compile project inherits the outer project's root because the
     /// `cmake` instance is shared (`cmMessenger::TopSource`).
     pub top_source_root: Option<String>,
+    /// Tracing settings shared with try_compile instances
+    /// (`cmake::SetTraceRedirect`).
+    pub trace: Option<Rc<TraceConfig>>,
+    /// `recursion_depth` when each directory's `cmMakefile` started
+    /// executing, for the per-makefile `ExecutionStatusStack` size.
+    trace_frame_base: Vec<usize>,
 }
 
 impl Interp {
@@ -286,6 +301,8 @@ impl Interp {
             recursion_depth_base: 0,
             dir_final_vars: Vec::new(),
             top_source_root: None,
+            trace: None,
+            trace_frame_base: vec![0],
         };
         interp.makefiles.push(Makefile {
             source_dir: home_source.to_owned(),
@@ -641,6 +658,9 @@ impl Interp {
         let source = self.makefiles[index].source_dir.clone();
         let binary = self.makefiles[index].binary_dir.clone();
         self.mf_stack.push(index);
+        // cmMakefile::InitializeFromParent copies RecursionDepth; the new
+        // makefile's ExecutionStatusStack starts empty.
+        self.trace_frame_base.push(self.recursion_depth);
         self.push_scope();
         self.set_def("CMAKE_CURRENT_SOURCE_DIR", &source);
         self.set_def("CMAKE_CURRENT_BINARY_DIR", &binary);
@@ -653,6 +673,7 @@ impl Interp {
         self.save_directory_definitions(index);
         self.record_directory_vars();
         self.pop_scope();
+        self.trace_frame_base.pop();
         self.mf_stack.pop();
         ok
     }
@@ -1143,6 +1164,15 @@ impl Interp {
             }
             let command = &file.commands[index];
             let jumps = &file.jumps[index];
+            // Flow commands run their own blocks here but are traced like
+            // any command invocation (cmMakefile::ExecuteCommand).
+            if self.trace.is_some()
+                && matches!(command.lname.as_str(), "if" | "foreach" | "while" | "function" | "macro" | "block")
+                && self.is_flow(&command.lname)
+            {
+                let depth = self.recursion_depth + 1;
+                self.print_command_trace(file, command, subst, depth);
+            }
             let ctl = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(file, index, subst);
@@ -1181,6 +1211,92 @@ impl Interp {
 
     fn is_flow(&self, name: &str) -> bool {
         matches!(self.commands.get(name), Some(CommandDef::Flow))
+    }
+
+    /// `cmMakefile::PrintCommandTrace`. `depth` is the recursion depth of
+    /// the traced call (one more than the current depth for flow commands
+    /// traced before their call frame, and for CommandMissingFromStack).
+    pub fn print_command_trace(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+        depth: usize,
+    ) {
+        let Some(trace) = self.trace.clone() else {
+            return;
+        };
+        let full_path: &str = &file.path;
+        if !trace.sources.is_empty() {
+            let only_filename = util::filename_name(full_path);
+            let wanted = trace.sources.iter().any(|source| {
+                full_path.ends_with(source.as_str()) && only_filename == util::filename_name(source)
+            });
+            if !wanted {
+                return;
+            }
+        }
+        let mut args = Vec::with_capacity(command.args.len());
+        for arg in &command.args {
+            let raw = match subst {
+                Some(subst) if arg.delim != Delim::Bracket => subst.apply(&arg.value),
+                _ => arg.value.clone(),
+            };
+            if trace.expand && arg.delim != Delim::Bracket {
+                args.push(self.expand_variables(&raw, None, false, false));
+            } else {
+                args.push(raw);
+            }
+        }
+        let defer_id = self.ext.defer_current_id.clone();
+        let base = self.trace_frame_base.last().copied().unwrap_or(0);
+        let msg = if trace.json {
+            use crate::commands::string::json::Json;
+            let mut val: std::collections::BTreeMap<Vec<u8>, Json> = std::collections::BTreeMap::new();
+            val.insert(b"file".to_vec(), Json::Str(full_path.as_bytes().to_vec()));
+            val.insert(b"line".to_vec(), Json::Int(command.line as i64));
+            if command.line != command.line_end {
+                val.insert(b"line_end".to_vec(), Json::Int(command.line_end as i64));
+            }
+            if let Some(id) = &defer_id {
+                val.insert(b"defer".to_vec(), Json::Str(id.as_bytes().to_vec()));
+            }
+            val.insert(b"cmd".to_vec(), Json::Str(command.name.as_bytes().to_vec()));
+            val.insert(
+                b"args".to_vec(),
+                Json::Array(args.iter().map(|a| Json::Str(a.as_bytes().to_vec())).collect()),
+            );
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64();
+            val.insert(b"time".to_vec(), Json::Real(now));
+            val.insert(b"frame".to_vec(), Json::UInt(depth.saturating_sub(base) as u64));
+            val.insert(
+                b"global_frame".to_vec(),
+                Json::UInt((depth + self.recursion_depth_base) as u64),
+            );
+            crate::commands::string::json::write_json_compact(&Json::Object(val))
+        } else {
+            let mut msg = format!("{full_path}({}):", command.line);
+            if let Some(id) = &defer_id {
+                msg += &format!("DEFERRED:{id}:");
+            }
+            msg += &format!("  {}(", command.name);
+            for arg in &args {
+                msg += arg;
+                msg.push(' ');
+            }
+            msg.push(')');
+            msg
+        };
+        match &trace.file {
+            Some(file) => {
+                use std::io::Write;
+                let _ = writeln!(file.borrow_mut(), "{msg}");
+            }
+            None => self.stderr_line(&msg),
+        }
     }
 
     fn frame_for(&self, file: &Rc<ParsedFile>, command: &Command) -> Frame {
@@ -1263,6 +1379,10 @@ impl Interp {
         };
         if self.fatal {
             return (false, Ctl::Normal);
+        }
+        if self.trace.is_some() {
+            let depth = self.recursion_depth;
+            self.print_command_trace(file, command, subst, depth);
         }
         match def {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
@@ -1621,6 +1741,11 @@ impl Interp {
                     }
                     else_seen = true;
                     taken = !has_run;
+                    if !has_run && self.trace.is_some() {
+                        // CommandMissingFromStack::Yes
+                        let depth = self.recursion_depth + 1;
+                        self.print_command_trace(file, sep, subst, depth);
+                    }
                 }
                 "elseif" => {
                     let frame = self.frame_for(file, sep);
@@ -1644,6 +1769,10 @@ impl Interp {
                     if has_run {
                         taken = false;
                     } else {
+                        if self.trace.is_some() {
+                            let depth = self.recursion_depth + 1;
+                            self.print_command_trace(file, sep, subst, depth);
+                        }
                         let saved = std::mem::replace(&mut self.backtrace, backtrace);
                         taken = self.evaluate_if_condition(file, sep, subst, "elseif");
                         self.backtrace = saved;

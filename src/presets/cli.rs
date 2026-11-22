@@ -241,14 +241,39 @@ pub fn apply_configure_preset(
     if expanded.debug_try_compile == Some(true) {
         options.debug_trycompile = true;
     }
-    if expanded.trace_mode.is_some_and(|mode| mode != TraceEnableMode::Disable)
-        || expanded.trace_format.is_some()
-        || !expanded.trace_source.is_empty()
-        || !expanded.trace_redirect.is_empty()
+    if let Some(mode) = expanded.trace_mode
+        && mode != TraceEnableMode::Disable
     {
-        // cmake::SetTrace and friends: list-file tracing is not implemented.
-        error("Preset field \"trace\" is not supported");
-        return Err(1);
+        options.trace = true;
+        if mode == TraceEnableMode::Expand {
+            options.trace_expand = true;
+        }
+    }
+    if let Some(format) = expanded.trace_format {
+        options.trace = true;
+        options.trace_json = format == super::TraceOutputFormat::JsonV1;
+    }
+    if !expanded.trace_source.is_empty() {
+        options.trace = true;
+        options.trace_sources.extend(expanded.trace_source.iter().cloned());
+    }
+    if !expanded.trace_redirect.is_empty() {
+        options.trace = true;
+        // cmake::SetTraceFile
+        let file = &expanded.trace_redirect;
+        match std::fs::File::create(file) {
+            Ok(_) => {
+                println!("Trace will be written to {file}");
+                options.trace_redirect = Some(file.clone());
+            }
+            Err(e) => {
+                error(format!(
+                    "Error opening trace file {file}: {}",
+                    crate::cmcmd::os_error(&e)
+                ));
+                return Err(1);
+            }
+        }
     }
 
     // cmake::ProcessPresetVariables, ahead of the command-line cache args.

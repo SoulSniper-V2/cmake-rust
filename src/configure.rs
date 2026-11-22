@@ -42,6 +42,14 @@ pub struct ConfigureOptions {
     pub warn_uninitialized: bool,
     pub debug_trycompile: bool,
     pub trace: bool,
+    /// `--trace-expand` (cmake::TraceExpand).
+    pub trace_expand: bool,
+    /// `--trace-format=json-v1`.
+    pub trace_json: bool,
+    /// `--trace-source` files.
+    pub trace_sources: Vec<String>,
+    /// `--trace-redirect` file, already created.
+    pub trace_redirect: Option<String>,
     /// Original command-line arguments.
     pub argv: Vec<String>,
     /// `--explain <target> <flag>` request (cmake-rust extension).
@@ -221,8 +229,46 @@ pub(crate) fn glob_to_regex(pattern: &str) -> crate::cmregex::Regex {
 }
 
 /// Builds an interpreter for configuring `options`.
+/// The cmake instance's trace settings (`SetTrace*`, `SetTraceFile`).
+pub fn install_trace(interp: &mut Interp, options: &ConfigureOptions) {
+    if !options.trace {
+        return;
+    }
+    let file = options.trace_redirect.as_ref().and_then(|path| {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .ok()
+            .map(std::cell::RefCell::new)
+    });
+    interp.trace = Some(std::rc::Rc::new(crate::interp::TraceConfig {
+        expand: options.trace_expand,
+        json: options.trace_json,
+        sources: options.trace_sources.clone(),
+        file,
+    }));
+}
+
+/// `cmake::PrintTraceFormatVersion`.
+pub fn print_trace_format_version(options: &ConfigureOptions) {
+    if !options.trace || !options.trace_json {
+        return;
+    }
+    use std::io::Write;
+    let header = "{\"version\":{\"major\":1,\"minor\":2}}";
+    match &options.trace_redirect {
+        Some(path) => {
+            if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(path) {
+                let _ = writeln!(file, "{header}");
+            }
+        }
+        None => eprintln!("{header}"),
+    }
+}
+
 pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
     let mut interp = Interp::new(Mode::Project, &options.source_dir, &options.binary_dir, root);
+    install_trace(&mut interp, options);
     interp.in_try_compile = options.in_try_compile;
     interp.debug_trycompile = options.debug_trycompile;
     add_default_definitions(&mut interp);
@@ -678,6 +724,9 @@ pub fn try_compile_project(
     let suppress = if outer.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") { "TRUE" } else { "FALSE" };
     inner.cache.add("CMAKE_SUPPRESS_DEVELOPER_WARNINGS", Some(suppress), Some(""), CacheType::Internal);
     inner.suppress_dev_warnings = outer.suppress_dev_warnings;
+    // cmake::SetTraceRedirect: the inner instance traces into the parent's
+    // output with the parent's settings.
+    inner.trace = outer.trace.clone();
     let restore = |previous: &Option<std::path::PathBuf>| {
         if let Some(previous) = previous {
             let _ = std::env::set_current_dir(previous);
