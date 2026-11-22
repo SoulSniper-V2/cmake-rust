@@ -79,6 +79,9 @@ fn toolchain_vars(interp: &mut Interp, makefile: usize) {
             ("CMAKE_SHARED_LIBRARY_SONAME_CXX_FLAG", "-Wl,-soname,"),
             ("CMAKE_SHARED_MODULE_SONAME_FLAG", "-Wl,-soname,"),
             ("CMAKE_SHARED_MODULE_SONAME_C_FLAG", "-Wl,-soname,"),
+            ("CMAKE_EXECUTABLE_RUNTIME_C_FLAG", "-Wl,-rpath,"),
+            ("CMAKE_EXECUTABLE_RUNTIME_C_FLAG_SEP", ":"),
+            ("CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG", "-Wl,-rpath,"),
             ("CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG_SEP", ":"),
             ("CMAKE_SHARED_MODULE_RUNTIME_C_FLAG_SEP", ":"),
         ],
@@ -193,6 +196,7 @@ fn target_ex(
         props,
         provenance: Default::default(),
         backtrace: Vec::new(),
+        policies: interp.effective_policies(),
         ..Target::new("", crate::state::TargetKind::Executable, 0)
     };
     crate::state::register_target(interp, target);
@@ -873,6 +877,7 @@ fn oracle_fixtures() {
         (
             "target-rpath",
             Box::new(|i| {
+                run(i, "cmake_policy(SET CMP0095 NEW)");
                 target(
                     i,
                     "app",
@@ -880,7 +885,7 @@ fn oracle_fixtures() {
                     0,
                     &[("SOURCES", "main.c"), ("INSTALL_RPATH", "/opt/lib;$ORIGIN")],
                 );
-                run(i, "cmake_policy(SET CMP0095 NEW)\ninstall(TARGETS app)");
+                run(i, "install(TARGETS app)");
                 toolchain_vars(i, 0);
             }),
         ),

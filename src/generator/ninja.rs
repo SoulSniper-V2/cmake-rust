@@ -1695,6 +1695,44 @@ impl<'a> NinjaGenerator<'a> {
         true
     }
 
+    /// `cmNinjaNormalTargetGenerator::ComputeLinkCmd` for host link rules.
+    fn link_commands(&self, target: &Target, language: &str) -> Vec<String> {
+        let create = match target.kind {
+            TargetKind::Executable => "LINK_EXECUTABLE",
+            TargetKind::StaticLibrary => "CREATE_STATIC_LIBRARY",
+            TargetKind::SharedLibrary => "CREATE_SHARED_LIBRARY",
+            TargetKind::ModuleLibrary => "CREATE_SHARED_MODULE",
+            _ => return Vec::new(),
+        };
+        let ipo = target.kind == TargetKind::StaticLibrary
+            && flags::ipo_enabled(self.ctx, target, &self.config, language);
+        let rule = |suffix| {
+            let var = format!("CMAKE_{language}_{suffix}");
+            if ipo && let Some(value) = self.ctx.var(target.makefile, &format!("{var}_IPO")) {
+                return Some(value);
+            }
+            self.ctx.var(target.makefile, &var)
+        };
+        if let Some(commands) = rule(create) {
+            return util::expand_list(&commands, false);
+        }
+        if target.kind != TargetKind::StaticLibrary {
+            return Vec::new();
+        }
+        // Only the incremental archiver rules need the old archive removed.
+        let mut commands = vec![format!("{} -E rm -f <TARGET>", self.cmake_cmd)];
+        for suffix in ["ARCHIVE_CREATE", "ARCHIVE_FINISH"] {
+            if let Some(value) = rule(suffix) {
+                util::expand_list_into(&value, false, &mut commands);
+            } else {
+                self.ctx.error(target.backtrace.clone(), format!(
+                    "Error required internal CMake variable not set, cmake may not be built correctly.\nMissing variable is:\nCMAKE_{language}_{suffix}"
+                ));
+            }
+        }
+        commands
+    }
+
     /// `cmNinjaNormalTargetGenerator::WriteLinkRule` +
     /// `WriteLinkStatement` (no device link, no Apple).
     fn write_link_statement(&mut self, target: &'a Target, language: &str, objects: &[String]) {
@@ -1705,13 +1743,6 @@ impl<'a> NinjaGenerator<'a> {
         let target_output = self.ninja_path(&format!("{directory}/{}", names.output));
         let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
         let rule_name = self.linker_rule_name(language, target);
-        let link_command_var = match target.kind {
-            TargetKind::Executable => format!("CMAKE_{language}_LINK_EXECUTABLE"),
-            TargetKind::StaticLibrary => format!("CMAKE_{language}_ARCHIVE_CREATE"),
-            TargetKind::SharedLibrary => format!("CMAKE_{language}_CREATE_SHARED_LIBRARY"),
-            TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
-            _ => String::new(),
-        };
         // cmGeneratorTarget::HasLinkDependencyFile.
         let link_depfile = flags::link_dependency_file(self.ctx, target, language);
         let use_rsp = false;
@@ -1726,22 +1757,7 @@ impl<'a> NinjaGenerator<'a> {
                     .var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
                 rule.depfile = "$DEP_FILE".into();
             }
-            let commands: Vec<String> = if target.kind == TargetKind::StaticLibrary {
-                // cmNinjaNormalTargetGenerator::ComputeLinkCmd for static libs:
-                // remove the old archive first, then create/append/finish.
-                let mut list = vec![format!("{} -E rm -f <TARGET>", self.cmake_cmd)];
-                let create = self
-                    .ctx
-                    .var_safe(makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"));
-                list.extend(util::expand_list(&create, false));
-                let finish = self
-                    .ctx
-                    .var_safe(makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
-                list.extend(util::expand_list(&finish, false));
-                list
-            } else {
-                util::expand_list(&self.ctx.var_safe(makefile, &link_command_var), false)
-            };
+            let commands = self.link_commands(target, language);
             let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
             let mut vars: Vec<(&str, String)> = vec![
                 ("TARGET_NAME", target.name.clone()),
