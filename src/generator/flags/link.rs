@@ -300,9 +300,10 @@ fn resolve_wrapper(inputs: &Flags<'_, '_>, options: Vec<String>, prefix: &str) -
                 .collect()
         };
         if args.iter().any(|arg| arg.contains("SHELL:")) {
-            inputs.error(format!(
-                "'SHELL:' prefix is not supported as part of '{prefix}:' arguments."
-            ));
+            inputs.ctx.error(
+                inputs.target.backtrace.clone(),
+                format!("'SHELL:' prefix is not supported as part of '{prefix}:' arguments."),
+            );
             break;
         }
         if wrapper.is_empty() {
