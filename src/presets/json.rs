@@ -183,12 +183,34 @@ struct Token {
     end: usize,
 }
 
+/// `OurFeatures` settings that differ between the readers CMake builds.
+#[derive(Clone, Copy)]
+pub struct Features {
+    pub allow_comments: bool,
+    pub allow_trailing_commas: bool,
+    pub strict_root: bool,
+    pub fail_if_extra: bool,
+    pub reject_dup_keys: bool,
+}
+
+impl Features {
+    /// `CharReaderBuilder::strictMode`.
+    pub const STRICT: Features = Features {
+        allow_comments: false,
+        allow_trailing_commas: false,
+        strict_root: true,
+        fail_if_extra: true,
+        reject_dup_keys: true,
+    };
+}
+
 struct Reader<'a> {
     doc: &'a [u8],
     cur: usize,
     depth: usize,
-    /// (offset_start, message)
-    errors: Vec<(usize, String)>,
+    features: Features,
+    /// (offset_start, message, extra offset)
+    errors: Vec<(usize, String, Option<usize>)>,
 }
 
 impl<'a> Reader<'a> {
@@ -287,6 +309,17 @@ impl<'a> Reader<'a> {
         )
     }
 
+    /// `readTokenSkippingComments`.
+    fn read_token_skipping(&mut self) -> (bool, Token) {
+        let (mut ok, mut token) = self.read_token();
+        if self.features.allow_comments {
+            while ok && token.tt == TokenType::Comment {
+                (ok, token) = self.read_token();
+            }
+        }
+        (ok, token)
+    }
+
     fn read_string(&mut self) -> bool {
         let mut c = 0u8;
         while self.cur != self.doc.len() {
@@ -375,7 +408,12 @@ impl<'a> Reader<'a> {
     }
 
     fn add_error(&mut self, message: impl Into<String>, token: &Token) -> bool {
-        self.errors.push((token.start, message.into()));
+        self.errors.push((token.start, message.into(), None));
+        false
+    }
+
+    fn add_error_extra(&mut self, message: impl Into<String>, token: &Token, extra: usize) -> bool {
+        self.errors.push((token.start, message.into(), Some(extra)));
         false
     }
 
@@ -409,7 +447,7 @@ impl<'a> Reader<'a> {
             );
             std::process::abort();
         }
-        let (_, token) = self.read_token();
+        let (_, token) = self.read_token_skipping();
         let ok = match token.tt {
             TokenType::ObjectBegin => self.read_object(&token, slot),
             TokenType::ArrayBegin => self.read_array(&token, slot),
@@ -445,11 +483,13 @@ impl<'a> Reader<'a> {
         slot.start = token.start;
         let mut name = String::new();
         let token_name = loop {
-            let (ok, token_name) = self.read_token();
+            let (ok, token_name) = self.read_token_skipping();
             if !ok {
                 break token_name;
             }
-            if token_name.tt == TokenType::ObjectEnd && name.is_empty() {
+            if token_name.tt == TokenType::ObjectEnd
+                && (name.is_empty() || self.features.allow_trailing_commas)
+            {
                 return true;
             }
             name.clear();
@@ -464,7 +504,7 @@ impl<'a> Reader<'a> {
             let Kind::Object(map) = &mut slot.kind else {
                 unreachable!()
             };
-            if map.contains_key(&name) {
+            if self.features.reject_dup_keys && map.contains_key(&name) {
                 let msg = format!("Duplicate key: '{name}'");
                 return self.add_error_and_recover(msg, &token_name, TokenType::ObjectEnd);
             }
@@ -487,7 +527,7 @@ impl<'a> Reader<'a> {
             if !ok {
                 return self.recover_from_error(TokenType::ObjectEnd);
             }
-            let (ok, comma) = self.read_token();
+            let (ok, comma) = self.read_token_skipping();
             if !ok || (comma.tt != TokenType::ObjectEnd && comma.tt != TokenType::ArraySeparator) {
                 return self.add_error_and_recover(
                     "Missing ',' or '}' in object declaration",
@@ -508,7 +548,10 @@ impl<'a> Reader<'a> {
         let mut index = 0;
         loop {
             self.skip_spaces();
-            if self.cur != self.doc.len() && self.doc[self.cur] == b']' && index == 0 {
+            if self.cur != self.doc.len()
+                && self.doc[self.cur] == b']'
+                && (index == 0 || self.features.allow_trailing_commas)
+            {
                 let _ = self.read_token();
                 return true;
             }
@@ -524,7 +567,7 @@ impl<'a> Reader<'a> {
             if !ok {
                 return self.recover_from_error(TokenType::ArrayEnd);
             }
-            let (ok, current) = self.read_token();
+            let (ok, current) = self.read_token_skipping();
             if !ok || (current.tt != TokenType::ArraySeparator && current.tt != TokenType::ArrayEnd) {
                 return self.add_error_and_recover(
                     "Missing ',' or ']' in array declaration",
@@ -603,7 +646,7 @@ impl<'a> Reader<'a> {
                 continue;
             }
             if current == end {
-                self.add_error("Empty escape sequence in string", token);
+                self.add_error_extra("Empty escape sequence in string", token, current);
                 return None;
             }
             let escape = self.doc[current];
@@ -633,7 +676,7 @@ impl<'a> Reader<'a> {
                     }
                 }
                 _ => {
-                    self.add_error("Bad escape sequence in string", token);
+                    self.add_error_extra("Bad escape sequence in string", token, current);
                     return None;
                 }
             }
@@ -645,9 +688,10 @@ impl<'a> Reader<'a> {
         let mut unicode = self.decode_unicode_escape(token, current, end)?;
         if (0xD800..=0xDBFF).contains(&unicode) {
             if end - *current < 6 {
-                self.add_error(
+                self.add_error_extra(
                     "additional six characters expected to parse unicode surrogate pair.",
                     token,
+                    *current,
                 );
                 return None;
             }
@@ -656,9 +700,10 @@ impl<'a> Reader<'a> {
                 let pair = self.decode_unicode_escape(token, current, end)?;
                 unicode = 0x10000 + ((unicode & 0x3FF) << 10) + (pair & 0x3FF);
             } else {
-                self.add_error(
+                self.add_error_extra(
                     "expecting another \\u token to begin the second half of a unicode surrogate pair",
                     token,
+                    *current,
                 );
                 return None;
             }
@@ -668,7 +713,7 @@ impl<'a> Reader<'a> {
 
     fn decode_unicode_escape(&mut self, token: &Token, current: &mut usize, end: usize) -> Option<u32> {
         if end - *current < 4 {
-            self.add_error("Bad unicode escape sequence in string: four digits expected.", token);
+            self.add_error_extra("Bad unicode escape sequence in string: four digits expected.", token, *current);
             return None;
         }
         let mut unicode = 0u32;
@@ -681,9 +726,10 @@ impl<'a> Reader<'a> {
                 b'a'..=b'f' => unicode += u32::from(c - b'a' + 10),
                 b'A'..=b'F' => unicode += u32::from(c - b'A' + 10),
                 _ => {
-                    self.add_error(
+                    self.add_error_extra(
                         "Bad unicode escape sequence in string: hexadecimal digit expected.",
                         token,
+                        *current,
                     );
                     return None;
                 }
@@ -693,12 +739,23 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// `OurCharReader::parse` + `getStructuredErrors` (offset_start, message).
-fn parse(doc: &[u8]) -> (Value, Vec<(usize, String)>) {
+/// The result of `OurCharReader::parse`: the (possibly partial) root and
+/// the errors as (offset_start, message, extra offset).
+pub struct Parsed {
+    pub root: Value,
+    pub errors: Vec<(usize, String, Option<usize>)>,
+    /// The document after the skipped byte order mark.
+    doc_start: usize,
+}
+
+/// `OurCharReader::parse` with the given features (skipBom is on).
+pub fn parse_with(doc: &[u8], features: Features) -> Parsed {
+    let doc_start = if doc.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
     let mut reader = Reader {
         doc,
-        cur: 0,
+        cur: doc_start,
         depth: 0,
+        features,
         errors: Vec::new(),
     };
     let mut root = Value {
@@ -706,13 +763,13 @@ fn parse(doc: &[u8]) -> (Value, Vec<(usize, String)>) {
         start: 0,
     };
     reader.read_value(&mut root);
-    let (_, token) = reader.read_token();
-    if token.tt != TokenType::EndOfStream {
+    let (_, token) = reader.read_token_skipping();
+    if features.fail_if_extra && token.tt != TokenType::EndOfStream {
         reader.add_error("Extra non-whitespace after JSON value.", &token);
-    } else if !root.is_array() && !root.is_object() {
+    } else if features.strict_root && !root.is_array() && !root.is_object() {
         let token = Token {
             tt: TokenType::Error,
-            start: 0,
+            start: doc_start,
             end: doc.len(),
         };
         reader.add_error(
@@ -720,7 +777,54 @@ fn parse(doc: &[u8]) -> (Value, Vec<(usize, String)>) {
             &token,
         );
     }
-    (root, reader.errors)
+    Parsed {
+        root,
+        errors: reader.errors,
+        doc_start,
+    }
+}
+
+impl Parsed {
+    /// `OurReader::getLocationLineAndColumn`.
+    fn location(doc: &[u8], begin: usize, location: usize) -> String {
+        let mut current = begin;
+        let mut last_line_start = current;
+        let mut line = 0;
+        while current < location && current != doc.len() {
+            let c = doc[current];
+            current += 1;
+            if c == b'\r' {
+                if current != doc.len() && doc[current] == b'\n' {
+                    current += 1;
+                }
+                last_line_start = current;
+                line += 1;
+            } else if c == b'\n' {
+                last_line_start = current;
+                line += 1;
+            }
+        }
+        format!("Line {}, Column {}", line + 1, location.saturating_sub(last_line_start) + 1)
+    }
+
+    /// `OurReader::getFormattedErrorMessages`.
+    pub fn formatted_errors(&self, doc: &[u8]) -> String {
+        let mut out = String::new();
+        for (start, message, extra) in &self.errors {
+            out += &format!("* {}\n  {message}\n", Self::location(doc, self.doc_start, *start));
+            if let Some(extra) = extra {
+                out += &format!("See {} for detail.\n", Self::location(doc, self.doc_start, *extra));
+            }
+        }
+        out
+    }
+}
+
+/// strictMode parse with structured errors (offset_start, message).
+fn parse(doc: &[u8]) -> (Value, Vec<(usize, String)>) {
+    let parsed = parse_with(doc, Features::STRICT);
+    let errors = parsed.errors.into_iter().map(|(start, message, _)| (start, message)).collect();
+    (parsed.root, errors)
 }
 
 // ---------------------------------------------------------------------

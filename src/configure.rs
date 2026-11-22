@@ -335,11 +335,20 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         .cache
         .value("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
         .is_some_and(util::is_off);
-    let code = actual_configure(interp, options);
+    let mut file_api = None;
+    let code = actual_configure(interp, options, &mut file_api);
     if code != 0 {
         return code;
     }
     let code = crate::generator::generate(interp, options);
+    if let Some(api) = &mut file_api {
+        let index_for = if code != 0 {
+            crate::fileapi::IndexFor::FailedGenerate
+        } else {
+            crate::fileapi::IndexFor::Success
+        };
+        api.write_replies(interp, index_for);
+    }
     if code != 0 {
         interp.stderr_line("CMake Generate step failed.  Build files cannot be regenerated correctly.");
         return code;
@@ -354,7 +363,11 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
 }
 
 /// `cmake::ActualConfigure`.
-fn actual_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
+fn actual_configure(
+    interp: &mut Interp,
+    options: &ConfigureOptions,
+    file_api: &mut Option<crate::fileapi::FileApi>,
+) -> i32 {
     let home = options.source_dir.clone();
     let binary = options.binary_dir.clone();
     let _ = std::fs::remove_dir_all(format!("{binary}/CMakeFiles/CMakeScratch"));
@@ -488,8 +501,15 @@ fn actual_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
             CacheType::String,
         );
     }
+    // cmake::ActualConfigure: the file API reads queries before configuring.
+    let mut api = crate::fileapi::FileApi::new(&binary);
+    api.read_queries();
+    *file_api = Some(api);
     let start = Instant::now();
     configure_root(interp, &source_list);
+    if let Some(api) = file_api {
+        api.add_project_queries(interp);
+    }
     let elapsed = start.elapsed().as_secs_f64();
     if !options.in_try_compile {
         let message = if interp.error {
@@ -515,6 +535,9 @@ fn actual_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         system_error(Some(interp), &format!("Unable to open cache file for save. {binary}/CMakeCache.txt: {error}"));
     }
     if interp.error {
+        if let Some(api) = file_api {
+            api.write_replies(interp, crate::fileapi::IndexFor::FailedConfigure);
+        }
         return -1;
     }
     0
@@ -658,13 +681,24 @@ pub fn try_compile_project(
             let _ = std::env::set_current_dir(previous);
         }
     };
-    if actual_configure(&mut inner, &options) != 0 {
+    // The try_compile cmake instance runs the file API like any other.
+    let mut file_api = None;
+    if actual_configure(&mut inner, &options, &mut file_api) != 0 {
         outer.issue(MessageType::FatalError, "Failed to configure test project build system.");
         outer.set_fatal();
         restore(&previous_cwd);
         return (1, String::new());
     }
-    if crate::generator::generate(&mut inner, &options) != 0 {
+    let generated = crate::generator::generate(&mut inner, &options);
+    if let Some(api) = &mut file_api {
+        let index_for = if generated != 0 {
+            crate::fileapi::IndexFor::FailedGenerate
+        } else {
+            crate::fileapi::IndexFor::Success
+        };
+        api.write_replies(&inner, index_for);
+    }
+    if generated != 0 {
         outer.issue(MessageType::FatalError, "Failed to generate test project build system.");
         outer.set_fatal();
         restore(&previous_cwd);

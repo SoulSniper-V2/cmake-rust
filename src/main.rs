@@ -10,6 +10,7 @@ mod condition;
 mod configure;
 mod configure_log;
 mod flow;
+mod fileapi;
 mod fsutil;
 mod generator;
 mod install_model;
