@@ -1433,8 +1433,9 @@ fn object_file_name(
 /// are available. The public *_with_link_closure queries accept those closures.
 pub(super) fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a Target> {
     let mut seen = HashSet::from([(target.makefile, target.name.as_str())]);
-    let mut pending = evaluated_links(ctx, target, target, "LINK_LIBRARIES")
+    let mut pending = evaluated_entries(ctx, target, target, "LINK_LIBRARIES")
         .into_iter()
+        .flat_map(|(items, _)| items)
         .filter_map(|name| target_in_directory(ctx, target.makefile, &name))
         .rev()
         .collect::<Vec<_>>();
@@ -1461,14 +1462,22 @@ pub(super) fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) 
                 "INTERFACE_LINK_LIBRARIES",
             )
         };
-        pending.extend(
+        let items = if dep.provenance.contains_key(property) {
+            evaluated_entries(ctx, dep, target, property)
+                .into_iter()
+                .flat_map(|(items, _)| items)
+                .collect()
+        } else {
             expand_list(
                 &ctx.genex_with_dag(value, dep, target, property, None),
                 false,
             )
-            .into_iter()
-            .rev()
-            .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
+        };
+        pending.extend(
+            items
+                .into_iter()
+                .rev()
+                .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
         );
     }
     closure

@@ -156,26 +156,33 @@ impl GenexHost for CtxHost<'_, '_> {
         interp.ext.aliases.get(name).cloned()
     }
 
-    fn resolve_target(&self, name: &str, _current: Option<&str>) -> Option<String> {
-        if let Some(alias) = self.resolve_alias(name) {
-            return Some(alias);
-        }
+    fn alias_global(&self, name: &str) -> bool {
+        self.ctx.interp.ext.aliases.contains_key(name)
+    }
+
+    fn resolve_target(&self, name: &str, current: Option<&str>) -> Option<String> {
         if self.ctx.interp.ext.targets.contains_key(name) {
             return Some(name.to_owned());
         }
-        let mut dir = Some(self.dir);
-        while let Some(index) = dir {
-            if let Some(key) = crate::state::find_target_key_at(self.ctx.interp, index, name) {
-                return Some(key);
-            }
-            dir = self
-                .ctx
-                .interp
-                .makefiles
-                .get(index)
-                .and_then(|mf| mf.parent);
-        }
-        None
+        let dir = current
+            .and_then(|name| self.find(name))
+            .map_or(self.dir, |target| target.makefile);
+        self.ctx
+            .target_at(dir, name)
+            .map(|target| self.ctx.target_key(target))
+    }
+
+    fn compatible_interface_property(
+        &self,
+        name: &str,
+        prop: &str,
+        config: &str,
+        _raw: Option<&str>,
+        evaluating_links: bool,
+    ) -> Result<Option<String>, String> {
+        Ok(self.find(name).and_then(|target| {
+            super::compatible::property(self.ctx, target, config, prop, evaluating_links)
+        }))
     }
 
     fn target_artifact(

@@ -24,6 +24,15 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         return LinkLine::default();
     }
     let ordered = dependencies::compute(query, head);
+    super::super::compatible::check_declarations(
+        query.ctx,
+        head,
+        query.config,
+        ordered.entries.iter().filter_map(|entry| entry.item.target),
+    );
+    if query.ctx.has_error() {
+        return LinkLine::default();
+    }
     let users = usage_property(query, head, "LINK_DIRECTORIES");
     let mut info = Information::new(query, head, users);
     info.emit_entries(&ordered.entries);

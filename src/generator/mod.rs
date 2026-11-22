@@ -21,6 +21,7 @@
 //! - `export.rs`   export()/install(EXPORT) files.
 
 pub mod automatic;
+mod compatible;
 pub mod ctx;
 pub mod custom;
 pub mod evaluation_files;

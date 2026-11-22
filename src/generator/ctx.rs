@@ -410,6 +410,19 @@ impl<'a> GenCtx<'a> {
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
         let result = crate::genex::evaluate(&compiled, &mut ectx, &mut host);
+        if property == "LINK_LIBRARIES" && std::ptr::eq(owner, head) {
+            self.memo.borrow_mut().extend(
+                ectx.seen_target_properties
+                    .iter()
+                    .filter(|prop| !head.props.contains(prop))
+                    .map(|prop| {
+                        (
+                            super::compatible::implied_key(self, head, prop),
+                            String::new(),
+                        )
+                    }),
+            );
+        }
         self.report_warnings(&ectx);
         match result {
             Ok(value) => value,

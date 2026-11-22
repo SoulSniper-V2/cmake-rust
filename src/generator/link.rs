@@ -69,6 +69,51 @@ pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) ->
     information::compute(&query, target)
 }
 
+/// GetLinkImplementationClosure(config, UseTo::Compile).
+pub(super) fn compile_implementation_closure<'i>(
+    ctx: &GenCtx<'i>,
+    head: &Target,
+    config: &str,
+) -> Vec<&'i Target> {
+    if !target::can_compile_sources(head) || !head.props.contains("LINK_LIBRARIES") {
+        return Vec::new();
+    }
+    fn visit<'i>(
+        query: &Query<'_, 'i>,
+        head: &Target,
+        items: Vec<Item<'i>>,
+        seen: &mut HashSet<*const Target>,
+        closure: &mut Vec<&'i Target>,
+    ) {
+        for target in items.into_iter().filter_map(|item| item.target) {
+            if seen.insert(std::ptr::from_ref(target)) {
+                closure.push(target);
+                visit(
+                    query,
+                    head,
+                    interface(query, target, head).libraries,
+                    seen,
+                    closure,
+                );
+            }
+        }
+    }
+    let query = Query {
+        compile_usage: true,
+        ..Query::new(ctx, config, "")
+    };
+    let mut closure = Vec::new();
+    let mut seen = HashSet::from([std::ptr::from_ref(head)]);
+    visit(
+        &query,
+        head,
+        implementation(&query, head),
+        &mut seen,
+        &mut closure,
+    );
+    closure
+}
+
 /// Direct target-level dependencies after linearizing static-library cycles.
 pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
     target_graph::dependencies(ctx, target, config)
@@ -212,16 +257,27 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn eval(&self, raw: &str, owner: &Target, head: &Target, property: &str) -> String {
+        self.eval_entry(raw, owner, head, property, &[])
+    }
+
+    fn eval_entry(
+        &self,
+        raw: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        backtrace: &[crate::messages::Frame],
+    ) -> String {
         if raw.contains("$<") {
             let language = (!self.language.is_empty()).then_some(self.language);
-            if self.compile_usage {
+            if self.compile_usage || !backtrace.is_empty() {
                 return self.ctx.genex_with_dag_usage(
-                    (raw, &[]),
+                    (raw, backtrace),
                     owner,
                     head,
                     property,
                     language,
-                    true,
+                    self.compile_usage,
                 );
             }
             self.generator
@@ -466,7 +522,7 @@ fn provenanced_items<'i>(
     let mut items = Vec::new();
     let mut directory = owner.makefile;
     for (value, backtrace) in entries {
-        let evaluated = query.eval(&value, owner, head, property);
+        let evaluated = query.eval_entry(&value, owner, head, property, &backtrace);
         items.extend(plain_items_bt(
             query,
             owner,

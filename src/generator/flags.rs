@@ -162,18 +162,13 @@ impl Flags<'_, '_> {
     }
 
     fn pic(&self) -> Option<bool> {
-        // INTEGRATION: Resolve INTERFACE_POSITION_INDEPENDENT_CODE and
-        // diagnose incompatible values using compatible interface properties.
-        self.prop("POSITION_INDEPENDENT_CODE")
-            .map(crate::util::is_on)
-            .or_else(|| {
-                matches!(
-                    self.target.kind,
-                    crate::state::TargetKind::SharedLibrary
-                        | crate::state::TargetKind::ModuleLibrary
-                )
-                .then_some(true)
-            })
+        super::compatible::pic(self.ctx, self.target, self.config).or_else(|| {
+            matches!(
+                self.target.kind,
+                crate::state::TargetKind::SharedLibrary | crate::state::TargetKind::ModuleLibrary
+            )
+            .then_some(true)
+        })
     }
 }
 

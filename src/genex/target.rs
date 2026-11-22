@@ -436,7 +436,12 @@ impl Evaluator<'_, '_> {
                     ));
                 }
                 if property == "ALIASED_TARGET" {
-                    return Ok(self.host.resolve_alias(name).unwrap_or_default());
+                    return Ok(self
+                        .host
+                        .resolve_alias(name)
+                        .map_or_else(String::new, |key| {
+                            self.host.target_property_raw(&key, "NAME").unwrap_or(key)
+                        }));
                 }
                 if property == "ALIAS_GLOBAL" {
                     return Ok(if self.host.resolve_alias(name).is_none() {
