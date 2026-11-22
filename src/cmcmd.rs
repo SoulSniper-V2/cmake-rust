@@ -3,6 +3,8 @@
 mod archive;
 mod cocompile;
 mod depfile;
+mod dyndep;
+mod fortran;
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -151,12 +153,13 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         "cmake_transform_depfile" if args.len() == 8 => depfile::transform(args),
         "__run_co_compile" => cocompile::run_co_compile(args),
         "cmake_llvm_rc" => cocompile::run_llvm_rc(args),
-        "cmake_ninja_depends" | "cmake_ninja_dyndep" => {
-            error(format!(
-                "{command}: Fortran and C++ module dependency scanning is not supported"
-            ));
-            1
-        }
+        "cmake_ninja_depends" | "cmake_ninja_dyndep" => match dyndep::run(command, args) {
+            Ok(()) => 0,
+            Err(message) => {
+                error(message);
+                1
+            }
+        },
         "tar" if args.len() >= 2 => archive::tar(args),
         // copy_if_newer is absent from the pinned 4.1.0 cmcmd dispatcher.
         _ => {

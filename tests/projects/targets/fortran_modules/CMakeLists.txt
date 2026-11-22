@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.28)
+project(FortranModules LANGUAGES Fortran)
+set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON)
+
+add_library(constants STATIC constants.F90)
+set_property(TARGET constants PROPERTY Fortran_MODULE_DIRECTORY modules)
+target_compile_definitions(constants PRIVATE ANSWER=42)
+add_executable(check main.f90)
+set_property(SOURCE main.f90 PROPERTY Fortran_PREPROCESS OFF)
+target_include_directories(check PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/modules")
+target_link_libraries(check PRIVATE constants)

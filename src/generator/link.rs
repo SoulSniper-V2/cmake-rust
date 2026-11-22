@@ -65,6 +65,31 @@ pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) ->
     information::compute(&query, target)
 }
 
+/// Link information is also computed for static/object libraries when
+/// collating Fortran modules. Object link items forward their providers.
+pub(super) fn module_link_targets<'i>(
+    ctx: &GenCtx<'i>,
+    target: &Target,
+    language: &str,
+) -> Vec<(&'i Target, bool)> {
+    let query = Query::new(ctx, &ctx.config, language);
+    dependencies::compute(&query, target)
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            if let Some(dep) = entry.item.target {
+                Some((dep, false))
+            } else {
+                let objects = ctx.target_objects.borrow();
+                objects
+                    .get(&(target.makefile, entry.item.text))
+                    .and_then(|name| ctx.target(name))
+                    .map(|dep| (dep, true))
+            }
+        })
+        .collect()
+}
+
 /// GetLinkImplementationClosure(config, UseTo::Compile).
 pub(super) fn compile_implementation_closure<'i>(
     ctx: &GenCtx<'i>,

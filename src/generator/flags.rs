@@ -9,6 +9,7 @@ mod standard;
 pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
 pub(crate) use compile::{BtFrag, define_items, flag_fragments, include_items, pch_items};
+pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{link_dependency_file, link_flag_vars};
 pub use rule::{compiler_launcher, expand_rule};
 
@@ -250,7 +251,7 @@ fn target_options(options: Vec<String>) -> Vec<String> {
 }
 
 /// kwsys SystemTools::ParseUnixCommandLine uses the process argument parser.
-fn unix_command_line(text: &str) -> Vec<String> {
+pub(crate) fn unix_command_line(text: &str) -> Vec<String> {
     // kwsys accepts unfinished quotes and treats backslash as an escape
     // in every quote context.
     let mut args = Vec::new();

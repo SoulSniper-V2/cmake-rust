@@ -2050,7 +2050,7 @@ fn build_module_files(
 }
 
 /// `cmGeneratorTarget::GetFilesystemExportName`.
-fn filesystem_export_name(tgt: &Target) -> String {
+pub(super) fn filesystem_export_name(tgt: &Target) -> String {
     export_name(tgt).replace('_', "__").replace(':', "_c")
 }
 

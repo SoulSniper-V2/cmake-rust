@@ -63,7 +63,7 @@ def gather(build_dir):
             continue
         name = path.name
         if name in ("build.ninja", "rules.ninja", "CMakeCache.txt", "CTestTestfile.cmake",
-                    "cmake_install.cmake", "compile_commands.json"):
+                    "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json"):
             files[rel] = path.read_text(errors="replace")
     return files
 
@@ -101,6 +101,12 @@ def run_side(binary, case, work):
         produced = sorted(p.relative_to(build).as_posix() for p in build.rglob("*")
                           if p.is_file() and "CMakeFiles" not in p.parts and not p.name.startswith(".ninja"))
         result["build.outputs"] = "\n".join(produced)
+        # Compare the actual module edges, not just the final binary names.
+        for tdi in build.rglob("FortranDependInfo.json"):
+            for path in tdi.parent.rglob("*"):
+                scan_dep = path.suffix == ".d" and ("-pp." in path.name or path.name.endswith(".ddi.d"))
+                if path.name in ("Fortran.dd", "FortranModules.json") or path.suffix == ".ddi" or scan_dep:
+                    result[f"file:{path.relative_to(build)}"] = path.read_text()
     if (case / "ctest.txt").exists() and proc.returncode == 0:
         t = subprocess.run([str(ORACLE_CTEST), "--test-dir", str(build)], cwd=work, env=env,
                            capture_output=True, timeout=1800)

@@ -53,6 +53,34 @@ pub fn compile_vars_with_source_props(
         .append_feature(&mut flags, "EXPLICIT_LANGUAGE");
     }
     append(&mut flags, &target_flags(&inputs));
+    if inputs.lang == "Fortran" {
+        let format = |value: &str| {
+            value.split(';').rev().find_map(|f| match f {
+                "FIXED" => Some("FORMAT_FIXED_FLAG"),
+                "FREE" => Some("FORMAT_FREE_FLAG"),
+                _ => None,
+            })
+        };
+        if let Some(flag) = properties
+            .get("Fortran_FORMAT")
+            .and_then(format)
+            .or_else(|| target.props.get("Fortran_FORMAT").and_then(format))
+            .and_then(|key| inputs.lang_var(key))
+        {
+            append(&mut flags, &flag);
+        }
+        if fortran_preprocess(target, properties) == Some(false) {
+            append_options(
+                &mut flags,
+                expand_list(
+                    &inputs
+                        .lang_var("COMPILE_OPTIONS_PREPROCESS_OFF")
+                        .unwrap_or_default(),
+                    false,
+                ),
+            );
+        }
+    }
     if let Some(raw) = properties.get("COMPILE_FLAGS") {
         append(&mut flags, &inputs.eval(raw));
     }
@@ -81,6 +109,59 @@ pub fn compile_vars_with_source_props(
     }
 }
 
+pub(crate) fn fortran_preprocess(target: &Target, source: &Props) -> Option<bool> {
+    source
+        .get("Fortran_PREPROCESS")
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            target
+                .props
+                .get("Fortran_PREPROCESS")
+                .filter(|s| !s.is_empty())
+        })
+        .map(is_on)
+}
+
+pub(crate) fn fortran_source_include(ctx: &GenCtx, target: &Target, directory: String) -> String {
+    include_flags(
+        &Flags {
+            ctx,
+            target,
+            config: &ctx.config,
+            lang: "Fortran",
+        },
+        &[directory],
+        &HashSet::new(),
+    )
+}
+
+pub(crate) fn fortran_module_dir(ctx: &GenCtx, target: &Target) -> Option<String> {
+    let current = &ctx.interp.makefiles[target.makefile].binary_dir;
+    let dir = target
+        .props
+        .get("Fortran_MODULE_DIRECTORY")
+        .or_else(|| (current != &ctx.interp.home_binary).then_some(current.as_str()))?;
+    if dir.is_empty()
+        || ctx
+            .var(target.makefile, "CMAKE_Fortran_MODDIR_FLAG")
+            .is_none()
+    {
+        return None;
+    }
+    let dir = if crate::util::is_full_path(dir) {
+        dir.to_owned()
+    } else {
+        format!("{current}/{dir}")
+    };
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        ctx.error(
+            crate::generator::target::directory_backtrace(ctx, target.makefile),
+            format!("Cannot create Fortran module directory {dir}: {err}"),
+        );
+    }
+    Some(dir)
+}
+
 fn target_flags(inputs: &Flags<'_, '_>) -> String {
     let mut flags = flags_blob(inputs);
     append_compile_options_tail(&mut flags, inputs);
@@ -89,6 +170,36 @@ fn target_flags(inputs: &Flags<'_, '_>) -> String {
 
 fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
     let mut flags = inputs.language_flags(false);
+    if inputs.lang == "Fortran" {
+        append(
+            &mut flags,
+            &inputs.lang_var("MODOUT_FLAG").unwrap_or_default(),
+        );
+        let module_dir = fortran_module_dir(inputs.ctx, inputs.target)
+            .map(|dir| {
+                shell_with_make_vars(&crate::util::relative_if_under(
+                    &inputs.ctx.interp.home_binary,
+                    &dir,
+                ))
+            })
+            .or_else(|| inputs.lang_var("MODDIR_DEFAULT"))
+            .unwrap_or_default();
+        if !module_dir.is_empty() {
+            for key in ["MODDIR_FLAG", "MODDIR_INCLUDE_FLAG"] {
+                if let Some(flag) = inputs.lang_var(key).filter(|s| !s.is_empty()) {
+                    append(&mut flags, &format!("{flag}{module_dir}"));
+                }
+            }
+        }
+        if let Some(flag) = inputs.lang_var("MODPATH_FLAG") {
+            for dir in target_includes(&Flags {
+                lang: "C",
+                ..*inputs
+            }) {
+                append(&mut flags, &format!("{flag}{}", shell_with_make_vars(&dir)));
+            }
+        }
+    }
     if inputs.pic() == Some(true) {
         let pie = if inputs.target.kind == TargetKind::Executable {
             inputs
