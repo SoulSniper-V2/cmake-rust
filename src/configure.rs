@@ -22,6 +22,7 @@ pub struct CacheDefinition {
 pub struct ConfigureOptions {
     pub source_dir: String,
     pub binary_dir: String,
+    pub project_file: Option<String>,
     pub generator: Option<String>,
     pub toolset: Option<String>,
     pub platform: Option<String>,
@@ -70,6 +71,23 @@ pub struct ConfigureOptions {
     /// A path argument named an existing build tree whose cache was read
     /// (`cmState::IsCacheLoaded` during argument processing).
     pub cache_loaded: bool,
+}
+
+impl ConfigureOptions {
+    pub fn project_list_file(&self, dir: &str) -> String {
+        project_list_file(dir, self.project_file.as_deref().unwrap_or_default())
+    }
+}
+
+/// `cmake::GetCMakeListFile`: child directories fall back to CMakeLists.txt.
+pub(crate) fn project_list_file(dir: &str, name: &str) -> String {
+    if !name.is_empty() && name != "CMakeLists.txt" {
+        let path = format!("{dir}/{name}");
+        if std::path::Path::new(&path).is_file() {
+            return path;
+        }
+    }
+    format!("{dir}/CMakeLists.txt")
 }
 
 /// `cmSystemTools::Error`.
@@ -588,12 +606,31 @@ fn actual_configure(
     let home = options.source_dir.clone();
     let binary = options.binary_dir.clone();
     let _ = std::fs::remove_dir_all(format!("{binary}/CMakeFiles/CMakeScratch"));
-    let list_name = interp
+    let cached_name = interp
         .cache
         .value("CMAKE_LIST_FILE_NAME")
-        .map(str::to_owned)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "CMakeLists.txt".to_owned());
+        .unwrap_or_default();
+    let requested_name = options.project_file.as_deref().unwrap_or_default();
+    if !cached_name.is_empty() && !requested_name.is_empty() && cached_name != requested_name {
+        let message = format!(
+            "CMakeLists filename : \"{requested_name}\"\nDoes not match the previous: \"{cached_name}\"\nEither remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory."
+        );
+        system_error(Some(interp), &message);
+        return -2;
+    }
+    let list_name = [requested_name, cached_name, "CMakeLists.txt"]
+        .into_iter()
+        .find(|name| !name.is_empty())
+        .unwrap_or_default()
+        .to_owned();
+    interp.project_file.clone_from(&list_name);
+    if list_name != "CMakeLists.txt" {
+        interp.issue_at(
+            MessageType::Warning,
+            "This project has been configured with a project file other than CMakeLists.txt.  This feature is intended for temporary use during development and not for publication of a final product.",
+            &[],
+        );
+    }
     interp.cache.add(
         "CMAKE_LIST_FILE_NAME",
         Some(&list_name),
@@ -638,7 +675,15 @@ fn actual_configure(
     }
     let redirects = format!("{binary}/CMakeFiles/pkgRedirects");
     let _ = std::fs::remove_dir_all(&redirects);
-    let _ = std::fs::create_dir_all(&redirects);
+    if std::fs::create_dir_all(&redirects).is_err() {
+        system_error(
+            Some(interp),
+            &format!(
+                "Unable to (re)create the private pkgRedirects directory:\n  {redirects}\nThis may be caused by not having read/write access to the build directory.\nTry specifying a location with read/write access like:\n  cmake -B build\nIf using a CMake presets file, ensure that preset parameter\n'binaryDir' expands to a writable directory.\n"
+            ),
+        );
+        return -1;
+    }
     interp.cache.add(
         "CMAKE_FIND_PACKAGE_REDIRECTS_DIR",
         Some(&redirects),
@@ -795,6 +840,7 @@ fn same_file(lhs: &str, rhs: &str) -> bool {
 
 /// `cmGlobalGenerator::Configure` + `cmMakefile::Configure` for the root.
 fn configure_root(interp: &mut Interp, list_file: &str) {
+    interp.makefiles[0].backtrace[0].file = std::rc::Rc::from(list_file);
     let binary = interp.home_binary.clone();
     let source = interp.home_source.clone();
     interp.set_def("CMAKE_SOURCE_DIR", source.clone());

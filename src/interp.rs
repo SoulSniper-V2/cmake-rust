@@ -236,6 +236,7 @@ pub struct Interp {
     pub cmake_root: String,
     pub cmake_command: String,
     pub home_source: String,
+    pub project_file: String,
     pub home_binary: String,
     /// Loop nesting depth in the current function frame (for break/continue
     /// diagnostics).
@@ -313,6 +314,7 @@ impl Interp {
             cmake_root: cmake_root.to_owned(),
             cmake_command,
             home_source: home_source.to_owned(),
+            project_file: "CMakeLists.txt".to_owned(),
             home_binary: home_binary.to_owned(),
             loop_depth: vec![0],
             ext: crate::state::Ext::default(),
@@ -782,7 +784,7 @@ impl Interp {
             // cmMakefile::Configure pushes the directory's list-file
             // context as the permanent bottom of its backtrace.
             backtrace: vec![Frame {
-                file: Rc::from(format!("{source}/CMakeLists.txt").as_str()),
+                file: Rc::from(self.project_list_file(source)),
                 line: 0,
                 name: None,
                 deferred: false,
@@ -842,7 +844,7 @@ impl Interp {
         // The child's backtrace starts at its own list file, independent of
         // the parent's call stack (cmMakefile::Configure).
         let saved_backtrace = std::mem::take(&mut self.backtrace);
-        let list = format!("{source}/CMakeLists.txt");
+        let list = self.project_list_file(&source);
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
         self.save_directory_definitions(index);
@@ -1272,6 +1274,10 @@ impl Interp {
             );
         }
         self.mf_mut().policies.truncate(depth);
+    }
+
+    pub fn project_list_file(&self, source: &str) -> String {
+        crate::configure::project_list_file(source, &self.project_file)
     }
 
     /// Reads the directory's CMakeLists.txt (top-level or subdirectory).
@@ -3047,7 +3053,7 @@ impl Interp {
         // The child's backtrace starts at its own list file, independent of
         // the parent's call stack (cmMakefile::Configure).
         let saved_backtrace = std::mem::take(&mut self.backtrace);
-        let list = format!("{source}/CMakeLists.txt");
+        let list = self.project_list_file(&source);
         let ok = self.read_list_file_directory(&list);
         self.backtrace = saved_backtrace;
         self.save_directory_definitions(index);

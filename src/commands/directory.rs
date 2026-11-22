@@ -120,7 +120,7 @@ fn configure_subdirectory(
     // CMakeLists.txt existence check, so failed directories still count
     // toward CMAKE_NUMBER_OF_MAKEFILES.
     let index = interp.create_subdirectory(source, binary, exclude);
-    if !Path::new(source).join("CMakeLists.txt").is_file() {
+    if !Path::new(&interp.project_list_file(source)).is_file() {
         return report(
             interp,
             &format!("The source directory\n  {source}\ndoes not contain a CMakeLists.txt file."),
@@ -244,7 +244,7 @@ pub fn finish_directory(interp: &mut Interp) {
         // cmMakefile::Configure runs deferred subdirectories after the
         // parent's list file; diagnostics use the parent's file-scope
         // backtrace, which is the interpreter's current backtrace here.
-        if Path::new(&dir.source).join("CMakeLists.txt").is_file() {
+        if Path::new(&interp.project_list_file(&dir.source)).is_file() {
             interp.configure_subdirectory_dirscope(dir.index, false);
         } else {
             let _: CmdResult = report(
