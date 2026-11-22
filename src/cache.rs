@@ -173,11 +173,15 @@ impl Cache {
         // Normalize paths for PATH/FILEPATH entries (`cmSystemTools::ConvertToUnixSlashes`
         // of each list element).
         if matches!(kind, CacheType::Path | CacheType::Filepath) {
-            let items: Vec<String> = crate::util::expand_list(&entry.value, false)
-                .into_iter()
-                .map(|item| convert_to_unix_slashes(&item))
-                .collect();
-            entry.value = crate::util::join_list(&items);
+            if entry.value.contains(';') {
+                let items: Vec<String> = crate::util::expand_list(&entry.value, false)
+                    .into_iter()
+                    .map(|item| convert_to_unix_slashes(&item))
+                    .collect();
+                entry.value = crate::util::join_list(&items);
+            } else {
+                entry.value = convert_to_unix_slashes(&entry.value);
+            }
         }
     }
 
@@ -369,15 +373,65 @@ fn output_help(out: &mut String, help: &str) {
     }
 }
 
+/// kwsys `SystemTools::ConvertToUnixSlashes`: backslashes to slashes,
+/// repeated slashes collapsed (keeping exactly two leading ones), `~` and
+/// `~user` expanded, and a trailing slash removed.
 pub fn convert_to_unix_slashes(path: &str) -> String {
-    let mut out = path.replace('\\', "/");
-    while out.contains("//") && !out.starts_with("//") {
-        out = out.replace("//", "/");
+    if path.is_empty() {
+        return String::new();
     }
-    if out.len() > 1 && out.ends_with('/') {
+    let replaced = path.replace('\\', "/");
+    let bytes = replaced.as_bytes();
+    let double = bytes.len() >= 2 && bytes[0] == b'/' && bytes[1] == b'/' && bytes.get(2) != Some(&b'/');
+    let mut out = String::with_capacity(replaced.len());
+    let mut previous_slash = false;
+    for (index, ch) in replaced.char_indices() {
+        if ch == '/' && previous_slash && !(double && index == 1) {
+            continue;
+        }
+        previous_slash = ch == '/';
+        out.push(ch);
+    }
+    if out.starts_with('~') {
+        let rest = &out[1..];
+        if rest.is_empty() || rest.starts_with('/') {
+            if let Ok(home) = std::env::var("HOME") {
+                out = format!("{home}{rest}");
+            }
+        } else {
+            let idx = out.find('/').unwrap_or(out.len());
+            if let Some(dir) = home_of_user(&out[1..idx]) {
+                out = format!("{dir}{}", &out[idx..]);
+            }
+        }
+    }
+    // Keep the root slash and the slash after a drive letter ("c:/").
+    let size = out.len();
+    if size > 1
+        && out.ends_with('/')
+        && !(size == 3 && out.as_bytes()[1] == b':')
+        && out.as_bytes()[size - 2] != b'/'
+    {
         out.pop();
     }
     out
+}
+
+/// `getpwnam(user)->pw_dir`.
+fn home_of_user(user: &str) -> Option<String> {
+    let user = std::ffi::CString::new(user).ok()?;
+    // SAFETY: getpwnam with a valid C string; fields read immediately.
+    let pw = unsafe { libc::getpwnam(user.as_ptr()) };
+    if pw.is_null() {
+        return None;
+    }
+    // SAFETY: pw is non-null.
+    let dir = unsafe { (*pw).pw_dir };
+    if dir.is_null() {
+        return None;
+    }
+    // SAFETY: non-null C string.
+    Some(unsafe { std::ffi::CStr::from_ptr(dir) }.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

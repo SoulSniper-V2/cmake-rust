@@ -217,24 +217,24 @@ fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
             .filter(|entry| entry.initialized)
             .map(|entry| entry.value.clone())
     };
+    // ToolchainLambda and PrefixLambda: cmake::ProcessCacheArg with the
+    // value as given (the cache converts slashes for path types).
     if let Some(toolchain) = &options.toolchain_file {
-        let path = util::collapse_full_path(toolchain, &util_cwd());
         let cached = cached_value(interp, "CMAKE_TOOLCHAIN_FILE");
         interp.cache.add(
             "CMAKE_TOOLCHAIN_FILE",
-            Some(&path),
-            Some("The CMake toolchain file"),
+            Some(toolchain),
+            Some("No help, variable specified on the command line."),
             CacheType::Filepath,
         );
         watch(interp, "CMAKE_TOOLCHAIN_FILE", cached);
     }
     if let Some(prefix) = &options.install_prefix {
-        let path = util::collapse_full_path(prefix, &util_cwd());
         let cached = cached_value(interp, "CMAKE_INSTALL_PREFIX");
         interp.cache.add(
             "CMAKE_INSTALL_PREFIX",
-            Some(&path),
-            Some("Install path prefix, prepended onto install directories."),
+            Some(prefix),
+            Some("No help, variable specified on the command line."),
             CacheType::Path,
         );
         watch(interp, "CMAKE_INSTALL_PREFIX", cached);

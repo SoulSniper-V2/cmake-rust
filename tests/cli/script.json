@@ -219,5 +219,20 @@
   "files": {
    "t.cmake": "function(f)\n  if(1)\n    set(x 1)\n  elseif(0)\n  endif()\n  foreach(i a)\n    while(0)\n    endwhile()\n  endforeach()\n  block()\n  endblock()\nendfunction()\nmacro(m)\n  if(1)\n  endif()\nendmacro()\nf()\nm()\n"
   }
+ },
+ {
+  "name": "cache-path-normalization",
+  "argv": [
+   "-DT1:PATH=~",
+   "-DT2:FILEPATH=a\\\\b//c/",
+   "-DT3=~/x",
+   "-DT4=//x//y/../z",
+   "-DT5=rel/../q",
+   "-P",
+   "t.cmake"
+  ],
+  "files": {
+   "t.cmake": "set(T3 \"\" CACHE PATH \"\")\nset(T4 \"\" CACHE FILEPATH \"\")\nset(T5 \"\" CACHE PATH \"\")\nforeach(v T1 T2 T3 T4 T5)\n  get_property(t CACHE ${v} PROPERTY TYPE)\n  string(REPLACE \"$ENV{HOME}\" \"<HOME>\" val \"$CACHE{${v}}\")\n  string(REPLACE \"${CMAKE_CURRENT_BINARY_DIR}\" \"<CWD>\" val \"${val}\")\n  message(\"${v}=${val} ${t}\")\nendforeach()\n"
+  }
  }
 ]

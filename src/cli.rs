@@ -303,6 +303,14 @@ fn set_source(options: &mut ConfigureOptions, source: String, script_mode: bool)
     options.source_dir = source;
 }
 
+/// `cmSystemTools::ToNormalizedPathOnDisk` against the logical working
+/// directory `cwd`.
+fn normalized_path(value: &str, cwd: &str) -> String {
+    let value = crate::pathresolver::resolve_tilde_path(value);
+    let joined = if value.starts_with('/') { value } else { format!("{cwd}/{value}") };
+    crate::pathresolver::to_normalized_path_on_disk(&joined)
+}
+
 fn extra_path(path: &str) {
     warning(&format!(
         "Ignoring extra path from command line:\n \"{path}\""
@@ -570,10 +578,9 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             match name {
                 "--preset" => preset_name = value.clone(),
                 // cmSystemTools::ToNormalizedPathOnDisk
-                "--graphviz" => options.graphviz = Some(util::collapse_full_path(&value, cwd)),
+                "--graphviz" => options.graphviz = Some(normalized_path(&value, cwd)),
                 "--profiling-format" => profiling_format = value.clone(),
-                // cmSystemTools::ToNormalizedPathOnDisk
-                "--profiling-output" => profiling_output = util::collapse_full_path(&value, cwd),
+                "--profiling-output" => profiling_output = normalized_path(&value, cwd),
                 "-B" => have_b_arg = true,
                 _ => {}
             }
@@ -849,8 +856,9 @@ fn set_option<'a>(
             return Err(format!("No source directory specified for {name}"));
         }
         "-B" if value.is_empty() => return Err("No build directory specified for -B".to_owned()),
-        "-S" | "-H" => set_source(options, util::collapse_full_path(value, cwd), script_mode),
-        "-B" => options.binary_dir = util::collapse_full_path(value, cwd),
+        // cmSystemTools::ToNormalizedPathOnDisk
+        "-S" | "-H" => set_source(options, normalized_path(value, cwd), script_mode),
+        "-B" => options.binary_dir = normalized_path(value, cwd),
         "-G" => {
             if !known_generator(value) {
                 return Err(format!("Could not create named generator {value}"));

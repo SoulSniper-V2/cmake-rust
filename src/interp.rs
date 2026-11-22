@@ -577,10 +577,10 @@ impl Interp {
                 let items: Vec<String> = util::expand_list(&current, false)
                     .into_iter()
                     .map(|item| {
-                        if item.is_empty() || util::is_full_path(&item) {
+                        if util::is_off(&item) {
                             item
                         } else {
-                            util::collapse_full_path(&item, "")
+                            crate::pathresolver::to_normalized_path_on_disk(&item)
                         }
                     })
                     .collect();
