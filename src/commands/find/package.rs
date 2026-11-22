@@ -1,5 +1,6 @@
 //! Find modules and CMake package configuration files.
 
+mod cps;
 mod search;
 
 use std::collections::{BTreeSet, HashSet};
@@ -103,6 +104,14 @@ enum Section {
     Configs,
 }
 
+/// `cmFindPackageCommand::PackageDescriptionType`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Desc {
+    Any,
+    CMake,
+    Cps,
+}
+
 #[derive(Default)]
 struct Version {
     complete: String,
@@ -147,10 +156,10 @@ impl Version {
     }
 
     fn definitions(&self, prefix: &str) -> Vec<(String, String)> {
-        let mut defs = version_vars(prefix, &self.min);
+        let mut defs = version_vars(prefix, &self.min, None);
         if !self.max.is_empty() {
-            defs.extend(version_vars(&format!("{prefix}_MIN"), &self.min));
-            defs.extend(version_vars(&format!("{prefix}_MAX"), &self.max));
+            defs.extend(version_vars(&format!("{prefix}_MIN"), &self.min, None));
+            defs.extend(version_vars(&format!("{prefix}_MAX"), &self.max, None));
             defs.extend([
                 (format!("{prefix}_RANGE"), self.complete.clone()),
                 (format!("{prefix}_RANGE_MIN"), "INCLUDE".into()),
@@ -183,6 +192,7 @@ struct Package {
     version: Version,
     use_module: bool,
     use_config: bool,
+    use_cps: bool,
     components: Vec<String>,
     required: BTreeSet<String>,
     optional: BTreeSet<String>,
@@ -194,7 +204,19 @@ struct Package {
     registry_view: Option<String>,
     considered: Vec<(String, String)>,
     selected_version: String,
+    /// Release components of `selected_version` when a CPS `version`
+    /// parsed (otherwise `<name>_VERSION_*` fall back to sscanf).
+    found_version_parts: Option<Vec<u32>>,
     debug: Option<String>,
+    /// `RequiredTargets`: component targets a CPS dependency requires the
+    /// package to provide.
+    required_targets: BTreeSet<String>,
+    /// Qualified target names the loaded `*.cmake` config did not create.
+    missing_targets: Vec<String>,
+    /// `FileFound`: the located config/module/CPS file.
+    file_found: String,
+    /// The reader and appendices accepted by a `*.cps` candidate.
+    cps: Option<cps::CpsState>,
 }
 
 impl Package {
@@ -216,6 +238,7 @@ impl Package {
             version: Version::default(),
             use_module: true,
             use_config: true,
+            use_cps: false,
             components: Vec::new(),
             required: BTreeSet::new(),
             optional: BTreeSet::new(),
@@ -227,7 +250,12 @@ impl Package {
             registry_view: None,
             considered: Vec::new(),
             selected_version: String::new(),
+            found_version_parts: None,
             debug: interp.is_on("CMAKE_FIND_DEBUG_MODE").then(String::new),
+            required_targets: BTreeSet::new(),
+            missing_targets: Vec::new(),
+            file_found: String::new(),
+            cps: None,
         };
         let mut section = Section::None;
         let mut config_args = Vec::new();
@@ -333,6 +361,9 @@ impl Package {
         }
         pkg.use_module = config_args.is_empty();
         pkg.use_config = module_args.is_empty();
+        if pkg.use_config && cps::import_package_info_enabled(interp) {
+            pkg.use_cps = pkg.configs.is_empty();
+        }
         if !pkg.use_module && !pkg.use_config {
             return err(format!(
                 "given options exclusive to Module mode:\n  {}\nand options exclusive to Config mode:\n  {}\nThe options are incompatible.",
@@ -600,6 +631,7 @@ impl Package {
             self.append_debug(&debug);
             return Ok(false);
         };
+        self.file_found = module.clone();
         let _ = writeln!(debug, "The file was found at\n  {module}");
         self.append_debug(&debug);
         if use_system && let Some(policy) = deprecated_policy(&self.name) {
@@ -633,6 +665,13 @@ impl Package {
             }
             if self.configs.is_empty() {
                 for name in &self.names {
+                    if self.use_cps {
+                        self.configs.push(format!("{name}.cps"));
+                        let lower = format!("{}.cps", name.to_ascii_lowercase());
+                        if *self.configs.last().unwrap() != lower {
+                            self.configs.push(lower);
+                        }
+                    }
                     self.configs.push(format!("{name}Config.cmake"));
                     self.configs
                         .push(format!("{}-config.cmake", name.to_ascii_lowercase()));
@@ -650,7 +689,7 @@ impl Package {
                 } else {
                     format!("{}/{dir}", interp.current_source_dir())
                 };
-                file = self.find_config_file(interp, &dir);
+                file = self.find_config_file(interp, &dir, Desc::Any);
             }
             if file.is_none() {
                 file = self.search_config(interp);
@@ -668,25 +707,39 @@ impl Package {
         let mut rejected = None;
         let mut found = false;
         let result = if let Some(file) = &file {
+            self.file_found = file.clone();
             if interp.is_def_set(&found_var) && !interp.is_on(&found_var) {
                 interp.unset_def(&found_var);
             }
             interp.unset_def(&message_var);
             let version_var = format!("{name}_VERSION");
-            for (key, value) in version_vars(&version_var, &self.selected_version) {
+            for (key, value) in
+                version_vars(&version_var, &self.selected_version, self.found_version_parts.as_deref())
+            {
                 interp.set_def(key, value);
             }
             if self.selected_version.is_empty() {
                 interp.unset_def(&version_var);
             }
-            let result = self.read(interp, file, false);
-            if result.is_ok() {
-                found = !interp.is_def_set(&found_var) || interp.is_on(&found_var);
-                if !found {
-                    rejected = Some(interp.get_safe(&message_var));
+            if let Some(state) = self.cps.take() {
+                // The package was found as a CPS file; import it.
+                found = true;
+                cps::read_package(self, interp, file.clone(), state)
+            } else {
+                let result = self.read(interp, file, false);
+                if result.is_ok() {
+                    found = !interp.is_def_set(&found_var) || interp.is_on(&found_var);
+                    if !found {
+                        rejected = Some(interp.get_safe(&message_var));
+                    }
+                    // Check whether the required targets are defined.
+                    if found && !self.required_targets.is_empty() {
+                        self.check_required_targets(interp);
+                        found = self.missing_targets.is_empty();
+                    }
                 }
+                result
             }
-            result
         } else {
             Ok(())
         };
@@ -762,6 +815,12 @@ impl Package {
                 let _ = writeln!(text, " Reason given by package: \n{rejection}");
             }
             text
+        } else if !self.missing_targets.is_empty() {
+            format!(
+                "Found package configuration file:\n  {}\nbut the following required targets were not found:\n  {}",
+                file.unwrap_or_default(),
+                self.missing_targets.join(", ")
+            )
         } else if !self.considered.is_empty() {
             let comparison = if self.version.exact {
                 "exactly matches"
@@ -932,24 +991,41 @@ fn restore(interp: &mut Interp, key: &str, value: Option<String>) {
     }
 }
 
-fn version_vars(prefix: &str, version: &str) -> Vec<(String, String)> {
+fn version_vars(
+    prefix: &str,
+    version: &str,
+    parts: Option<&[u32]>,
+) -> Vec<(String, String)> {
     let mut vars = vec![(prefix.to_owned(), version.to_owned())];
     let [mut major, mut minor, mut patch, mut tweak] = [0u32; 4];
-    let count = CString::new(version).map_or(0, |version| {
-        // The format specifies four unsigned integers, each backed by a
-        // distinct writable u32. Missing components retain their zero values.
-        unsafe {
-            libc::sscanf(
-                version.as_ptr(),
-                c"%u.%u.%u.%u".as_ptr(),
-                &mut major,
-                &mut minor,
-                &mut patch,
-                &mut tweak,
-            )
+    let count = if let Some(parts) = parts {
+        for (index, part) in parts.iter().take(4).enumerate() {
+            match index {
+                0 => major = *part,
+                1 => minor = *part,
+                2 => patch = *part,
+                _ => tweak = *part,
+            }
         }
-        .max(0)
-    });
+        parts.len() as i32
+    } else {
+        CString::new(version).map_or(0, |version| {
+            // The format specifies four unsigned integers, each backed
+            // by a distinct writable u32. Missing components retain
+            // their zero values.
+            unsafe {
+                libc::sscanf(
+                    version.as_ptr(),
+                    c"%u.%u.%u.%u".as_ptr(),
+                    &mut major,
+                    &mut minor,
+                    &mut patch,
+                    &mut tweak,
+                )
+            }
+            .max(0)
+        })
+    };
     for (label, value) in [
         ("MAJOR", major),
         ("MINOR", minor),

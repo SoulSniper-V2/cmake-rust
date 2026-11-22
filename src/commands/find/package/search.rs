@@ -13,6 +13,8 @@ enum Segment<'a> {
     Exact(&'a str),
     Common,
     Package,
+    /// Case-insensitive whole-name match (CPS package directories).
+    PackageExact,
     CaseInsensitive(&'a str),
     Bundle(&'a str),
     Any,
@@ -45,6 +47,10 @@ impl Layouts<'_> {
                             .iter()
                             .any(|name| entry.starts_with(&name.to_ascii_lowercase()))
                     }
+                    Segment::PackageExact => self
+                        .names
+                        .iter()
+                        .any(|name| entry.eq_ignore_ascii_case(name)),
                     Segment::Bundle(extension) => self
                         .names
                         .iter()
@@ -55,7 +61,7 @@ impl Layouts<'_> {
             }),
         };
         let mut entries: Vec<_> = entries.collect();
-        if matches!(segment, Segment::Package | Segment::Any) {
+        if matches!(segment, Segment::Package | Segment::PackageExact | Segment::Any) {
             match self.order.as_str() {
                 "NAME" => entries.sort_unstable(),
                 "NATURAL" => entries
@@ -246,37 +252,99 @@ impl Package {
         };
 
         use Segment::{Any, Bundle, CaseInsensitive, Common, Exact, Package as PackageDir};
+        use Segment::PackageExact;
         let cmake = CaseInsensitive("cmake");
+        let cps_ci = CaseInsensitive("cps");
         let lib_cmake = Exact("cmake");
+        let cps_lit = Exact("cps");
         let framework = Bundle(".framework");
         let app = Bundle(".app");
         let resources = Exact("Resources");
         let versions = Exact("Versions");
         let app_resources = Exact("Contents/Resources");
-        let normal: &[&[Segment<'_>]] = &[
-            &[],
-            &[cmake],
-            &[PackageDir],
-            &[PackageDir, cmake],
-            &[PackageDir, cmake, PackageDir],
-            &[Common, lib_cmake, PackageDir],
-            &[Common, PackageDir],
-            &[Common, PackageDir, cmake],
-            &[PackageDir, Common, lib_cmake, PackageDir],
-            &[PackageDir, Common, PackageDir],
-            &[PackageDir, Common, PackageDir, cmake],
+        let normal: &[(&[Segment<'_>], Desc)] = &[
+            // PREFIX/(Foo|foo|FOO)/(cps|CPS)/
+            (&[PackageExact, cps_ci], Desc::Cps),
+            // PREFIX/(Foo|foo|FOO)/(cps|CPS)/*/
+            (&[PackageExact, cps_ci, Any], Desc::Cps),
+            // PREFIX/(cps|CPS)/(Foo|foo|FOO)/
+            (&[cps_ci, PackageExact], Desc::Cps),
+            // PREFIX/(cps|CPS)/(Foo|foo|FOO)/*/
+            (&[cps_ci, PackageExact, Any], Desc::Cps),
+            // PREFIX/(cps|CPS)/ (useful on windows or in build trees)
+            (&[cps_ci], Desc::Cps),
+            // PREFIX/ (useful on windows or in build trees)
+            (&[], Desc::CMake),
+            // PREFIX/(cmake|CMake)/
+            (&[cmake], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/
+            (&[PackageDir], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/(cmake|CMake)/
+            (&[PackageDir, cmake], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/(cmake|CMake)/(Foo|foo|FOO).*/
+            (&[PackageDir, cmake, PackageDir], Desc::CMake),
+            // PREFIX/(lib/ARCH|lib*|share)/cps/(Foo|foo|FOO)/
+            (&[Common, cps_lit, PackageExact], Desc::Cps),
+            // PREFIX/(lib/ARCH|lib*|share)/cps/(Foo|foo|FOO)/*/
+            (&[Common, cps_lit, PackageExact, Any], Desc::Cps),
+            // PREFIX/(lib/ARCH|lib*|share)/cps/
+            (&[Common, cps_lit], Desc::Cps),
+            // PREFIX/(lib/ARCH|lib*|share)/cmake/(Foo|foo|FOO).*/
+            (&[Common, lib_cmake, PackageDir], Desc::CMake),
+            // PREFIX/(lib/ARCH|lib*|share)/(Foo|foo|FOO).*/
+            (&[Common, PackageDir], Desc::CMake),
+            // PREFIX/(lib/ARCH|lib*|share)/(Foo|foo|FOO).*/(cmake|CMake)/
+            (&[Common, PackageDir, cmake], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/(lib/ARCH|lib*|share)/cmake/(Foo|foo|FOO).*/
+            (&[PackageDir, Common, lib_cmake, PackageDir], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/(lib/ARCH|lib*|share)/(Foo|foo|FOO).*/
+            (&[PackageDir, Common, PackageDir], Desc::CMake),
+            // PREFIX/(Foo|foo|FOO).*/(lib/ARCH|lib*|share)/(Foo|foo|FOO).*/(cmake|CMake)/
+            (&[PackageDir, Common, PackageDir, cmake], Desc::CMake),
         ];
-        let frameworks: &[&[Segment<'_>]] = &[
-            &[framework, resources],
-            &[framework, resources, cmake],
-            &[framework, versions, Any, resources],
-            &[framework, versions, Any, resources, cmake],
+        let frameworks: &[(&[Segment<'_>], Desc)] = &[
+            // <prefix>/Foo.framework/Versions/*/Resources/CPS/
+            (&[framework, versions, Any, resources, cps_ci], Desc::Cps),
+            // <prefix>/Foo.framework/Resources/CPS/
+            (&[framework, resources, cps_ci], Desc::Cps),
+            (&[framework, resources], Desc::CMake),
+            (&[framework, resources, cmake], Desc::CMake),
+            (&[framework, versions, Any, resources], Desc::CMake),
+            (&[framework, versions, Any, resources, cmake], Desc::CMake),
         ];
-        let apps: &[&[Segment<'_>]] = &[&[app, app_resources], &[app, app_resources, cmake]];
+        let apps: &[(&[Segment<'_>], Desc)] = &[
+            // <prefix>/Foo.app/Contents/Resources/CPS/
+            (&[app, app_resources, cps_ci], Desc::Cps),
+            (&[app, app_resources], Desc::CMake),
+            (&[app, app_resources, cmake], Desc::CMake),
+        ];
+
+        // Look for CPS_PATH entries; these are effectively prefixes with an
+        // implied trailing 'cps', that may specify additional directories to
+        // directly search for CPS files.
+        let mut file = None;
+        if self.use_cps && let Some(cps_env) = env::var_os("CPS_PATH") {
+            for path in env::split_paths(&cps_env) {
+                let prefix = format!("{}/", path.to_string_lossy());
+                if !Path::new(&prefix).is_dir() {
+                    continue;
+                }
+                for pattern in [&[PackageExact, cps_lit][..], &[PackageExact][..]] {
+                    file = walk_layout(&layouts, &prefix, pattern, &mut |dir| {
+                        self.search_directory(interp, dir, &[], Desc::Cps)
+                    });
+                    if file.is_some() {
+                        break;
+                    }
+                }
+                if file.is_some() {
+                    break;
+                }
+            }
+        }
 
         let fw = self.options.framework;
         let bundle = self.options.bundle;
-        let mut file = None;
         for (enabled, check_prefix, patterns) in [
             (
                 matches!(fw, MacMode::First | MacMode::Only),
@@ -296,6 +364,9 @@ impl Package {
                 continue;
             }
             for path in &paths {
+                if file.is_some() {
+                    break;
+                }
                 if check_prefix {
                     let no_slash = if path == "/" {
                         path
@@ -311,16 +382,13 @@ impl Package {
                         continue;
                     }
                 }
-                for pattern in patterns {
+                for &(pattern, kind) in patterns {
                     file = walk_layout(&layouts, path, pattern, &mut |dir| {
-                        self.search_directory(interp, dir, &ignore)
+                        self.search_directory(interp, dir, &ignore, kind)
                     });
                     if file.is_some() {
                         break;
                     }
-                }
-                if file.is_some() {
-                    break;
                 }
             }
             if file.is_some() {
@@ -340,6 +408,7 @@ impl Package {
         interp: &mut Interp,
         dir: &str,
         ignored: &[String],
+        kind: Desc,
     ) -> Option<String> {
         let suffixes = self.suffixes.clone();
         for suffix in suffixes {
@@ -349,7 +418,7 @@ impl Package {
                 format!("{dir}{suffix}")
             };
             if !ignored.contains(&path)
-                && let Some(config) = self.find_config_file(interp, &path)
+                && let Some(config) = self.find_config_file(interp, &path, kind)
             {
                 return Some(config);
             }
@@ -357,8 +426,11 @@ impl Package {
         None
     }
 
-    pub(super) fn find_config_file(&mut self, interp: &mut Interp, dir: &str) -> Option<String> {
+    pub(super) fn find_config_file(&mut self, interp: &mut Interp, dir: &str, kind: Desc) -> Option<String> {
         for config in self.configs.clone() {
+            if kind != Desc::Any && cps::config_desc(&config) != kind {
+                continue;
+            }
             let file = format!("{dir}/{config}");
             if let Some(debug) = &mut self.debug {
                 let _ = writeln!(debug, "  {file}");
@@ -376,6 +448,10 @@ impl Package {
     }
 
     fn check_version(&mut self, interp: &mut Interp, config: &str) -> bool {
+        if cps::is_cps(config) {
+            // CPS file
+            return cps::check_version(self, config);
+        }
         let base = config.strip_suffix(".cmake").unwrap_or(config);
         let version_file = [
             format!("{base}-version.cmake"),
