@@ -66,7 +66,12 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         }
     }
 
-    fn artifact_type(&self, target: &Target, kind: ArtifactKind, config: &str) -> Option<ArtifactType> {
+    fn artifact_type(
+        &self,
+        target: &Target,
+        kind: ArtifactKind,
+        config: &str,
+    ) -> Option<ArtifactType> {
         match kind {
             ArtifactKind::ImportFile
             | ArtifactKind::LinkerImportFile

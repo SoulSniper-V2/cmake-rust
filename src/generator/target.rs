@@ -1530,9 +1530,9 @@ fn link_closure_entries<'a>(
             )
         };
         pending.extend(items.into_iter().rev().filter_map(|name| {
-            target_in_directory(ctx, dep.makefile, &name).map(|provider| (provider, backtrace.clone()))
-        }),
-        );
+            target_in_directory(ctx, dep.makefile, &name)
+                .map(|provider| (provider, backtrace.clone()))
+        }));
         closure.push((dep, backtrace));
     }
     closure

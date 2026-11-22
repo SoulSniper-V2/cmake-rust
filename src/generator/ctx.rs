@@ -366,7 +366,14 @@ impl<'a> GenCtx<'a> {
         language: Option<&str>,
         compile_usage: bool,
     ) -> String {
-        self.genex_with_dag_at(text, owner, head, property, (language, compile_usage), backtrace)
+        self.genex_with_dag_at(
+            text,
+            owner,
+            head,
+            property,
+            (language, compile_usage),
+            backtrace,
+        )
     }
 
     pub fn genex_with_dag_at(
