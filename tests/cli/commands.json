@@ -1,160 +1,1975 @@
 [
-  {"name": "bare", "argv": ["-E"]},
-  {"name": "unknown", "argv": ["-E", "unknown"]},
-  {"name": "help", "argv": ["-E", "--help"]},
-  {"name": "capabilities", "argv": ["-E", "capabilities"], "ninja_capabilities": true},
-  {"name": "capabilities-extra", "argv": ["-E", "capabilities", "x"]},
-  {"name": "server", "argv": ["-E", "server"]},
-  {"name": "echo-empty", "argv": ["-E", "echo"]},
-  {"name": "echo-args", "argv": ["-E", "echo", "one two", "", "--", "雪"]},
-  {"name": "echo-append", "argv": ["-E", "echo_append", "word", "two"]},
-  {"name": "echo-append-empty", "argv": ["-E", "echo_append"]},
-  {"name": "true", "argv": ["-E", "true"]},
-  {"name": "true-extra", "argv": ["-E", "true", "irrelevant"]},
-  {"name": "false", "argv": ["-E", "false"]},
-  {"name": "false-extra", "argv": ["-E", "false", "irrelevant"]},
-  {"name": "cat-arity", "argv": ["-E", "cat"]},
-  {"name": "chdir-arity", "argv": ["-E", "chdir"]},
-  {"name": "compare_files-arity", "argv": ["-E", "compare_files"]},
-  {"name": "copy-arity", "argv": ["-E", "copy"]},
-  {"name": "copy_directory-arity", "argv": ["-E", "copy_directory"]},
-  {"name": "copy_directory_if_different-arity", "argv": ["-E", "copy_directory_if_different"]},
-  {"name": "copy_if_different-arity", "argv": ["-E", "copy_if_different"]},
-  {"name": "copy_if_newer-arity", "argv": ["-E", "copy_if_newer"]},
-  {"name": "create_symlink-arity", "argv": ["-E", "create_symlink"]},
-  {"name": "create_hardlink-arity", "argv": ["-E", "create_hardlink"]},
-  {"name": "make_directory-arity", "argv": ["-E", "make_directory"]},
-  {"name": "remove-arity", "argv": ["-E", "remove"]},
-  {"name": "remove_directory-arity", "argv": ["-E", "remove_directory"]},
-  {"name": "rename-arity", "argv": ["-E", "rename"]},
-  {"name": "rm-arity", "argv": ["-E", "rm"]},
-  {"name": "sleep-arity", "argv": ["-E", "sleep"]},
-  {"name": "tar-arity", "argv": ["-E", "tar"]},
-  {"name": "time-arity", "argv": ["-E", "time"]},
-  {"name": "touch-arity", "argv": ["-E", "touch"]},
-  {"name": "touch_nocreate-arity", "argv": ["-E", "touch_nocreate"]},
-  {"name": "copy-if-newer-unavailable", "argv": ["-E", "copy_if_newer", "a", "b"], "files": {"a": "first"}},
-  {"name": "md5sum-arity", "argv": ["-E", "md5sum"]},
-  {"name": "md5sum-file", "argv": ["-E", "md5sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "md5sum-mixed", "argv": ["-E", "md5sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "sha1sum-arity", "argv": ["-E", "sha1sum"]},
-  {"name": "sha1sum-file", "argv": ["-E", "sha1sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "sha1sum-mixed", "argv": ["-E", "sha1sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "sha224sum-arity", "argv": ["-E", "sha224sum"]},
-  {"name": "sha224sum-file", "argv": ["-E", "sha224sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "sha224sum-mixed", "argv": ["-E", "sha224sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "sha256sum-arity", "argv": ["-E", "sha256sum"]},
-  {"name": "sha256sum-file", "argv": ["-E", "sha256sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "sha256sum-mixed", "argv": ["-E", "sha256sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "sha384sum-arity", "argv": ["-E", "sha384sum"]},
-  {"name": "sha384sum-file", "argv": ["-E", "sha384sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "sha384sum-mixed", "argv": ["-E", "sha384sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "sha512sum-arity", "argv": ["-E", "sha512sum"]},
-  {"name": "sha512sum-file", "argv": ["-E", "sha512sum", "data"], "files": {"data": {"hex": "0061ff"}}},
-  {"name": "sha512sum-mixed", "argv": ["-E", "sha512sum", "data", "missing", ".", "also-missing"], "files": {"data": ""}},
-  {"name": "cat-file", "argv": ["-E", "cat", "a", "b"], "files": {"a": "one", "b": "two\n"}},
-  {"name": "cat-binary", "argv": ["-E", "cat", "a"], "files": {"a": {"hex": "00ff610d0a00"}}},
-  {"name": "cat-missing", "argv": ["-E", "cat", "nope", "a"], "files": {"a": "one"}},
-  {"name": "cat-directory", "argv": ["-E", "cat", ".", "a"], "files": {"a": "one"}},
-  {"name": "cat-options", "argv": ["-E", "cat", "-bad", "a"], "files": {"a": "one"}},
-  {"name": "cat-double-dash", "argv": ["-E", "cat", "--", "-bad"], "files": {"-bad": "one"}},
-  {"name": "cat-stdin", "argv": ["-E", "cat", "a", "-", "-file"], "files": {"a": "one", "-file": "three"}, "stdin": "two"},
-  {"name": "cat-empty", "argv": ["-E", "cat", "empty", "a"], "files": {"empty": "", "a": "one"}},
-  {"name": "compare-identical", "argv": ["-E", "compare_files", "a", "a"], "files": {"a": "a"}},
-  {"name": "compare-different", "argv": ["-E", "compare_files", "a", "b"], "files": {"a": "a", "b": "b"}},
-  {"name": "compare-crlf", "argv": ["-E", "compare_files", "a", "b"], "files": {"a": "a\n", "b": "a\r\n"}},
-  {"name": "compare-ignore-eol", "argv": ["-E", "compare_files", "--ignore-eol", "a", "b"], "files": {"a": "a\n", "b": "a\r\n"}},
-  {"name": "compare-ignore-final-newline", "argv": ["-E", "compare_files", "--ignore-eol", "a", "b"], "files": {"a": "a\n", "b": "a"}},
-  {"name": "compare-bad-option", "argv": ["-E", "compare_files", "--foo", "a", "b"]},
-  {"name": "compare-nonexistent", "argv": ["-E", "compare_files", "a", "b"]},
-  {"name": "compare-directory", "argv": ["-E", "compare_files", ".", "."]},
-  {"name": "mkdir-multiple", "argv": ["-E", "make_directory", "a/b/c", "d"], "inspect": ["a", "a/b", "a/b/c", "d"]},
-  {"name": "mkdir-file", "argv": ["-E", "make_directory", "a", "file", "b"], "files": {"file": "unchanged"}, "inspect": ["a", "file", "b"]},
-  {"name": "copy-file", "argv": ["-E", "copy", "a", "b/c"], "files": {"a": "text"}, "inspect": ["a", "b/c"]},
-  {"name": "copy-dir-as-file", "argv": ["-E", "copy", "source", "dest"], "files": {"source/x": "text"}, "dirs": ["dest"], "inspect": ["dest", "dest/x"]},
-  {"name": "copy-self", "argv": ["-E", "copy", "a", "a"], "files": {"a": "text"}, "inspect": ["a"]},
-  {"name": "copy-into-dir", "argv": ["-E", "copy", "a", "b", "c"], "files": {"a": "one", "b": "two"}, "dirs": ["c"], "inspect": ["c", "c/a", "c/b"]},
-  {"name": "copy-multi-bad-dir", "argv": ["-E", "copy", "a", "b", "c"], "files": {"a": "one", "b": "two"}},
-  {"name": "copy-t-before", "argv": ["-E", "copy", "-t", "dest", "a"], "files": {"a": "data"}, "dirs": ["dest"], "inspect": ["dest/a"]},
-  {"name": "copy-t-after", "argv": ["-E", "copy", "a", "-t=dest"], "files": {"a": "data"}, "dirs": ["dest"], "inspect": ["dest/a"]},
-  {"name": "copy-t-no-files", "argv": ["-E", "copy", "-t", "dest"], "dirs": ["dest"], "inspect": ["dest"]},
-  {"name": "copy-t-file", "argv": ["-E", "copy", "-t", "dest", "a"], "files": {"a": "data", "dest": "old"}, "inspect": ["dest"]},
-  {"name": "copy-t-no-value", "argv": ["-E", "copy", "a", "-t"]},
-  {"name": "copy-continues", "argv": ["-E", "copy", "missing", "a", "dest"], "files": {"a": "data"}, "dirs": ["dest"], "inspect": ["dest/a"]},
-  {"name": "copy-if-different-mixed", "argv": ["-E", "copy_if_different", "missing", "a", "dest"], "files": {"a": "data", "dest/a": "data"}, "inspect": ["dest/a"]},
-  {"name": "copy-if-different-changed", "argv": ["-E", "copy_if_different", "a", "dest"], "files": {"a": "new", "dest": "old"}, "inspect": ["dest"]},
-  {"name": "copy-if-different-bad-destination", "argv": ["-E", "copy_if_different", "a", "b", "dest"]},
-  {"name": "copy-directories", "argv": ["-E", "copy_directory", "a", "b", "dest"], "files": {"a/a": "one", "b/b": "two"}, "inspect": ["dest", "dest/a", "dest/b"]},
-  {"name": "copy-directory-file", "argv": ["-E", "copy_directory", "a", "b"], "files": {"a": "data"}},
-  {"name": "copy-directory-if-different", "argv": ["-E", "copy_directory_if_different", "src", "dst"], "files": {"src/a": "old", "dst/a": "old", "src/b": "new", "dst/b": "old"}, "inspect": ["dst/a", "dst/b"]},
-  {"name": "copy-symlink", "argv": ["-E", "copy", "link", "target"], "files": {"a": "data"}, "links": {"link": "a"}, "inspect": ["target"]},
-  {"name": "rename-file", "argv": ["-E", "rename", "a", "b"], "files": {"a": "data", "b": "old"}, "inspect": ["a", "b"]},
-  {"name": "rename-directory", "argv": ["-E", "rename", "a", "b"], "files": {"a/file": "data"}, "inspect": ["a", "b/file"]},
-  {"name": "rename-missing", "argv": ["-E", "rename", "a", "b"]},
-  {"name": "symlink-new", "argv": ["-E", "create_symlink", "../a", "b/link"], "files": {"a": "data"}, "dirs": ["b"], "inspect": ["b/link"]},
-  {"name": "symlink-replace-broken", "argv": ["-E", "create_symlink", "a", "link"], "files": {"a": "data"}, "links": {"link": "missing"}, "inspect": ["link"]},
-  {"name": "symlink-dest-dir", "argv": ["-E", "create_symlink", "a", "dest"], "dirs": ["dest"], "inspect": ["dest"]},
-  {"name": "symlink-no-parent", "argv": ["-E", "create_symlink", "a", "missing/dir"]},
-  {"name": "hardlink-new", "argv": ["-E", "create_hardlink", "a", "b"], "files": {"a": "data"}, "inspect": ["a", "b"]},
-  {"name": "hardlink-no-parent", "argv": ["-E", "create_hardlink", "a", "missing/dir"], "files": {"a": "data"}},
-  {"name": "hardlink-missing-source", "argv": ["-E", "create_hardlink", "a", "b"]},
-  {"name": "hardlink-broken-source", "argv": ["-E", "create_hardlink", "a", "b"], "links": {"a": "missing"}},
-  {"name": "hardlink-dest-dir", "argv": ["-E", "create_hardlink", "a", "b"], "files": {"a": "data"}, "dirs": ["b"]},
-  {"name": "symlink-library", "argv": ["-E", "cmake_symlink_library", "lib/liba.so.1.2", "lib/liba.so.1", "lib/liba.so"], "files": {"lib/liba.so.1.2": "binary"}, "inspect": ["lib/liba.so", "lib/liba.so.1"]},
-  {"name": "symlink-library-equal-real", "argv": ["-E", "cmake_symlink_library", "lib/liba.so.1", "lib/liba.so.1", "lib/liba.so"], "files": {"lib/liba.so.1": "binary"}, "inspect": ["lib/liba.so", "lib/liba.so.1"]},
-  {"name": "symlink-executable", "argv": ["-E", "cmake_symlink_executable", "bin/tool-7", "bin/tool"], "files": {"bin/tool-7": "binary", "bin/tool": "old"}, "inspect": ["bin/tool"]},
-  {"name": "symlink-internal-missing-parent", "argv": ["-E", "cmake_symlink_executable", "missing/tool-7", "missing/tool"]},
-  {"name": "remove-file-and-missing", "argv": ["-E", "remove", "a", "missing"], "files": {"a": "data"}, "inspect": ["a"]},
-  {"name": "remove-dir-without-force", "argv": ["-E", "remove", "dir"], "dirs": ["dir"]},
-  {"name": "remove-dir-with-force", "argv": ["-E", "remove", "-f", "dir"], "dirs": ["dir"], "inspect": ["dir"]},
-  {"name": "remove-directory-multiple", "argv": ["-E", "remove_directory", "a", "b", "c"], "files": {"a/file": "data", "b": "file"}, "dirs": ["c"], "inspect": ["a", "b", "c"]},
-  {"name": "remove-directory-symlink", "argv": ["-E", "remove_directory", "a", "b"], "dirs": ["target"], "files": {"f": "data"}, "links": {"a": "target", "b": "f"}, "inspect": ["a", "b", "target", "f"]},
-  {"name": "rm-missing", "argv": ["-E", "rm", "missing"]},
-  {"name": "rm-missing-forced", "argv": ["-E", "rm", "-f", "missing"]},
-  {"name": "rm-recursive", "argv": ["-E", "rm", "-R", "a", "b"], "files": {"a/file": "ok", "b": "file"}, "inspect": ["a", "b"]},
-  {"name": "rm-directory-without-recursive", "argv": ["-E", "rm", "-f", "dir"], "dirs": ["dir"], "inspect": ["dir"]},
-  {"name": "rm-broken-symlink", "argv": ["-E", "rm", "link"], "links": {"link": "missing"}, "inspect": ["link"]},
-  {"name": "rm-link-to-directory", "argv": ["-E", "rm", "link"], "files": {"dir/a": "data"}, "links": {"link": "dir"}, "inspect": ["link", "dir/a"]},
-  {"name": "rm-dash-file", "argv": ["-E", "rm", "--", "-name"], "files": {"-name": "data"}, "inspect": ["-name"]},
-  {"name": "rm-invalid", "argv": ["-E", "rm", "-x"]},
-  {"name": "rm-no-path", "argv": ["-E", "rm", "-f", "--", ""]},
-  {"name": "touch-create", "argv": ["-E", "touch", "a", "b"], "inspect": ["a", "b"]},
-  {"name": "touch-preserves-data", "argv": ["-E", "touch", "file"], "files": {"file": "old"}, "inspect": ["file"]},
-  {"name": "touch-no-parent", "argv": ["-E", "touch", "a/file"]},
-  {"name": "touch-dir", "argv": ["-E", "touch", "a"], "dirs": ["a"], "inspect": ["a"]},
-  {"name": "touch-nocreate", "argv": ["-E", "touch_nocreate", "a", "b"], "files": {"b": "old"}, "inspect": ["a", "b"]},
-  {"name": "sleep-number-and-unit", "argv": ["-E", "sleep", "0", "0.001s"]},
-  {"name": "sleep-negative", "argv": ["-E", "sleep", "-0.1"]},
-  {"name": "sleep-invalid-unit", "argv": ["-E", "sleep", "01ms"]},
-  {"name": "sleep-invalid-number", "argv": ["-E", "sleep", "abc"]},
-  {"name": "chdir-ok", "argv": ["-E", "chdir", "dir", "/bin/pwd"], "dirs": ["dir"]},
-  {"name": "chdir-args", "argv": ["-E", "chdir", ".", "/bin/echo", "two words", ""]},
-  {"name": "chdir-exit", "argv": ["-E", "chdir", ".", "/bin/sh", "-c", "exit 7"]},
-  {"name": "chdir-missing-dir", "argv": ["-E", "chdir", "missing", "/bin/pwd"]},
-  {"name": "chdir-file", "argv": ["-E", "chdir", "data", "/bin/pwd"], "files": {"data": ""}},
-  {"name": "env-no-command", "argv": ["-E", "env", "A=B"]},
-  {"name": "env-unknown-option", "argv": ["-E", "env", "--invalid", "/bin/true"]},
-  {"name": "env-set", "argv": ["-E", "env", "FOO=x y", "/bin/sh", "-c", "printf \"%s\n\" \"$FOO\""]},
-  {"name": "env-unset", "argv": ["-E", "env", "--unset=HELLO", "/bin/sh", "-c", "printf \"%s\n\" \"${HELLO-unset}\""], "env": {"HELLO": "true"}},
-  {"name": "env-modify-missing", "argv": ["-E", "env", "--modify"]},
-  {"name": "env-modify-no-equals", "argv": ["-E", "env", "--modify", "abc"]},
-  {"name": "env-modify-no-colon", "argv": ["-E", "env", "--modify", "A=foo"]},
-  {"name": "env-modify-unknown", "argv": ["-E", "env", "--modify", "A=foo:bar"]},
-  {"name": "env-modify-set", "argv": ["-E", "env", "A=changed", "--modify", "A=set:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-unset", "argv": ["-E", "env", "A=changed", "--modify", "A=unset:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-reset", "argv": ["-E", "env", "A=changed", "--modify", "A=reset:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-string_append", "argv": ["-E", "env", "A=changed", "--modify", "A=string_append:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-string_prepend", "argv": ["-E", "env", "A=changed", "--modify", "A=string_prepend:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-path_list_append", "argv": ["-E", "env", "A=changed", "--modify", "A=path_list_append:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-path_list_prepend", "argv": ["-E", "env", "A=changed", "--modify", "A=path_list_prepend:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-cmake_list_append", "argv": ["-E", "env", "A=changed", "--modify", "A=cmake_list_append:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-modify-cmake_list_prepend", "argv": ["-E", "env", "A=changed", "--modify", "A=cmake_list_prepend:word", "/bin/sh", "-c", "printf \"%s\n\" \"${A-unset}\""], "env": {"A": "original"}},
-  {"name": "env-double-dash", "argv": ["-E", "env", "A=b", "--", "./equals=file"], "files": {"equals=file": {"mode": "755", "text": "#!/bin/sh\nprintf '%s' \"$A\"\n"}}},
-  {"name": "env-stdin", "argv": ["-E", "env", "/bin/cat"], "stdin": "test\n"},
-  {"name": "env-exit", "argv": ["-E", "env", "/bin/sh", "-c", "exit 7"]},
-  {"name": "env-no-executable", "argv": ["-E", "env", "none-such-binary"]},
-  {"name": "time-success", "argv": ["-E", "time", "/bin/echo", "hello"], "elapsed": true},
-  {"name": "time-exit", "argv": ["-E", "time", "/bin/sh", "-c", "exit 7"], "elapsed": true},
-  {"name": "time-missing-executable", "argv": ["-E", "time", "none-such-binary"], "elapsed": true},
-  {"name": "environment", "argv": ["-E", "environment"], "env": {"ONE": "line", "TWO": "words"}}
+ {
+  "name": "bare",
+  "argv": [
+   "-E"
+  ]
+ },
+ {
+  "name": "unknown",
+  "argv": [
+   "-E",
+   "unknown"
+  ]
+ },
+ {
+  "name": "help",
+  "argv": [
+   "-E",
+   "--help"
+  ]
+ },
+ {
+  "name": "capabilities",
+  "argv": [
+   "-E",
+   "capabilities"
+  ],
+  "ninja_capabilities": true
+ },
+ {
+  "name": "capabilities-extra",
+  "argv": [
+   "-E",
+   "capabilities",
+   "x"
+  ]
+ },
+ {
+  "name": "server",
+  "argv": [
+   "-E",
+   "server"
+  ]
+ },
+ {
+  "name": "echo-empty",
+  "argv": [
+   "-E",
+   "echo"
+  ]
+ },
+ {
+  "name": "echo-args",
+  "argv": [
+   "-E",
+   "echo",
+   "one two",
+   "",
+   "--",
+   "\u96ea"
+  ]
+ },
+ {
+  "name": "echo-append",
+  "argv": [
+   "-E",
+   "echo_append",
+   "word",
+   "two"
+  ]
+ },
+ {
+  "name": "echo-append-empty",
+  "argv": [
+   "-E",
+   "echo_append"
+  ]
+ },
+ {
+  "name": "true",
+  "argv": [
+   "-E",
+   "true"
+  ]
+ },
+ {
+  "name": "true-extra",
+  "argv": [
+   "-E",
+   "true",
+   "irrelevant"
+  ]
+ },
+ {
+  "name": "false",
+  "argv": [
+   "-E",
+   "false"
+  ]
+ },
+ {
+  "name": "false-extra",
+  "argv": [
+   "-E",
+   "false",
+   "irrelevant"
+  ]
+ },
+ {
+  "name": "cat-arity",
+  "argv": [
+   "-E",
+   "cat"
+  ]
+ },
+ {
+  "name": "chdir-arity",
+  "argv": [
+   "-E",
+   "chdir"
+  ]
+ },
+ {
+  "name": "compare_files-arity",
+  "argv": [
+   "-E",
+   "compare_files"
+  ]
+ },
+ {
+  "name": "copy-arity",
+  "argv": [
+   "-E",
+   "copy"
+  ]
+ },
+ {
+  "name": "copy_directory-arity",
+  "argv": [
+   "-E",
+   "copy_directory"
+  ]
+ },
+ {
+  "name": "copy_directory_if_different-arity",
+  "argv": [
+   "-E",
+   "copy_directory_if_different"
+  ]
+ },
+ {
+  "name": "copy_if_different-arity",
+  "argv": [
+   "-E",
+   "copy_if_different"
+  ]
+ },
+ {
+  "name": "copy_if_newer-arity",
+  "argv": [
+   "-E",
+   "copy_if_newer"
+  ]
+ },
+ {
+  "name": "create_symlink-arity",
+  "argv": [
+   "-E",
+   "create_symlink"
+  ]
+ },
+ {
+  "name": "create_hardlink-arity",
+  "argv": [
+   "-E",
+   "create_hardlink"
+  ]
+ },
+ {
+  "name": "make_directory-arity",
+  "argv": [
+   "-E",
+   "make_directory"
+  ]
+ },
+ {
+  "name": "remove-arity",
+  "argv": [
+   "-E",
+   "remove"
+  ]
+ },
+ {
+  "name": "remove_directory-arity",
+  "argv": [
+   "-E",
+   "remove_directory"
+  ]
+ },
+ {
+  "name": "rename-arity",
+  "argv": [
+   "-E",
+   "rename"
+  ]
+ },
+ {
+  "name": "rm-arity",
+  "argv": [
+   "-E",
+   "rm"
+  ]
+ },
+ {
+  "name": "sleep-arity",
+  "argv": [
+   "-E",
+   "sleep"
+  ]
+ },
+ {
+  "name": "tar-arity",
+  "argv": [
+   "-E",
+   "tar"
+  ]
+ },
+ {
+  "name": "time-arity",
+  "argv": [
+   "-E",
+   "time"
+  ]
+ },
+ {
+  "name": "touch-arity",
+  "argv": [
+   "-E",
+   "touch"
+  ]
+ },
+ {
+  "name": "touch_nocreate-arity",
+  "argv": [
+   "-E",
+   "touch_nocreate"
+  ]
+ },
+ {
+  "name": "copy-if-newer-unavailable",
+  "argv": [
+   "-E",
+   "copy_if_newer",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "first"
+  }
+ },
+ {
+  "name": "md5sum-arity",
+  "argv": [
+   "-E",
+   "md5sum"
+  ]
+ },
+ {
+  "name": "md5sum-file",
+  "argv": [
+   "-E",
+   "md5sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "md5sum-mixed",
+  "argv": [
+   "-E",
+   "md5sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "sha1sum-arity",
+  "argv": [
+   "-E",
+   "sha1sum"
+  ]
+ },
+ {
+  "name": "sha1sum-file",
+  "argv": [
+   "-E",
+   "sha1sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "sha1sum-mixed",
+  "argv": [
+   "-E",
+   "sha1sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "sha224sum-arity",
+  "argv": [
+   "-E",
+   "sha224sum"
+  ]
+ },
+ {
+  "name": "sha224sum-file",
+  "argv": [
+   "-E",
+   "sha224sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "sha224sum-mixed",
+  "argv": [
+   "-E",
+   "sha224sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "sha256sum-arity",
+  "argv": [
+   "-E",
+   "sha256sum"
+  ]
+ },
+ {
+  "name": "sha256sum-file",
+  "argv": [
+   "-E",
+   "sha256sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "sha256sum-mixed",
+  "argv": [
+   "-E",
+   "sha256sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "sha384sum-arity",
+  "argv": [
+   "-E",
+   "sha384sum"
+  ]
+ },
+ {
+  "name": "sha384sum-file",
+  "argv": [
+   "-E",
+   "sha384sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "sha384sum-mixed",
+  "argv": [
+   "-E",
+   "sha384sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "sha512sum-arity",
+  "argv": [
+   "-E",
+   "sha512sum"
+  ]
+ },
+ {
+  "name": "sha512sum-file",
+  "argv": [
+   "-E",
+   "sha512sum",
+   "data"
+  ],
+  "files": {
+   "data": {
+    "hex": "0061ff"
+   }
+  }
+ },
+ {
+  "name": "sha512sum-mixed",
+  "argv": [
+   "-E",
+   "sha512sum",
+   "data",
+   "missing",
+   ".",
+   "also-missing"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "cat-file",
+  "argv": [
+   "-E",
+   "cat",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "one",
+   "b": "two\n"
+  }
+ },
+ {
+  "name": "cat-binary",
+  "argv": [
+   "-E",
+   "cat",
+   "a"
+  ],
+  "files": {
+   "a": {
+    "hex": "00ff610d0a00"
+   }
+  }
+ },
+ {
+  "name": "cat-missing",
+  "argv": [
+   "-E",
+   "cat",
+   "nope",
+   "a"
+  ],
+  "files": {
+   "a": "one"
+  }
+ },
+ {
+  "name": "cat-directory",
+  "argv": [
+   "-E",
+   "cat",
+   ".",
+   "a"
+  ],
+  "files": {
+   "a": "one"
+  }
+ },
+ {
+  "name": "cat-options",
+  "argv": [
+   "-E",
+   "cat",
+   "-bad",
+   "a"
+  ],
+  "files": {
+   "a": "one"
+  }
+ },
+ {
+  "name": "cat-double-dash",
+  "argv": [
+   "-E",
+   "cat",
+   "--",
+   "-bad"
+  ],
+  "files": {
+   "-bad": "one"
+  }
+ },
+ {
+  "name": "cat-stdin",
+  "argv": [
+   "-E",
+   "cat",
+   "a",
+   "-",
+   "-file"
+  ],
+  "files": {
+   "a": "one",
+   "-file": "three"
+  },
+  "stdin": "two"
+ },
+ {
+  "name": "cat-empty",
+  "argv": [
+   "-E",
+   "cat",
+   "empty",
+   "a"
+  ],
+  "files": {
+   "empty": "",
+   "a": "one"
+  }
+ },
+ {
+  "name": "compare-identical",
+  "argv": [
+   "-E",
+   "compare_files",
+   "a",
+   "a"
+  ],
+  "files": {
+   "a": "a"
+  }
+ },
+ {
+  "name": "compare-different",
+  "argv": [
+   "-E",
+   "compare_files",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "a",
+   "b": "b"
+  }
+ },
+ {
+  "name": "compare-crlf",
+  "argv": [
+   "-E",
+   "compare_files",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "a\n",
+   "b": "a\r\n"
+  }
+ },
+ {
+  "name": "compare-ignore-eol",
+  "argv": [
+   "-E",
+   "compare_files",
+   "--ignore-eol",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "a\n",
+   "b": "a\r\n"
+  }
+ },
+ {
+  "name": "compare-ignore-final-newline",
+  "argv": [
+   "-E",
+   "compare_files",
+   "--ignore-eol",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "a\n",
+   "b": "a"
+  }
+ },
+ {
+  "name": "compare-bad-option",
+  "argv": [
+   "-E",
+   "compare_files",
+   "--foo",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "compare-nonexistent",
+  "argv": [
+   "-E",
+   "compare_files",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "compare-directory",
+  "argv": [
+   "-E",
+   "compare_files",
+   ".",
+   "."
+  ]
+ },
+ {
+  "name": "mkdir-multiple",
+  "argv": [
+   "-E",
+   "make_directory",
+   "a/b/c",
+   "d"
+  ],
+  "inspect": [
+   "a",
+   "a/b",
+   "a/b/c",
+   "d"
+  ]
+ },
+ {
+  "name": "mkdir-file",
+  "argv": [
+   "-E",
+   "make_directory",
+   "a",
+   "file",
+   "b"
+  ],
+  "files": {
+   "file": "unchanged"
+  },
+  "inspect": [
+   "a",
+   "file",
+   "b"
+  ]
+ },
+ {
+  "name": "copy-file",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "b/c"
+  ],
+  "files": {
+   "a": "text"
+  },
+  "inspect": [
+   "a",
+   "b/c"
+  ]
+ },
+ {
+  "name": "copy-dir-as-file",
+  "argv": [
+   "-E",
+   "copy",
+   "source",
+   "dest"
+  ],
+  "files": {
+   "source/x": "text"
+  },
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest",
+   "dest/x"
+  ]
+ },
+ {
+  "name": "copy-self",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "a"
+  ],
+  "files": {
+   "a": "text"
+  },
+  "inspect": [
+   "a"
+  ]
+ },
+ {
+  "name": "copy-into-dir",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "b",
+   "c"
+  ],
+  "files": {
+   "a": "one",
+   "b": "two"
+  },
+  "dirs": [
+   "c"
+  ],
+  "inspect": [
+   "c",
+   "c/a",
+   "c/b"
+  ]
+ },
+ {
+  "name": "copy-multi-bad-dir",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "b",
+   "c"
+  ],
+  "files": {
+   "a": "one",
+   "b": "two"
+  }
+ },
+ {
+  "name": "copy-t-before",
+  "argv": [
+   "-E",
+   "copy",
+   "-t",
+   "dest",
+   "a"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest/a"
+  ]
+ },
+ {
+  "name": "copy-t-after",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "-t=dest"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest/a"
+  ]
+ },
+ {
+  "name": "copy-t-no-files",
+  "argv": [
+   "-E",
+   "copy",
+   "-t",
+   "dest"
+  ],
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest"
+  ]
+ },
+ {
+  "name": "copy-t-file",
+  "argv": [
+   "-E",
+   "copy",
+   "-t",
+   "dest",
+   "a"
+  ],
+  "files": {
+   "a": "data",
+   "dest": "old"
+  },
+  "inspect": [
+   "dest"
+  ]
+ },
+ {
+  "name": "copy-t-no-value",
+  "argv": [
+   "-E",
+   "copy",
+   "a",
+   "-t"
+  ]
+ },
+ {
+  "name": "copy-continues",
+  "argv": [
+   "-E",
+   "copy",
+   "missing",
+   "a",
+   "dest"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest/a"
+  ]
+ },
+ {
+  "name": "copy-if-different-mixed",
+  "argv": [
+   "-E",
+   "copy_if_different",
+   "missing",
+   "a",
+   "dest"
+  ],
+  "files": {
+   "a": "data",
+   "dest/a": "data"
+  },
+  "inspect": [
+   "dest/a"
+  ]
+ },
+ {
+  "name": "copy-if-different-changed",
+  "argv": [
+   "-E",
+   "copy_if_different",
+   "a",
+   "dest"
+  ],
+  "files": {
+   "a": "new",
+   "dest": "old"
+  },
+  "inspect": [
+   "dest"
+  ]
+ },
+ {
+  "name": "copy-if-different-bad-destination",
+  "argv": [
+   "-E",
+   "copy_if_different",
+   "a",
+   "b",
+   "dest"
+  ]
+ },
+ {
+  "name": "copy-directories",
+  "argv": [
+   "-E",
+   "copy_directory",
+   "a",
+   "b",
+   "dest"
+  ],
+  "files": {
+   "a/a": "one",
+   "b/b": "two"
+  },
+  "inspect": [
+   "dest",
+   "dest/a",
+   "dest/b"
+  ]
+ },
+ {
+  "name": "copy-directory-file",
+  "argv": [
+   "-E",
+   "copy_directory",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "data"
+  }
+ },
+ {
+  "name": "copy-directory-if-different",
+  "argv": [
+   "-E",
+   "copy_directory_if_different",
+   "src",
+   "dst"
+  ],
+  "files": {
+   "src/a": "old",
+   "dst/a": "old",
+   "src/b": "new",
+   "dst/b": "old"
+  },
+  "inspect": [
+   "dst/a",
+   "dst/b"
+  ]
+ },
+ {
+  "name": "copy-symlink",
+  "argv": [
+   "-E",
+   "copy",
+   "link",
+   "target"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "links": {
+   "link": "a"
+  },
+  "inspect": [
+   "target"
+  ]
+ },
+ {
+  "name": "rename-file",
+  "argv": [
+   "-E",
+   "rename",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "data",
+   "b": "old"
+  },
+  "inspect": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "rename-directory",
+  "argv": [
+   "-E",
+   "rename",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a/file": "data"
+  },
+  "inspect": [
+   "a",
+   "b/file"
+  ]
+ },
+ {
+  "name": "rename-missing",
+  "argv": [
+   "-E",
+   "rename",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "symlink-new",
+  "argv": [
+   "-E",
+   "create_symlink",
+   "../a",
+   "b/link"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "dirs": [
+   "b"
+  ],
+  "inspect": [
+   "b/link"
+  ]
+ },
+ {
+  "name": "symlink-replace-broken",
+  "argv": [
+   "-E",
+   "create_symlink",
+   "a",
+   "link"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "links": {
+   "link": "missing"
+  },
+  "inspect": [
+   "link"
+  ]
+ },
+ {
+  "name": "symlink-dest-dir",
+  "argv": [
+   "-E",
+   "create_symlink",
+   "a",
+   "dest"
+  ],
+  "dirs": [
+   "dest"
+  ],
+  "inspect": [
+   "dest"
+  ]
+ },
+ {
+  "name": "symlink-no-parent",
+  "argv": [
+   "-E",
+   "create_symlink",
+   "a",
+   "missing/dir"
+  ]
+ },
+ {
+  "name": "hardlink-new",
+  "argv": [
+   "-E",
+   "create_hardlink",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "inspect": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "hardlink-no-parent",
+  "argv": [
+   "-E",
+   "create_hardlink",
+   "a",
+   "missing/dir"
+  ],
+  "files": {
+   "a": "data"
+  }
+ },
+ {
+  "name": "hardlink-missing-source",
+  "argv": [
+   "-E",
+   "create_hardlink",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "hardlink-broken-source",
+  "argv": [
+   "-E",
+   "create_hardlink",
+   "a",
+   "b"
+  ],
+  "links": {
+   "a": "missing"
+  }
+ },
+ {
+  "name": "hardlink-dest-dir",
+  "argv": [
+   "-E",
+   "create_hardlink",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "dirs": [
+   "b"
+  ]
+ },
+ {
+  "name": "symlink-library",
+  "argv": [
+   "-E",
+   "cmake_symlink_library",
+   "lib/liba.so.1.2",
+   "lib/liba.so.1",
+   "lib/liba.so"
+  ],
+  "files": {
+   "lib/liba.so.1.2": "binary"
+  },
+  "inspect": [
+   "lib/liba.so",
+   "lib/liba.so.1"
+  ]
+ },
+ {
+  "name": "symlink-library-equal-real",
+  "argv": [
+   "-E",
+   "cmake_symlink_library",
+   "lib/liba.so.1",
+   "lib/liba.so.1",
+   "lib/liba.so"
+  ],
+  "files": {
+   "lib/liba.so.1": "binary"
+  },
+  "inspect": [
+   "lib/liba.so",
+   "lib/liba.so.1"
+  ]
+ },
+ {
+  "name": "symlink-executable",
+  "argv": [
+   "-E",
+   "cmake_symlink_executable",
+   "bin/tool-7",
+   "bin/tool"
+  ],
+  "files": {
+   "bin/tool-7": "binary",
+   "bin/tool": "old"
+  },
+  "inspect": [
+   "bin/tool"
+  ]
+ },
+ {
+  "name": "symlink-internal-missing-parent",
+  "argv": [
+   "-E",
+   "cmake_symlink_executable",
+   "missing/tool-7",
+   "missing/tool"
+  ]
+ },
+ {
+  "name": "remove-file-and-missing",
+  "argv": [
+   "-E",
+   "remove",
+   "a",
+   "missing"
+  ],
+  "files": {
+   "a": "data"
+  },
+  "inspect": [
+   "a"
+  ]
+ },
+ {
+  "name": "remove-dir-without-force",
+  "argv": [
+   "-E",
+   "remove",
+   "dir"
+  ],
+  "dirs": [
+   "dir"
+  ]
+ },
+ {
+  "name": "remove-dir-with-force",
+  "argv": [
+   "-E",
+   "remove",
+   "-f",
+   "dir"
+  ],
+  "dirs": [
+   "dir"
+  ],
+  "inspect": [
+   "dir"
+  ]
+ },
+ {
+  "name": "remove-directory-multiple",
+  "argv": [
+   "-E",
+   "remove_directory",
+   "a",
+   "b",
+   "c"
+  ],
+  "files": {
+   "a/file": "data",
+   "b": "file"
+  },
+  "dirs": [
+   "c"
+  ],
+  "inspect": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "name": "remove-directory-symlink",
+  "argv": [
+   "-E",
+   "remove_directory",
+   "a",
+   "b"
+  ],
+  "dirs": [
+   "target"
+  ],
+  "files": {
+   "f": "data"
+  },
+  "links": {
+   "a": "target",
+   "b": "f"
+  },
+  "inspect": [
+   "a",
+   "b",
+   "target",
+   "f"
+  ]
+ },
+ {
+  "name": "rm-missing",
+  "argv": [
+   "-E",
+   "rm",
+   "missing"
+  ]
+ },
+ {
+  "name": "rm-missing-forced",
+  "argv": [
+   "-E",
+   "rm",
+   "-f",
+   "missing"
+  ]
+ },
+ {
+  "name": "rm-recursive",
+  "argv": [
+   "-E",
+   "rm",
+   "-R",
+   "a",
+   "b"
+  ],
+  "files": {
+   "a/file": "ok",
+   "b": "file"
+  },
+  "inspect": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "rm-directory-without-recursive",
+  "argv": [
+   "-E",
+   "rm",
+   "-f",
+   "dir"
+  ],
+  "dirs": [
+   "dir"
+  ],
+  "inspect": [
+   "dir"
+  ]
+ },
+ {
+  "name": "rm-broken-symlink",
+  "argv": [
+   "-E",
+   "rm",
+   "link"
+  ],
+  "links": {
+   "link": "missing"
+  },
+  "inspect": [
+   "link"
+  ]
+ },
+ {
+  "name": "rm-link-to-directory",
+  "argv": [
+   "-E",
+   "rm",
+   "link"
+  ],
+  "files": {
+   "dir/a": "data"
+  },
+  "links": {
+   "link": "dir"
+  },
+  "inspect": [
+   "link",
+   "dir/a"
+  ]
+ },
+ {
+  "name": "rm-dash-file",
+  "argv": [
+   "-E",
+   "rm",
+   "--",
+   "-name"
+  ],
+  "files": {
+   "-name": "data"
+  },
+  "inspect": [
+   "-name"
+  ]
+ },
+ {
+  "name": "rm-invalid",
+  "argv": [
+   "-E",
+   "rm",
+   "-x"
+  ]
+ },
+ {
+  "name": "rm-no-path",
+  "argv": [
+   "-E",
+   "rm",
+   "-f",
+   "--",
+   ""
+  ]
+ },
+ {
+  "name": "touch-create",
+  "argv": [
+   "-E",
+   "touch",
+   "a",
+   "b"
+  ],
+  "inspect": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "touch-preserves-data",
+  "argv": [
+   "-E",
+   "touch",
+   "file"
+  ],
+  "files": {
+   "file": "old"
+  },
+  "inspect": [
+   "file"
+  ]
+ },
+ {
+  "name": "touch-no-parent",
+  "argv": [
+   "-E",
+   "touch",
+   "a/file"
+  ]
+ },
+ {
+  "name": "touch-dir",
+  "argv": [
+   "-E",
+   "touch",
+   "a"
+  ],
+  "dirs": [
+   "a"
+  ],
+  "inspect": [
+   "a"
+  ]
+ },
+ {
+  "name": "touch-nocreate",
+  "argv": [
+   "-E",
+   "touch_nocreate",
+   "a",
+   "b"
+  ],
+  "files": {
+   "b": "old"
+  },
+  "inspect": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "name": "sleep-number-and-unit",
+  "argv": [
+   "-E",
+   "sleep",
+   "0",
+   "0.001s"
+  ]
+ },
+ {
+  "name": "sleep-negative",
+  "argv": [
+   "-E",
+   "sleep",
+   "-0.1"
+  ]
+ },
+ {
+  "name": "sleep-invalid-unit",
+  "argv": [
+   "-E",
+   "sleep",
+   "01ms"
+  ]
+ },
+ {
+  "name": "sleep-invalid-number",
+  "argv": [
+   "-E",
+   "sleep",
+   "abc"
+  ]
+ },
+ {
+  "name": "chdir-ok",
+  "argv": [
+   "-E",
+   "chdir",
+   "dir",
+   "/bin/pwd"
+  ],
+  "dirs": [
+   "dir"
+  ]
+ },
+ {
+  "name": "chdir-args",
+  "argv": [
+   "-E",
+   "chdir",
+   ".",
+   "/bin/echo",
+   "two words",
+   ""
+  ]
+ },
+ {
+  "name": "chdir-exit",
+  "argv": [
+   "-E",
+   "chdir",
+   ".",
+   "/bin/sh",
+   "-c",
+   "exit 7"
+  ]
+ },
+ {
+  "name": "chdir-missing-dir",
+  "argv": [
+   "-E",
+   "chdir",
+   "missing",
+   "/bin/pwd"
+  ]
+ },
+ {
+  "name": "chdir-file",
+  "argv": [
+   "-E",
+   "chdir",
+   "data",
+   "/bin/pwd"
+  ],
+  "files": {
+   "data": ""
+  }
+ },
+ {
+  "name": "env-no-command",
+  "argv": [
+   "-E",
+   "env",
+   "A=B"
+  ]
+ },
+ {
+  "name": "env-unknown-option",
+  "argv": [
+   "-E",
+   "env",
+   "--invalid",
+   "/bin/true"
+  ]
+ },
+ {
+  "name": "env-set",
+  "argv": [
+   "-E",
+   "env",
+   "FOO=x y",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"$FOO\""
+  ]
+ },
+ {
+  "name": "env-unset",
+  "argv": [
+   "-E",
+   "env",
+   "--unset=HELLO",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${HELLO-unset}\""
+  ],
+  "env": {
+   "HELLO": "true"
+  }
+ },
+ {
+  "name": "env-modify-missing",
+  "argv": [
+   "-E",
+   "env",
+   "--modify"
+  ]
+ },
+ {
+  "name": "env-modify-no-equals",
+  "argv": [
+   "-E",
+   "env",
+   "--modify",
+   "abc"
+  ]
+ },
+ {
+  "name": "env-modify-no-colon",
+  "argv": [
+   "-E",
+   "env",
+   "--modify",
+   "A=foo"
+  ]
+ },
+ {
+  "name": "env-modify-unknown",
+  "argv": [
+   "-E",
+   "env",
+   "--modify",
+   "A=foo:bar"
+  ]
+ },
+ {
+  "name": "env-modify-set",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=set:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-unset",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=unset:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-reset",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=reset:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-string_append",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=string_append:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-string_prepend",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=string_prepend:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-path_list_append",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=path_list_append:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-path_list_prepend",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=path_list_prepend:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-cmake_list_append",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=cmake_list_append:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-modify-cmake_list_prepend",
+  "argv": [
+   "-E",
+   "env",
+   "A=changed",
+   "--modify",
+   "A=cmake_list_prepend:word",
+   "/bin/sh",
+   "-c",
+   "printf \"%s\n\" \"${A-unset}\""
+  ],
+  "env": {
+   "A": "original"
+  }
+ },
+ {
+  "name": "env-double-dash",
+  "argv": [
+   "-E",
+   "env",
+   "A=b",
+   "--",
+   "./equals=file"
+  ],
+  "files": {
+   "equals=file": {
+    "mode": "755",
+    "text": "#!/bin/sh\nprintf '%s' \"$A\"\n"
+   }
+  }
+ },
+ {
+  "name": "env-stdin",
+  "argv": [
+   "-E",
+   "env",
+   "/bin/cat"
+  ],
+  "stdin": "test\n"
+ },
+ {
+  "name": "env-exit",
+  "argv": [
+   "-E",
+   "env",
+   "/bin/sh",
+   "-c",
+   "exit 7"
+  ]
+ },
+ {
+  "name": "env-no-executable",
+  "argv": [
+   "-E",
+   "env",
+   "none-such-binary"
+  ]
+ },
+ {
+  "name": "time-success",
+  "argv": [
+   "-E",
+   "time",
+   "/bin/echo",
+   "hello"
+  ],
+  "elapsed": true
+ },
+ {
+  "name": "time-exit",
+  "argv": [
+   "-E",
+   "time",
+   "/bin/sh",
+   "-c",
+   "exit 7"
+  ],
+  "elapsed": true
+ },
+ {
+  "name": "time-missing-executable",
+  "argv": [
+   "-E",
+   "time",
+   "none-such-binary"
+  ],
+  "elapsed": true
+ },
+ {
+  "name": "environment",
+  "argv": [
+   "-E",
+   "environment"
+  ],
+  "env": {
+   "ONE": "line",
+   "TWO": "words"
+  }
+ },
+ {
+  "name": "co-compile-no-jobs",
+  "argv": [
+   "-E",
+   "__run_co_compile",
+   "--",
+   "x"
+  ]
+ },
+ {
+  "name": "co-compile-missing-tool",
+  "argv": [
+   "-E",
+   "__run_co_compile",
+   "--iwyu=iwyu-does-not-exist",
+   "--",
+   "x"
+  ]
+ },
+ {
+  "name": "co-compile-unknown-arg",
+  "argv": [
+   "-E",
+   "__run_co_compile",
+   "--iwyu=x",
+   "y"
+  ]
+ },
+ {
+  "name": "co-compile-no-cc",
+  "argv": [
+   "-E",
+   "__run_co_compile",
+   "--iwyu=x",
+   "--"
+  ]
+ },
+ {
+  "name": "co-compile-cpplint-launcher",
+  "argv": [
+   "-E",
+   "__run_co_compile",
+   "--cpplint=true",
+   "--launcher=env",
+   "--source=a.c",
+   "--",
+   "true"
+  ]
+ },
+ {
+  "name": "llvm-rc-no-args",
+  "argv": [
+   "-E",
+   "cmake_llvm_rc"
+  ]
+ },
+ {
+  "name": "llvm-rc-no-rc",
+  "argv": [
+   "-E",
+   "cmake_llvm_rc",
+   "src",
+   "test.tmp",
+   "echo",
+   "hi"
+  ]
+ },
+ {
+  "name": "llvm-rc-no-pp",
+  "argv": [
+   "-E",
+   "cmake_llvm_rc",
+   "src",
+   "test.tmp",
+   "++",
+   "echo",
+   "hi"
+  ]
+ },
+ {
+  "name": "llvm-rc-run",
+  "argv": [
+   "-E",
+   "cmake_llvm_rc",
+   "d/src",
+   "test.tmp",
+   "echo",
+   "hi",
+   "++",
+   "cp",
+   "/FO",
+   "test.tmp",
+   "SOURCE_DIR/out.txt"
+  ],
+  "dirs": [
+   "d"
+  ],
+  "inspect": [
+   "d/out.txt"
+  ]
+ }
 ]

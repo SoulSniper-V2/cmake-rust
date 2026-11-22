@@ -121,6 +121,10 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
     if !invalid.is_empty() {
         return err(format!("given invalid permission {}.", invalid.join(",")));
     }
+    // AddEvaluationFile compiles OUTPUT and CONDITION here (the compiled
+    // forms are evaluated at generate time without recompiling).
+    drop(crate::profiling::entry("genex_compile", &output, || None));
+    drop(crate::profiling::entry("genex_compile", &condition, || None));
     let dir = interp.mf_index();
     let backtrace = interp.backtrace.clone();
     let cmp0070 = interp.policy_status("CMP0070");

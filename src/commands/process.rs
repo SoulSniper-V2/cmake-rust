@@ -196,6 +196,31 @@ impl From<ExitStatus> for Status {
     }
 }
 
+/// The `cmUVProcessChain` exception text of an abnormal exit (a signal),
+/// or `None` for a normal exit.
+pub(crate) fn exception_text(status: ExitStatus) -> Option<String> {
+    match Status::from(status) {
+        Status::Exit(_) => None,
+        Status::Abnormal(message) => Some(message),
+    }
+}
+
+/// The libuv text of a spawn failure (`uv_strerror`, lower case).
+pub(crate) fn spawn_error_text(error: &io::Error) -> String {
+    match spawn_error_status(error) {
+        Status::Abnormal(message) => message,
+        Status::Exit(_) => String::new(),
+    }
+}
+
+fn spawn_error_status(error: &io::Error) -> Status {
+    let text = error.to_string();
+    let message = text
+        .split_once(" (os error ")
+        .map_or(text.as_str(), |(message, _)| message);
+    Status::Abnormal(message.to_ascii_lowercase())
+}
+
 fn spawn_error(error: io::Error) -> Status {
     let text = error.to_string();
     let message = text

@@ -24,10 +24,14 @@ mod policy;
 mod policy_table;
 pub mod properties;
 mod presets;
+mod profiling;
 mod props;
 mod state;
 mod util;
 
 fn main() {
-    std::process::exit(cli::main());
+    let code = cli::main();
+    // The cmake instance's destructor closes the profiling output.
+    profiling::finish();
+    std::process::exit(code);
 }

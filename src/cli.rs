@@ -511,6 +511,8 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     let mut preset_name = String::new();
     let mut list_presets = None;
     let mut have_b_arg = false;
+    let mut profiling_format = String::new();
+    let mut profiling_output = String::new();
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -569,6 +571,9 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 "--preset" => preset_name = value.clone(),
                 // cmSystemTools::ToNormalizedPathOnDisk
                 "--graphviz" => options.graphviz = Some(util::collapse_full_path(&value, cwd)),
+                "--profiling-format" => profiling_format = value.clone(),
+                // cmSystemTools::ToNormalizedPathOnDisk
+                "--profiling-output" => profiling_output = util::collapse_full_path(&value, cwd),
                 "-B" => have_b_arg = true,
                 _ => {}
             }
@@ -687,6 +692,23 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         }
         cmcmd::error(format!("{flag} is not supported"));
         return Ok(1);
+    }
+
+    // The end of cmake::SetArgs.
+    if !profiling_output.is_empty() || !profiling_format.is_empty() {
+        if profiling_output.is_empty() {
+            cmcmd::error("--profiling-format specified but no --profiling-output!");
+            return Ok(1);
+        }
+        if profiling_format == "google-trace" {
+            if let Err(error) = crate::profiling::start(&profiling_output) {
+                cmcmd::error(format!("Could not start profiling: {error}"));
+                return Ok(1);
+            }
+        } else {
+            cmcmd::error("Invalid format specified for --profiling-format");
+            return Ok(1);
+        }
     }
 
     if script_mode && options.fresh {

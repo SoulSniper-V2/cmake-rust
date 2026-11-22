@@ -3000,7 +3000,7 @@ fn convert_to_run_command_path(path: &str) -> String {
 
 /// `cmSystemTools::ParseArguments`: splits a command line into argv,
 /// handling double/single quotes and backslash escapes. No shell involved.
-fn parse_arguments(command: &str) -> Vec<String> {
+pub(crate) fn parse_arguments(command: &str) -> Vec<String> {
     let bytes = command.as_bytes();
     // The Windows-path special case never triggers for unix paths.
     let win_path = false;

@@ -325,6 +325,8 @@ struct Frame {
 }
 
 pub fn parse(input: &str) -> Compiled {
+    // cmCompiledGeneratorExpression's constructor profiles the compile.
+    let _profile = crate::profiling::entry("genex_compile", input, || None);
     let mut frames = vec![Frame {
         start: 0,
         parts: vec![Vec::new()],
@@ -571,6 +573,8 @@ impl Evaluator<'_, '_> {
                     parameters,
                 } => {
                     let expr = &compiled.input[span.clone()];
+                    // GeneratorExpressionContent::Evaluate
+                    let _profile = crate::profiling::entry("genex_eval", expr, || None);
                     let id = self.parts(compiled, identifier, scope, dag)?;
                     let mut args: Vec<String> = Vec::new();
                     let count = parameters.len();
@@ -642,6 +646,17 @@ impl Evaluator<'_, '_> {
                             self.error(expr, format!("$<{id}> expression requires {detail}"))
                         );
                     }
+                    let _exec = crate::profiling::entry("genex_exec", &id, || {
+                        use crate::commands::string::json::Json;
+                        let mut object = std::collections::BTreeMap::new();
+                        if !args.is_empty() {
+                            object.insert(
+                                b"genexArgs".to_vec(),
+                                Json::Array(args.iter().map(|arg| Json::Str(arg.as_bytes().to_vec())).collect()),
+                            );
+                        }
+                        Some(Json::Object(object))
+                    });
                     result.push_str(&self.node(&id, &args, expr, scope, dag)?);
                 }
             }

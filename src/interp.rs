@@ -1257,13 +1257,7 @@ impl Interp {
             let jumps = &file.jumps[index];
             // Flow commands run their own blocks here but are traced like
             // any command invocation (cmMakefile::ExecuteCommand).
-            if self.trace.is_some()
-                && matches!(command.lname.as_str(), "if" | "foreach" | "while" | "function" | "macro" | "block")
-                && self.is_flow(&command.lname)
-            {
-                let depth = self.recursion_depth + 1;
-                self.print_command_trace(file, command, subst, depth);
-            }
+            self.announce_flow_command(file, command, subst);
             let ctl = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(file, index, subst);
@@ -1440,9 +1434,44 @@ impl Interp {
     /// Executes a single non-flow command. Returns (succeeded, control).
     pub fn execute(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         self.backtrace.push(self.frame_for(file, command));
+        let profile = self.profile_command(file, command, subst);
         let result = self.execute_inner(file, command, subst);
+        drop(profile);
         self.backtrace.pop();
         result
+    }
+
+    /// The profiling entry of `cmMakefile::CallScope`: the command's
+    /// lower-case name, its unexpanded arguments and its location.
+    fn profile_command(
+        &self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> crate::profiling::Entry {
+        if self.in_try_compile {
+            return crate::profiling::Entry::none();
+        }
+        crate::profiling::entry("script", &command.lname, || {
+            use crate::commands::string::json::Json;
+            let mut object = std::collections::BTreeMap::new();
+            if !command.args.is_empty() {
+                let values: Vec<String> = command
+                    .args
+                    .iter()
+                    .map(|arg| match subst {
+                        Some(subst) if arg.delim != Delim::Bracket => subst.apply(&arg.value),
+                        _ => arg.value.clone(),
+                    })
+                    .collect();
+                object.insert(b"functionArgs".to_vec(), Json::Str(values.join(" ").into_bytes()));
+            }
+            object.insert(
+                b"location".to_vec(),
+                Json::Str(format!("{}:{}", file.path, command.line).into_bytes()),
+            );
+            Some(Json::Object(object))
+        })
     }
 
     /// `cmMakefile::GetRecursionDepthLimit`: the normal variable wins over
@@ -1626,6 +1655,25 @@ impl Interp {
         }
     }
 
+    /// Flow commands run their own blocks but are traced and profiled like
+    /// any command invocation (cmMakefile::ExecuteCommand). Their own
+    /// ExecuteCommand only opens the function blocker, so the profiling
+    /// entry closes at once; the body is replayed outside its scope.
+    fn announce_flow_command(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) {
+        if !matches!(command.lname.as_str(), "if" | "foreach" | "while" | "function" | "macro" | "block")
+            || !self.is_flow(&command.lname)
+        {
+            return;
+        }
+        if self.trace.is_some() {
+            let depth = self.recursion_depth + 1;
+            self.print_command_trace(file, command, subst, depth);
+        }
+        if crate::profiling::enabled() {
+            drop(self.profile_command(file, command, subst));
+        }
+    }
+
     /// Runs a function/macro body; a failing direct command stops it.
     fn run_body(&mut self, callable: &Rc<Callable>, subst: Option<&MacroSubst>) -> BodyResult {
         let file = callable.file.clone();
@@ -1636,6 +1684,7 @@ impl Interp {
             }
             let command = &file.commands[index];
             let jumps = &file.jumps[index];
+            self.announce_flow_command(&file, command, subst);
             let (ok, ctl) = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(&file, index, subst);

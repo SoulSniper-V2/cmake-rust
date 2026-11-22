@@ -437,6 +437,8 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     // cmake::Configure: apply `DiagLevels` (from -W flags and presets) to
     // the cache, then sync the messenger with the cache.
+    // cmake::Configure
+    let configure_profile = project_profile_entry(options, "configure");
     // DiagLevel: 0 = DIAG_IGNORE, 1 = DIAG_WARN, 2 = DIAG_ERROR.
     let level = |warn: Option<bool>, error: Option<bool>| -> Option<u8> {
         if error == Some(true) {
@@ -501,9 +503,11 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         .is_some_and(util::is_off);
     let mut file_api = None;
     let code = actual_configure(interp, options, &mut file_api);
+    drop(configure_profile);
     if code != 0 {
         return code;
     }
+    let generate_profile = project_profile_entry(options, "generate");
     let code = crate::generator::generate(interp, options);
     if let Some(api) = &mut file_api {
         let index_for = if code != 0 {
@@ -513,6 +517,7 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         };
         api.write_replies(interp, index_for);
     }
+    drop(generate_profile);
     if code != 0 {
         interp.stderr_line("CMake Generate step failed.  Build files cannot be regenerated correctly.");
         return code;
@@ -524,6 +529,15 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         );
     }
     0
+}
+
+/// The "project" profiling entries of cmake::Configure and cmake::Generate
+/// (try_compile projects run in a separate, unprofiled cmake instance).
+fn project_profile_entry(options: &ConfigureOptions, name: &str) -> crate::profiling::Entry {
+    if options.in_try_compile {
+        return crate::profiling::Entry::none();
+    }
+    crate::profiling::entry("project", name, || None)
 }
 
 /// `cmake::ActualConfigure`.
@@ -787,6 +801,7 @@ pub fn try_compile_project(
     cmake_args: Option<&[String]>,
 ) -> (i32, String) {
     let _ = fast;
+    let _profiling = crate::profiling::suspend();
     let _ = std::fs::create_dir_all(bindir);
     let previous_cwd = std::env::current_dir().ok();
     if std::env::set_current_dir(bindir).is_err() {

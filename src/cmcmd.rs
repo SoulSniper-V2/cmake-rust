@@ -1,6 +1,7 @@
 //! Portable commands exposed by `cmake -E` (cmcmd.cxx).
 
 mod archive;
+mod cocompile;
 mod depfile;
 
 use std::collections::BTreeMap;
@@ -148,6 +149,8 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
             symlink_internal(command, &args[0], &args[1])
         }
         "cmake_transform_depfile" if args.len() == 8 => depfile::transform(args),
+        "__run_co_compile" => cocompile::run_co_compile(args),
+        "cmake_llvm_rc" => cocompile::run_llvm_rc(args),
         "cmake_ninja_depends" | "cmake_ninja_dyndep" => {
             error(format!(
                 "{command}: Fortran and C++ module dependency scanning is not supported"

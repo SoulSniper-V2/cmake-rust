@@ -1,24 +1,223 @@
 [
-  {"name": "p-missing", "argv": ["-P"]},
-  {"name": "p-empty-equals", "argv": ["-P="]},
-  {"name": "p-followed-by-option", "argv": ["-P", "-D"]},
-  {"name": "p-missing-file", "argv": ["-P", "missing.cmake"]},
-  {"name": "p-dir", "argv": ["-P", "."]},
-  {"name": "p-path-relative", "argv": ["-P", "sub/../missing.cmake"], "dirs": ["sub"]},
-  {"name": "p-plain", "argv": ["-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-attached", "argv": ["-Ps.cmake", "value"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-equals", "argv": ["-P=s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-defined", "argv": ["-DA=hello", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-spaced-define", "argv": ["-D", "A:STRING=value", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-define-after", "argv": ["-P", "s.cmake", "-DA=hello"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-arbitrary-options", "argv": ["-P", "s.cmake", "--", "--version", "-D"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-literal-attached-with-dash", "argv": ["-Ps.cmake", "--", "-B"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-bad-define", "argv": ["-Dno-value", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-fresh", "argv": ["-P", "s.cmake", "--fresh"], "files": {"s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"}},
-  {"name": "p-exit-code", "argv": ["-P", "s.cmake"], "files": {"s.cmake": "cmake_language(EXIT 7)\n"}},
-  {"name": "p-log-level", "argv": ["--log-level=VERBOSE", "-P", "s.cmake"], "files": {"s.cmake": "message(VERBOSE visible)\nmessage(DEBUG hidden)\n"}},
-  {"name": "p-empty-file-argument", "argv": ["-P", ""]},
-  {"name": "p-message-context", "argv": ["--log-context", "-P", "s.cmake"], "files": {"s.cmake": "set(CMAKE_MESSAGE_CONTEXT first second)\nmessage(STATUS hello)\n"}},
-  {"name": "p-typed-path-tilde", "argv": ["-DA:PATH=~/sub", "-P", "s.cmake"], "files": {"s.cmake": "message(STATUS \"${A}\")\n"}},
-  {"name": "p-reject-fifo", "argv": ["-P", "/dev/stdin"], "stdin": "return()\n"}
+ {
+  "name": "p-missing",
+  "argv": [
+   "-P"
+  ]
+ },
+ {
+  "name": "p-empty-equals",
+  "argv": [
+   "-P="
+  ]
+ },
+ {
+  "name": "p-followed-by-option",
+  "argv": [
+   "-P",
+   "-D"
+  ]
+ },
+ {
+  "name": "p-missing-file",
+  "argv": [
+   "-P",
+   "missing.cmake"
+  ]
+ },
+ {
+  "name": "p-dir",
+  "argv": [
+   "-P",
+   "."
+  ]
+ },
+ {
+  "name": "p-path-relative",
+  "argv": [
+   "-P",
+   "sub/../missing.cmake"
+  ],
+  "dirs": [
+   "sub"
+  ]
+ },
+ {
+  "name": "p-plain",
+  "argv": [
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-attached",
+  "argv": [
+   "-Ps.cmake",
+   "value"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-equals",
+  "argv": [
+   "-P=s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-defined",
+  "argv": [
+   "-DA=hello",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-spaced-define",
+  "argv": [
+   "-D",
+   "A:STRING=value",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-define-after",
+  "argv": [
+   "-P",
+   "s.cmake",
+   "-DA=hello"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-arbitrary-options",
+  "argv": [
+   "-P",
+   "s.cmake",
+   "--",
+   "--version",
+   "-D"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-literal-attached-with-dash",
+  "argv": [
+   "-Ps.cmake",
+   "--",
+   "-B"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-bad-define",
+  "argv": [
+   "-Dno-value",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-fresh",
+  "argv": [
+   "-P",
+   "s.cmake",
+   "--fresh"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}|${CMAKE_ARGC}|${CMAKE_ARGV1}|${CMAKE_ARGV2}|${CMAKE_ARGV3}|${CMAKE_ARGV4}|${CMAKE_SCRIPT_MODE_FILE}\")\n"
+  }
+ },
+ {
+  "name": "p-exit-code",
+  "argv": [
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "cmake_language(EXIT 7)\n"
+  }
+ },
+ {
+  "name": "p-log-level",
+  "argv": [
+   "--log-level=VERBOSE",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(VERBOSE visible)\nmessage(DEBUG hidden)\n"
+  }
+ },
+ {
+  "name": "p-empty-file-argument",
+  "argv": [
+   "-P",
+   ""
+  ]
+ },
+ {
+  "name": "p-message-context",
+  "argv": [
+   "--log-context",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "set(CMAKE_MESSAGE_CONTEXT first second)\nmessage(STATUS hello)\n"
+  }
+ },
+ {
+  "name": "p-typed-path-tilde",
+  "argv": [
+   "-DA:PATH=~/sub",
+   "-P",
+   "s.cmake"
+  ],
+  "files": {
+   "s.cmake": "message(STATUS \"${A}\")\n"
+  }
+ },
+ {
+  "name": "p-reject-fifo",
+  "argv": [
+   "-P",
+   "/dev/stdin"
+  ],
+  "stdin": "return()\n"
+ },
+ {
+  "name": "trace-flow-in-function-bodies",
+  "argv": [
+   "--trace",
+   "-P",
+   "t.cmake"
+  ],
+  "files": {
+   "t.cmake": "function(f)\n  if(1)\n    set(x 1)\n  elseif(0)\n  endif()\n  foreach(i a)\n    while(0)\n    endwhile()\n  endforeach()\n  block()\n  endblock()\nendfunction()\nmacro(m)\n  if(1)\n  endif()\nendmacro()\nf()\nm()\n"
+  }
+ }
 ]
