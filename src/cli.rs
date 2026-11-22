@@ -304,7 +304,15 @@ fn extra_path(path: &str) {
 }
 
 fn positional(options: &mut ConfigureOptions, arg: &str, cwd: &str, script_mode: bool) -> bool {
-    let full = util::collapse_full_path(arg, cwd);
+    // cmake::SetDirectoriesFromFile: an existing path is resolved with
+    // ToNormalizedPathOnDisk (a symlink before ".." is followed); a missing
+    // one is collapsed lexically.
+    let given = Path::new(arg);
+    let full = if given.exists() {
+        normalized_path(arg, cwd)
+    } else {
+        util::collapse_full_path(arg, cwd)
+    };
     let path = Path::new(&full);
     let is_dir = path.is_dir();
     let exists = path.exists();
