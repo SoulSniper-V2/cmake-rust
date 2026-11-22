@@ -125,5 +125,7 @@ pub struct ExportTarget {
     pub artifact: Option<InstallOptions>,
     pub includes: Vec<String>,
     pub file_sets: BTreeMap<String, String>,
+    /// Destination of the namelink (for `NAMELINK_ONLY` exports).
+    pub namelink: Option<InstallOptions>,
     pub namelink_only: bool,
 }

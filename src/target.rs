@@ -462,6 +462,9 @@ pub fn create_target(
     target.imported = imported;
     target.imported_global = imported && global;
     target.backtrace.clone_from(&interp.backtrace);
+    target
+        .find_package_stack
+        .clone_from(&interp.ext.find_package_stack);
     target.policies = interp.effective_policies();
     // TYPE, NAME, SOURCE_DIR, BINARY_DIR, IMPORTED[_GLOBAL] and the file
     // set lists are computed on read (cmTargetPropertyComputer), not stored.

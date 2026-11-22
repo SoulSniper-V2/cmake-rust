@@ -308,10 +308,9 @@ impl<'a> GenCtx<'a> {
             return Err(std::mem::take(&mut *self.errors.borrow_mut()));
         }
         super::evaluation_files::generate(self);
-        let mut ninja = super::ninja::NinjaGenerator::new(self);
-        if let Err(error) = ninja.generate() {
-            self.error(Vec::new(), format!("Unable to write build files: {error}"));
-        }
+        // cmGlobalGenerator::Generate order: per-directory install rules and
+        // test files, then build export sets, and (back in
+        // cmGlobalNinjaGenerator::Generate) the ninja files last.
         for result in [
             super::install::write_install_scripts(self),
             super::tests::write_test_files(self),
@@ -320,6 +319,15 @@ impl<'a> GenCtx<'a> {
             if let Err(error) = result {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
+        }
+        if !self.errors.borrow().is_empty() {
+            // cmGlobalNinjaGenerator::Generate: bail before writing build
+            // files when earlier generation raised a fatal error.
+            return Err(self.errors.borrow().clone());
+        }
+        let mut ninja = super::ninja::NinjaGenerator::new(self);
+        if let Err(error) = ninja.generate() {
+            self.error(Vec::new(), format!("Unable to write build files: {error}"));
         }
         let errors = self.errors.borrow().clone();
         if errors.is_empty() { Ok(()) } else { Err(errors) }

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(missing_dep C)
+add_library(a STATIC a.c)
+add_library(b STATIC b.c)
+target_link_libraries(a PRIVATE b)
+export(TARGETS a FILE "${CMAKE_BINARY_DIR}/a-targets.cmake")

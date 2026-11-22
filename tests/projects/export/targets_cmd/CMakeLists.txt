@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(targets_cmd C)
+add_library(x STATIC x.c)
+add_library(y STATIC y.c)
+target_link_libraries(x PRIVATE y)
+set_target_properties(x PROPERTIES EXPORT_NAME xre)
+export(TARGETS x y FILE t-targets.cmake)

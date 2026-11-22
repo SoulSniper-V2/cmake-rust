@@ -69,6 +69,8 @@ pub struct Target {
     pub traced_utilities: Vec<(String, bool)>,
     /// `cmTarget::AddCodegenDependency`.
     pub codegen_dependencies: BTreeSet<String>,
+    /// `cmTarget::GetFindPackageStack` (enclosing find_package calls).
+    pub find_package_stack: Vec<String>,
 }
 
 impl Target {
@@ -95,6 +97,7 @@ impl Target {
             have_install_rule: false,
             traced_utilities: Vec::new(),
             codegen_dependencies: BTreeSet::new(),
+            find_package_stack: Vec::new(),
         }
     }
 }
@@ -316,6 +319,9 @@ pub struct Ext {
     pub defer_current_id: Option<String>,
     pub dependency_provider: Option<(String, Vec<String>)>,
     pub find_package: HashMap<usize, crate::commands::find::package::PackageState>,
+    /// `cmake::FindPackageStack`: package names of active find_package
+    /// calls for `cmTarget::GetFindPackageStack` snapshots.
+    pub find_package_stack: Vec<String>,
     pub next_defer_id: usize,
     pub experimental_warnings: std::collections::HashSet<(String, String)>,
     pub in_top_level_includes: bool,
