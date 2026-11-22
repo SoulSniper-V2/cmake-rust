@@ -812,6 +812,21 @@ fn actual_configure(
             &[],
         );
     }
+    // `cmCacheManager::OutputNewlineTruncationWarning` issues the
+    // messenger warning while saving the cache.
+    let newline_keys: Vec<String> = interp
+        .cache
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.initialized && entry.value.contains('\n'))
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in newline_keys {
+        interp.issue(
+            MessageType::Warning,
+            &format!("Value of {key} contained a newline; truncating"),
+        );
+    }
     let version = crate::interp::VERSION;
     let command = interp.cmake_command.clone();
     if let Err(error) = interp

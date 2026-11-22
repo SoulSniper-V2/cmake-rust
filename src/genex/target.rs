@@ -386,6 +386,23 @@ impl Evaluator<'_, '_> {
                         continue;
                     }
                     if let Some(dependency) = resolved {
+                        // cmGeneratorTarget::ResolveLinkItem: warn when the
+                        // linked target is marked DEPRECATED, at the link
+                        // item's backtrace.
+                        if let Some(message) = self
+                            .host
+                            .target_property_raw(&dependency, "DEPRECATION")
+                            .filter(|message| !message.is_empty())
+                        {
+                            let name = self.host.display_name(&dependency);
+                            self.ctx.warnings.push(GenexWarning {
+                                backtrace: entry.backtrace,
+                                dev: true,
+                                text: format!(
+                                    "The library that is being linked to, {name}, is marked as being deprecated by the owner.  The message provided by the developer is: \n{message}\n"
+                                ),
+                            });
+                        }
                         // ResolveLinkItem: executables without exports are
                         // linked by name, not as targets. EvaluateInterfaceProperty
                         // and the closures never follow a target listed in

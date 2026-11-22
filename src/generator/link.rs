@@ -15,7 +15,7 @@ use std::path::Path;
 
 use super::ctx::GenCtx;
 use super::target::{self, ArtifactType, SourceInfo};
-use crate::messages::Frame;
+use crate::messages::{Frame, MessageType};
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
 use crate::util::{expand_list, is_on, is_on_opt};
@@ -480,6 +480,19 @@ fn plain_items_bt<'i>(
             let target = query.resolve(*directory, name).filter(|target| {
                 target.kind != TargetKind::Executable || on(target, "ENABLE_EXPORTS")
             });
+            // cmGeneratorTarget::ResolveLinkItem: deprecation warning at
+            // the link item's backtrace.
+            if let Some(deprecation) = target
+                .and_then(|target| target.props.get("DEPRECATION"))
+                .filter(|value| !value.is_empty())
+            {
+                let name = target.map_or(name.to_owned(), |target| target.name.clone());
+                query.ctx.message(
+                    MessageType::AuthorWarning,
+                    backtrace.to_vec(),
+                    format!("The library that is being linked to, {name}, is marked as being deprecated by the owner.  The message provided by the developer is: \n{deprecation}\n"),
+                );
+            }
             let mut item = Item::new(name, target, &feature);
             item.backtrace = backtrace.to_vec();
             items.push(item);

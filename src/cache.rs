@@ -337,6 +337,7 @@ impl Cache {
             let _ = write!(out, ":{}=", entry.kind.as_str());
             output_value(&mut out, &entry.value);
             out.push('\n');
+            output_newline_warning(&mut out, key, &entry.value);
             out.push('\n');
         }
         out.push_str(
@@ -392,6 +393,39 @@ fn output_value(out: &mut String, value: &str) {
         let _ = write!(out, "'{value}'");
     } else {
         out.push_str(value);
+    }
+}
+
+/// `cmCacheManager::OutputWarningComment`.
+fn output_warning_comment(out: &mut String, message: &str, wrap_spaces: bool) {
+    let bytes = message.as_bytes();
+    let mut pos = 0usize;
+    for i in 0..=bytes.len() {
+        if (i == bytes.len())
+            || (bytes[i] == b'\n')
+            || (i - pos >= 60 && bytes[i] == b' ' && wrap_spaces)
+        {
+            out.push_str("# ");
+            let mut start = pos;
+            if bytes[start] == b'\n' {
+                start += 1;
+                out.push_str("\\n");
+            }
+            out.push_str(&message[start..i]);
+            out.push('\n');
+            pos = i;
+        }
+    }
+}
+
+/// `cmCacheManager::OutputNewlineTruncationWarning` (comment part).
+fn output_newline_warning(out: &mut String, key: &str, value: &str) {
+    if value.contains('\n') {
+        let comment = format!(
+            "WARNING: Value of {key} contained a newline and was truncated. Original value:"
+        );
+        output_warning_comment(out, &comment, true);
+        output_warning_comment(out, value, false);
     }
 }
 
