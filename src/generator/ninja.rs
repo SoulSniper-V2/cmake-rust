@@ -551,7 +551,7 @@ impl<'a> NinjaGenerator<'a> {
         // CloseCompileCommandsStream.
         if !self.compile_commands.is_empty() {
             let content = format!("[\n{}\n]\n", self.compile_commands.join(",\n"));
-            crate::fsutil::write_if_different(
+            crate::fsutil::write_generated(
                 std::path::Path::new(&format!("{}/compile_commands.json", self.home_binary)),
                 content.as_bytes(),
             )?;
@@ -581,7 +581,7 @@ impl<'a> NinjaGenerator<'a> {
                 summary.push_str(&format!("{binary}/CMakeFiles/{}.dir\n", global.name));
             }
         }
-        crate::fsutil::write_if_different(
+        crate::fsutil::write_generated(
             std::path::Path::new(&format!(
                 "{}/CMakeFiles/TargetDirectories.txt",
                 self.home_binary
@@ -589,18 +589,14 @@ impl<'a> NinjaGenerator<'a> {
             summary.as_bytes(),
         )?;
         // cmSystemTools::GetErrorOccurredFlag: the streams are marked failed,
-        // so neither file is replaced.
+        // so neither file is replaced. Otherwise both are rewritten
+        // (cmGeneratedFileStream without copy-if-different), so build.ninja
+        // is always newer than the CMakeCache.txt it depends on.
         if self.ctx.interp.error || self.ctx.has_error() {
             return Ok(());
         }
-        crate::fsutil::write_if_different(
-            std::path::Path::new(&rules_path),
-            rules_file.as_bytes(),
-        )?;
-        crate::fsutil::write_if_different(
-            std::path::Path::new(&build_path),
-            build_file.as_bytes(),
-        )?;
+        crate::fsutil::write_generated(std::path::Path::new(&rules_path), rules_file.as_bytes())?;
+        crate::fsutil::write_generated(std::path::Path::new(&build_path), build_file.as_bytes())?;
         Ok(())
     }
 }
@@ -2608,8 +2604,9 @@ impl<'a> NinjaGenerator<'a> {
         root.insert(b"sources".to_vec(), Json::Array(sources));
         root.insert(b"target".to_vec(), Json::Object(target_json));
         let _ = std::fs::create_dir_all(directory);
-        crate::fsutil::write_if_different(std::path::Path::new(&file), out.as_bytes())?;
-        crate::fsutil::write_if_different(
+        // cmGlobalGenerator::WriteSummary: plain cmGeneratedFileStreams.
+        crate::fsutil::write_generated(std::path::Path::new(&file), out.as_bytes())?;
+        crate::fsutil::write_generated(
             std::path::Path::new(&json_file),
             write_json_stream(&Json::Object(root)).as_bytes(),
         )
