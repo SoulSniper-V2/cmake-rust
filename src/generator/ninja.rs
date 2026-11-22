@@ -19,6 +19,15 @@ pub const SHELL_NOOP: &str = ":";
 pub type CcRef = (usize, usize);
 const REQUIRED_NINJA_VERSION_CONSOLE_POOL: &str = "1.5";
 
+/// `cmGeneratorTarget::Cxx20SupportLevel`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CxxSupportLevel {
+    MissingCxx,
+    NoCxx20,
+    MissingRule,
+    Supported,
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Rule {
     pub name: String,
@@ -504,6 +513,21 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmGlobalNinjaGenerator::Generate` (single config).
     pub fn generate(&mut self) -> std::io::Result<()> {
         let interp = self.ctx.interp;
+        // cmGlobalGenerator::ApplyCXXStdTargets: a fatal CXX_MODULE_STD
+        // diagnostic aborts generation before any target is generated.
+        let errors = self.ctx.errors.borrow().len();
+        let targets: Vec<&Target> = self
+            .ctx
+            .targets_in_order()
+            .into_iter()
+            .filter(|target| target.alias_of.is_none())
+            .collect();
+        for target in targets {
+            self.check_cxx_module_std(target);
+            if self.ctx.errors.borrow().len() != errors {
+                return Ok(());
+            }
+        }
         // Default global targets per directory.
         self.create_global_targets();
         // Local generators (directories) in creation order.
@@ -1519,6 +1543,264 @@ impl<'a> NinjaGenerator<'a> {
         self.add_rule(&rule);
     }
 
+    /// `cmGeneratorTarget::HaveCxx20ModuleSources`: files of the target's
+    /// `CXX_MODULES` file sets, expanded and collapsed to full paths.
+    fn cxx_module_file_set_files(&self, target: &Target) -> Vec<String> {
+        let source_dir = &self.ctx.interp.makefiles[target.makefile].source_dir;
+        let mut files = Vec::new();
+        for set in target.file_sets.values() {
+            if set.kind != "CXX_MODULES" {
+                continue;
+            }
+            for (entry, _backtrace) in &set.files {
+                for file in util::expand_list(&self.ctx.genex(entry, Some(target), None), false) {
+                    files.push(util::collapse_full_path(&file, source_dir));
+                }
+            }
+        }
+        files
+    }
+
+    /// `cmStandardLevelResolver::GetExplicitStandardLevel`: the highest
+    /// C++ standard level requested by the target's `CXX_STANDARD`
+    /// property or `cxx_std_*` compile features.
+    fn explicit_cxx_standard(&self, target: &Target) -> Option<u32> {
+        let mut level: Option<u32> = None;
+        if let Some(standard) = target.props.get("CXX_STANDARD") {
+            let standard = self.ctx.genex(standard, Some(target), None);
+            let standard = standard
+                .trim()
+                .strip_suffix("-FORCED")
+                .unwrap_or(standard.trim());
+            if let Ok(requested) = standard.parse::<u32>() {
+                level = Some(level.unwrap_or(0).max(requested));
+            }
+        }
+        let features = target
+            .props
+            .get("COMPILE_FEATURES")
+            .map(|features| self.ctx.genex(features, Some(target), None))
+            .unwrap_or_default();
+        for feature in util::expand_list(&features, false) {
+            if let Some(requested) = feature
+                .strip_prefix("cxx_std_")
+                .and_then(|requested| requested.parse::<u32>().ok())
+            {
+                level = Some(level.unwrap_or(0).max(requested));
+            }
+        }
+        level
+    }
+
+    /// `cmGeneratorTarget::HaveCxxModuleSupport`.
+    fn cxx_module_support_level(&self, target: &Target) -> CxxSupportLevel {
+        if !self.ctx.interp.langs.enabled.iter().any(|l| l == "CXX") {
+            return CxxSupportLevel::MissingCxx;
+        }
+        if self
+            .ctx
+            .var(target.makefile, "CMAKE_CXX_STANDARD_DEFAULT")
+            .is_none_or(|default| default.is_empty())
+        {
+            // We do not know any meaningful C++ standard levels.
+            return CxxSupportLevel::NoCxx20;
+        }
+        if self
+            .explicit_cxx_standard(target)
+            .is_none_or(|level| level < 20)
+        {
+            return CxxSupportLevel::NoCxx20;
+        }
+        if self
+            .ctx
+            .var(target.makefile, "CMAKE_CXX_SCANDEP_SOURCE")
+            .is_none()
+        {
+            return CxxSupportLevel::MissingRule;
+        }
+        CxxSupportLevel::Supported
+    }
+
+    /// `cmGeneratorTarget::NeedCxxDyndep` == Enabled.
+    fn need_cxx_dyndep(&self, target: &Target) -> bool {
+        if let Some(prop) = target.props.get("CXX_SCAN_FOR_MODULES") {
+            return util::is_on(&self.ctx.genex(prop, Some(target), None));
+        }
+        matches!(
+            self.ctx.interp.policy_status_at(target.makefile, "CMP0155"),
+            crate::policy::PolicyStatus::New
+        ) && self.cxx_module_support_level(target) == CxxSupportLevel::Supported
+    }
+
+    /// `cmGeneratorTarget::NeedDyndepForSource`.
+    fn need_dyndep_for_source(
+        &self,
+        target: &Target,
+        module_files: &[String],
+        source: &gt::SourceInfo,
+    ) -> bool {
+        if source.language == "Fortran" {
+            return true;
+        }
+        if source.language != "CXX" {
+            return false;
+        }
+        if module_files.iter().any(|file| file == &source.path) {
+            return true;
+        }
+        if let Some(index) = crate::commands::target::find_known_source(
+            self.ctx.interp,
+            target.makefile,
+            &source.path,
+        ) && let Some(prop) = self.ctx.interp.ext.sources[&target.makefile][index]
+            .props
+            .get("CXX_SCAN_FOR_MODULES")
+        {
+            return util::is_on(prop);
+        }
+        self.need_cxx_dyndep(target)
+    }
+
+    /// `cmGeneratorTarget::ApplyCXXStdTargets`: diagnose `CXX_MODULE_STD`
+    /// properties. The `__CMAKE::CXX<level>` link injection itself is not
+    /// ported (no synthetic module targets yet); only the fatal-error
+    /// paths are.
+    fn check_cxx_module_std(&mut self, target: &Target) {
+        let Some(std_prop) = target.props.get("CXX_MODULE_STD") else {
+            return;
+        };
+        let compiled = crate::genex::parse(std_prop);
+        let mut ectx = crate::genex::EvalContext {
+            config: "",
+            ..crate::genex::EvalContext::default()
+        };
+        let mut host = super::genex_host::CtxHost::new(self.ctx, target.makefile);
+        let std_prop_value = match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
+            Ok(value) => value,
+            Err(error) => {
+                self.ctx.error(Vec::new(), error.to_string());
+                return;
+            }
+        };
+        if ectx.context_sensitive {
+            self.ctx.error(
+                self.ctx.dir_backtrace(target.makefile),
+                format!(
+                    "The \"CXX_MODULE_STD\" property on the target \"{}\" contains a context-sensitive condition that is not supported.",
+                    target.name
+                ),
+            );
+            return;
+        }
+        if !util::is_on(&std_prop_value) {
+            return;
+        }
+        if self.cxx_module_support_level(target) != CxxSupportLevel::Supported {
+            return;
+        }
+        let Some(level) = self.explicit_cxx_standard(target) else {
+            return;
+        };
+        if level < 23 {
+            return;
+        }
+        let target_name = format!("__CMAKE::CXX{level}");
+        if !self.ctx.interp.ext.targets.contains_key(&target_name) {
+            let reason = self
+                .ctx
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_CXX{level}_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE"),
+                )
+                .filter(|reason| !reason.is_empty())
+                .map(|reason| format!("  Reason:\n  {reason}"))
+                .unwrap_or_default();
+            self.ctx.error(
+                self.ctx.dir_backtrace(target.makefile),
+                format!(
+                    "The \"CXX_MODULE_STD\" property on the target \"{}\" requires that the \"{target_name}\" target exist, but it was not provided by the toolchain.{reason}",
+                    target.name
+                ),
+            );
+        }
+    }
+
+    /// `cmGeneratorTarget::CheckCxxModuleStatus`, plus the per-source
+    /// diagnostics from cmNinjaTargetGenerator::WriteObjectBuildStatement
+    /// (a `CXX_MODULES` file-set member not classified as CXX) and
+    /// cmDyndepCollation (a `CXX_MODULES` file-set member not scheduled
+    /// for compilation).
+    fn check_cxx_module_status(&mut self, target: &Target, sources: &[gt::SourceInfo]) {
+        let module_files = self.cxx_module_file_set_files(target);
+        let mut scannable = !module_files.is_empty();
+        if !scannable {
+            scannable = sources.iter().any(|source| {
+                source.language == "CXX"
+                    && self.need_dyndep_for_source(target, &module_files, source)
+            });
+        }
+        if !scannable {
+            return;
+        }
+        // Ninja has module support; only the toolchain level can fail.
+        let level = self.cxx_module_support_level(target);
+        match level {
+            CxxSupportLevel::MissingCxx => self.ctx.error(
+                self.ctx.dir_backtrace(target.makefile),
+                format!(
+                    "The target named \"{}\" has C++ sources that use modules, but the \"CXX\" language has not been enabled.",
+                    target.name
+                ),
+            ),
+            CxxSupportLevel::NoCxx20 => {
+                let effective = match self.explicit_cxx_standard(target) {
+                    Some(level) => format!("; found \"cxx_std_{level}\""),
+                    None => "; no C++ standard found".to_owned(),
+                };
+                self.ctx.error(
+                    self.ctx.dir_backtrace(target.makefile),
+                    format!(
+                        "The target named \"{}\" has C++ sources that use modules, but does not include \"cxx_std_20\" (or newer) among its `target_compile_features`{effective}.",
+                        target.name
+                    ),
+                );
+            }
+            CxxSupportLevel::MissingRule => self.ctx.error(
+                self.ctx.dir_backtrace(target.makefile),
+                format!(
+                    "The target named \"{}\" has C++ sources that may use modules, but the compiler does not provide a way to discover the import graph dependencies.  See the cmake-cxxmodules(7) manual for details.  Use the CMAKE_CXX_SCAN_FOR_MODULES variable to enable or disable scanning.",
+                    target.name
+                ),
+            ),
+            CxxSupportLevel::Supported => {}
+        }
+        for file in &module_files {
+            match sources
+                .iter()
+                .find(|source| &source.path == file && source.kind == SourceKind::ObjectSource)
+            {
+                // cmDyndepCollation: emitted during object builds upstream;
+                // here it is reported only when module support is available,
+                // matching collation's gating on NeedDyndep.
+                None if level == CxxSupportLevel::Supported => self.ctx.error(
+                    self.ctx.dir_backtrace(target.makefile),
+                    format!(
+                        "Target \"{}\" has source file\n  {file}\nin a \"FILE_SET TYPE CXX_MODULES\" but it is not scheduled for compilation.",
+                        target.name
+                    ),
+                ),
+                Some(source) if source.language != "CXX" => self.ctx.error(
+                    self.ctx.dir_backtrace(target.makefile),
+                    format!(
+                        "Target \"{}\" contains the source\n  {file}\nin a file set of type \"CXX_MODULES\" but the source is not classified as a \"CXX\" source.",
+                        target.name
+                    ),
+                ),
+                _ => {}
+            }
+        }
+    }
+
     /// `cmNinjaNormalTargetGenerator::Generate`.
     fn generate_normal_target(&mut self, target: &'a Target) {
         let config = self.config.clone();
@@ -1534,6 +1816,7 @@ impl<'a> NinjaGenerator<'a> {
             return;
         }
         let sources = gt::sources(self.ctx, target, &config);
+        self.check_cxx_module_status(target, &sources);
         // WriteLanguagesRules: compile rules for every object language.
         let mut languages: Vec<String> = Vec::new();
         for source in sources.iter() {
@@ -1866,19 +2149,39 @@ impl<'a> NinjaGenerator<'a> {
                     .var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
                 rule.depfile = "$DEP_FILE".into();
             }
+            // cmGeneratorTarget::GetFeatureSpecificLinkRuleVariable.
+            let feature_var = |var: String| -> String {
+                let ipo_var = format!("{var}_IPO");
+                if flags::ipo_enabled(self.ctx, target, &config, language)
+                    && self.ctx.var(makefile, &ipo_var).is_some()
+                {
+                    ipo_var
+                } else {
+                    var
+                }
+            };
             let commands: Vec<String> = if target.kind == TargetKind::StaticLibrary {
-                // cmNinjaNormalTargetGenerator::ComputeLinkCmd for static libs:
-                // remove the old archive first, then create/append/finish.
-                let mut list = vec![format!("{} -E rm -f <TARGET>", self.cmake_cmd)];
-                let create = self
-                    .ctx
-                    .var_safe(makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"));
-                list.extend(util::expand_list(&create, false));
-                let finish = self
-                    .ctx
-                    .var_safe(makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
-                list.extend(util::expand_list(&finish, false));
-                list
+                // cmNinjaNormalTargetGenerator::ComputeLinkCmd: prefer the
+                // language's CMAKE_<lang>_CREATE_STATIC_LIBRARY rule
+                // (cmGeneratorTarget::GetCreateRuleVariable) when defined;
+                // otherwise remove the old archive, then create/finish.
+                let create_var = feature_var(format!("CMAKE_{language}_CREATE_STATIC_LIBRARY"));
+                if let Some(create) = self.ctx.var(makefile, &create_var) {
+                    util::expand_list(&create, false)
+                } else {
+                    let mut list = vec![format!("{} -E rm -f $TARGET_FILE", self.cmake_cmd)];
+                    let create = self.ctx.var_safe(
+                        makefile,
+                        &feature_var(format!("CMAKE_{language}_ARCHIVE_CREATE")),
+                    );
+                    list.extend(util::expand_list(&create, false));
+                    let finish = self.ctx.var_safe(
+                        makefile,
+                        &feature_var(format!("CMAKE_{language}_ARCHIVE_FINISH")),
+                    );
+                    list.extend(util::expand_list(&finish, false));
+                    list
+                }
             } else {
                 util::expand_list(&self.ctx.var_safe(makefile, &link_command_var), false)
             };

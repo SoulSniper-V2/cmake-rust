@@ -1,6 +1,6 @@
 //! Target-level dependencies and static-library cycle linearization.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::messages::Frame;
@@ -179,6 +179,27 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         };
     }
 
+    // cmComputeTargetDepends::CollectSideEffects: each target's side-effect
+    // sets contain itself (when it produces side effects) plus the union of
+    // all transitively reachable dependees' sets.
+    let count = targets.len();
+    let mut cc_side: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); count];
+    let mut lang_side: Vec<HashMap<String, BTreeSet<usize>>> = vec![HashMap::new(); count];
+    {
+        let mut visited = vec![false; count];
+        for index in 0..count {
+            collect_side_effects(
+                query,
+                &targets,
+                &initial,
+                index,
+                &mut visited,
+                &mut cc_side,
+                &mut lang_side,
+            );
+        }
+    }
+
     let mut intermediate = initial.clone();
     for (index, target) in targets.iter().enumerate() {
         if matches!(
@@ -187,31 +208,36 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         ) && on(target, "OPTIMIZE_DEPENDENCIES")
         {
             let mut optimized = Vec::new();
-            let mut visited = HashSet::new();
+            let mut emitted = HashSet::new();
             for edge in &initial[index] {
                 if edge.strong {
                     optimized.push(edge.clone());
                     continue;
                 }
-                let mut work = vec![edge.to];
-                while let Some(to) = work.pop() {
-                    if !visited.insert(to) {
-                        continue;
-                    }
-                    let target = targets[to];
-                    // INTEGRATION: Generated sources/custom commands and
-                    // non-C language side effects need the corresponding
-                    // configure model records.
-                    if target.kind == TargetKind::Utility
-                        || target.props.contains("CUSTOM_COMMAND_SIDE_EFFECTS")
-                    {
+                // cmComputeTargetDepends::OptimizeLinkDependencies: keep
+                // edges to transitive dependees with custom-command side
+                // effects or side effects in the depender's languages.
+                for &dep in &cc_side[edge.to] {
+                    if emitted.insert(dep) {
                         optimized.push(Edge {
-                            to,
+                            to: dep,
                             strong: false,
-                            backtrace: Rc::new(Vec::new()),
+                            backtrace: edge.backtrace.clone(),
                         });
                     }
-                    work.extend(initial[to].iter().map(|edge| edge.to));
+                }
+                for lang in compile_languages(query, target) {
+                    if let Some(set) = lang_side[edge.to].get(&lang) {
+                        for &dep in set {
+                            if emitted.insert(dep) {
+                                optimized.push(Edge {
+                                    to: dep,
+                                    strong: false,
+                                    backtrace: edge.backtrace.clone(),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             intermediate[index] = optimized;
@@ -501,6 +527,79 @@ impl<'i> Collector<'_, '_, 'i> {
             // AddObjectDepends records a utility dependency captured after
             // configure; its backtrace is empty.
             self.add(target, true, Rc::new(Vec::new()));
+        }
+    }
+}
+
+/// `cmGeneratorTarget::AppendCustomCommandSideEffects`: the target produces
+/// build side effects if it has target-level custom commands or a source
+/// with an attached custom command.
+fn has_custom_command_side_effect(query: &Query<'_, '_>, target: &Target) -> bool {
+    if !target.custom_commands.is_empty() {
+        return true;
+    }
+    target::sources(query.ctx, target, query.config)
+        .iter()
+        .any(|source| {
+            crate::commands::target::find_known_source(
+                query.ctx.interp,
+                target.makefile,
+                &source.path,
+            )
+            .is_some_and(|index| {
+                query.ctx.interp.ext.sources[&target.makefile][index]
+                    .custom_command
+                    .is_some()
+            })
+        })
+}
+
+/// `cmGeneratorTarget::GetAllConfigCompileLanguages` restricted to the
+/// languages that do not have side effects of their own.
+fn compile_languages(query: &Query<'_, '_>, target: &Target) -> BTreeSet<String> {
+    target::sources(query.ctx, target, query.config)
+        .iter()
+        .map(|source| source.language.clone())
+        .filter(|language| !language.is_empty())
+        .collect()
+}
+
+/// `cmComputeTargetDepends::CollectSideEffectsForTarget`.
+#[allow(clippy::too_many_arguments, reason = "mirrors the C++ accumulation")]
+fn collect_side_effects(
+    query: &Query<'_, '_>,
+    targets: &[&Target],
+    initial: &[Vec<Edge>],
+    index: usize,
+    visited: &mut [bool],
+    cc_side: &mut [BTreeSet<usize>],
+    lang_side: &mut [HashMap<String, BTreeSet<usize>>],
+) {
+    const NO_SIDE_EFFECT: [&str; 6] = ["C", "CXX", "OBJC", "OBJCXX", "ASM", "CUDA"];
+    if visited[index] {
+        return;
+    }
+    visited[index] = true;
+    if has_custom_command_side_effect(query, targets[index]) {
+        cc_side[index].insert(index);
+    }
+    for language in compile_languages(query, targets[index]) {
+        if !NO_SIDE_EFFECT.contains(&language.as_str()) && language != "HIP" {
+            lang_side[index].entry(language).or_default().insert(index);
+        }
+    }
+    for edge in &initial[index] {
+        collect_side_effects(
+            query, targets, initial, edge.to, visited, cc_side, lang_side,
+        );
+        let transitive_cc: Vec<usize> = cc_side[edge.to].iter().copied().collect();
+        cc_side[index].extend(transitive_cc);
+        let transitive_lang: Vec<(String, Vec<usize>)> = lang_side[edge.to]
+            .iter()
+            .map(|(language, set)| (language.clone(), set.iter().copied().collect()))
+            .collect();
+        for (language, set) in transitive_lang {
+            lang_side[index].entry(language).or_default().extend(set);
         }
     }
 }
