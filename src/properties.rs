@@ -424,8 +424,6 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 struct SourceLocation {
     directory: String,
     name: String,
-    ambiguous_directory: bool,
-    ambiguous_extension: bool,
 }
 
 impl SourceLocation {
@@ -433,80 +431,35 @@ impl SourceLocation {
         Self {
             directory: location.directory.clone(),
             name: location.name.clone(),
-            ambiguous_directory: location.ambiguous_directory,
-            ambiguous_extension: location.ambiguous_extension,
         }
     }
 
     fn new(interp: &Interp, index: usize, path: &str) -> Self {
         let mf = &interp.makefiles[index];
         let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-        let mut ambiguous_directory = !path.starts_with('/');
-        let strict_extensions = interp.policy_status("CMP0115") == crate::policy::PolicyStatus::New
-            && interp.policy_status("CMP0187") == crate::policy::PolicyStatus::New;
-        let mut ambiguous_extension = !strict_extensions;
+        let ambiguous_directory = !path.starts_with('/');
         let mut directory = if ambiguous_directory {
             dir.to_owned()
         } else {
             collapse_full_path(if dir.is_empty() { "/" } else { dir }, &mf.source_dir)
         };
         let extension = name.rsplit_once('.').map_or("", |(_, ext)| ext);
-        if SOURCE_EXTENSIONS.contains(&extension)
+        let known_extension = SOURCE_EXTENSIONS.contains(&extension)
             || interp
                 .langs
                 .enabled
                 .iter()
-                .any(|enabled| enabled == language(name))
+                .any(|enabled| enabled == language(name));
+        // An existing file resolves an ambiguous directory.
+        if !known_extension
+            && ambiguous_directory
+            && std::path::Path::new(&collapse_full_path(path, &mf.source_dir)).is_file()
         {
-            ambiguous_extension = false;
-        } else if std::path::Path::new(&collapse_full_path(path, &mf.source_dir)).is_file() {
-            ambiguous_extension = false;
-            if ambiguous_directory {
-                directory = collapse_full_path(dir, &mf.source_dir);
-                ambiguous_directory = false;
-            }
+            directory = collapse_full_path(dir, &mf.source_dir);
         }
         Self {
             directory,
             name: name.into(),
-            ambiguous_directory,
-            ambiguous_extension,
-        }
-    }
-
-    fn matches(&self, other: &Self, source: &str, binary: &str) -> bool {
-        let matching_name = |known: &str, ambiguous: &str| {
-            known == ambiguous
-                || known
-                    .strip_prefix(ambiguous)
-                    .and_then(|suffix| suffix.strip_prefix('.'))
-                    .is_some_and(|ext| SOURCE_EXTENSIONS.contains(&ext))
-        };
-        let name_matches = match (self.ambiguous_extension, other.ambiguous_extension) {
-            (true, false) => matching_name(&other.name, &self.name),
-            (false, true) => matching_name(&self.name, &other.name),
-            _ => self.name == other.name,
-        };
-        let directory_matches = |absolute: &str, relative: &str| {
-            collapse_full_path(relative, source) == absolute
-                || collapse_full_path(relative, binary) == absolute
-        };
-        name_matches
-            && match (self.ambiguous_directory, other.ambiguous_directory) {
-                (true, false) => directory_matches(&other.directory, &self.directory),
-                (false, true) => directory_matches(&self.directory, &other.directory),
-                _ => self.directory == other.directory,
-            }
-    }
-
-    fn update(&mut self, other: Self) {
-        if self.ambiguous_directory && !other.ambiguous_directory {
-            self.directory = other.directory;
-            self.ambiguous_directory = false;
-        }
-        if self.ambiguous_extension && !other.ambiguous_extension {
-            self.name = other.name;
-            self.ambiguous_extension = false;
         }
     }
 

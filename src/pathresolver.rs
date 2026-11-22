@@ -6,6 +6,7 @@ use std::ffi::CString;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Symlinks {
+    #[allow(dead_code)]
     None,
     /// Resolve a symlink only when a following `..` would step out of it.
     Lazy,
@@ -23,12 +24,14 @@ pub const LOGICAL_PATH: Policy = Policy {
     symlinks: Symlinks::Lazy,
     existence_required: false,
 };
-/// `Policies::RealPath`.
+/// `Policies::RealPath` (ported with the full policy set; unused so far).
+#[allow(dead_code)]
 pub const REAL_PATH: Policy = Policy {
     symlinks: Symlinks::Eager,
     existence_required: true,
 };
 /// `Policies::NaivePath` (and `CasePath` off Windows and macOS).
+#[allow(dead_code)]
 pub const NAIVE_PATH: Policy = Policy {
     symlinks: Symlinks::None,
     existence_required: false,

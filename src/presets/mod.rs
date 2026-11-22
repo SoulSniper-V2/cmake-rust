@@ -405,7 +405,7 @@ enum CycleStatus {
 }
 
 #[derive(Default)]
-struct EnvContext {
+pub(crate) struct EnvContext {
     env: BTreeMap<String, Option<String>>,
     cycles: BTreeMap<String, CycleStatus>,
 }

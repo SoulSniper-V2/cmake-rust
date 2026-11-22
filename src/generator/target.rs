@@ -31,7 +31,6 @@ pub enum ArtifactType {
 /// `cmGeneratorTarget::Names`.
 #[derive(Clone, Debug, Default)]
 pub struct Names {
-    pub base: String,
     pub output: String,
     pub real: String,
     pub import_library: String,
@@ -64,7 +63,8 @@ pub struct SourceInfo {
     /// Object file name relative to the target's object directory, e.g.
     /// `src/foo.c.o` (empty for non-object sources).
     pub object_name: String,
-    /// Whether this source is GENERATED.
+    /// Whether this source is GENERATED (checked by the resolution tests).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub generated: bool,
     /// For an object file of a linked OBJECT library
     /// (`cmSourceFile::GetObjectLibrary`), that library's name.
@@ -298,7 +298,6 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
         String::new()
     };
     Names {
-        base: parts.base,
         output,
         real,
         import_library,

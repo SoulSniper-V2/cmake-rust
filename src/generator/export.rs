@@ -933,28 +933,26 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 iface_properties.extend(expand_list(value, false));
             }
         }
-        if tgt.kind != TargetKind::InterfaceLibrary {
-            if tgt.kind != TargetKind::ObjectLibrary {
-                if target::linker_language(self.ctx, tgt, &self.ctx.config).is_empty() {
-                    self.ctx.error(
+        if tgt.kind != TargetKind::InterfaceLibrary && tgt.kind != TargetKind::ObjectLibrary {
+            if target::linker_language(self.ctx, tgt, &self.ctx.config).is_empty() {
+                self.ctx.error(
                         self.depender_backtrace(tgt),
                         format!(
                             "Exporting the target \"{}\" is not allowed since its linker language cannot be determined",
                             tgt.name
                         ),
                     );
+            }
+            for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
+                let Some(dep) = self.resolve(tgt.makefile, &name) else {
+                    continue;
+                };
+                if dep.kind == TargetKind::ObjectLibrary {
+                    continue;
                 }
-                for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
-                    let Some(dep) = self.resolve(tgt.makefile, &name) else {
-                        continue;
-                    };
-                    if dep.kind == TargetKind::ObjectLibrary {
-                        continue;
-                    }
-                    for key in KINDS {
-                        if let Some(value) = dep.props.get(key) {
-                            iface_properties.extend(expand_list(value, false));
-                        }
+                for key in KINDS {
+                    if let Some(value) = dep.props.get(key) {
+                        iface_properties.extend(expand_list(value, false));
                     }
                 }
             }
@@ -2114,9 +2112,12 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
     // import footer + policy footer.
     let mut out = policy_header(ex.required.get());
     import_header(&mut out, "");
-    if !export.append && set.is_some() && export.options.package_dependencies {
+    if !export.append
+        && let Some(set) = set
+        && export.options.package_dependencies
+    {
         ex.bump((3, 9, 0));
-        package_dependencies(&ex, &mut out, set.unwrap());
+        package_dependencies(&ex, &mut out, set);
     }
     out.push_str(&body);
     out.push_str(IMPORT_FOOTER);
@@ -2237,7 +2238,7 @@ pub(super) fn write_install_export(
         out,
         indent,
         &opts,
-        CopyRule::new(dest, CopyKind::File, &[file.clone()]),
+        CopyRule::new(dest, CopyKind::File, std::slice::from_ref(&file)),
     );
     // Per-config import file.
     let has_config = records

@@ -489,10 +489,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     if !script_mode {
         warn_orphan_generator_settings();
     }
-    let mut options = ConfigureOptions {
-        argv: argv.to_vec(),
-        ..Default::default()
-    };
+    let mut options = ConfigureOptions::default();
     let mut view = None::<CacheView>;
     let mut view_only = false;
     let mut regenerate = false;

@@ -306,7 +306,7 @@ impl<'a> NinjaGenerator<'a> {
             home_binary: interp.home_binary.clone(),
             home_source: interp.home_source.clone(),
             config: ctx.config.clone(),
-            install_target_enabled: interp.ext.misc.get("install-target-enabled").is_some(),
+            install_target_enabled: interp.ext.misc.contains_key("install-target-enabled"),
         }
     }
 
@@ -363,10 +363,6 @@ impl<'a> NinjaGenerator<'a> {
 
     // ------------------------------------------------------------------
     // Target outputs/dependencies
-
-    fn target_kind_name(kind: TargetKind) -> &'static str {
-        kind.type_name()
-    }
 
     /// `cmGlobalNinjaGenerator::AppendTargetOutputs`.
     pub fn append_target_outputs(&self, target: &Target, out: &mut Vec<String>, depend: DependOn) {
@@ -678,7 +674,8 @@ impl<'a> NinjaGenerator<'a> {
             .unwrap_or("ctest")
             .to_owned();
         let cmake = interp.cmake_command.clone();
-        let mut infos: Vec<(String, String, Vec<Vec<String>>, Vec<String>, bool)> = Vec::new();
+        type TestInfo = (String, String, Vec<Vec<String>>, Vec<String>, bool);
+        let mut infos: Vec<TestInfo> = Vec::new();
         let mut working_dirs: HashMap<String, String> = HashMap::new();
         // AddGlobalTarget_Package / AddGlobalTarget_PackageSource.
         let cpack = format!("{}/cpack", util::filename_path(&interp.cmake_command));
@@ -1333,14 +1330,6 @@ pub fn is_in_build_system(target: &Target) -> bool {
             TargetKind::UnknownLibrary => false,
             _ => true,
         }
-}
-
-/// `cmGeneratorTarget::GetPropertyAsBool("EXCLUDE_FROM_ALL")`.
-pub fn is_excluded_from_all(target: &Target) -> bool {
-    target
-        .props
-        .get("EXCLUDE_FROM_ALL")
-        .is_some_and(util::is_on)
 }
 
 impl<'a> NinjaGenerator<'a> {

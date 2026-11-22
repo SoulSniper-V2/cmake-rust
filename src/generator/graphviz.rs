@@ -70,8 +70,8 @@ struct Writer<'c, 'i> {
     node_names: HashMap<String, String>,
     visited_items: BTreeSet<String>,
     visited_links: BTreeSet<(String, String)>,
-    per_target: Vec<((Option<usize>, String), Item<'i>, Vec<Connection<'i>>)>,
-    dependers: Vec<((Option<usize>, String), Item<'i>, Vec<Connection<'i>>)>,
+    per_target: Vec<ConnectionEntry<'i>>,
+    dependers: Vec<ConnectionEntry<'i>>,
     aliases: BTreeMap<String, Vec<String>>,
 }
 
@@ -444,7 +444,7 @@ impl<'c, 'i> Writer<'c, 'i> {
         deps
     }
 
-    fn visit_links(&mut self, item: &Item<'i>, root: &Item<'i>) {
+    fn visit_links(&mut self, item: &Item<'i>, _root: &Item<'i>) {
         let Some(target) = item.target else {
             return;
         };
@@ -460,7 +460,7 @@ impl<'c, 'i> Writer<'c, 'i> {
             // OnIndirectLink writes nothing.
             self.visit_links(&dependee, &dependee);
             self.visit_links(&dependee, item);
-            self.visit_links(&dependee, root);
+            self.visit_links(&dependee, _root);
         }
     }
 
@@ -480,7 +480,7 @@ impl<'c, 'i> Writer<'c, 'i> {
 
     /// `FindAllConnections`.
     fn find_all(
-        map: &[((Option<usize>, String), Item<'i>, Vec<Connection<'i>>)],
+        map: &[ConnectionEntry<'i>],
         root: &Item<'i>,
         out: &mut Vec<(Item<'i>, Item<'i>, String)>,
         visited: &mut BTreeSet<(Option<usize>, String)>,
@@ -496,12 +496,7 @@ impl<'c, 'i> Writer<'c, 'i> {
         }
     }
 
-    fn write_per_target(
-        &self,
-        connections: &[((Option<usize>, String), Item<'i>, Vec<Connection<'i>>)],
-        suffix: &str,
-        dependers: bool,
-    ) {
+    fn write_per_target(&self, connections: &[ConnectionEntry<'i>], suffix: &str, dependers: bool) {
         for (_, root, _) in connections {
             let mut extended = Vec::new();
             let mut visited = BTreeSet::from([root.identity()]);
@@ -527,8 +522,11 @@ impl<'c, 'i> Writer<'c, 'i> {
     }
 }
 
+/// A per-target connection list: (target identity, item, connections).
+type ConnectionEntry<'i> = ((Option<usize>, String), Item<'i>, Vec<Connection<'i>>);
+
 fn push_connection<'i>(
-    map: &mut Vec<((Option<usize>, String), Item<'i>, Vec<Connection<'i>>)>,
+    map: &mut Vec<ConnectionEntry<'i>>,
     src: &Item<'i>,
     dst: &Item<'i>,
     scope: &str,

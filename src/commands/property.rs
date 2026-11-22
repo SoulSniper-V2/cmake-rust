@@ -886,7 +886,7 @@ fn set_source_files_properties(interp: &mut Interp, args: &[String]) -> CmdResul
                 tail = rest;
             }
             "PROPERTIES" => {
-                if tail.len() % 2 != 0 {
+                if !tail.len().is_multiple_of(2) {
                     return err(format!("{WRONG_COUNT}."));
                 }
                 pairs.extend(
@@ -959,7 +959,7 @@ fn property_pairs(args: &[String]) -> Result<(&[String], &[String]), CmdErr> {
     if properties.is_empty() {
         return err(NO_PROPERTIES);
     }
-    if properties.len() % 2 != 0 {
+    if !properties.len().is_multiple_of(2) {
         return err(format!("{WRONG_COUNT}."));
     }
     Ok((&args[..split], properties))

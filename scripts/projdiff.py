@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ORACLE = Path("/tmp/cmake-rust-validation.hSLgEZHR/kitware-reference/bin/cmake")
 ORACLE_CTEST = ORACLE.parent / "ctest"
-DATA_ROOT = "/tmp/cmake-rust-validation.hSLgEZHR/kitware"
+DATA_ROOT = os.path.realpath("/tmp/cmake-rust-validation.hSLgEZHR/kitware")
 VOLATILE_CACHE = re.compile(
     r"^(CMAKE_COMMAND|CMAKE_CTEST_COMMAND|CMAKE_CPACK_COMMAND|CMAKE_ROOT|CMAKE_CACHEFILE_DIR"
     r"|CMAKE_PLATFORM_INFO_INITIALIZED)[:=]")

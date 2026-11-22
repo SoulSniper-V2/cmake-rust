@@ -1,3 +1,6 @@
+// Version checks mirror cmFileAPI's `minor <= kMinor`, where several kMinor are 0.
+#![allow(clippy::absurd_extreme_comparisons)]
+
 //! The CMake file-based API (cmFileAPI.cxx and the per-kind dumpers
 //! cmFileAPICache.cxx, cmFileAPICMakeFiles.cxx, cmFileAPIToolchains.cxx,
 //! cmFileAPIConfigureLog.cxx, cmFileAPICodemodel.cxx).

@@ -61,8 +61,6 @@ pub struct ConfigureOptions {
     pub trace_sources: Vec<String>,
     /// `--trace-redirect` file, already created.
     pub trace_redirect: Option<String>,
-    /// Original command-line arguments.
-    pub argv: Vec<String>,
     /// `--explain <target> <flag>` request (cmake-rust extension).
     pub explain: Option<(String, String)>,
     /// Configure for a try_compile project (no progress output).

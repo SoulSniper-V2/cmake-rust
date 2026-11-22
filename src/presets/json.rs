@@ -268,14 +268,7 @@ impl<'a> Reader<'a> {
                 self.read_number(false);
                 TokenType::Number
             }
-            b'-' | b'+' => {
-                if self.read_number(true) {
-                    TokenType::Number
-                } else {
-                    ok = false;
-                    TokenType::Error
-                }
-            }
+            b'-' | b'+' if self.read_number(true) => TokenType::Number,
             b't' => {
                 ok = self.match_(b"rue");
                 TokenType::True

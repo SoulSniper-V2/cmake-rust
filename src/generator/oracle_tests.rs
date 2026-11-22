@@ -401,7 +401,8 @@ fn case(case: &str, build: impl FnOnce(&mut Interp)) -> Result<(), String> {
 
 #[test]
 fn oracle_fixtures() {
-    let cases: Vec<(&str, Box<dyn Fn(&mut Interp)>)> = vec![
+    type Fixture = (&'static str, Box<dyn Fn(&mut Interp)>);
+    let cases: Vec<Fixture> = vec![
         ("empty", Box::new(|i| c_vars(i, 0))),
         (
             "prologue",

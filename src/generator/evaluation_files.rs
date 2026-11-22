@@ -17,8 +17,10 @@ pub fn generate(ctx: &GenCtx) -> Vec<String> {
         let content = if file.input_is_content {
             file.input.clone()
         } else {
+            // GetInputFileName/FixRelativePath: CMP0070 OLD uses the relative
+            // path unchanged, i.e. relative to the working directory.
             let path = if util::is_full_path(&file.input) || !file.cmp0070_new {
-                util::collapse_full_path(&file.input, &makefile.source_dir)
+                util::collapse_full_path(&file.input, "")
             } else {
                 util::collapse_full_path(&file.input, &makefile.source_dir)
             };

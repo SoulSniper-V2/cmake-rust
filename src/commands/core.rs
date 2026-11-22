@@ -694,13 +694,13 @@ pub fn apply_policy_version_ex(
         );
         interp.issue(MessageType::DeprecationWarning, &text);
     }
-    for index in 0..POLICIES.len() {
+    for (index, entry) in POLICIES.iter().enumerate() {
         if policy::newer_than(index, major, minor, patch) {
-            if POLICIES[index].removed {
+            if entry.removed {
                 continue;
             }
             let mut status = PolicyStatus::Warn;
-            let variable = format!("CMAKE_POLICY_DEFAULT_{}", POLICIES[index].id);
+            let variable = format!("CMAKE_POLICY_DEFAULT_{}", entry.id);
             if let Some(value) = interp.get_def(&variable).map(str::to_owned)
                 && !value.is_empty()
             {
@@ -710,7 +710,7 @@ pub fn apply_policy_version_ex(
                     other => {
                         let text = format!(
                             "Policy {} has invalid value \"{other}\" in variable {variable}.  It must be \"OLD\", \"NEW\", or empty.",
-                            POLICIES[index].id
+                            entry.id
                         );
                         interp.issue(MessageType::FatalError, &text);
                         return false;

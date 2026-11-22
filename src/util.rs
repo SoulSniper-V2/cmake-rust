@@ -45,7 +45,7 @@ pub fn strtod_full(value: &str) -> Option<f64> {
     let parsed = unsafe { libc::strtod(c.as_ptr(), &mut end) };
     // SAFETY: `end` points into `c` (possibly at its terminator).
     let rest = unsafe { *end };
-    (rest == 0 && end as *const libc::c_char != c.as_ptr()).then_some(parsed)
+    (rest == 0 && !std::ptr::eq(end, c.as_ptr())).then_some(parsed)
 }
 
 /// C `sscanf("%lg")`: parses a leading floating-point number, ignoring the
@@ -68,10 +68,7 @@ pub fn strtol(value: &str, base: i32) -> (i64, bool) {
     let parsed = unsafe { libc::strtol(c.as_ptr(), &mut end, base) };
     // SAFETY: end points into c.
     let rest = unsafe { *end };
-    (
-        parsed as i64,
-        rest == 0 && end as *const libc::c_char != c.as_ptr(),
-    )
+    (parsed as i64, rest == 0 && !std::ptr::eq(end, c.as_ptr()))
 }
 
 /// `cmList` expansion of a single value (`cmExpandList`). Splits on `;`
@@ -99,12 +96,10 @@ pub fn expand_list_into(value: &str, keep_empty: bool, out: &mut Vec<String>) {
     let mut index = 0usize;
     while index < bytes.len() {
         match bytes[index] {
-            b'\\' => {
-                if bytes.get(index + 1) == Some(&b';') {
-                    item.extend_from_slice(&bytes[last..index]);
-                    last = index + 1;
-                    index += 1;
-                }
+            b'\\' if bytes.get(index + 1) == Some(&b';') => {
+                item.extend_from_slice(&bytes[last..index]);
+                last = index + 1;
+                index += 1;
             }
             b'[' => square += 1,
             b']' => square -= 1,

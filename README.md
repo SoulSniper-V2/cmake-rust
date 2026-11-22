@@ -20,7 +20,8 @@ During configuration, `--explain <target> <flag>` prints the target dependency p
 ```sh
 cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
-scripts/verify-zlib.sh
+scripts/stage-prefix.sh   # <root>/rust-prefix/bin/cmake + share/cmake-4.1
+RUST_CMAKE=<root>/rust-prefix/bin/cmake scripts/verify-zlib.sh
 ```
 
 The script requires Git, Python 3, Ninja, a native C toolchain, and a reference installation of Kitware CMake with CTest. It uses two clean copies of zlib v1.3.1 at commit `51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf`, and isolates the Rust side's executable search path. The reference is invoked separately. Set `ZLIB_PIN_DIR` to use an existing clean checkout of that commit. Set `RUST_CMAKE`, `UPSTREAM_CMAKE`, `CTEST`, or `NINJA` to override tool paths.

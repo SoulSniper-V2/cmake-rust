@@ -128,7 +128,6 @@ pub struct Regex {
     regstart: u8,             // byte that must begin a match; 0 = none obvious
     reganch: bool,            // match is anchored at beginning-of-line
     regmust: Option<Vec<u8>>, // literal that must appear in any match
-    regnpar: usize,           // internal () count + 1 (mirrors the C++ member)
 }
 
 impl Regex {
@@ -162,7 +161,6 @@ impl Regex {
             regstart: 0,
             reganch: false,
             regmust: None,
-            regnpar: comp.regnpar,
         };
 
         // Dig out information for optimizations (mirrors compile()).
@@ -936,7 +934,7 @@ mod tests {
     use super::*;
 
     fn unhex(s: &str) -> Vec<u8> {
-        assert!(s.len() % 2 == 0);
+        assert!(s.len().is_multiple_of(2));
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())

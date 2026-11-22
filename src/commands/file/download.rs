@@ -141,8 +141,11 @@ fn load_curl() -> Result<Curl, String> {
             if symbol.is_null() {
                 return Err(format!("libcurl does not export {}", $name));
             }
-            // SAFETY: the symbol has the C signature declared in Curl.
-            unsafe { std::mem::transmute::<*mut c_void, _>(symbol) }
+            // SAFETY: the symbol has the C signature declared in Curl; the
+            // target fn-pointer type is the field being initialized.
+            #[allow(clippy::missing_transmute_annotations)]
+            let function = unsafe { std::mem::transmute::<*mut c_void, _>(symbol) };
+            function
         }};
     }
     Ok(Curl {

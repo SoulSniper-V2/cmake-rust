@@ -15,7 +15,11 @@ zlib="${ZLIB_PIN_DIR:-$work/upstream}"
 for binary in "$reference" "$rust" "$ctest" "$ninja" "$cc" "$ar"; do
     test -x "$binary"
 done
-"$rust" --version | grep -Fq 'Rust-native implementation'
+# The candidate reports CMake's own version text, so check identity instead:
+# it must not be the reference executable and must be a rustc-built binary.
+test "$(realpath "$rust")" != "$(realpath "$reference")"
+! cmp -s "$rust" "$reference"
+grep -aqF '/rustc/' "$rust"
 if [[ ! -d "$zlib/.git" ]]; then
     git clone --quiet --depth 1 --branch v1.3.1 https://github.com/madler/zlib.git "$zlib"
 fi

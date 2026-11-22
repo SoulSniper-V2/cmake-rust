@@ -192,7 +192,7 @@ fn ninja_flag_assembly_matches_kitware() {
                 deps.split_ascii_whitespace().collect()
             });
         assert_eq!(object_dependencies(&source_props), deps, "{}", fixture.name);
-        check_rules(&fixture, &ctx, &target);
+        check_rules(&fixture, &ctx, target);
         assert!(
             ctx.errors.borrow().is_empty(),
             "{} {:?}",

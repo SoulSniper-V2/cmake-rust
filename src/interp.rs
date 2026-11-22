@@ -2107,7 +2107,7 @@ impl Interp {
                 if command.lname == "endif" {
                     let quiet = self
                         .get_def("CMAKE_MINIMUM_REQUIRED_VERSION")
-                        .map_or(true, |value| atof_prefix(value) <= 1.4);
+                        .is_none_or(|value| atof_prefix(value) <= 1.4);
                     if quiet {
                         return (true, Ctl::Normal);
                     }

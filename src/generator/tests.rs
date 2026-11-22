@@ -93,7 +93,7 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
         writeln!(
             out,
             "if({})",
-            config_test("CTEST_CONFIGURATION_TYPE", &configs)
+            config_test("CTEST_CONFIGURATION_TYPE", configs)
         )
         .unwrap();
     }

@@ -374,6 +374,7 @@ fn run_preprocessor(command: &[String], intermediate: &str) -> i32 {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .mode(0o644)
         .open(intermediate);
     let mut cmd = Command::new(&command[0]);

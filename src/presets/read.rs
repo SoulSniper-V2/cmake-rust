@@ -1575,11 +1575,9 @@ impl Graph {
             return false;
         }
 
-        if v < 2 {
-            if root.is_member("buildPresets") || root.is_member("testPresets") {
-                errors::build_test_presets_unsupported(&mut self.parse_state);
-                return false;
-            }
+        if v < 2 && (root.is_member("buildPresets") || root.is_member("testPresets")) {
+            errors::build_test_presets_unsupported(&mut self.parse_state);
+            return false;
         }
         if v < 6 && root.is_member("packagePresets") {
             errors::package_presets_unsupported(&mut self.parse_state);

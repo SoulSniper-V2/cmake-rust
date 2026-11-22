@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ORACLE = Path("/tmp/cmake-rust-validation.hSLgEZHR/kitware-reference/bin/cmake")
-DATA_ROOT = "/tmp/cmake-rust-validation.hSLgEZHR/kitware"
+DATA_ROOT = os.path.realpath("/tmp/cmake-rust-validation.hSLgEZHR/kitware")
 
 
 def run(binary, script, args, env_extra):

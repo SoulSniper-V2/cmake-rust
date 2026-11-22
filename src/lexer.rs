@@ -6,8 +6,6 @@
 //! arguments/comments, quoted-argument line continuations, and the
 //! argument-separation diagnostics.
 
-use std::rc::Rc;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delim {
     Unquoted,
@@ -31,14 +29,6 @@ pub struct Command {
     pub line: usize,
     pub line_end: usize,
     pub args: Vec<Arg>,
-}
-
-/// A parsed list file. Commands are shared so that function bodies can refer
-/// to slices without copying.
-#[derive(Debug)]
-pub struct ListFile {
-    pub path: String,
-    pub commands: Vec<Command>,
 }
 
 #[derive(Debug)]
@@ -702,48 +692,34 @@ fn check_nesting(commands: &[Command]) -> Option<(usize, String)> {
                 };
                 *stack.last_mut().expect("top") = (kind, command);
             }
-            "endif" => {
-                if !close(&mut stack, &[Kind::If, Kind::Else]) {
-                    return here(command);
-                }
+            "endif" if !close(&mut stack, &[Kind::If, Kind::Else]) => {
+                return here(command);
             }
             "while" => stack.push((Kind::While, command)),
-            "endwhile" => {
-                if !close(&mut stack, &[Kind::While]) {
-                    return here(command);
-                }
+            "endwhile" if !close(&mut stack, &[Kind::While]) => {
+                return here(command);
             }
             "foreach" => stack.push((Kind::Foreach, command)),
-            "endforeach" => {
-                if !close(&mut stack, &[Kind::Foreach]) {
-                    return here(command);
-                }
+            "endforeach" if !close(&mut stack, &[Kind::Foreach]) => {
+                return here(command);
             }
             "function" => stack.push((Kind::Function, command)),
-            "endfunction" => {
-                if !close(&mut stack, &[Kind::Function]) {
-                    return here(command);
-                }
+            "endfunction" if !close(&mut stack, &[Kind::Function]) => {
+                return here(command);
             }
             "macro" => stack.push((Kind::Macro, command)),
-            "endmacro" => {
-                if !close(&mut stack, &[Kind::Macro]) {
-                    return here(command);
-                }
+            "endmacro" if !close(&mut stack, &[Kind::Macro]) => {
+                return here(command);
             }
             "block" => stack.push((Kind::Block, command)),
-            "endblock" => {
-                if !close(&mut stack, &[Kind::Block]) {
-                    return here(command);
-                }
+            "endblock" if !close(&mut stack, &[Kind::Block]) => {
+                return here(command);
             }
             _ => {}
         }
     }
     stack.last().and_then(|(_, command)| here(command))
 }
-
-pub type SharedCommands = Rc<Vec<Command>>;
 
 #[cfg(test)]
 mod tests {
