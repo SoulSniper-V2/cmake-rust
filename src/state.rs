@@ -235,6 +235,10 @@ pub struct SourceFile {
     )]
     pub makefile: usize,
     pub props: Props,
+    /// `cmSourceFile`'s backtraced property lists (INCLUDE_DIRECTORIES,
+    /// COMPILE_OPTIONS, COMPILE_DEFINITIONS): each write's value plus the
+    /// makefile backtrace at write time.
+    pub provenance: BTreeMap<String, Vec<PropertyEntry>>,
     pub location: SourceFileLocation,
     pub generated: bool,
     pub custom_command: Option<CustomCommand>,

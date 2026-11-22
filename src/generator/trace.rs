@@ -62,9 +62,23 @@ fn apply(interp: &mut Interp, key: &str, traced: Traced) {
         return;
     };
     if !traced.sources.is_empty() {
-        // cmTarget::AddTracedSources: one appended SOURCES entry.
+        // cmTarget::AddTracedSources: one appended SOURCES entry, recorded
+        // under the makefile's persistent file-scope frame (the generate-time
+        // DirectoryBacktrace).
+        let makefile = &interp.makefiles[target.makefile];
+        let file = makefile
+            .list_files
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
+        let backtrace = [crate::messages::Frame {
+            file: std::rc::Rc::from(file.as_str()),
+            line: 0,
+            name: None,
+            deferred: false,
+        }];
         let joined = traced.sources.join(";");
-        target.insert_entry("SOURCES", &joined, &[], false);
+        target.insert_entry("SOURCES", &joined, &backtrace, false);
     }
     for utility in traced.utilities {
         if !target.traced_utilities.contains(&utility) {

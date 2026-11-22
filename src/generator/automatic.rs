@@ -118,7 +118,21 @@ fn apply(interp: &mut Interp, key: &str, changes: Changes) {
             .iter()
             .any(|entry| entry == &path || collapse_full_path(entry, "") == path);
         if !present {
-            target.insert_entry("SOURCES", &path, &[], before);
+            // Sources injected at generate time carry the makefile's
+            // persistent file-scope frame (cmLocalGenerator::DirectoryBacktrace).
+            let makefile = &interp.makefiles[target.makefile];
+            let file = makefile
+                .list_files
+                .first()
+                .cloned()
+                .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
+            let backtrace = [crate::messages::Frame {
+                file: std::rc::Rc::from(file.as_str()),
+                line: 0,
+                name: None,
+                deferred: false,
+            }];
+            target.insert_entry("SOURCES", &path, &backtrace, before);
         }
     }
 }

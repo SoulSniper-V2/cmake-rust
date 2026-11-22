@@ -111,6 +111,7 @@ impl GeneratorQueries for FixtureGenerator {
             object_name: format!("{}{src}.o", if subdir { "__/" } else { "" }),
             generated: false,
             object_library: None,
+            backtrace: Vec::new(),
         }]
     }
 }
@@ -315,13 +316,16 @@ fn cmake_4_1_ninja_edges() {
             if on(target, "BUILD_WITH_INSTALL_RPATH") {
                 assert!(line.rpath_change.is_none());
             }
-            let mut order_only = graph
+            let index = graph
+                .targets
                 .iter()
-                .find(|(head, _)| head.name == name)
-                .unwrap()
-                .1
+                .position(|head| head.name == name)
+                .unwrap();
+            let mut seen = std::collections::HashSet::new();
+            let mut order_only = graph.edges[index]
                 .iter()
-                .map(|dep| target_artifact(&query, ctx.target(dep).unwrap()))
+                .filter(|(dep, _)| seen.insert(*dep))
+                .map(|(dep, _)| target_artifact(&query, graph.targets[*dep]))
                 .collect::<Vec<_>>();
             order_only.sort();
             order_only.extend(line.shared_symlinks);

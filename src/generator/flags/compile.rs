@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-use super::{Flags, append, append_options, cmake_space, shell_with_make_vars};
+use super::{Flags, append, append_options, cmake_space, shell, shell_with_make_vars};
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
@@ -82,6 +82,12 @@ pub fn compile_vars_with_source_props(
 }
 
 fn target_flags(inputs: &Flags<'_, '_>) -> String {
+    let mut flags = flags_blob(inputs);
+    append_compile_options_tail(&mut flags, inputs);
+    flags
+}
+
+fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
     let mut flags = inputs.language_flags(false);
     if inputs.pic() == Some(true) {
         let pie = if inputs.target.kind == TargetKind::Executable {
@@ -142,7 +148,18 @@ fn target_flags(inputs: &Flags<'_, '_>) -> String {
     if let Some(raw) = inputs.ctx.interp.ext.directory_define_flags.get(&inputs.target.makefile) {
         append(&mut flags, raw);
     }
+    flags
+}
 
+/// `cmLocalGenerator::GetTargetCompileFlags`: the `compileFlags` blob
+/// (everything before `AddCompileOptions`'s per-entry appends).
+fn flags_blob(inputs: &Flags<'_, '_>) -> String {
+    target_flags_prefix(inputs)
+}
+
+/// The `AddCompileOptions` tail: COMPILE_FLAGS/regex-filtered options plus
+/// COMPILE_WARNING_AS_ERROR feature flags.
+fn append_compile_options_tail(flags: &mut String, inputs: &Flags<'_, '_>) {
     // GetCompileOptions already de-duplicated and split SHELL: options.
     let options = inputs.usage("COMPILE_OPTIONS");
     let raw = inputs.prop("COMPILE_FLAGS").unwrap_or_default();
@@ -152,17 +169,16 @@ fn target_flags(inputs: &Flags<'_, '_>) -> String {
                 .into_iter()
                 .chain(options)
                 .filter(|option| regex.find(option).is_some());
-            append_options(&mut flags, allowed);
+            append_options(flags, allowed);
         }
     } else {
         // Target COMPILE_FLAGS are literal. Source COMPILE_FLAGS are evaluated.
-        append(&mut flags, raw);
-        append_options(&mut flags, options);
+        append(flags, raw);
+        append_options(flags, options);
     }
     if is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR")) {
-        inputs.append_feature(&mut flags, "WARNING_AS_ERROR");
+        inputs.append_feature(flags, "WARNING_AS_ERROR");
     }
-    flags
 }
 
 /// cmLocalGenerator::AddCompileOptions uses Windows tokenization for the
@@ -529,5 +545,201 @@ pub fn object_dependencies(properties: &Props) -> Vec<String> {
                 path
             }
         })
+        .collect()
+}
+
+// ---------------------------------------------------------------------
+// File API codemodel data (cmFileAPICodemodel.cxx CompileData fields).
+// These mirror the target-level portions of GetTargetCompileFlags,
+// GetTargetDefines, GetIncludeDirectories and GetPrecompileHeaders while
+// preserving per-fragment backtraces.
+
+/// One backtraced codemodel fragment: (value, backtrace).
+pub(crate) type BtFrag = (String, Vec<crate::messages::Frame>);
+
+/// `GetTargetCompileFlags` as codemodel "compileCommandFragments".
+pub(crate) fn flag_fragments(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
+    let inputs = Flags { ctx, target, config, lang };
+    let mut out = Vec::new();
+    let blob = flags_blob(&inputs);
+    if !blob.is_empty() {
+        out.push((blob, Vec::new()));
+    }
+    let raw = inputs.prop("COMPILE_FLAGS").unwrap_or_default();
+    if let Some(pattern) = inputs.lang_var("FLAG_REGEX") {
+        if let Ok(regex) = crate::cmregex::Regex::new(&pattern) {
+            for option in windows_command_line(raw)
+                .into_iter()
+                .filter(|option| regex.find(option).is_some())
+            {
+                out.push((option, Vec::new()));
+            }
+            for item in inputs.usage_items("COMPILE_OPTIONS") {
+                if regex.find(&item.value).is_some() {
+                    out.push((shell(&item.value), ctx.backtrace(item.backtrace)));
+                }
+            }
+        }
+    } else {
+        if !raw.trim_matches(cmake_space).is_empty() {
+            out.push((raw.to_owned(), Vec::new()));
+        }
+        for item in inputs.usage_items("COMPILE_OPTIONS") {
+            out.push((shell(&item.value), ctx.backtrace(item.backtrace)));
+        }
+    }
+    if is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR")) {
+        let mut w = String::new();
+        inputs.append_feature(&mut w, "WARNING_AS_ERROR");
+        if !w.is_empty() {
+            out.push((w, Vec::new()));
+        }
+    }
+    out
+}
+
+/// `GetTargetDefines` as codemodel "defines" (export macro first, then
+/// usage definitions; std::set<BT> sorts by value, first insertion wins).
+pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
+    let inputs = Flags { ctx, target, config, lang };
+    let mut items: Vec<BtFrag> = Vec::new();
+    if matches!(inputs.target.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary)
+        || (inputs.target.kind == TargetKind::Executable && is_on_opt(inputs.prop("ENABLE_EXPORTS")))
+    {
+        let symbol = inputs.prop("DEFINE_SYMBOL").map(str::to_owned).unwrap_or_else(|| {
+            let name = format!("{}_EXPORTS", inputs.target.name);
+            let mut symbol = String::new();
+            if name.starts_with(|c: char| c.is_ascii_digit()) {
+                symbol.push('_');
+            }
+            symbol.extend(name.bytes().map(|c| {
+                if c.is_ascii_alphanumeric() { char::from(c) } else { '_' }
+            }));
+            symbol
+        });
+        for define in expand_list(&symbol, false) {
+            items.push((define, Vec::new()));
+        }
+    }
+    for item in inputs.usage_items("COMPILE_DEFINITIONS") {
+        let value = item.value.strip_prefix("-D").unwrap_or(&item.value).to_owned();
+        items.push((value, ctx.backtrace(item.backtrace)));
+    }
+    items.retain(|(d, _)| check_definition(d));
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items.dedup_by(|a, b| a.0 == b.0);
+    items
+}
+
+/// `cmLocalGenerator::GetIncludeDirectories` as codemodel
+/// "includes"/"frameworks" entries: (path, is_system, backtrace).
+pub(crate) fn include_items(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
+    let inputs = Flags { ctx, target, config, lang };
+    let standard: Vec<String> = expand_list(
+        &inputs.lang_var("STANDARD_INCLUDE_DIRECTORIES").unwrap_or_default(),
+        false,
+    )
+    .iter()
+    .map(|dir| unix_slashes(dir))
+    .collect();
+    let mut implicit = standard.clone();
+    if lang != "Fortran" {
+        implicit.extend(
+            expand_list(&inputs.lang_var("IMPLICIT_INCLUDE_DIRECTORIES").unwrap_or_default(), false)
+                .iter()
+                .map(|dir| unix_slashes(dir)),
+        );
+    }
+    let implicit: HashSet<String> = implicit.iter().map(|dir| real_path(dir)).collect();
+    let cpath: HashSet<String> = if matches!(lang, "C" | "CXX") {
+        std::env::var_os("CPATH")
+            .iter()
+            .flat_map(std::env::split_paths)
+            .filter(|path| path.is_absolute())
+            .map(|path| real_path(&path.to_string_lossy()))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let not_excluded = |dir: &str| {
+        let real = real_path(dir);
+        !implicit.contains(&real) || cpath.contains(&real)
+    };
+
+    // (path, is_system, backtrace, is_user_entry)
+    let mut users: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
+    for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
+        if !Path::new(&item.value).is_absolute() && !crate::util::is_off(&item.value) {
+            break;
+        }
+        let dir = unix_slashes(&item.value);
+        let system = item.system
+            || target
+                .system_include_directories
+                .contains(dir.trim_end_matches('/'));
+        users.push((dir, system, ctx.backtrace(item.backtrace), true));
+    }
+
+    let mut result: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut emit = |entry: (String, bool, Vec<crate::messages::Frame>, bool),
+                    result: &mut Vec<(String, bool, Vec<crate::messages::Frame>, bool)>| {
+        if seen.insert(entry.0.clone()) {
+            result.push(entry);
+        }
+    };
+    if is_on_opt(inputs.var("CMAKE_INCLUDE_CURRENT_DIR").as_deref()) {
+        let directory = &ctx.interp.makefiles[target.makefile];
+        emit((directory.binary_dir.clone(), false, Vec::new(), false), &mut result);
+        emit((directory.source_dir.clone(), false, Vec::new(), false), &mut result);
+    }
+    if is_on_opt(inputs.var("CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE").as_deref()) {
+        for entry in &users {
+            if not_excluded(&entry.0)
+                && (Path::new(&entry.0).starts_with(&ctx.interp.home_source)
+                    || Path::new(&entry.0).starts_with(&ctx.interp.home_binary))
+            {
+                emit(entry.clone(), &mut result);
+            }
+        }
+    }
+    for entry in &users {
+        if not_excluded(&entry.0) {
+            emit(entry.clone(), &mut result);
+        }
+    }
+    // MoveSystemIncludesToEnd: non-system directories first, order kept.
+    let (non_system, system): (Vec<_>, Vec<_>) = result.into_iter().partition(|e| !e.1);
+    let mut result = non_system;
+    result.extend(system);
+    for dir in &standard {
+        emit((dir.clone(), false, Vec::new(), false), &mut result);
+    }
+    // Re-emit user-requested dirs that are implicit (stripImplicitDirs path
+    // appends implicitDirs only on demand, which the codemodel does not use).
+    for entry in &users {
+        if implicit.contains(&real_path(&entry.0)) {
+            emit(entry.clone(), &mut result);
+        }
+    }
+    result
+        .into_iter()
+        .map(|(path, system, backtrace, _)| (path, system, backtrace))
+        .collect()
+}
+
+/// `cmGeneratorTarget::GetPrecompileHeaders` as codemodel
+/// "precompileHeaders" entries.
+pub(crate) fn pch_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
+    let inputs = Flags { ctx, target, config, lang };
+    inputs
+        .usage_items("PRECOMPILE_HEADERS")
+        .into_iter()
+        .map(|item| (item.value, ctx.backtrace(item.backtrace)))
         .collect()
 }

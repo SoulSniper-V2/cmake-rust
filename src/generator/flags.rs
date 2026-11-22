@@ -7,6 +7,8 @@ mod rule;
 mod standard;
 
 pub use compile::compile_vars_with_source_props;
+#[allow(unused_imports, reason = "consumed by the file API codemodel")]
+pub(crate) use compile::{BtFrag, define_items, flag_fragments, include_items, pch_items};
 pub use link::{link_dependency_file, link_flag_vars};
 pub use rule::{compiler_launcher, expand_rule};
 
@@ -169,7 +171,7 @@ fn cmake_space(ch: char) -> bool {
     ch.is_ascii_whitespace() || ch == '\u{b}'
 }
 
-fn append(flags: &mut String, text: &str) {
+pub(crate) fn append(flags: &mut String, text: &str) {
     if !text.trim_matches(cmake_space).is_empty() {
         if !flags.is_empty() {
             flags.push(' ');
@@ -178,7 +180,7 @@ fn append(flags: &mut String, text: &str) {
     }
 }
 
-fn shell(text: &str) -> String {
+pub(crate) fn shell(text: &str) -> String {
     escape_for_shell(text, NINJA_UNIX)
 }
 
@@ -242,3 +244,42 @@ fn unix_command_line(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod oracle_tests;
+
+/// `cmGeneratorTarget::IsIPOEnabled` for the file API codemodel.
+pub(crate) fn ipo_enabled(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> bool {
+    Flags { ctx, target, config, lang }.ipo_enabled()
+}
+
+/// `target->GetLinkDirectories` usage entries for the codemodel
+/// `libraryPath` backtraces: (dir, backtrace).
+pub(crate) fn link_dir_items(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Vec<(String, Vec<crate::messages::Frame>)> {
+    Flags { ctx, target, config, lang }
+        .usage_items("LINK_DIRECTORIES")
+        .into_iter()
+        .map(|item| (item.value, ctx.backtrace(item.backtrace)))
+        .collect()
+}
+
+pub(crate) use link::codemodel_link_flags;
+pub(crate) use standard::{level, levels};
+
+/// `usage_items` values + backtraces for File API consumers (e.g. the
+/// `COMPILE_FEATURES` entries behind `languageStandard.backtraces`).
+pub(crate) fn usage_item_fragments(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+    property: &str,
+) -> Vec<(String, Vec<crate::messages::Frame>)> {
+    Flags { ctx, target, config, lang }
+        .usage_items(property)
+        .into_iter()
+        .map(|item| (item.value, ctx.backtrace(item.backtrace)))
+        .collect()
+}

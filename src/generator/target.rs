@@ -69,6 +69,9 @@ pub struct SourceInfo {
     /// For an object file of a linked OBJECT library
     /// (`cmSourceFile::GetObjectLibrary`), that library's name.
     pub object_library: Option<String>,
+    /// `SourceAndContext::Backtrace`: the backtrace of the command that
+    /// appended this source entry.
+    pub backtrace: Vec<Frame>,
 }
 
 /// Prefix, configured base (including the postfix), and suffix of an artifact.
@@ -716,7 +719,7 @@ pub fn imported_artifact_path<'a>(target: &'a Target, config: &str, artifact: Ar
     .filter(|value| !value.is_empty())
 }
 
-fn imported_full_path(
+pub(crate) fn imported_full_path(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
@@ -825,7 +828,7 @@ thread_local! {
 /// A property of the cmSourceFile for `path` in directory `dir_index`
 /// (including the global GENERATED registry and `$<TARGET_OBJECTS>` files).
 /// `CUSTOM_COMMAND` is ON when a rule is attached to the source.
-pub(super) fn source_prop(
+pub(crate) fn source_prop(
     ctx: &GenCtx,
     dir_index: usize,
     path: &str,
@@ -852,6 +855,26 @@ pub(super) fn source_prop(
             .map(|_| "1".to_owned());
     }
     crate::properties::get(ctx.interp, crate::properties::Object::Source(dir_index, path), name)
+}
+
+/// `cmSourceFile::GetCompileOptions`/`GetIncludeDirectories`/
+/// `GetCompileDefinitions`: the backtraced entry list for one of the three
+/// source-file properties CMake stores as `BT<std::string>` vectors.
+pub(crate) fn source_prop_entries(
+    ctx: &GenCtx,
+    dir_index: usize,
+    path: &str,
+    name: &str,
+) -> Vec<(String, Vec<Frame>)> {
+    let Some(index) = crate::commands::target::find_known_source(ctx.interp, dir_index, path)
+    else {
+        return Vec::new();
+    };
+    ctx.interp.ext.sources[&dir_index][index]
+        .provenance
+        .get(name)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The OBJECT library whose `$<TARGET_OBJECTS>` named `path` in `dir`.
@@ -1304,7 +1327,7 @@ pub(super) fn evaluated_links(
 /// provenance entry, each carrying the appending command's backtrace.
 /// Falls back to a single entry without a backtrace when the property was
 /// written without provenance tracking.
-fn evaluated_entries(
+pub(crate) fn evaluated_entries(
     ctx: &GenCtx,
     provider: &Target,
     head: &Target,
@@ -1344,7 +1367,10 @@ pub(crate) fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
     }]
 }
 
-fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool)> {
+/// `(full_path, is_header_set, entry_backtrace)` for every file-set member,
+/// in `cmFileSet` file-entry order so each file keeps the `target_sources`
+/// call-site backtrace of its `FILES` entry.
+pub(crate) fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool, Vec<Frame>)> {
     let mut files = Vec::new();
     let source_dir = &ctx.interp.makefiles[target.makefile].source_dir;
     // INTEGRATION: project the model's private/public cmFileSet entries onto
@@ -1387,19 +1413,29 @@ fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool)> {
                 }
                 directories.push(dir);
             }
-            for file in expand_list(&ctx.genex(text, Some(target), None), false) {
-                let file = collapse_full_path(&file, source_dir);
-                if directories.iter().any(|dir| is_subdirectory(&file, dir)) {
-                    files.push((file, header));
-                } else {
-                    let mut error = format!(
-                        "File:\n  {file}\nmust be in one of the file set's base directories:"
-                    );
-                    for dir in &directories {
-                        error.push_str("\n  ");
-                        error.push_str(dir);
+            // cmFileSet::FileEntries: each append is a (value, backtrace)
+            // pair; the joined target property has the same contents.
+            let entries: Vec<(String, Vec<Frame>)> = target
+                .file_sets
+                .get(&name)
+                .map(|set| set.files.clone())
+                .filter(|entries| !entries.is_empty())
+                .unwrap_or_else(|| vec![(text.to_owned(), Vec::new())]);
+            for (entry, entry_bt) in entries {
+                for file in expand_list(&ctx.genex(&entry, Some(target), None), false) {
+                    let file = collapse_full_path(&file, source_dir);
+                    if directories.iter().any(|dir| is_subdirectory(&file, dir)) {
+                        files.push((file, header, entry_bt.clone()));
+                    } else {
+                        let mut error = format!(
+                            "File:\n  {file}\nmust be in one of the file set's base directories:"
+                        );
+                        for dir in &directories {
+                            error.push_str("\n  ");
+                            error.push_str(dir);
+                        }
+                        ctx.error(Vec::new(), error);
                     }
-                    ctx.error(Vec::new(), error);
                 }
             }
         }
@@ -1430,7 +1466,11 @@ enum Listed {
         backtrace: Vec<Frame>,
     },
     /// `$<TARGET_OBJECTS:lib>` of a directly linked OBJECT library.
-    Object { path: String, library: String },
+    Object {
+        path: String,
+        library: String,
+        backtrace: Vec<Frame>,
+    },
 }
 
 /// `cmGeneratorTarget::GetSourceFilePaths` + `ComputeKindedSources`.
@@ -1480,41 +1520,45 @@ fn collect_sources(
             })
             .collect(),
     );
-    // AddObjectEntries: objects of OBJECT libraries in the link implementation.
+    // AddObjectEntries: objects of OBJECT libraries in the link
+    // implementation, each carrying its link item's backtrace.
     if target.kind != TargetKind::ObjectLibrary {
         let mut entries = Vec::new();
-        for item in evaluated_links(ctx, target, target, "LINK_LIBRARIES") {
-            let Some(library) = target_in_directory(ctx, target.makefile, &item)
-                .filter(|dep| dep.kind == TargetKind::ObjectLibrary && !std::ptr::eq(*dep, target))
-            else {
-                continue;
-            };
-            let objects = if library.imported {
-                let list = mapped_import_config(library, config).and_then(|info| info.location);
-                expand_list(list.unwrap_or_default(), false)
-            } else {
-                let object_dir = object_directory(ctx, library, config);
-                sources(ctx, library, config)
-                    .iter()
-                    .filter(|source| source.kind == SourceKind::ObjectSource)
-                    .map(|source| format!("{object_dir}{}", source.object_name))
-                    .collect()
-            };
-            entries.push(
-                objects
-                    .into_iter()
-                    .map(|path| Listed::Object {
-                        path,
-                        library: library.name.clone(),
-                    })
-                    .collect(),
-            );
+        for (items, backtrace) in evaluated_entries(ctx, target, target, "LINK_LIBRARIES") {
+            for item in items {
+                let Some(library) = target_in_directory(ctx, target.makefile, &item)
+                    .filter(|dep| dep.kind == TargetKind::ObjectLibrary && !std::ptr::eq(*dep, target))
+                else {
+                    continue;
+                };
+                let objects = if library.imported {
+                    let list = mapped_import_config(library, config).and_then(|info| info.location);
+                    expand_list(list.unwrap_or_default(), false)
+                } else {
+                    let object_dir = object_directory(ctx, library, config);
+                    sources(ctx, library, config)
+                        .iter()
+                        .filter(|source| source.kind == SourceKind::ObjectSource)
+                        .map(|source| format!("{object_dir}{}", source.object_name))
+                        .collect()
+                };
+                entries.push(
+                    objects
+                        .into_iter()
+                        .map(|path| Listed::Object {
+                            path,
+                            library: library.name.clone(),
+                            backtrace: backtrace.clone(),
+                        })
+                        .collect(),
+                );
+            }
         }
         groups.push(entries);
     }
     let mut header_set = HashSet::new();
     let mut set_files = Vec::new();
-    for (file, header) in file_sets(ctx, target) {
+    for (file, header, backtrace) in file_sets(ctx, target) {
         if header {
             // addFileSetEntry marks HEADERS members HEADER_FILE_ONLY.
             header_set.insert(file.clone());
@@ -1522,7 +1566,7 @@ fn collect_sources(
         set_files.push(Listed::Path {
             path: file,
             provider: None,
-            backtrace: Vec::new(),
+            backtrace,
         });
     }
     groups.push(vec![set_files]);
@@ -1536,8 +1580,12 @@ fn collect_sources(
             // entry and ends this processSources call.
             let mut resolved = Vec::new();
             for item in entry {
-                let (path, generated, listed, object_library) = match item {
-                    Listed::Object { path, library } => (path.clone(), true, path, Some(library)),
+                let (path, generated, listed, object_library, backtrace) = match item {
+                    Listed::Object {
+                        path,
+                        library,
+                        backtrace,
+                    } => (path.clone(), true, path, Some(library), backtrace),
                     Listed::Path {
                         path: source,
                         provider,
@@ -1560,12 +1608,12 @@ fn collect_sources(
                             continue 'groups;
                         }
                         let library = target_object_library(ctx, target.makefile, &path);
-                        (path, generated, source, library)
+                        (path, generated, source, library, backtrace)
                     }
                 };
-                resolved.push((path, generated, listed, object_library));
+                resolved.push((path, generated, listed, object_library, backtrace));
             }
-            for (path, generated, listed, object_library) in resolved {
+            for (path, generated, listed, object_library, backtrace) in resolved {
                 if !seen.insert(path.clone()) {
                     continue;
                 }
@@ -1577,6 +1625,7 @@ fn collect_sources(
                         object_name: String::new(),
                         generated,
                         object_library,
+                        backtrace,
                     });
                     continue;
                 }
@@ -1602,6 +1651,7 @@ fn collect_sources(
                     object_name,
                     generated,
                     object_library: None,
+                    backtrace,
                 });
             }
         }
@@ -1705,7 +1755,7 @@ pub(super) fn link_implementation_languages(
 
 /// `cmGeneratorTarget::GetLanguages`: languages of all sources plus those of
 /// OBJECT libraries whose objects are among them.
-fn target_languages(
+pub(crate) fn target_languages(
     ctx: &GenCtx,
     target: &Target,
     config: &str,

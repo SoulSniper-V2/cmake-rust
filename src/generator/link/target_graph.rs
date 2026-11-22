@@ -1,14 +1,85 @@
 //! Target-level dependencies and static-library cycle linearization.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+use crate::messages::Frame;
 
 use super::dependencies::Components;
 use super::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Edge {
     to: usize,
     strong: bool,
+    /// `cmGraphEdge::Backtrace`: the call site that created this dependency.
+    backtrace: Rc<Vec<Frame>>,
+}
+
+/// A final dependency edge with its backtrace, for File API consumers.
+pub(crate) type DepEdge = (usize, Rc<Vec<Frame>>);
+
+/// The whole `cmComputeTargetDepends` result: the in-build-system targets in
+/// `cmGlobalGenerator`'s target order plus each one's `FinalGraph` edges.
+pub(crate) struct DepGraph<'i> {
+    pub targets: Vec<&'i Target>,
+    pub edges: Vec<Vec<DepEdge>>,
+}
+
+/// `cmGlobalGenerator::GetTargetDirectDepends`: `target`'s final dependency
+/// edges ordered by the dependee's target order index.
+pub(crate) fn dep_edges<'i>(
+    ctx: &GenCtx<'i>,
+    head: &'i Target,
+    config: &str,
+) -> Vec<(&'i Target, Rc<Vec<Frame>>)> {
+    if ctx.dep_graph.borrow().is_none() {
+        let query = Query::new(ctx, config, "");
+        let graph = compute(&query);
+        // Target pointers to their `ext.targets` keys (which can be the
+        // scoped `[dir]name` form for imported/duplicate targets).
+        let keys: HashMap<usize, &str> = ctx
+            .interp
+            .ext
+            .targets
+            .iter()
+            .map(|(key, target)| (std::ptr::from_ref(target) as usize, key.as_str()))
+            .collect();
+        let mut map = HashMap::new();
+        for (index, target) in graph.targets.iter().enumerate() {
+            let mut edges = graph.edges[index].clone();
+            edges.sort_by_key(|(to, _)| *to);
+            edges.dedup_by_key(|(to, _)| *to);
+            map.insert(
+                std::ptr::from_ref(*target) as usize,
+                edges
+                    .into_iter()
+                    .filter_map(|(to, bt)| {
+                        keys.get(&(std::ptr::from_ref(graph.targets[to]) as usize))
+                            .map(|key| ((*key).to_owned(), bt))
+                    })
+                    .collect::<Vec<(String, Rc<Vec<Frame>>)>>(),
+            );
+        }
+        *ctx.dep_graph.borrow_mut() = Some(Rc::new(map));
+    }
+    let graph = ctx.dep_graph.borrow();
+    graph
+        .as_ref()
+        .and_then(|map| map.get(&(std::ptr::from_ref(head) as usize)))
+        .map(|edges| {
+            edges
+                .iter()
+                .filter_map(|(name, bt)| {
+                    ctx.interp
+                        .ext
+                        .targets
+                        .get(name.as_str())
+                        .map(|target| (target, bt.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<String> {
@@ -17,10 +88,11 @@ pub(super) fn dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<Str
         return expand_list(value, false);
     }
     let query = Query::new(ctx, config, "");
-    for (target, deps) in compute(&query) {
+    let graph = compute(&query);
+    for (target, deps) in graph.targets.iter().zip(&graph.edges) {
         ctx.memo.borrow_mut().insert(
             format!("link:target-dependencies:{config}:{}", target.name),
-            deps.join(";"),
+            unique(deps.iter().map(|(to, _)| graph.targets[*to].name.clone())).join(";"),
         );
     }
     ctx.memo
@@ -30,7 +102,7 @@ pub(super) fn dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<Str
         .unwrap_or_default()
 }
 
-pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>)> {
+pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
     let mut targets = query.ctx.targets_in_order();
     targets.retain(|target| in_build_system(target));
     targets.sort_by_key(|target| target.makefile);
@@ -73,7 +145,7 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
             edges: Vec::new(),
         };
         let links = implementation(&query, target);
-        collector.follow_interface(&links);
+        collector.follow_interface(&links, None);
         collector.follow_utilities(target, true);
         if let Some(sources) = target.props.get("SOURCES") {
             for source in expand_list(sources, false) {
@@ -101,10 +173,10 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
             no_cycles,
             false,
         );
-        return targets
-            .into_iter()
-            .map(|target| (target, Vec::new()))
-            .collect();
+        return DepGraph {
+            targets,
+            edges: Vec::new(),
+        };
     }
 
     let mut intermediate = initial.clone();
@@ -118,7 +190,7 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
             let mut visited = HashSet::new();
             for edge in &initial[index] {
                 if edge.strong {
-                    optimized.push(*edge);
+                    optimized.push(edge.clone());
                     continue;
                 }
                 let mut work = vec![edge.to];
@@ -133,7 +205,11 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
                     if target.kind == TargetKind::Utility
                         || target.props.contains("CUSTOM_COMMAND_SIDE_EFFECTS")
                     {
-                        optimized.push(Edge { to, strong: false });
+                        optimized.push(Edge {
+                            to,
+                            strong: false,
+                            backtrace: Rc::new(Vec::new()),
+                        });
                     }
                     work.extend(initial[to].iter().map(|edge| edge.to));
                 }
@@ -145,7 +221,7 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
     let components = self::components(&intermediate);
     let mut heads = vec![0; components.members.len()];
     let mut tails = vec![0; components.members.len()];
-    let mut result = vec![Vec::new(); targets.len()];
+    let mut result: Vec<Vec<DepEdge>> = vec![Vec::new(); targets.len()];
     for (component, nodes) in components.members.iter().enumerate() {
         let mut linear = LinearComponent {
             component,
@@ -167,10 +243,10 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
                     no_cycles,
                     true,
                 );
-                return targets
-                    .into_iter()
-                    .map(|target| (target, Vec::new()))
-                    .collect();
+                return DepGraph {
+                    targets,
+                    edges: Vec::new(),
+                };
             }
         }
         if let Some(&tail) = linear.order.first() {
@@ -180,7 +256,9 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
             heads[component] = head;
         }
         for pair in linear.order.windows(2) {
-            result[pair[1]].push(pair[0]);
+            // The linking edges that linearize a component carry no
+            // backtrace (`cmListFileBacktrace()` in IntraComponent).
+            result[pair[1]].push((pair[0], Rc::new(Vec::new())));
         }
     }
     for (node, edges) in intermediate.iter().enumerate() {
@@ -188,27 +266,17 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>) -> Vec<(&'i Target, Vec<String>
         for edge in edges {
             let dest = components.index[edge.to];
             if source != dest {
-                result[tails[source]].push(heads[dest]);
+                result[tails[source]].push((heads[dest], edge.backtrace.clone()));
             }
         }
     }
-    targets
-        .iter()
-        .zip(result)
-        .map(|(&target, dependencies)| {
-            (
-                target,
-                unique(
-                    dependencies
-                        .into_iter()
-                        .map(|index| targets[index].name.clone()),
-                ),
-            )
-        })
-        .collect()
+    DepGraph {
+        targets,
+        edges: result,
+    }
 }
 
-fn in_build_system(target: &Target) -> bool {
+pub(crate) fn in_build_system(target: &Target) -> bool {
     !target.imported
         && target.alias_of.is_none()
         && match target.kind {
@@ -293,7 +361,7 @@ struct LinearComponent<'a> {
     emitted: HashSet<usize>,
     active: HashSet<usize>,
     order: Vec<usize>,
-    result: &'a mut [Vec<usize>],
+    result: &'a mut [Vec<DepEdge>],
 }
 
 impl LinearComponent<'_> {
@@ -305,11 +373,11 @@ impl LinearComponent<'_> {
             return true;
         }
         self.active.insert(node);
-        for &edge in &self.edges[node] {
+        for edge in &self.edges[node] {
             if !edge.strong || self.components.index[edge.to] != self.component {
                 continue;
             }
-            self.result[node].push(edge.to);
+            self.result[node].push((edge.to, edge.backtrace.clone()));
             if !self.visit(edge.to) {
                 return false;
             }
@@ -331,23 +399,44 @@ struct Collector<'a, 'q, 'i> {
 }
 
 impl<'i> Collector<'_, '_, 'i> {
-    fn follow_interface(&mut self, items: &[Item<'i>]) {
+    /// `cmComputeTargetDepends::AddInterfaceDepends`. `inherited` is the
+    /// backtrace of the top-level link dependency whose interface is being
+    /// followed, which CMake injects into every transitive entry.
+    fn follow_interface(&mut self, items: &[Item<'i>], inherited: Option<Rc<Vec<Frame>>>) {
         for item in items {
             let Some(target) = item.target else {
                 self.add_object_source(&item.text);
                 continue;
             };
             if self.emitted.insert(std::ptr::from_ref(target) as usize) {
-                self.add(target, false);
-                self.follow_interface(&interface(self.query, target, self.head).libraries);
+                let backtrace = inherited
+                    .clone()
+                    .unwrap_or_else(|| Rc::new(item.backtrace.clone()));
+                // A linked executable without exports is treated as an
+                // external file, not a target dependency.
+                let no_exports = target.kind == TargetKind::Executable
+                    && !is_on_opt(target.props.get("ENABLE_EXPORTS"))
+                    && !is_on_opt(target.props.get("WINDOWS_EXPORT_ALL_SYMBOLS"))
+                    && !is_on_opt(target.props.get("CYGWIN_EXPORT_ALL_SYMBOLS"));
+                if !no_exports {
+                    self.add(target, false, backtrace.clone());
+                    self.follow_interface(
+                        &interface(self.query, target, self.head).libraries,
+                        Some(backtrace),
+                    );
+                }
             }
         }
     }
 
-    fn add(&mut self, target: &Target, strong: bool) {
+    fn add(&mut self, target: &Target, strong: bool, backtrace: Rc<Vec<Frame>>) {
         if let Some(&to) = self.indices.get(&(std::ptr::from_ref(target) as usize)) {
             if to != self.head_index {
-                self.edges.push(Edge { to, strong });
+                self.edges.push(Edge {
+                    to,
+                    strong,
+                    backtrace,
+                });
             }
         } else {
             self.follow_utilities(target, false);
@@ -364,16 +453,31 @@ impl<'i> Collector<'_, '_, 'i> {
         // cmGeneratorTarget::GetUtilityItems: add_dependencies plus the
         // utilities found by dependency tracing.
         {
-            let mut deps = expand_list(
+            let mut deps: Vec<(String, Rc<Vec<Frame>>)> = expand_list(
                 target.props.get("MANUALLY_ADDED_DEPENDENCIES").unwrap_or_default(),
                 false,
+            )
+            .into_iter()
+            .map(|name| {
+                let backtrace = target
+                    .dependencies
+                    .get(&name)
+                    .map(|frames| Rc::new(frames.clone()))
+                    .unwrap_or_default();
+                (name, backtrace)
+            })
+            .collect();
+            deps.extend(
+                target
+                    .traced_utilities
+                    .iter()
+                    .map(|(name, _)| (name.clone(), Rc::new(Vec::new()))),
             );
-            deps.extend(target.traced_utilities.iter().map(|(name, _)| name.clone()));
-            deps.sort_unstable();
-            deps.dedup();
-            for name in deps {
+            deps.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+            deps.dedup_by(|(a, _), (b, _)| a == b);
+            for (name, backtrace) in deps {
                 if let Some(dependee) = self.query.resolve(target.makefile, &name) {
-                    self.add(dependee, true);
+                    self.add(dependee, true, backtrace);
                 } else if report_missing && target.kind != TargetKind::GlobalTarget {
                     self.query.error(format!(
                         "The dependency target \"{name}\" of target \"{}\" does not exist.",
@@ -391,7 +495,9 @@ impl<'i> Collector<'_, '_, 'i> {
             .and_then(|name| self.query.resolve(self.head.makefile, name))
             .or_else(|| super::dependencies::linked_object_owner(self.query, value));
         if let Some(target) = owner.filter(|target| target.kind == TargetKind::ObjectLibrary) {
-            self.add(target, true);
+            // AddObjectDepends records a utility dependency captured after
+            // configure; its backtrace is empty.
+            self.add(target, true, Rc::new(Vec::new()));
         }
     }
 }

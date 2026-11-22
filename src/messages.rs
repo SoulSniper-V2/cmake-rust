@@ -20,7 +20,7 @@ pub enum MessageType {
 
 /// One backtrace entry (`cmListFileContext`). `line == 0` marks a file
 /// entry without a command.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub file: Rc<str>,
     pub line: usize,

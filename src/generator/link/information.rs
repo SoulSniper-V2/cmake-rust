@@ -65,9 +65,12 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
     let dependent_dirs = info.dependent_dirs.ordered(&info.implicit_dirs, &artifacts);
     let (runtime, rpath_change) = info.rpath(&ordered, &runtime_dirs, &filename_path(&output_file));
     let mut libraries = Vec::new();
+    let mut lib_fragments = Vec::new();
     if !runtime.is_empty() {
+        lib_fragments.push((runtime.clone(), Vec::new()));
         libraries.push(runtime);
     }
+    lib_fragments.extend(std::mem::take(&mut info.fragments));
     libraries.append(&mut info.items);
     let rpath_link = if dependent_dirs.is_empty() || info.rpath_link_flag.is_empty() {
         String::new()
@@ -81,7 +84,9 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
     let standard = info.langvar("STANDARD_LIBRARIES");
     let extra = format!("{rpath_link}{standard}");
     if !extra.is_empty() {
-        libraries.push(extra.trim_end().to_owned());
+        let trimmed = extra.trim_end().to_owned();
+        lib_fragments.push((trimmed.clone(), Vec::new()));
+        libraries.push(trimmed);
     }
     let path_flag = info.lookup(
         &format!("CMAKE_{}_LIBRARY_PATH_FLAG", query.language),
@@ -92,7 +97,8 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         "CMAKE_LIBRARY_PATH_TERMINATOR",
     );
     let link_path = link_dirs
-        .into_iter()
+        .iter()
+        .cloned()
         .chain(expand_list(
             &info.langvar("STANDARD_LINK_DIRECTORIES"),
             false,
@@ -118,6 +124,8 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         libraries: libraries.join("  ").trim().to_owned(),
         link_path,
         depends: info.depends,
+        lib_fragments,
+        link_dirs: link_dirs.clone(),
         shared_symlinks,
         rpath_change,
         link_what_you_use,
@@ -212,6 +220,9 @@ struct Information<'a, 'q, 'i> {
     query: &'a Query<'q, 'i>,
     head: &'a Target,
     items: Vec<String>,
+    /// Per-item emitted strings with their link-item backtraces
+    /// (file API codemodel "libraries" fragments).
+    fragments: Vec<(String, Vec<crate::messages::Frame>)>,
     depends: Vec<String>,
     shared_symlinks: Vec<String>,
     link_dirs: Directories,
@@ -268,6 +279,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
             query,
             head,
             items: Vec::new(),
+            fragments: Vec::new(),
             depends: Vec::new(),
             shared_symlinks: Vec::new(),
             link_dirs: Directories::new(users.clone()),
@@ -351,7 +363,12 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
             if entry.kind == Kind::SharedDep {
                 self.add_shared(entry);
             } else {
+                let emitted = self.items.len();
                 self.add_item(entry, active.as_ref().map(|(_, feature)| feature));
+                for string in &self.items[emitted..] {
+                    self.fragments
+                        .push((string.clone(), entry.item.backtrace.clone()));
+                }
             }
         }
         if let Some((_, feature)) = active {
