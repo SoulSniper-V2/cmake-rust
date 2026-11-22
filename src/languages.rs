@@ -332,6 +332,7 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
             let path = format!("{root_bin}/CMake{lang}Compiler.cmake");
             if std::path::Path::new(&path).is_file() {
                 read(interp, &path);
+                check_compiler_change(interp, lang, optional);
                 need_test.insert(lang.clone(), false);
                 set_language_enabled_flag(interp, lang);
                 need_maps.insert(lang.clone(), true);
@@ -538,4 +539,61 @@ fn check_compiler_id_compatibility(interp: &mut Interp, lang: &str) {
         // Handled by policies removed in 4.x; nothing to do.
     }
     let _ = id;
+}
+
+/// `cmSystemTools::FindProgram` restricted to PATH.
+fn find_in_path(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = format!("{dir}/{name}");
+        if std::path::Path::new(&candidate).is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// `cmGlobalGenerator::CheckCompilerPath`: when the compiler just loaded
+/// differs from the cached entry, flag the cache for deletion so that
+/// `cmake::HandleDeleteCacheVariables` restarts configure cleanly.
+fn check_compiler_change(interp: &mut Interp, lang: &str, optional: bool) {
+    let cname = format!("CMAKE_{lang}_COMPILER");
+    let Some(cached) = interp.cache.value(&cname).map(str::to_owned) else {
+        return;
+    };
+    if optional {
+        return;
+    }
+    // Split compiler from arguments (first word).
+    let first = cached
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let cached_path = if util::is_full_path(&first) {
+        first
+    } else {
+        find_in_path(&first).unwrap_or(first)
+    };
+    let found_path = interp
+        .get_def(&cname)
+        .map(str::to_owned)
+        .unwrap_or_default();
+    if util::collapse_full_path(&found_path, "") != util::collapse_full_path(&cached_path, "") {
+        const KEY: &str = "__CMAKE_DELETE_CACHE_CHANGE_VARS_";
+        let mut vars = interp.global_props.get(KEY).unwrap_or_default().to_owned();
+        if !vars.is_empty() {
+            vars.push(';');
+        }
+        vars.push_str(&cname);
+        vars.push(';');
+        vars.push_str(&cached);
+        interp.global_props.set(KEY, vars);
+    }
 }

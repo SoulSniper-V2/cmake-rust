@@ -411,17 +411,90 @@ pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
 }
 
 /// Runs configure and generate. Returns the process exit code.
+/// `run_configure` returns this sentinel when
+/// `__CMAKE_DELETE_CACHE_CHANGE_VARS_` was set during configure, in place of
+/// `cmake::HandleDeleteCacheVariables` re-entering `cmake::Configure`.
+pub const RESTART_CONFIGURE: i32 = -7;
+
 pub fn configure(options: &ConfigureOptions) -> i32 {
     let Some(root) = find_cmake_root() else {
         eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
         return 1;
     };
-    let mut interp = new_project_interp(options, &root);
-    let code = run_configure(&mut interp, options);
-    if code != 0 {
-        return 1;
+    loop {
+        let mut interp = new_project_interp(options, &root);
+        let code = run_configure(&mut interp, options);
+        if code == RESTART_CONFIGURE {
+            handle_delete_cache_variables(&interp, options);
+            continue;
+        }
+        if code != 0 {
+            return 1;
+        }
+        return 0;
     }
-    0
+}
+
+/// `cmake::HandleDeleteCacheVariables`: delete the cache, restore the
+/// changed compiler entries, warn, and let the caller re-run configure.
+fn handle_delete_cache_variables(interp: &Interp, options: &ConfigureOptions) {
+    let vars = interp
+        .global_props
+        .get("__CMAKE_DELETE_CACHE_CHANGE_VARS_")
+        .unwrap_or_default()
+        .to_owned();
+    let mut saved = Vec::new();
+    let mut warning = String::from(
+        "You have changed variables that require your cache to be deleted.\n\
+         Configure will be re-run and you may have to reset some variables.\n\
+         The following variables have changed:\n",
+    );
+    let parts: Vec<&str> = vars.split(';').collect();
+    let mut index = 0;
+    while index < parts.len() {
+        let key = parts[index].to_owned();
+        warning.push_str(&key);
+        warning.push_str("= ");
+        index += 1;
+        let value = if index < parts.len() {
+            let value = parts[index];
+            warning.push_str(value);
+            warning.push('\n');
+            index += 1;
+            value.to_owned()
+        } else {
+            warning.push('\n');
+            String::new()
+        };
+        let (kind, help) = interp
+            .cache
+            .entries
+            .get(&key)
+            .map(|entry| {
+                (
+                    entry.kind.as_str().to_owned(),
+                    entry.properties.get("HELPSTRING").cloned(),
+                )
+            })
+            .unwrap_or_else(|| ("UNINITIALIZED".to_owned(), None));
+        saved.push((key, value, kind, help));
+    }
+    // cmake::DeleteCache + LoadCache: drop the cache, then restore the
+    // changed entries so the next configure sees them.
+    let binary = &options.binary_dir;
+    let _ = std::fs::remove_file(format!("{binary}/CMakeCache.txt"));
+    let _ = std::fs::remove_dir_all(format!("{binary}/CMakeFiles"));
+    let _ = std::fs::create_dir_all(binary);
+    let mut text = String::new();
+    for (key, value, kind, help) in saved {
+        text.push_str(&format!(
+            "//{}\n{key}:{kind}={value}\n\n",
+            help.unwrap_or_default()
+        ));
+    }
+    let _ = std::fs::write(format!("{binary}/CMakeCache.txt"), text);
+    // `cmSystemTools::Message` terminates the output with a newline.
+    eprintln!("{warning}");
 }
 
 /// `cmake::Run` for NORMAL_MODE after argument parsing.
@@ -559,6 +632,17 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let mut file_api = None;
     let code = actual_configure(interp, options, &mut file_api);
     drop(configure_profile);
+    // `cmake::Configure`: HandleDeleteCacheVariables is consulted after
+    // ActualConfigure, before any generation, even when configure failed.
+    if !options.in_try_compile
+        && !interp.in_try_compile
+        && interp
+            .global_props
+            .get("__CMAKE_DELETE_CACHE_CHANGE_VARS_")
+            .is_some_and(|vars| !vars.is_empty())
+    {
+        return RESTART_CONFIGURE;
+    }
     if code != 0 {
         return code;
     }
