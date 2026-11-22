@@ -197,6 +197,8 @@ pub struct Deferred {
 pub enum Mode {
     Project,
     Script,
+    /// `cmStateEnums::FIND_PACKAGE` (`cmake --find-package`).
+    FindPackage,
 }
 
 /// `cmake::SetDebugOutputOn`, `SetDebugFindOutput`,

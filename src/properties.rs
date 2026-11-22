@@ -177,10 +177,10 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                 }
                 "CMAKE_ROLE" => {
                     return Some(
-                        if interp.mode == Mode::Script {
-                            "SCRIPT"
-                        } else {
-                            "PROJECT"
+                        match interp.mode {
+                            Mode::Script => "SCRIPT",
+                            Mode::FindPackage => "FIND_PACKAGE",
+                            Mode::Project => "PROJECT",
                         }
                         .into(),
                     );
