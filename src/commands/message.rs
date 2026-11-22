@@ -211,11 +211,20 @@ fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
 /// `cmMakefile::DisplayStatus` writes one status prefix per message.
 /// `cmMakefile::DisplayStatus` -> `cmake::UpdateProgress`: no progress
 /// output while configuring a try_compile project.
+/// `cmMakefile::DisplayStatus(text, -1)` through cmakemainProgressCallback:
+/// with --debug-output a "Configuring..." status names the current source
+/// directory, and the current makefile's call stack follows.
 pub fn status_line(interp: &mut Interp, text: &str) {
     if interp.in_try_compile {
         return;
     }
-    interp.stdout_line(&format!("-- {text}"));
+    let mut line = format!("-- {text}");
+    if interp.debug.output && !interp.ext.execution_file_bases.is_empty() && text.starts_with("Configuring") {
+        line.push(' ');
+        line.push_str(&interp.mf().source_dir);
+    }
+    line.push_str(&interp.debug_stack());
+    interp.stdout_line(&line);
 }
 
 impl LogLevel {

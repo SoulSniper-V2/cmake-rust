@@ -295,6 +295,9 @@ pub struct Ext {
     pub aliases: HashMap<String, String>,
     pub tests: Vec<Test>,
     pub execution_files: Vec<String>,
+    /// Where the current directory's entries begin in `execution_files`
+    /// (a directory snapshot has no call-stack parent).
+    pub execution_file_bases: Vec<usize>,
     pub testing_enabled: BTreeSet<usize>,
     pub sources: BTreeMap<usize, Vec<SourceFile>>,
     pub generated_sources: BTreeSet<String>,

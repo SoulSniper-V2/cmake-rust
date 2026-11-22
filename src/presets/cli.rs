@@ -235,18 +235,14 @@ pub fn apply_configure_preset(
     if expanded.warn_system_vars == Some(true) {
         options.check_system_vars = true;
     }
-    // --debug-output and --debug-find have no implementation to enable.
-    for (field, enabled) in [
-        ("debug.output", expanded.debug_output == Some(true)),
-        ("debug.find", expanded.debug_find == Some(true)),
-    ] {
-        if enabled {
-            error(format!("Preset field \"{field}\" is not supported"));
-            return Err(1);
-        }
+    if expanded.debug_output == Some(true) {
+        options.debug.output = true;
     }
     if expanded.debug_try_compile == Some(true) {
         options.debug_trycompile = true;
+    }
+    if expanded.debug_find == Some(true) {
+        options.debug.find = true;
     }
     if let Some(mode) = expanded.trace_mode
         && mode != TraceEnableMode::Disable

@@ -311,6 +311,12 @@ fn normalized_path(value: &str, cwd: &str) -> String {
     crate::pathresolver::to_normalized_path_on_disk(&joined)
 }
 
+/// `cmTokenize(value, ',')` in Legacy mode: no tokens yields one empty one.
+fn tokenize_commas(value: &str) -> Vec<&str> {
+    let tokens: Vec<&str> = value.split(',').filter(|v| !v.is_empty()).collect();
+    if tokens.is_empty() { vec![""] } else { tokens }
+}
+
 fn extra_path(path: &str) {
     warning(&format!(
         "Ignoring extra path from command line:\n \"{path}\""
@@ -580,6 +586,24 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 // cmSystemTools::ToNormalizedPathOnDisk
                 "--graphviz" => options.graphviz = Some(normalized_path(&value, cwd)),
                 "--profiling-format" => profiling_format = value.clone(),
+                "--debug-find-pkg" => {
+                    let packages = tokenize_commas(&value);
+                    print!("Running with debug output on for the 'find' commands for package(s)");
+                    for package in packages {
+                        print!(" {package}");
+                        options.debug.find_pkgs.insert(package.to_owned());
+                    }
+                    println!(".");
+                }
+                "--debug-find-var" => {
+                    let vars = tokenize_commas(&value);
+                    print!("Running with debug output on for the variable(s)");
+                    for var in vars {
+                        print!(" {var}");
+                        options.debug.find_vars.insert(var.to_owned());
+                    }
+                    println!(".");
+                }
                 "--profiling-output" => profiling_output = normalized_path(&value, cwd),
                 "-B" => have_b_arg = true,
                 _ => {}
@@ -642,8 +666,14 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     println!("Warn about uninitialized values.");
                     options.warn_uninitialized = true;
                 }
-                "--debug-output" => println!("Running with debug output on."),
-                "--debug-find" => println!("Running with debug output on for the `find` commands."),
+                "--debug-output" => {
+                    println!("Running with debug output on.");
+                    options.debug.output = true;
+                }
+                "--debug-find" => {
+                    println!("Running with debug output on for the `find` commands.");
+                    options.debug.find = true;
+                }
                 "--no-warn-unused-cli" => {
                     println!("Not searching for unused variables given on the command line.");
                     options.no_warn_unused_cli = true;
@@ -1255,6 +1285,7 @@ fn run_script_mode(
         return 1;
     };
     crate::configure::install_trace(&mut interp, options);
+    interp.debug = options.debug.clone();
     if let Some(level) = &options.log_level {
         interp
             .ext

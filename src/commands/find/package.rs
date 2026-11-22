@@ -227,7 +227,7 @@ impl Package {
             registry_view: None,
             considered: Vec::new(),
             selected_version: String::new(),
-            debug: interp.is_on("CMAKE_FIND_DEBUG_MODE").then(String::new),
+            debug: interp.find_debug_wanted(None).then(String::new),
         };
         let mut section = Section::None;
         let mut config_args = Vec::new();
@@ -921,7 +921,14 @@ impl Package {
 }
 
 fn find_package(interp: &mut Interp, args: &[String]) -> CmdResult {
-    Package::parse(interp, args)?.run(interp, args)
+    // cmMakefile::DebugFindPkgRAII: --debug-find-pkg for this package.
+    let old_mode = interp.debug.find_pkg_mode;
+    if let Some(name) = args.first() {
+        interp.debug.find_pkg_mode = interp.debug.find_pkgs.contains(name);
+    }
+    let result = Package::parse(interp, args).and_then(|mut pkg| pkg.run(interp, args));
+    interp.debug.find_pkg_mode = old_mode;
+    result
 }
 
 fn restore(interp: &mut Interp, key: &str, value: Option<String>) {

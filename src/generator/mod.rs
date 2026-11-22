@@ -69,6 +69,20 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         }
         return -1;
     }
+    if interp.debug.output && !options.in_try_compile {
+        // cmGlobalGenerator::Generate reports progress after each local
+        // generator, with that directory as the current makefile, whose
+        // call stack is its own list file. (Printed once generation has
+        // finished, so error output is not interleaved the same way.)
+        let dirs: Vec<(String, String)> = interp
+            .makefiles
+            .iter()
+            .map(|mf| (mf.binary_dir.clone(), format!("{}/CMakeLists.txt", mf.source_dir)))
+            .collect();
+        for (binary, list) in dirs {
+            interp.stdout_line(&format!("-- Generating {binary}\n   Called from: [1]\t{list}"));
+        }
+    }
     if !options.in_try_compile {
         let elapsed = start.elapsed().as_secs_f64();
         crate::commands::core::status_line(interp, &format!("Generating done ({elapsed:.1}s)"));

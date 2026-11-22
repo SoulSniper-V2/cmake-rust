@@ -111,6 +111,7 @@ impl Find {
             return err("called with incorrect number of arguments");
         }
         let variable = filtered.remove(0);
+        let debug_wanted = interp.find_debug_wanted(Some(&variable));
         let mut cache_type = if kind == Kind::Path {
             CacheType::Path
         } else {
@@ -141,7 +142,7 @@ impl Find {
                 names_per_dir: false,
                 required: None,
                 validator: None,
-                debug: interp.is_on("CMAKE_FIND_DEBUG_MODE").then(Vec::new),
+                debug: debug_wanted.then(Vec::new),
             },
             filtered,
         ))

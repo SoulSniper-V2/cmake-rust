@@ -193,6 +193,19 @@ pub enum Mode {
     Script,
 }
 
+/// `cmake::SetDebugOutputOn`, `SetDebugFindOutput`,
+/// `SetDebugFindOutputPkgs`/`Vars` and `cmMakefile::DebugFindPkg`.
+#[derive(Clone, Debug, Default)]
+pub struct DebugOptions {
+    pub output: bool,
+    pub find: bool,
+    pub find_pkgs: std::collections::BTreeSet<String>,
+    pub find_vars: std::collections::BTreeSet<String>,
+    /// `cmMakefile::DebugFindPkg`, set while find_package runs for a
+    /// package named by --debug-find-pkg.
+    pub find_pkg_mode: bool,
+}
+
 /// List-file tracing (`cmake::SetTrace`, `SetTraceExpand`,
 /// `SetTraceFormat`, `AddTraceSource`, `SetTraceFile`).
 pub struct TraceConfig {
@@ -240,6 +253,8 @@ pub struct Interp {
     pub in_try_compile: bool,
     /// `--debug-trycompile`: keep try_compile directories and log events.
     pub debug_trycompile: bool,
+    /// `--debug-output` and the `--debug-find*` options.
+    pub debug: DebugOptions,
     /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
     pub root_check_cmp0000: bool,
     /// Language-enablement state (cmGlobalGenerator language maps).
@@ -305,6 +320,7 @@ impl Interp {
             request_return: false,
             in_try_compile: false,
             debug_trycompile: false,
+            debug: DebugOptions::default(),
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,
@@ -412,8 +428,47 @@ impl Interp {
     pub fn policy_optional_warning(&self, value: Option<&str>) -> bool {
         match value {
             Some(value) => util::is_on(value),
-            None => self.trace.is_some(),
+            // Enable optional policy warnings with --debug-output, --trace,
+            // or --trace-expand.
+            None => self.debug.output || self.trace.is_some(),
         }
+    }
+
+    /// `cmFindCommon::ComputeIfDebugModeWanted(var)`.
+    pub fn find_debug_wanted(&self, var: Option<&str>) -> bool {
+        self.debug.find_pkg_mode
+            || self.is_on("CMAKE_FIND_DEBUG_MODE")
+            || self.debug.find
+            || var.is_some_and(|var| self.debug.find_vars.contains(var))
+    }
+
+    /// `cmakemainGetStack`: with --debug-output, the call stack of the
+    /// current makefile (`cmMakefile::FormatListFileStack`), if any.
+    pub fn debug_stack(&self) -> String {
+        if !self.debug.output {
+            return String::new();
+        }
+        let Some(&base) = self.ext.execution_file_bases.last() else {
+            return String::new();
+        };
+        let files = &self.ext.execution_files[base.min(self.ext.execution_files.len())..];
+        if files.is_empty() {
+            return String::new();
+        }
+        let count = files.len();
+        let lines: Vec<String> = files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| format!("[{}]\t{file}", count - index))
+            .collect();
+        format!("\n   Called from: {}", lines.join("\n                "))
+    }
+
+    /// `cmSystemTools::Message` through cmakemainMessageCallback: the text
+    /// and the --debug-output call stack on stderr.
+    pub fn system_message(&mut self, text: &str) {
+        let stack = self.debug_stack();
+        self.stderr_line(&format!("{text}{stack}"));
     }
 
     /// The variable watch `cmWarnUnusedCliWarning` (`cmake::MarkCliAsUsed`).
@@ -713,6 +768,9 @@ impl Interp {
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
         let source = self.makefiles[index].source_dir.clone();
         let binary = self.makefiles[index].binary_dir.clone();
+        if self.debug.output {
+            self.system_message(&format!("   Entering             {source}"));
+        }
         self.mf_stack.push(index);
         // cmMakefile::InitializeFromParent copies RecursionDepth; the new
         // makefile's ExecutionStatusStack starts empty.
@@ -731,6 +789,10 @@ impl Interp {
         self.pop_scope();
         self.trace_frame_base.pop();
         self.mf_stack.pop();
+        if self.debug.output {
+            let parent_source = self.mf().source_dir.clone();
+            self.system_message(&format!("   Returning to         {parent_source}"));
+        }
         ok
     }
 
@@ -870,15 +932,17 @@ impl Interp {
         if messages::is_error(kind) {
             self.error = true;
         }
+        rendered.push_str(&self.debug_stack());
         self.stderr_line(&rendered);
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
-        let rendered = messages::render(kind, text, &self.backtrace, self.top_source());
+        let mut rendered = messages::render(kind, text, &self.backtrace, self.top_source());
         if messages::is_error(kind) {
             self.error = true;
         }
+        rendered.push_str(&self.debug_stack());
         self.stderr_line(&rendered);
     }
 
@@ -901,6 +965,8 @@ impl Interp {
     /// Runs the top-level CMakeLists.txt with the root-directory rules of
     /// `cmMakefile::Configure` (CMP0000 detection and implicit project()).
     pub fn run_root_list_file(&mut self, path: &str) {
+        // The directory snapshot ends the call stack (GetCallStackParent).
+        self.ext.execution_file_bases.push(self.ext.execution_files.len());
         self.backtrace.push(Frame {
             file: Rc::from(path),
             line: 0,
@@ -962,6 +1028,7 @@ impl Interp {
         }
         self.pop_list_file_vars(saved);
         self.backtrace.pop();
+        self.ext.execution_file_bases.pop();
     }
 
     /// Writes a line to stdout (message STATUS etc.).
@@ -1106,6 +1173,8 @@ impl Interp {
 
     /// Reads the directory's CMakeLists.txt (top-level or subdirectory).
     pub fn read_list_file_directory(&mut self, path: &str) -> bool {
+        // The directory snapshot ends the call stack (GetCallStackParent).
+        self.ext.execution_file_bases.push(self.ext.execution_files.len());
         self.backtrace.push(Frame {
             file: Rc::from(path),
             line: 0,
@@ -1135,6 +1204,7 @@ impl Interp {
         }
         self.pop_list_file_vars(saved);
         self.backtrace.pop();
+        self.ext.execution_file_bases.pop();
         ok
     }
 
@@ -2714,6 +2784,9 @@ impl Interp {
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
         let source = self.makefiles[index].source_dir.clone();
         let binary = self.makefiles[index].binary_dir.clone();
+        if self.debug.output {
+            self.system_message(&format!("   Entering             {source}"));
+        }
         self.mf_stack.push(index);
         // cmMakefile::InitializeFromParent copies RecursionDepth; the new
         // makefile's ExecutionStatusStack starts empty.
@@ -2732,6 +2805,10 @@ impl Interp {
         self.pop_scope();
         self.trace_frame_base.pop();
         self.mf_stack.pop();
+        if self.debug.output {
+            let parent_source = self.mf().source_dir.clone();
+            self.system_message(&format!("   Returning to         {parent_source}"));
+        }
         ok
     }
 }

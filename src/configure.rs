@@ -50,6 +50,8 @@ pub struct ConfigureOptions {
     /// `--no-warn-unused-cli` (or a preset's "unusedCli": false).
     pub no_warn_unused_cli: bool,
     pub debug_trycompile: bool,
+    /// `--debug-output`, `--debug-find`, `--debug-find-pkg`, `--debug-find-var`.
+    pub debug: crate::interp::DebugOptions,
     pub trace: bool,
     /// `--trace-expand` (cmake::TraceExpand).
     pub trace_expand: bool,
@@ -364,6 +366,9 @@ pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
     install_trace(&mut interp, options);
     interp.in_try_compile = options.in_try_compile;
     interp.debug_trycompile = options.debug_trycompile;
+    if !options.in_try_compile {
+        interp.debug = options.debug.clone();
+    }
     add_default_definitions(&mut interp);
     if let Some(level) = &options.log_level {
         interp.ext.misc.insert("log-level".into(), level.clone());

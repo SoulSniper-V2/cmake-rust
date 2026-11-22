@@ -570,5 +570,72 @@
   "files": {
    "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nstring(CONFIGURE \"\\${U1} @U2@\" o)\nfile(WRITE ${CMAKE_CURRENT_BINARY_DIR}/f.in \"@U3@ ${U4}\")\nconfigure_file(${CMAKE_CURRENT_BINARY_DIR}/f.in f.out)\nconfigure_file(${CMAKE_CURRENT_BINARY_DIR}/f.in f2.out @ONLY)\n"
   }
+ },
+ {
+  "name": "debug-output",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--debug-output"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nmessage(STATUS \"top\")\ninclude(${CMAKE_CURRENT_SOURCE_DIR}/inc.cmake)\nadd_subdirectory(sub)\nmessage(WARNING \"warn\")\nmessage(STATUS \"Configuring x\")\nfind_program(PROG_NOPE nonexistent-program-xyz)\n",
+   "src/inc.cmake": "function(f)\n  message(STATUS \"in f\")\n  get_property(s DIRECTORY PROPERTY LISTFILE_STACK)\n  message(STATUS \"stack=${s}\")\nendfunction()\nf()\n",
+   "src/sub/CMakeLists.txt": "message(STATUS \"sub\")\nf()\ninstall(CODE \"message(sub)\")\n"
+  }
+ },
+ {
+  "name": "debug-find-var",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--debug-find-var=PROG_NOPE,OTHER"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nmessage(STATUS \"top\")\ninclude(${CMAKE_CURRENT_SOURCE_DIR}/inc.cmake)\nadd_subdirectory(sub)\nmessage(WARNING \"warn\")\nmessage(STATUS \"Configuring x\")\nfind_program(PROG_NOPE nonexistent-program-xyz)\n",
+   "src/inc.cmake": "function(f)\n  message(STATUS \"in f\")\n  get_property(s DIRECTORY PROPERTY LISTFILE_STACK)\n  message(STATUS \"stack=${s}\")\nendfunction()\nf()\n",
+   "src/sub/CMakeLists.txt": "message(STATUS \"sub\")\nf()\ninstall(CODE \"message(sub)\")\n"
+  }
+ },
+ {
+  "name": "debug-find-pkg-empty",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--debug-find-pkg="
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nmessage(STATUS \"top\")\ninclude(${CMAKE_CURRENT_SOURCE_DIR}/inc.cmake)\nadd_subdirectory(sub)\nmessage(WARNING \"warn\")\nmessage(STATUS \"Configuring x\")\nfind_program(PROG_NOPE nonexistent-program-xyz)\n",
+   "src/inc.cmake": "function(f)\n  message(STATUS \"in f\")\n  get_property(s DIRECTORY PROPERTY LISTFILE_STACK)\n  message(STATUS \"stack=${s}\")\nendfunction()\nf()\n",
+   "src/sub/CMakeLists.txt": "message(STATUS \"sub\")\nf()\ninstall(CODE \"message(sub)\")\n"
+  }
+ },
+ {
+  "name": "cmp0082-warn",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.13)\ncmake_policy(VERSION 3.13)\nproject(p NONE)\nset(CMAKE_POLICY_WARNING_CMP0082 ON)\nadd_subdirectory(sub)\ninstall(CODE \"message(top)\")\n",
+   "src/inc.cmake": "function(f)\n  message(STATUS \"in f\")\n  get_property(s DIRECTORY PROPERTY LISTFILE_STACK)\n  message(STATUS \"stack=${s}\")\nendfunction()\nf()\n",
+   "src/sub/CMakeLists.txt": "install(CODE \"message(sub)\")\n"
+  }
  }
 ]

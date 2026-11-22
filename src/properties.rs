@@ -139,10 +139,14 @@ pub fn directory_definition(interp: &Interp, index: usize, name: &str) -> Option
         .or_else(|| interp.cache.value(name).map(str::to_owned))
 }
 
+/// LISTFILE_STACK: the execution list files of the call-stack snapshots,
+/// which stop at the current directory's own snapshot.
 pub fn listfile_stack(interp: &Interp) -> String {
     let root = (interp.mode == Mode::Script).then_some("");
+    let base = interp.ext.execution_file_bases.last().copied().unwrap_or(0);
+    let files = &interp.ext.execution_files[base.min(interp.ext.execution_files.len())..];
     root.into_iter()
-        .chain(interp.ext.execution_files.iter().map(String::as_str))
+        .chain(files.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(";")
 }

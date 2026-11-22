@@ -125,6 +125,9 @@ endif()
     if interleave {
         for &child in children { include_child(ctx, &mut out, child); }
     }
+    if directory_policy(ctx, index, "CMP0082") == PolicyStatus::Warn {
+        cmp0082_warning(ctx, index, rules);
+    }
     for rule in rules.iter().filter(|r| matches!(r.action, InstallAction::LegacyFiles { .. })) {
         render_rule(ctx, &mut out, index, rule)?;
     }
@@ -183,6 +186,40 @@ endif()
 "#));
     }
     Ok(out)
+}
+
+/// `cmInstallSubdirectoryGenerator::HaveInstall`: the directory, or one
+/// of its subdirectories, has an install generator.
+fn have_install(ctx: &GenCtx, dir: usize) -> bool {
+    let has_rules = ctx.interp.ext.install.rules.get(&dir).is_some_and(|rules| {
+        rules.iter().any(|rule| !matches!(rule.action, InstallAction::LegacyTarget(_)))
+    });
+    has_rules || ctx.interp.makefiles[dir].children.iter().any(|&child| have_install(ctx, child))
+}
+
+/// The CMP0082 WARN check of `cmLocalGenerator::GenerateInstallRules`: an
+/// install rule follows a subdirectory (added earlier) that installs
+/// something (`CheckCMP0082` over the generators in order).
+fn cmp0082_warning(ctx: &GenCtx, index: usize, rules: &[InstallRule]) {
+    let children = &ctx.interp.makefiles[index].children;
+    let after_subdirectory_install = rules
+        .iter()
+        .filter(|rule| !matches!(rule.action, InstallAction::LegacyTarget(_)))
+        .any(|rule| {
+            children
+                .iter()
+                .take(rule.preceding_children)
+                .any(|&child| have_install(ctx, child))
+        });
+    if after_subdirectory_install
+        && ctx
+            .interp
+            .policy_optional_warning(ctx.var(index, "CMAKE_POLICY_WARNING_CMP0082").as_deref())
+        && let Some(policy) = index_of("CMP0082")
+    {
+        let message = format!("{}\n", crate::policy::policy_warning(policy));
+        ctx.warning(target::directory_backtrace(ctx, index), message);
+    }
 }
 
 fn include_child(ctx: &GenCtx, out: &mut String, child: usize) {
