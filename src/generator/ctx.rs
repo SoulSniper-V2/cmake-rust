@@ -33,9 +33,11 @@ pub struct GenCtx<'a> {
     /// codemodel target dependencies), computed once per configuration.
     /// Keyed by depender target pointer; dependees are stored by name.
     /// Pointer-free so `GenCtx` stays covariant over `'a`.
-    pub dep_graph:
-        RefCell<Option<std::rc::Rc<HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>>>>,
+    pub dep_graph: RefCell<Option<std::rc::Rc<DepGraphEdges>>>,
 }
+
+/// Depender target pointer -> (dependee name, edge backtrace).
+pub type DepGraphEdges = HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>;
 
 impl<'a> GenCtx<'a> {
     pub fn new(interp: &'a Interp) -> GenCtx<'a> {

@@ -285,7 +285,7 @@ fn interface_compile_defines(
                 defines.insert(def.as_bytes().to_vec(), Json::Null);
             }
             Some(n) => {
-                defines.insert(def[..n].as_bytes().to_vec(), jstr(&def[n + 1..]));
+                defines.insert(def.as_bytes()[..n].to_vec(), jstr(&def[n + 1..]));
             }
         }
     }
@@ -501,7 +501,8 @@ pub(super) fn write_build(
         component.insert(skey("type"), jstr(component_type(record.kind)));
         if record.kind != TargetKind::InterfaceLibrary {
             let mut configurations = Obj::new();
-            for c in [ctx.config.clone()] {
+            {
+                let c = ctx.config.clone();
                 interface_properties_config(&mut ex, &mut configurations, record, &c);
             }
             if !configurations.is_empty() {

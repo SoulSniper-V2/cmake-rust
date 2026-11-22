@@ -88,8 +88,6 @@ pub fn codemodel_target_dependencies<'i>(
 pub struct GraphLinkItem<'i> {
     pub name: String,
     pub target: Option<&'i Target>,
-    /// Backtrace of the `target_link_libraries` call site (`Item::Backtrace`).
-    pub backtrace: Vec<crate::messages::Frame>,
 }
 
 /// `GetLinkImplementationLibraries(config, UseTo::Link)` and
@@ -115,7 +113,6 @@ pub fn graph_link_libraries<'i>(
             .map(|item| GraphLinkItem {
                 name: item.text,
                 target: item.target,
-                backtrace: item.backtrace.clone(),
             })
             .collect()
     };
@@ -185,7 +182,7 @@ trait GeneratorQueries {
 struct Generator;
 impl GeneratorQueries for Generator {}
 
-struct Query<'a, 'i> {
+pub(crate) struct Query<'a, 'i> {
     ctx: &'a GenCtx<'i>,
     config: &'a str,
     language: &'a str,

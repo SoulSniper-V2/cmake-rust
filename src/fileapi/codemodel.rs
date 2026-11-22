@@ -1,6 +1,6 @@
 //! `cmFileAPICodemodel.cxx`: the codemodel-v2 object kind.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use md5::Digest as Md5Digest;
 use sha3::Digest;
@@ -54,7 +54,7 @@ impl BtGraph {
         if frames.is_empty() {
             return None;
         }
-        let mut index = self.add_from(frames, frames.len() - 1);
+        let index = self.add_from(frames, frames.len() - 1);
         Some(index)
     }
 
@@ -571,7 +571,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             InstallAction::Script {
                 text,
                 is_code,
-                all_components,
+                all_components: _,
             } => {
                 if *is_code {
                     installer.set("type", jstr("code"));
@@ -584,33 +584,26 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 }
             }
             InstallAction::Export(export) => {
-                installer.set("type", jstr("export"));
-                installer.set("destination", jstr(dest()));
-                installer.set("exportName", jstr(&export.set));
-                let mut targets = jarr();
-                if let Some(set) = self.ctx.interp.ext.install.export_sets.get(&export.set) {
-                    for t in &set.targets {
-                        let mut obj = jobj();
-                        if let Some(target) = self.find_target(&t.name) {
-                            obj.set("id", jstr(self.id_of(target)));
-                            obj.set("index", juint(self.index_of(target) as u64));
-                        }
-                        targets.push(obj);
-                    }
-                }
-                installer.set("exportTargets", targets);
-                // `GetMainImportFile`: CMakeFiles/Export/<md5(dest)>/<file>.
-                let temp = format!(
-                    "{}/CMakeFiles/Export/{:x}",
-                    self.ctx.interp.makefiles[mf].binary_dir,
-                    md5::Md5::digest(opts.destination.as_bytes()),
+                self.dump_export_installer(
+                    &mut installer,
+                    dest(),
+                    &export.set,
+                    &opts.destination,
+                    mf,
+                    &export.filename,
                 );
-                let mut paths = jarr();
-                paths.push(jstr(relative_if_under(
-                    &self.top_build,
-                    &format!("{temp}/{}", export.filename),
-                )));
-                installer.set("paths", paths);
+            }
+            // cmInstallPackageInfoExportGenerator is a cmInstallExportGenerator
+            // whose file name is GetPackageFileName().
+            InstallAction::PackageInfo { set, arguments } => {
+                self.dump_export_installer(
+                    &mut installer,
+                    dest(),
+                    set,
+                    &opts.destination,
+                    mf,
+                    &arguments.package_file_name(),
+                );
             }
             InstallAction::FileSet { name, set } => {
                 let Some(target) = self.find_target(name) else {
@@ -636,7 +629,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     ));
                 }
                 installer.set("paths", out_paths);
-                installer.set("fileSetName", jstr(&file_set_name(set)));
+                installer.set("fileSetName", jstr(file_set_name(set)));
                 installer.set("fileSetType", jstr(&file_set.kind));
                 installer.set(
                     "fileSetDirectories",
@@ -932,7 +925,46 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     }
 
     /// Target-level CompileData (`ProcessLanguage`).
-    fn compile_data(&self, graph: &mut BtGraph, target: &Target, lang: &str) -> CompileData {
+    /// The cmInstallExportGenerator branch of `DumpInstaller`.
+    fn dump_export_installer(
+        &self,
+        installer: &mut Json,
+        destination: String,
+        set_name: &str,
+        raw_destination: &str,
+        mf: usize,
+        file_name: &str,
+    ) {
+        installer.set("type", jstr("export"));
+        installer.set("destination", jstr(destination));
+        installer.set("exportName", jstr(set_name));
+        let mut targets = jarr();
+        if let Some(set) = self.ctx.interp.ext.install.export_sets.get(set_name) {
+            for t in &set.targets {
+                let mut obj = jobj();
+                if let Some(target) = self.find_target(&t.name) {
+                    obj.set("id", jstr(self.id_of(target)));
+                    obj.set("index", juint(self.index_of(target) as u64));
+                }
+                targets.push(obj);
+            }
+        }
+        installer.set("exportTargets", targets);
+        // `GetMainImportFile`: CMakeFiles/Export/<md5(dest)>/<file>.
+        let temp = format!(
+            "{}/CMakeFiles/Export/{:x}",
+            self.ctx.interp.makefiles[mf].binary_dir,
+            md5::Md5::digest(raw_destination.as_bytes()),
+        );
+        let mut paths = jarr();
+        paths.push(jstr(relative_if_under(
+            &self.top_build,
+            &format!("{temp}/{file_name}"),
+        )));
+        installer.set("paths", paths);
+    }
+
+    fn compile_data(&self, _graph: &mut BtGraph, target: &Target, lang: &str) -> CompileData {
         let m = &self.ctx.interp.makefiles[target.makefile];
         let sysroot = self
             .ctx
@@ -1121,7 +1153,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         fsdb: &BTreeMap<String, u32>,
         groups: &mut Vec<(String, Vec<u32>)>,
         compile_groups: &mut Vec<(CompileData, Vec<u32>)>,
-        lang_data: &BTreeMap<String, CompileData>,
+        _lang_data: &BTreeMap<String, CompileData>,
     ) -> Json {
         let mut s = jobj();
         s.set(
@@ -1205,7 +1237,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         if let Some(name) = self.explicit_source_group(target, path) {
             return Some(name);
         }
-        let mut check = |name: &str, regex: &str| -> Option<String> {
+        let check = |name: &str, regex: &str| -> Option<String> {
             crate::cmregex::Regex::new(regex)
                 .ok()
                 .and_then(|r| r.find(path).map(|_| name.to_owned()))
@@ -1508,7 +1540,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 jstr(relative_if_under(&self.top_source, &command)),
             );
             launcher.set("type", jstr(kind));
-            let args: Vec<Json> = parts.map(|a| jstr(a)).collect();
+            let args: Vec<Json> = parts.map(jstr).collect();
             if !args.is_empty() {
                 launcher.set("arguments", Json::Array(args));
             }
@@ -1668,9 +1700,7 @@ fn language_standard(
 
     // LanguageStandardProperties[prop]: the value of the last
     // `<LANG>_STANDARD` write plus that write's backtrace.
-    if prop_value.is_none() {
-        return None;
-    }
+    prop_value.as_ref()?;
     let entries = gt::evaluated_entries(ctx, target, target, &prop);
     let standard = prop_value?;
     if standard.is_empty() {

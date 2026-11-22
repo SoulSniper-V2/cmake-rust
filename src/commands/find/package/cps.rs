@@ -212,6 +212,7 @@ fn append_property(
 
 /// `AppendLanguageProperties`: `data[key]` may be a list applied to all
 /// languages or an object mapping CPS languages to lists.
+#[allow(clippy::too_many_arguments)] // mirrors the upstream signature
 fn append_language_properties(
     interp: &mut Interp,
     target: &str,
@@ -1089,7 +1090,7 @@ impl Package {
         Package {
             name: dep.name.clone(),
             dir: format!("{}_DIR", dep.name),
-            options: self.options.clone(),
+            options: self.options,
             quiet: self.quiet,
             bypass: true,
             global: self.global,

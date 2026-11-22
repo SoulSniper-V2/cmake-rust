@@ -501,16 +501,18 @@ fn get_allow_sys_include(interp: &mut Interp) -> bool {
 // ---------------------------------------------------------------------------
 // Argument parsing (cmArgumentParser semantics)
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum Strictness {
     Strict,
+    #[default]
     Permissive,
     BestEffort,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum EnvMode {
     Fdo,
+    #[default]
     Pkgconf,
     Ignore,
 }
@@ -531,18 +533,6 @@ struct CommonArgs {
     disable_uninstalled: Option<bool>,
     pc_libdir: Option<Vec<String>>,
     pc_path: Option<Vec<String>>,
-}
-
-impl Default for Strictness {
-    fn default() -> Self {
-        Strictness::Permissive
-    }
-}
-
-impl Default for EnvMode {
-    fn default() -> Self {
-        EnvMode::Pkgconf
-    }
 }
 
 impl CommonArgs {
@@ -619,7 +609,7 @@ enum Kw {
     Exact,
     Quiet,
     Strictness,
-    EnvModeKw,
+    EnvModeKeyword,
     SysrootDir,
     TopBuildDir,
     DisableUninstalled,
@@ -642,7 +632,7 @@ enum Active {
     Prefix,
     Name,
     Strictness,
-    EnvModeKw,
+    EnvModeKeyword,
     PcLibdir,
     PcPath,
     SystemIncludeDirs,
@@ -656,7 +646,7 @@ fn common_keywords() -> Vec<(&'static str, Kw)> {
         ("EXACT", Kw::Exact),
         ("QUIET", Kw::Quiet),
         ("STRICTNESS", Kw::Strictness),
-        ("ENV_MODE", Kw::EnvModeKw),
+        ("ENV_MODE", Kw::EnvModeKeyword),
         ("PC_SYSROOT_DIR", Kw::SysrootDir),
         ("TOP_BUILD_DIR", Kw::TopBuildDir),
         ("DISABLE_UNINSTALLED", Kw::DisableUninstalled),
@@ -694,7 +684,7 @@ fn parse_subcommand<S: ArgSink>(args: &[String], sink: &mut S) {
                 | Kw::AllowSystemIncludes
                 | Kw::AllowSystemLibs => sink.set_flag(kw),
                 Kw::Strictness => active = Some(Active::Strictness),
-                Kw::EnvModeKw => active = Some(Active::EnvModeKw),
+                Kw::EnvModeKeyword => active = Some(Active::EnvModeKeyword),
                 Kw::SysrootDir => active = Some(Active::SysrootDir),
                 Kw::TopBuildDir => active = Some(Active::TopBuildDir),
                 Kw::Prefix => active = Some(Active::Prefix),
@@ -745,7 +735,7 @@ fn parse_subcommand<S: ArgSink>(args: &[String], sink: &mut S) {
             Some(Active::SystemLibraryDirs) => sink.list(Kw::SystemLibraryDirs).push(arg.clone()),
             Some(Active::BindPcRequires) => sink.list(Kw::BindPcRequires).push(arg.clone()),
             Some(Active::Strictness) => sink.common().set_strictness(arg),
-            Some(Active::EnvModeKw) => sink.common().set_env_mode(arg),
+            Some(Active::EnvModeKeyword) => sink.common().set_env_mode(arg),
             None => {
                 // Unparsed argument; the upstream handlers ignore these.
             }
@@ -1257,6 +1247,7 @@ fn create_cmake_target(
 }
 
 /// `CheckPackageDependencies`.
+#[allow(clippy::too_many_arguments)] // mirrors the upstream signature
 fn check_package_dependencies(
     interp: &mut Interp,
     name: &str,
