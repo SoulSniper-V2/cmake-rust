@@ -12,6 +12,9 @@ use crate::util::{expand_list, is_on, is_on_opt};
 #[derive(Clone, Debug, Default)]
 pub struct CompileVars {
     pub flags: String,
+    /// FLAGS before cmGlobalNinjaGenerator::WriteVariable trims it (the
+    /// value ExportObjectCompileCommand substitutes).
+    pub flags_untrimmed: String,
     pub defines: String,
     pub includes: String,
 }
@@ -58,6 +61,7 @@ pub fn compile_vars_with_source_props(
         append_options(&mut flags, expand_list(&inputs.eval(options), false));
     }
     CompileVars {
+        flags_untrimmed: flags.clone(),
         flags: flags.trim_matches(cmake_space).to_owned(),
         defines: defines(&inputs, properties)
             .trim_matches(cmake_space)
