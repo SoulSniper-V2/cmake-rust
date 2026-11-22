@@ -1801,13 +1801,8 @@ impl<'a> NinjaGenerator<'a> {
         let config = self.config.clone();
         let link_language = gt::linker_language(self.ctx, target, &config);
         if link_language.is_empty() {
-            crate::configure::system_error(
-                None,
-                &format!(
-                    "CMake can not determine linker language for target: {}",
-                    target.name
-                ),
-            );
+            // cmSystemTools::Error marks the generation failed.
+            self.ctx.report_unknown_linker_language(target);
             return;
         }
         let sources = gt::sources(self.ctx, target, &config);

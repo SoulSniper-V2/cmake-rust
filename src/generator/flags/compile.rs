@@ -352,7 +352,7 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or(&source.path);
-                inputs.error(format!(
+                inputs.local_error(format!(
                     "Found relative path while evaluating include directories of \"{name}\":\n  \"{dir}\"\n"
                 ));
                 break;
@@ -446,7 +446,7 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     let mut directories = Vec::new();
     for dir in inputs.usage("INCLUDE_DIRECTORIES") {
         if !Path::new(&dir).is_absolute() && !crate::util::is_off(&dir) {
-            inputs.error(format!(
+            inputs.local_error(format!(
                 "Found relative path while evaluating include directories of \"{}\":\n  \"{dir}\"\n",
                 inputs.target.name
             ));

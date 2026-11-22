@@ -120,7 +120,14 @@ impl Flags<'_, '_> {
                 Ok(items) => items,
                 Err(error) => {
                     if !error.quiet {
-                        let backtrace = self.ctx.backtrace(error.backtrace);
+                        let mut backtrace = self.ctx.backtrace(error.backtrace);
+                        if backtrace.is_empty() && error.expression.is_empty() {
+                            // Usage-requirement diagnostics (e.g. relative
+                            // INTERFACE_INCLUDE_DIRECTORIES) are issued by the
+                            // head target's cmLocalGenerator::IssueMessage.
+                            backtrace =
+                                super::target::directory_backtrace(self.ctx, self.target.makefile);
+                        }
                         self.ctx.genex_error(backtrace, &error);
                     }
                     Vec::new()
@@ -137,9 +144,17 @@ impl Flags<'_, '_> {
         super::target::target_policy(self.ctx, self.target, index)
     }
 
+    /// `cmake::IssueMessage(FATAL_ERROR, text)` without a backtrace.
     fn error(&self, text: impl Into<String>) {
-        // INTEGRATION: Supply the target/property backtrace when available.
         self.ctx.error(Vec::new(), text);
+    }
+
+    /// `cmLocalGenerator::IssueMessage`: at the target directory's backtrace.
+    fn local_error(&self, text: impl Into<String>) {
+        self.ctx.error(
+            super::target::directory_backtrace(self.ctx, self.target.makefile),
+            text,
+        );
     }
 
     fn config_flags(&self, name: &str) -> String {

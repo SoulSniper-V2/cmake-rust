@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::interp::Interp;
 use crate::messages::{Frame, MessageType};
-use crate::state::Target;
+use crate::state::{Target, TargetKind};
 
 /// One diagnostic produced during generation, in the order it was raised.
 #[derive(Clone, Debug)]
@@ -148,6 +148,29 @@ impl<'a> GenCtx<'a> {
         self.errors
             .borrow_mut()
             .push(Diagnostic::Bare(message.into()));
+    }
+
+    /// The cmNinjaNormalTargetGenerator::Generate linker-language check,
+    /// which reports once per target (it is also made ahead of the build
+    /// export files, which cmGlobalGenerator::Generate writes after every
+    /// local generator ran).
+    pub fn report_unknown_linker_language(&self, target: &Target) -> bool {
+        if super::target::linker_language(self, target, &self.config).is_empty() {
+            let message = format!(
+                "CMake can not determine linker language for target: {}",
+                target.name
+            );
+            let known = self
+                .errors
+                .borrow()
+                .iter()
+                .any(|existing| matches!(existing, Diagnostic::Bare(text) if *text == message));
+            if !known {
+                self.system_error(message);
+            }
+            return true;
+        }
+        false
     }
 
     /// `cmLocalGenerator::IssueMessage`'s backtrace: the directory scope of
@@ -579,6 +602,28 @@ impl<'a> GenCtx<'a> {
         }
         // cmGlobalGenerator::Generate: evaluation files first.
         super::evaluation_files::generate(self);
+        let failed_before_targets = self.has_error();
+        // The local generators' target generation (in directory order)
+        // reports targets without a linker language before the build
+        // export sets are written.
+        for dir in 0..self.interp.makefiles.len() {
+            for target in self.targets_in_order() {
+                if target.makefile == dir
+                    && !target.imported
+                    && target.alias_of.is_none()
+                    && matches!(
+                        target.kind,
+                        TargetKind::Executable
+                            | TargetKind::StaticLibrary
+                            | TargetKind::SharedLibrary
+                            | TargetKind::ModuleLibrary
+                            | TargetKind::ObjectLibrary
+                    )
+                {
+                    self.report_unknown_linker_language(target);
+                }
+            }
+        }
         // cmGlobalGenerator::Generate order: per-directory install rules and
         // test files, then build export sets, and (back in
         // cmGlobalNinjaGenerator::Generate) the ninja files last.
@@ -591,9 +636,10 @@ impl<'a> GenCtx<'a> {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
         }
-        if !self.has_error() {
+        if !failed_before_targets {
             // cmGlobalNinjaGenerator::Generate: bail before writing build
-            // files when earlier generation raised a fatal error.
+            // files when earlier generation raised a fatal error (target
+            // generation itself precedes the install, test and export files).
             let mut ninja = super::ninja::NinjaGenerator::new(self);
             if let Err(error) = ninja.generate() {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));

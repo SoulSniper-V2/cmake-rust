@@ -213,11 +213,11 @@ pub(super) fn selected_linker(inputs: &Flags<'_, '_>) -> Option<String> {
     let value = inputs.lang_var(&variable);
     if value.is_none() && selected != "DEFAULT" {
         if selected.bytes().all(|byte| byte.is_ascii_uppercase()) {
-            inputs.error(format!(
+            inputs.local_error(format!(
                 "LINKER_TYPE '{selected}' is unknown or not supported by this toolchain."
             ));
         } else {
-            inputs.error(format!(
+            inputs.local_error(format!(
                 "LINKER_TYPE '{selected}' is unknown. Did you forget to define the 'CMAKE_{}_{variable}' variable?",
                 inputs.lang
             ));

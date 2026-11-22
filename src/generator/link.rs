@@ -339,6 +339,21 @@ impl<'a, 'i> Query<'a, 'i> {
         }
     }
 
+    /// `cmSystemTools::Error` (once per message, as the C++ computes each
+    /// target's link information once).
+    fn system_error(&self, message: impl Into<String>) {
+        let message = message.into();
+        if !self
+            .ctx
+            .errors
+            .borrow()
+            .iter()
+            .any(|existing| existing.text() == message)
+        {
+            self.ctx.system_error(message);
+        }
+    }
+
     fn policy(&self, target: &Target, id: &str) -> PolicyStatus {
         let Some(index) = index_of(id) else {
             return PolicyStatus::Warn;

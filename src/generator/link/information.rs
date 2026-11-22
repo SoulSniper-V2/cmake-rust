@@ -17,7 +17,8 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         return LinkLine::default();
     }
     if query.language.is_empty() {
-        query.error(format!(
+        // cmComputeLinkInformation::Compute: cmSystemTools::Error.
+        query.system_error(format!(
             "CMake can not determine linker language for target: {}",
             head.name
         ));
