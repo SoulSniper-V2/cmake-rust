@@ -602,7 +602,7 @@ pub fn create_target(
 /// duplicates allowed by ALLOW_DUPLICATE_CUSTOM_TARGETS) get the key
 /// `[<dir>]<name>` and are reachable through `scoped_targets` from their
 /// directory and the subdirectories created after them.
-pub fn register_target(interp: &mut Interp, target: Target) -> String {
+pub fn register_target(interp: &mut Interp, mut target: Target) -> String {
     let dir = target.makefile;
     let name = target.name.clone();
     let key =
@@ -619,6 +619,9 @@ pub fn register_target(interp: &mut Interp, target: Target) -> String {
         } else {
             name
         };
+    // `cmTarget::cmTarget`: INITIALIZE_FROM_VARIABLE definitions apply to
+    // every target at construction.
+    crate::properties::initialize_target(interp, &mut target);
     if !target.imported {
         interp.makefiles[dir].targets.push(key.clone());
     }
