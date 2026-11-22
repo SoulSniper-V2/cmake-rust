@@ -1630,12 +1630,14 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
     let dir = util::collapse_full_path(dir, cwd);
     let mut variables = std::collections::BTreeMap::new();
     let mut strip = false;
+    let mut verbose = false;
+    let mut jobs: u32 = 0;
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
         match arg.as_str() {
             "--strip" => strip = true,
-            "-v" | "--verbose" => {}
+            "-v" | "--verbose" => verbose = true,
             _ => {
                 let names = [
                     "--config",
@@ -1664,9 +1666,12 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
                     return 1;
                 };
                 if matches!(name, "-j" | "--parallel") {
-                    if parse_jobs(&value, name).is_err() {
-                        eprint!("{}", include_str!("cmcmd/install-usage.txt"));
-                        return 1;
+                    match parse_jobs(&value, name) {
+                        Ok(value) => jobs = value,
+                        Err(()) => {
+                            eprint!("{}", include_str!("cmcmd/install-usage.txt"));
+                            return 1;
+                        }
                     }
                 } else {
                     variables.insert(name, value);
@@ -1699,23 +1704,49 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
             "-DCMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS={permissions}"
         ));
     }
-    if let Some(value) = variables.get("--config").filter(|value| !value.is_empty()) {
-        argv.push(format!("-DCMAKE_INSTALL_CONFIG_NAME={value}"));
-    }
-    let script = format!("{dir}/cmake_install.cmake");
-    argv.extend(["-P".to_owned(), script.clone()]);
-    let Some(mut interp) = make_script_interp(&argv, cwd) else {
-        return 1;
-    };
-    for arg in argv[1..argv.len() - 2]
-        .iter()
-        .filter_map(|arg| arg.strip_prefix("-D"))
-    {
-        if let Ok(definition) = cache_definition(arg) {
-            add_definition(&mut interp.cache, &definition);
+    argv.push("-P".to_owned());
+    let component = variables.get("--component").cloned().unwrap_or_default();
+    let config = variables.get("--config").cloned().unwrap_or_default();
+    let handler =
+        crate::install_script::InstallScriptHandler::new(&dir, &component, &config, &mut argv);
+    if jobs == 0 && handler.is_parallel() {
+        jobs = 1;
+        if let Ok(value) = std::env::var("CMAKE_INSTALL_PARALLEL_LEVEL") {
+            match parse_jobs(&value, "") {
+                Ok(level) if level >= 1 => jobs = level,
+                _ => {
+                    eprintln!(
+                        "Value of CMAKE_INSTALL_PARALLEL_LEVEL environment variable must be a positive integer."
+                    );
+                    return 1;
+                }
+            }
         }
     }
-    i32::from(read_script(&mut interp, &script, cwd, true) != 0)
+    if handler.is_parallel() {
+        return i32::from(handler.install(jobs, cwd) > 0);
+    }
+    let mut result = 0;
+    for command in handler.commands() {
+        let Some(script) = command.last() else {
+            continue;
+        };
+        let Some(mut interp) = make_script_interp(command, cwd) else {
+            return 1;
+        };
+        // cmake --install -v: SetDebugOutputOn(verbose).
+        interp.debug.output = verbose;
+        for arg in command[1..command.len() - 2]
+            .iter()
+            .filter_map(|arg| arg.strip_prefix("-D"))
+        {
+            if let Ok(definition) = cache_definition(arg) {
+                add_definition(&mut interp.cache, &definition);
+            }
+        }
+        result = i32::from(read_script(&mut interp, script, cwd, true) != 0);
+    }
+    result
 }
 
 fn directory_permissions(value: &str) -> Option<String> {

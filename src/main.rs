@@ -18,6 +18,7 @@ mod generator;
 mod genex;
 mod help;
 mod install_model;
+mod install_script;
 mod interp;
 mod languages;
 mod lexer;

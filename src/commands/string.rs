@@ -3,7 +3,7 @@
 //! `cmGeneratorExpression::Preprocess`).
 
 pub mod json;
-mod misc;
+pub(crate) mod misc;
 mod regex_replace;
 
 use crate::interp::{CmdResult, Interp, err};
