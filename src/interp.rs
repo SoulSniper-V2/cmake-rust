@@ -226,6 +226,7 @@ pub struct Interp {
     pub cache: Cache,
     scopes: Vec<Scope>,
     pub backtrace: Vec<Frame>,
+    policy_barriers: Vec<(usize, usize)>,
     pub makefiles: Vec<Makefile>,
     pub mf_stack: Vec<usize>,
     pub commands: HashMap<String, CommandDef>,
@@ -304,6 +305,7 @@ impl Interp {
             cache: Cache::default(),
             scopes: vec![Scope::default()],
             backtrace: Vec::new(),
+            policy_barriers: Vec::new(),
             makefiles: Vec::new(),
             mf_stack: Vec::new(),
             commands: HashMap::new(),
@@ -937,7 +939,13 @@ impl Interp {
     }
 
     pub fn pop_policy(&mut self) -> bool {
-        if self.mf().policies.len() <= 1 {
+        let minimum = self
+            .policy_barriers
+            .iter()
+            .rev()
+            .find(|(dir, _)| *dir == self.mf_index())
+            .map_or(1, |(_, depth)| *depth);
+        if self.mf().policies.len() <= minimum {
             self.issue(
                 MessageType::FatalError,
                 "cmake_policy POP without matching PUSH",
@@ -1246,6 +1254,7 @@ impl Interp {
             name: None,
             deferred: false,
         });
+        self.policy_barriers.push((self.mf_index(), depth_before));
         if !no_policy_scope {
             self.push_policy(false, PolicyMap::default());
         }
@@ -1258,8 +1267,16 @@ impl Interp {
         }
         self.pop_list_file_vars(saved);
         if !no_policy_scope {
-            self.end_policy_scope(depth_before);
+            self.pop_policy();
         }
+        self.policy_barriers.pop();
+        if self.mf().policies.len() > depth_before && !self.fatal {
+            self.issue(
+                MessageType::FatalError,
+                "cmake_policy PUSH without matching POP",
+            );
+        }
+        self.mf_mut().policies.truncate(depth_before);
         self.backtrace.pop();
         ok
     }

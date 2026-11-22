@@ -311,9 +311,9 @@ fn add_build_target(
         let global = modifiers.global
             || interp
                 .ext
-                .misc
-                .get("imported_target_global_scope")
-                .is_some_and(|value| is_on(value));
+                .find_package
+                .get(&interp.mf_index())
+                .is_some_and(|state| state.global);
         return Ok(create_target(interp, name, kind, true, global));
     }
     enforce_unique_name(interp, name, false)?;

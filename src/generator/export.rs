@@ -449,7 +449,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
             let pkg = linked
                 .find_package_stack
                 .last()
-                .cloned()
+                .map(|(name, _)| name.clone())
                 .or_else(|| {
                     linked
                         .props
@@ -1936,14 +1936,16 @@ fn missing_targets(out: &mut String, missing: &[String]) {
 fn package_dependencies(ex: &Exporter<'_, '_>, out: &mut String, set: &ExportSet) {
     out.push_str("include(CMakeFindDependencyMacro)\n");
     let mut deps: Vec<(String, String, Vec<String>)> = set.package_dependencies.clone();
+    let mut inferred = BTreeMap::new();
     for ptr in &ex.external {
         let tgt = unsafe { &**ptr };
+        let call = tgt.find_package_stack.last();
         let name = tgt
             .props
             .get("EXPORT_FIND_PACKAGE_NAME")
             .filter(|n| !n.is_empty())
             .map(str::to_owned)
-            .or_else(|| tgt.find_package_stack.last().cloned());
+            .or_else(|| call.map(|(name, _)| name.clone()));
         let Some(name) = name else { continue };
         if name.is_empty() {
             continue;
@@ -1954,9 +1956,21 @@ fn package_dependencies(ex: &Exporter<'_, '_>, out: &mut String, set: &ExportSet
                     *enabled = "ON".to_owned();
                 }
             }
-            None => deps.push((name, "ON".to_owned(), Vec::new())),
+            None => {
+                let index = inferred.entry(name).or_insert(u32::MAX);
+                if let Some((_, call_index)) = call {
+                    *index = *call_index;
+                }
+            }
         }
     }
+    let mut inferred: Vec<_> = inferred.into_iter().collect();
+    inferred.sort_by_key(|(_, index)| *index);
+    deps.extend(
+        inferred
+            .into_iter()
+            .map(|(name, _)| (name, "ON".to_owned(), Vec::new())),
+    );
     for (pkg, enabled, args) in &deps {
         if !is_on(enabled) {
             continue;

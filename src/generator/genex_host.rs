@@ -38,12 +38,14 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         let runtime = gt::directory(ctx, target, config, ArtifactType::Runtime);
         Ok(match kind {
             ArtifactKind::File | ArtifactKind::LinkerFile | ArtifactKind::LinkerLibraryFile => {
-                let artifact = if kind == ArtifactKind::File {
-                    ArtifactType::Runtime
-                } else {
-                    ArtifactType::Import
-                };
-                let path = gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File);
+                // Native Linux targets link directly to the runtime artifact.
+                let path = gt::full_path(
+                    ctx,
+                    target,
+                    config,
+                    ArtifactType::Runtime,
+                    kind == ArtifactKind::File,
+                );
                 (
                     crate::util::filename_path(&path),
                     crate::util::filename_name(&path),

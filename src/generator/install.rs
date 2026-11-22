@@ -13,6 +13,15 @@ use crate::util::{escape_for_cmake, expand_list, is_full_path, is_on_opt};
 
 pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
     let mut files = Vec::new();
+    if ctx.interp.ext.install.enabled
+        && is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref())
+    {
+        ctx.message(
+            crate::messages::MessageType::Warning,
+            target::directory_backtrace(ctx, 0),
+            "CMAKE_SKIP_INSTALL_RULES was enabled even though installation rules have been specified",
+        );
+    }
     for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
         if is_on_opt(ctx.var(index, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {
             continue;
@@ -431,10 +440,18 @@ fn render_rule(
             );
         }
         InstallAction::Script { text, is_code, .. } => {
-            // INTEGRATION: CMP0087 enables evaluation of install script arguments.
-            let text = if text.contains("$<")
-                && directory_policy(ctx, index, "CMP0087") == PolicyStatus::New
-            {
+            let policy = directory_policy(ctx, index, "CMP0087");
+            let has_genex = text
+                .split_once("$<")
+                .is_some_and(|(_, tail)| tail.contains('>'));
+            if has_genex && policy == PolicyStatus::Warn {
+                ctx.message(
+                    crate::messages::MessageType::AuthorWarning,
+                    target::directory_backtrace(ctx, index),
+                    crate::policy::policy_warning(index_of("CMP0087").unwrap()),
+                );
+            }
+            let text = if has_genex && policy == PolicyStatus::New {
                 ctx.genex(
                     &text.replace("$<INSTALL_PREFIX>", "${CMAKE_INSTALL_PREFIX}"),
                     None,
