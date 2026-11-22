@@ -24,7 +24,7 @@ const EXPORT_PACKAGE_INFO_VARIABLE: &str = "CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_IN
 const EXPORT_PACKAGE_INFO_DESCRIPTION: &str = "CMake's support for exporting package information in the Common Package Specification format is experimental. It is meant only for experimentation and feedback to CMake developers.";
 
 /// `cmExperimental::HasSupportEnabled(Feature::ExportPackageInfo)`.
-fn export_package_info_enabled(interp: &mut Interp) -> bool {
+pub(crate) fn export_package_info_enabled(interp: &mut Interp) -> bool {
     let Some(value) = interp.read_definition(EXPORT_PACKAGE_INFO_VARIABLE) else {
         return false;
     };
@@ -245,6 +245,7 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
     include_by_variable(interp, "CMAKE_PROJECT_INCLUDE_BEFORE")?;
     include_by_variable(interp, &format!("CMAKE_PROJECT_{name}_INCLUDE_BEFORE"))?;
     interp.mf_mut().props.set("PROJECT_NAME", name.clone());
+    crate::package_info::record_project(interp, &name);
     let cmp0180 = interp.policy_status("CMP0180");
     let binary = interp.current_binary_dir();
     let source = interp.current_source_dir();

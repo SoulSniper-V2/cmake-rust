@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
 
-use super::{ctx::GenCtx, export, target};
+use super::{ctx::GenCtx, export, package_info, target};
 use crate::commands::install::{legacy_source, unix_slashes};
 use crate::fsutil::write_if_different;
 use crate::install_model::*;
@@ -265,6 +265,9 @@ fn render_rule(ctx: &GenCtx, out: &mut String, index: usize, rule: &InstallRule)
             }
         }
         InstallAction::Export(export) => export::write_install_export(ctx, out, index, rule, export, indent)?,
+        InstallAction::PackageInfo { set, arguments } => {
+            package_info::write_install(ctx, out, index, rule, set, arguments, indent)?
+        }
         InstallAction::LegacyFiles { args, programs } => {
             let opts = InstallOptions {
                 component: ctx.var(index, "CMAKE_INSTALL_DEFAULT_COMPONENT_NAME").unwrap_or_else(|| opts.component.clone()),

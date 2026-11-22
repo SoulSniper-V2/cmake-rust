@@ -56,6 +56,11 @@ pub enum InstallAction {
     FileSet { name: String, set: String },
     Bmi(String),
     Export(InstallExport),
+    /// `install(PACKAGE_INFO ... EXPORT <set>)`.
+    PackageInfo {
+        set: String,
+        arguments: crate::package_info::PackageInfoArguments,
+    },
     RuntimeDependencies {
         set: String,
         filters: BTreeMap<String, Vec<String>>,
@@ -109,6 +114,8 @@ pub struct BuildExport {
     pub targets: Vec<String>,
     pub options: ExportOptions,
     pub append: bool,
+    /// `export(EXPORT <set> PACKAGE_INFO <name> ...)` → CPS output.
+    pub package_info: Option<crate::package_info::PackageInfoArguments>,
     pub backtrace: Vec<Frame>,
 }
 

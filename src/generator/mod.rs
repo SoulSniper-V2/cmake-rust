@@ -32,6 +32,7 @@ pub mod install;
 pub mod link;
 pub mod pch;
 pub mod ninja;
+pub mod package_info;
 pub mod target;
 pub mod tests;
 pub mod trace;

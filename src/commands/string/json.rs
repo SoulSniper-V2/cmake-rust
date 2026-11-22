@@ -1097,6 +1097,15 @@ pub fn write_json_stream(value: &Json) -> String {
     String::from_utf8_lossy(&Writer::write_indented(value, b"\t")).into_owned()
 }
 
+/// `Json::StreamWriterBuilder` with `indentation = "  "` and
+/// `commentStyle = "None"`, as used by
+/// `cmExportPackageInfoGenerator::WritePackageInfo`: two-space indent,
+/// `"key" : value`, and no trailing newline (StreamWriter does not emit
+/// one; `cmGeneratedFileStream` does not add one either).
+pub fn write_json_indent2(value: &Json) -> String {
+    String::from_utf8_lossy(&Writer::write_indented(value, b"  ")).into_owned()
+}
+
 fn write_json(value: &Json) -> String {
     String::from_utf8_lossy(&Writer::write(value)).into_owned()
 }

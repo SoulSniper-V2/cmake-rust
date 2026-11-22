@@ -57,6 +57,59 @@ pub(super) fn balanced_end(input: &str, start: usize) -> Option<usize> {
     None
 }
 
+/// `cmGeneratorExpression::Collect` / `extractAllGeneratorExpressions`:
+/// strip every `$<...>` expression, recording each `NAME:content` in
+/// `collected` (keyed by expression name, in encounter order).
+pub fn collect(
+    input: &str,
+    collected: &mut std::collections::BTreeMap<String, Vec<String>>,
+) -> String {
+    let mut result = String::new();
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut last_pos = 0usize;
+    // Stack of (expression name, start position of its content).
+    let mut genexps: Vec<(String, usize)> = Vec::new();
+    while let Some(offset) = input[last_pos..].find("$<") {
+        let open = last_pos + offset;
+        result.push_str(&input[last_pos..open]);
+        let pos = open + 2;
+        let mut index = pos;
+        let mut name_start = Some(index);
+        while index < len {
+            if bytes[index..].starts_with(b"$<") {
+                index += 1;
+                name_start = Some(index + 1);
+                index += 1;
+                continue;
+            }
+            if bytes[index] == b':' && name_start.is_some() {
+                genexps.push((input[name_start.unwrap()..index].to_owned(), index + 1));
+                name_start = None;
+            } else if bytes[index] == b'>' {
+                if name_start.is_none() && !genexps.is_empty() {
+                    let (name, start) = genexps.pop().unwrap();
+                    collected.entry(name).or_default().push(input[start..index].to_owned());
+                }
+                if genexps.is_empty() {
+                    break;
+                }
+            }
+            index += 1;
+        }
+        let traversed = (index - pos) + 1;
+        if index == len {
+            result.push_str("$<");
+            result.push_str(&input[pos..(pos + traversed).min(len)]);
+        }
+        last_pos = pos + traversed;
+    }
+    if genexps.is_empty() {
+        result.push_str(input.get(last_pos..).unwrap_or_default());
+    }
+    strip_empty_list_elements(&result)
+}
+
 pub fn strip(input: &str) -> String {
     let mut input = input;
     let mut result = String::new();

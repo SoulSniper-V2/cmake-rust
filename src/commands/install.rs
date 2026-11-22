@@ -21,7 +21,7 @@ pub fn register(interp: &mut Interp) {
 // cmArgumentParser consumes a scalar once, a list up to the next keyword, and
 // gathers unconsumed arguments for the caller's signature-specific diagnostic.
 #[derive(Default)]
-pub(super) struct Arguments<'a> {
+pub(crate) struct Arguments<'a> {
     pub values: BTreeMap<&'a str, Vec<String>>,
     pub unknown: Vec<String>,
 }
@@ -262,6 +262,7 @@ fn install(interp: &mut Interp, args: &[String]) -> CmdResult {
         "SCRIPT" | "CODE" => script(interp, args),
         "TARGETS" | "IMPORTED_RUNTIME_ARTIFACTS" => targets(interp, args),
         "EXPORT" => export(interp, args),
+        "PACKAGE_INFO" => package_info(interp, args),
         "RUNTIME_DEPENDENCY_SET" => runtime_set(interp, args),
         "EXPORT_ANDROID_MK" => err("EXPORT_ANDROID_MK is not supported by cmake-rust"),
         _ => err(format!("does not recognize sub-command {mode}")),
@@ -763,6 +764,42 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
     };
     interp.ext.install.export_sets.entry(set.to_owned()).or_default();
     add(interp, opts, InstallAction::Export(InstallExport { set: set.to_owned(), filename, options }));
+    Ok(())
+}
+
+/// `HandlePackageInfoMode`.
+fn package_info(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if !super::project::export_package_info_enabled(interp) {
+        return err("does not recognize sub-command PACKAGE_INFO");
+    }
+    let parsed = parse_options(
+        args,
+        &[crate::package_info::SINGLE_KEYS.as_slice(), &["EXPORT"]].concat(),
+        &crate::package_info::LIST_KEYS,
+        &crate::package_info::FLAG_KEYS,
+    );
+    if let Some(arg) = parsed.unknown.first() { return Err(unknown("PACKAGE_INFO", arg)); }
+    let mut opts = options(interp, &parsed, &defaults(interp));
+    validate_permissions(&opts)?;
+    let set = parsed.get("EXPORT");
+    if set.is_empty() { return err("PACKAGE_INFO missing EXPORT."); }
+    let mut arguments = crate::package_info::PackageInfoArguments::from_args(&parsed);
+    arguments.check(true)?;
+    arguments.set_metadata_from_project(interp)?;
+    // Get or construct the destination path.
+    if opts.destination.is_empty() {
+        opts.destination = if interp.get_safe("CMAKE_SYSTEM_NAME") == "Windows" {
+            "cps".to_owned()
+        } else {
+            format!(
+                "{}/cps/{}",
+                typed_destination(interp, "LIB").unwrap_or_default(),
+                arguments.package_dir_name()
+            )
+        };
+    }
+    interp.ext.install.export_sets.entry(set.to_owned()).or_default();
+    add(interp, opts, InstallAction::PackageInfo { set: set.to_owned(), arguments });
     Ok(())
 }
 
