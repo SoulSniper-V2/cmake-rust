@@ -406,6 +406,16 @@ impl Interp {
         crate::commands::sysinfo::notify_variable(self, name, "REMOVED_ACCESS", "");
     }
 
+    /// `cmMakefile::PolicyOptionalWarningEnabled` for the value of a
+    /// `CMAKE_POLICY_WARNING_CMP<NNNN>` variable: unset means enabled under
+    /// --trace/--trace-expand (--debug-output is not implemented).
+    pub fn policy_optional_warning(&self, value: Option<&str>) -> bool {
+        match value {
+            Some(value) => util::is_on(value),
+            None => self.trace.is_some(),
+        }
+    }
+
     /// The variable watch `cmWarnUnusedCliWarning` (`cmake::MarkCliAsUsed`).
     pub fn mark_cli_used(&self, name: &str) {
         let watched = {
@@ -585,7 +595,7 @@ impl Interp {
             PolicyStatus::New => {}
             status => {
                 if status == PolicyStatus::Warn
-                    && self.is_on("CMAKE_POLICY_WARNING_CMP0126")
+                    && self.policy_optional_warning(self.get_def("CMAKE_POLICY_WARNING_CMP0126"))
                     && self.get_normal_def(name).is_some()
                 {
                     let text = format!(

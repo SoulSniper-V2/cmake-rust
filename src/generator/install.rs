@@ -17,7 +17,9 @@ pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
         if is_on_opt(ctx.var(index, "CMAKE_SKIP_INSTALL_RULES").as_deref()) { continue; }
         let file = format!("{}/cmake_install.cmake", mf.binary_dir);
         let script = install_script(ctx, index)?;
-        write_if_different(Path::new(&file), script.as_bytes())?;
+        // cmGeneratedFileStream without SetCopyIfDifferent: always rewritten,
+        // so the RERUN_CMAKE outputs are newer than CMakeCache.txt.
+        crate::fsutil::write_generated(Path::new(&file), script.as_bytes())?;
         files.push(file);
     }
     if !is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {

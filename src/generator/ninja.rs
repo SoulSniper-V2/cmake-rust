@@ -2097,10 +2097,9 @@ impl<'a> NinjaGenerator<'a> {
                 }
                 crate::policy::PolicyStatus::Warn => {
                     if interp.makefiles[makefile].binary_dir != interp.home_binary
-                        || self
-                            .ctx
-                            .var(makefile, "CMAKE_POLICY_WARNING_CMP0116")
-                            .is_some_and(|value| util::is_on(&value))
+                        || interp.policy_optional_warning(
+                            self.ctx.var(makefile, "CMAKE_POLICY_WARNING_CMP0116").as_deref(),
+                        )
                     {
                         self.ctx.warning(
                             command.backtrace.clone(),

@@ -919,11 +919,7 @@ fn trim_whitespace(text: &str) -> &str {
 
 /// `PolicyOptionalWarningEnabled`.
 fn policy_optional_warning_enabled(interp: &Interp, var: &str) -> bool {
-    if let Some(value) = interp.get_def(var) {
-        return util::is_on(value);
-    }
-    // --debug-output/--trace are not yet implemented; they would also enable.
-    false
+    interp.policy_optional_warning(interp.get_def(var))
 }
 
 // ---------------------------------------------------------------------------

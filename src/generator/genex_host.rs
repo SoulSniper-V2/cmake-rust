@@ -202,6 +202,12 @@ impl GenexHost for CtxHost<'_, '_> {
         self.ctx.var(self.dir, name)
     }
 
+    fn policy_optional_warning(&self, var: &str) -> bool {
+        self.ctx
+            .interp
+            .policy_optional_warning(self.ctx.var(self.dir, var).as_deref())
+    }
+
     fn policy_status(&self, name: &str, id: &str) -> PolicyStatus {
         let Some(index) = policy::index_of(id) else {
             return PolicyStatus::Warn;

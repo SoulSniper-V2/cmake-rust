@@ -73,6 +73,11 @@ pub trait GenexHost {
     fn target_objects(&self, target: &str, config: &str) -> Result<Vec<String>, String>;
     /// cmMakefile::GetDefinition.
     fn variable(&self, name: &str) -> Option<String>;
+    /// cmMakefile::PolicyOptionalWarningEnabled for a
+    /// `CMAKE_POLICY_WARNING_CMP<NNNN>` variable.
+    fn policy_optional_warning(&self, var: &str) -> bool {
+        self.variable(var).as_deref().is_some_and(crate::util::is_on)
+    }
     /// cmGeneratorTarget::GetPolicyStatusCMP*.
     fn policy_status(&self, target: &str, policy: &str) -> PolicyStatus;
 

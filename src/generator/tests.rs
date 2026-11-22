@@ -6,7 +6,6 @@ use super::ctx::GenCtx;
 use super::install::{config_test, directory_policy};
 use super::target::{ArtifactType, full_path};
 use crate::commands::install::unix_slashes;
-use crate::fsutil::write_if_different;
 use crate::policy::PolicyStatus;
 use crate::state::{TargetKind, Test};
 use crate::util::{escape_for_cmake, expand_list, is_on_opt};
@@ -15,7 +14,8 @@ pub fn write_test_files(ctx: &GenCtx) -> std::io::Result<()> {
     for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
         if is_on_opt(ctx.var(index, "CMAKE_TESTING_ENABLED").as_deref()) {
             let script = test_script(ctx, index);
-            write_if_different(&Path::new(&mf.binary_dir).join("CTestTestfile.cmake"), script.as_bytes())?;
+            // cmGeneratedFileStream without SetCopyIfDifferent.
+            crate::fsutil::write_generated(&Path::new(&mf.binary_dir).join("CTestTestfile.cmake"), script.as_bytes())?;
         }
     }
     Ok(())

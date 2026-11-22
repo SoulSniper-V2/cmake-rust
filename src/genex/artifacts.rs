@@ -219,11 +219,7 @@ impl Evaluator<'_, '_> {
             self.ctx.dependency_targets.insert(target.clone());
             if (component != Path || bundle)
                 && policy == PolicyStatus::Warn
-                && self
-                    .host
-                    .variable("CMAKE_POLICY_WARNING_CMP0112")
-                    .as_deref()
-                    .is_some_and(util::is_on)
+                && self.host.policy_optional_warning("CMAKE_POLICY_WARNING_CMP0112")
             {
                 self.policy_warning(
                     "CMP0112",
