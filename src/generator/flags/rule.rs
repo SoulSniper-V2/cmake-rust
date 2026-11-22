@@ -11,35 +11,41 @@ pub enum RuleStep {
 
 /// Ninja's per-object LAUNCHER binding, including the required trailing space.
 pub fn compiler_launcher(ctx: &GenCtx, target: &Target, lang: &str) -> String {
+    let raw = compiler_launcher_list(ctx, target, lang);
+    if raw.is_empty() {
+        return raw;
+    }
+    format!("{} ", convert_launcher(&raw))
+}
+
+pub fn compiler_launcher_list(ctx: &GenCtx, target: &Target, lang: &str) -> String {
     if !matches!(
         lang,
         "C" | "CXX" | "Fortran" | "CUDA" | "HIP" | "ISPC" | "OBJC" | "OBJCXX"
     ) {
         return String::new();
     }
-    let inputs = Flags {
-        ctx,
-        target,
-        lang,
-        config: &ctx.config,
-    };
-    let mut launcher = launcher(&inputs, "COMPILER_LAUNCHER");
-    if !launcher.is_empty() {
-        launcher.push(' ');
-    }
-    launcher
+    target
+        .props
+        .get(&format!("{lang}_COMPILER_LAUNCHER"))
+        .map(|raw| ctx.genex(raw, Some(target), Some(lang)))
+        .unwrap_or_default()
 }
 
-fn launcher(inputs: &Flags<'_, '_>, suffix: &str) -> String {
-    let name = format!("{}_{suffix}", inputs.lang);
+fn linker_launcher(inputs: &Flags<'_, '_>) -> String {
+    let name = format!("{}_LINKER_LAUNCHER", inputs.lang);
     let Some(raw) = inputs.prop(&name).filter(|raw| !raw.is_empty()) else {
         return String::new();
     };
-    let evaluated = inputs.eval(raw);
-    if suffix == "COMPILER_LAUNCHER" && evaluated.is_empty() {
-        return String::new();
-    }
-    let mut args = expand_list(&evaluated, true).into_iter();
+    let evaluated =
+        inputs
+            .ctx
+            .genex_with_dag(raw, inputs.target, inputs.target, &name, Some(inputs.lang));
+    convert_launcher(&evaluated)
+}
+
+fn convert_launcher(raw: &str) -> String {
+    let mut args = expand_list(raw, true).into_iter();
     let Some(exe) = args.next() else {
         return String::new();
     };
@@ -154,7 +160,7 @@ fn replacement(
             .or_else(|| inputs.var(name))
             .unwrap_or_default();
             // cmStrCat(Launcher, ' ', result) always inserts the separator.
-            let launcher = launcher(inputs, "LINKER_LAUNCHER");
+            let launcher = linker_launcher(inputs);
             let escaped = shell_with_make_vars(&linker);
             return if launcher.is_empty() {
                 escaped
@@ -265,7 +271,7 @@ fn compiler(inputs: &Flags<'_, '_>, step: RuleStep, current_language: bool) -> S
     let path = shell_with_make_vars(&inputs.lang_var("COMPILER").unwrap_or_default());
     // cmStrCat(Launcher, ' ', ret) always inserts the separator.
     let mut command = if step == RuleStep::Link && current_language {
-        let launcher = launcher(inputs, "LINKER_LAUNCHER");
+        let launcher = linker_launcher(inputs);
         if launcher.is_empty() {
             path
         } else {

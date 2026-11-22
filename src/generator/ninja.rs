@@ -15,6 +15,23 @@ use crate::util;
 
 pub const SHELL_NOOP: &str = ":";
 
+/// cmGlobalCommonGenerator::RemoveUnknownClangTidyExportFixesFiles.
+fn remove_unknown_tidy_fixes(dir: &std::path::Path, known: &BTreeSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            remove_unknown_tidy_fixes(&path, known);
+        } else if path.extension().is_some_and(|ext| ext == "yaml")
+            && path.to_str().is_some_and(|name| !known.contains(name))
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// A custom command attached to source `index` of directory `dir`.
 pub type CcRef = (usize, usize);
 const REQUIRED_NINJA_VERSION_CONSOLE_POOL: &str = "1.5";
@@ -264,6 +281,8 @@ pub struct NinjaGenerator<'a> {
     depends_closures: HashMap<String, BTreeSet<String>>,
     /// `CompileCommandsStream` entries (compile_commands.json).
     compile_commands: Vec<String>,
+    tidy_fixes_dirs: BTreeSet<String>,
+    tidy_fixes_files: BTreeSet<String>,
     pub cmake_cmd: String,
     pub ninja_cmd: String,
     home_binary: String,
@@ -301,6 +320,8 @@ impl<'a> NinjaGenerator<'a> {
             local_custom_commands: Vec::new(),
             depends_closures: HashMap::new(),
             compile_commands: Vec::new(),
+            tidy_fixes_dirs: BTreeSet::new(),
+            tidy_fixes_files: BTreeSet::new(),
             cmake_cmd: cmake,
             ninja_cmd: ninja,
             home_binary: interp.home_binary.clone(),
@@ -530,6 +551,9 @@ impl<'a> NinjaGenerator<'a> {
             std::path::Path::new(&build_path),
             build_file.as_bytes(),
         )?;
+        for dir in &self.tidy_fixes_dirs {
+            remove_unknown_tidy_fixes(std::path::Path::new(dir), &self.tidy_fixes_files);
+        }
         Ok(())
     }
 }
@@ -1611,11 +1635,20 @@ impl<'a> NinjaGenerator<'a> {
                     .variables
                     .insert("DEP_FILE".into(), format!("{object}.d"));
             }
-            build.variables.insert(
-                "LAUNCHER".into(),
-                flags::compiler_launcher(self.ctx, target, &source.language),
-            );
             let object_dir_rel = self.ninja_path(&object_dir);
+            let code_check = if source_props.get("SKIP_LINTING").is_some_and(util::is_on) {
+                String::new()
+            } else {
+                self.code_check(target, source, &object_dir_rel)
+            };
+            if code_check.is_empty() {
+                build.variables.insert(
+                    "LAUNCHER".into(),
+                    flags::compiler_launcher(self.ctx, target, &source.language),
+                );
+            } else {
+                build.variables.insert("CODE_CHECK".into(), code_check);
+            }
             build.variables.insert("OBJECT_DIR".into(), object_dir_rel);
             build
                 .variables
@@ -1726,7 +1759,7 @@ impl<'a> NinjaGenerator<'a> {
                     .var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
                 rule.depfile = "$DEP_FILE".into();
             }
-            let commands: Vec<String> = if target.kind == TargetKind::StaticLibrary {
+            let mut commands: Vec<String> = if target.kind == TargetKind::StaticLibrary {
                 // cmNinjaNormalTargetGenerator::ComputeLinkCmd for static libs:
                 // remove the old archive first, then create/append/finish.
                 let mut list = vec![format!("{} -E rm -f <TARGET>", self.cmake_cmd)];
@@ -1742,6 +1775,27 @@ impl<'a> NinjaGenerator<'a> {
             } else {
                 util::expand_list(&self.ctx.var_safe(makefile, &link_command_var), false)
             };
+            if target.kind != TargetKind::StaticLibrary
+                && target
+                    .props
+                    .get("LINK_WHAT_YOU_USE")
+                    .is_some_and(util::is_on)
+                && !self
+                    .ctx
+                    .var_safe(
+                        makefile,
+                        &format!("CMAKE_{language}_LINK_WHAT_YOU_USE_FLAG"),
+                    )
+                    .is_empty()
+                && let Some(checker) = self.ctx.var(makefile, "CMAKE_LINK_WHAT_YOU_USE_CHECK")
+            {
+                commands.push(format!(
+                    "{} -E __run_co_compile --lwyu={} --source={}",
+                    self.cmake_cmd,
+                    flags::shell(&checker),
+                    self.shell(&target_real),
+                ));
+            }
             let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
             let mut vars: Vec<(&str, String)> = vec![
                 ("TARGET_NAME", target.name.clone()),
@@ -2014,6 +2068,91 @@ impl<'a> NinjaGenerator<'a> {
 
     /// `cmNinjaTargetGenerator::ExportObjectCompileCommand` +
     /// `cmGlobalNinjaGenerator::AddCXXCompileCommand`.
+    /// cmCommonTargetGenerator::GenerateCodeCheckRules.
+    fn code_check(&mut self, target: &Target, source: &gt::SourceInfo, object_dir: &str) -> String {
+        let lang = &source.language;
+        let mut options = Vec::new();
+        let mut needs_source = false;
+        let driver_mode = |tool| {
+            self.ctx
+                .var(target.makefile, &format!("CMAKE_{lang}_{tool}_DRIVER_MODE"))
+                .filter(|mode| !mode.is_empty())
+                .unwrap_or_else(|| if lang == "C" { "gcc" } else { "g++" }.into())
+        };
+        for (property, option) in [
+            ("INCLUDE_WHAT_YOU_USE", "iwyu"),
+            ("CLANG_TIDY", "tidy"),
+            ("CPPLINT", "cpplint"),
+            ("CPPCHECK", "cppcheck"),
+            ("ICSTAT", "icstat"),
+        ] {
+            if property != "CLANG_TIDY" && !matches!(lang.as_str(), "C" | "CXX") {
+                continue;
+            }
+            let Some(raw) = target.props.get(&format!("{lang}_{property}")) else {
+                continue;
+            };
+            let mut command = self.ctx.genex(raw, Some(target), Some(lang));
+            if command.is_empty() {
+                continue;
+            }
+            match option {
+                "iwyu" if !command.contains("--driver-mode=") => {
+                    let _ = write!(command, ";--driver-mode={}", driver_mode(property));
+                }
+                "tidy" => {
+                    let _ = write!(
+                        command,
+                        ";--extra-arg-before=--driver-mode={}",
+                        driver_mode(property)
+                    );
+                    if let Some(dir) = target
+                        .props
+                        .get(&format!("{lang}_CLANG_TIDY_EXPORT_FIXES_DIR"))
+                        .filter(|dir| !dir.is_empty())
+                    {
+                        let binary = &self.ctx.interp.makefiles[target.makefile].binary_dir;
+                        let dir = util::collapse_full_path(dir, binary);
+                        let safe = object_dir
+                            .trim_start_matches('/')
+                            .replace([':', ' '], "_")
+                            .replace("../", "__/");
+                        let fixes = format!("{dir}/{safe}/{}.yaml", source.object_name);
+                        let _ = std::fs::create_dir_all(util::filename_path(&fixes));
+                        let _ = write!(command, ";--export-fixes={}", self.ninja_path(&fixes));
+                        self.tidy_fixes_dirs.insert(dir);
+                        self.tidy_fixes_files.insert(fixes);
+                    }
+                }
+                "icstat" => {
+                    if !command.contains("--checks=") {
+                        command.push_str(";--checks=cstat_sel_checks.txt");
+                    }
+                    if !command.contains("--db=") {
+                        command.push_str(";--db=cstat.db");
+                    }
+                }
+                _ => {}
+            }
+            needs_source |= matches!(option, "tidy" | "cpplint" | "cppcheck");
+            options.push(format!(" --{option}={}", flags::shell(&command)));
+        }
+        if options.is_empty() {
+            return String::new();
+        }
+        let mut command = format!("{} -E __run_co_compile", self.cmake_cmd);
+        let launcher = flags::compiler_launcher_list(self.ctx, target, lang);
+        if !launcher.is_empty() {
+            let _ = write!(command, " --launcher={}", flags::shell(&launcher));
+        }
+        command.extend(options);
+        if needs_source {
+            let _ = write!(command, " --source={}", self.shell(&source.path));
+        }
+        command.push_str(" -- ");
+        command
+    }
+
     fn export_object_compile_command(
         &mut self,
         target: &Target,
