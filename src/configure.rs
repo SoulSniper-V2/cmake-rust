@@ -32,6 +32,8 @@ pub struct ConfigureOptions {
     pub undefine: Vec<String>,
     /// `-C <initial-cache>` scripts.
     pub preload_scripts: Vec<String>,
+    /// The `-C` values as given, for "loading initial cache file".
+    pub preload_script_args: Vec<String>,
     pub fresh: bool,
     pub log_level: Option<String>,
     pub log_context: bool,
@@ -239,6 +241,23 @@ fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
     true
 }
 
+/// `cmake::ReadListFile`: a temporary makefile whose reset state keeps
+/// only CMAKE_SOURCE_DIR and CMAKE_BINARY_DIR; normal variables it sets do
+/// not reach the project.
+fn read_temporary_list_file(interp: &mut Interp, path: &str) {
+    interp.push_scope();
+    let (source, binary) = (interp.home_source.clone(), interp.home_binary.clone());
+    interp.set_def("CMAKE_SOURCE_DIR", source);
+    interp.set_def("CMAKE_BINARY_DIR", binary);
+    if !std::path::Path::new(path).is_file() {
+        system_error(Some(interp), &format!("Not a file: {path}"));
+    }
+    if !interp.read_list_file(path) {
+        system_error(Some(interp), &format!("Error processing file: {path}"));
+    }
+    interp.pop_scope();
+}
+
 /// `cmake::RunCheckForUnusedVariables`.
 pub fn check_for_unused_variables(interp: &mut Interp) {
     if !interp.warn_unused_cli {
@@ -385,10 +404,27 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         system_error(Some(interp), "Run 'cmake --help' for all supported options.");
         return -1;
     }
-    for script in &options.preload_scripts {
-        // `-C` scripts run in script context before configuring.
+    for (index, script) in options.preload_scripts.iter().enumerate() {
+        if let Some(arg) = options.preload_script_args.get(index) {
+            interp.stdout_line(&format!("loading initial cache file {arg}"));
+        }
         let path = util::collapse_full_path(script, &util_cwd());
-        interp.read_list_file(&path);
+        read_temporary_list_file(interp, &path);
+    }
+    // cmake::Run: MAKEFLAGS would leak into try_compile builds.
+    if std::env::var_os("MAKEFLAGS").is_some() {
+        // SAFETY: single-threaded configure.
+        unsafe { std::env::set_var("MAKEFLAGS", "") };
+    }
+    // cmake::PreLoadCMakeFiles
+    for dir in [interp.home_source.clone(), interp.home_binary.clone()] {
+        if dir.is_empty() {
+            continue;
+        }
+        let pre_load = format!("{dir}/PreLoad.cmake");
+        if std::path::Path::new(&pre_load).exists() {
+            read_temporary_list_file(interp, &pre_load);
+        }
     }
     // cmake::Configure: apply `DiagLevels` (from -W flags and presets) to
     // the cache, then sync the messenger with the cache.

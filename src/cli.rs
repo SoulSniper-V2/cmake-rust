@@ -981,9 +981,12 @@ fn process_cache_args(
         match *name {
             "-D" => options.definitions.push(cache_definition(value)?),
             "-C" if value.is_empty() => return Err("No file name specified for -C".to_owned()),
-            "-C" => options
-                .preload_scripts
-                .push(util::collapse_full_path(value, cwd)),
+            "-C" => {
+                options
+                    .preload_scripts
+                    .push(util::collapse_full_path(value, cwd));
+                options.preload_script_args.push(value.clone());
+            }
             "-U" => options.undefine.push(value.clone()),
             "-W" => warning_option(options, value)?,
             "--toolchain" => options.toolchain_file = Some(value.clone()),
