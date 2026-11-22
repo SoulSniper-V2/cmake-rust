@@ -86,6 +86,29 @@ fn quote_name(name: &str) -> String {
     format!("[{sign}[{name}]{sign}]")
 }
 
+/// cmTestGenerator.cxx `needToQuoteTestName`: CMP0110, warning about names
+/// that only work when quoted.
+fn need_to_quote_test_name(ctx: &GenCtx, index: usize, name: &str) -> bool {
+    match directory_policy(ctx, index, "CMP0110") {
+        PolicyStatus::New => true,
+        status => {
+            if status == PolicyStatus::Warn
+                && name.contains(['$', '[', ']', ' ', '#', ';', '\t', '\n', '"', '\\'])
+                && let Some(policy) = crate::policy::index_of("CMP0110")
+            {
+                ctx.warning(
+                    super::target::directory_backtrace(ctx, index),
+                    format!(
+                        "{}\nThe following name given to add_test() is invalid if CMP0110 is not set or set to OLD:\n  `{name}\u{b4}\n",
+                        crate::policy::policy_warning(policy)
+                    ),
+                );
+            }
+            false
+        }
+    }
+}
+
 fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
     let configs = &test.configurations;
     let indent = if configs.is_empty() { "" } else { "  " };
@@ -97,7 +120,7 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
         )
         .unwrap();
     }
-    let name = if directory_policy(ctx, index, "CMP0110") == PolicyStatus::New {
+    let name = if need_to_quote_test_name(ctx, index, &test.name) {
         quote_name(&test.name)
     } else {
         test.name.clone()
@@ -127,14 +150,10 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
             .target(exe)
             .filter(|target| target.kind == TargetKind::Executable)
         {
-            let keep_empty = test.props.get("_CMAKE_RUST_CMP0178").map_or_else(
-                || directory_policy(ctx, index, "CMP0178") == PolicyStatus::New,
-                |policy| policy == "NEW",
-            );
-            let emulator = test.props.get("_CMAKE_RUST_CMP0158").map_or_else(
-                || directory_policy(ctx, index, "CMP0158") != PolicyStatus::New,
-                |policy| policy != "NEW",
-            ) || is_on_opt(ctx.var(index, "CMAKE_CROSSCOMPILING").as_deref());
+            // cmTest records CMP0178 and CMP0158 when add_test() runs.
+            let cmp0178 = test.empty_argument_policy;
+            let emulator = test.emulator_policy != PolicyStatus::New
+                || is_on_opt(ctx.var(index, "CMAKE_CROSSCOMPILING").as_deref());
             let properties = if emulator {
                 &["TEST_LAUNCHER", "CROSSCOMPILING_EMULATOR"][..]
             } else {
@@ -143,11 +162,25 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
             for key in properties {
                 if let Some(value) = target.props.get(key).filter(|s| !s.is_empty()) {
                     // INTEGRATION: launcher arguments may have generator expressions.
-                    let values = expand_list(&ctx.genex(value, None, None), keep_empty);
+                    let evaluated = ctx.genex(value, None, None);
+                    let values = expand_list(&evaluated, cmp0178 == PolicyStatus::New);
                     if let Some((launcher, args)) = values
                         .split_first()
                         .filter(|(launcher, _)| !launcher.is_empty())
                     {
+                        if cmp0178 == PolicyStatus::Warn
+                            && values != expand_list(&evaluated, true)
+                            && let Some(policy) = crate::policy::index_of("CMP0178")
+                        {
+                            ctx.warning(
+                                super::target::directory_backtrace(ctx, test.makefile),
+                                format!(
+                                    "The {key} property of target '{}' contains empty list items. Those empty items are being silently discarded to preserve backward compatibility.\n{}",
+                                    target.name,
+                                    crate::policy::policy_warning(policy)
+                                ),
+                            );
+                        }
                         write!(out, "{} ", escape_for_cmake(&unix_slashes(launcher))).unwrap();
                         for arg in args {
                             write!(out, "{} ", escape_for_cmake(arg)).unwrap();

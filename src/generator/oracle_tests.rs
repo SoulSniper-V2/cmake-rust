@@ -236,8 +236,9 @@ fn add_test(
         command_expand_lists: entries
             .iter()
             .any(|(key, _)| *key == "COMMAND_EXPAND_LISTS"),
-        empty_argument_policy: crate::policy::PolicyStatus::New,
-        emulator_policy: crate::policy::PolicyStatus::New,
+        // cmTest records the policies in effect when add_test() runs.
+        empty_argument_policy: interp.policy_status("CMP0178"),
+        emulator_policy: interp.policy_status("CMP0158"),
         backtrace: vec![
             Frame {
                 file: file.clone(),
