@@ -938,6 +938,18 @@ impl Interp {
         self.mf_mut().policies.push(PolicyFrame { map, weak });
     }
 
+    /// `cmStateSnapshot::CanPopPolicyScope`: whether `cmake_policy(POP)`
+    /// could pop a non-barrier policy frame in the current scope.
+    pub fn can_pop_policy_scope(&self) -> bool {
+        let minimum = self
+            .policy_barriers
+            .iter()
+            .rev()
+            .find(|(dir, _)| *dir == self.mf_index())
+            .map_or(1, |(_, depth)| *depth);
+        self.mf().policies.len() > minimum
+    }
+
     pub fn pop_policy(&mut self) -> bool {
         let minimum = self
             .policy_barriers

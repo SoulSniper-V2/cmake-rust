@@ -1283,6 +1283,22 @@ fn run_script_mode(
             .misc
             .insert("log-context".to_owned(), "1".to_owned());
     }
+    // `cmake::SetCacheArgs` seeds CMAKE_POLICY_VERSION_MINIMUM from the
+    // environment before processing -D/-U/-C arguments.
+    if interp.cache.value("CMAKE_POLICY_VERSION_MINIMUM").is_none()
+        && let Ok(value) = std::env::var("CMAKE_POLICY_VERSION_MINIMUM")
+        && !value.is_empty()
+    {
+        interp.cache.add(
+            "CMAKE_POLICY_VERSION_MINIMUM",
+            Some(&value),
+            Some("Override policy version for cmake_minimum_required calls."),
+            crate::cache::CacheType::String,
+        );
+        if let Some(entry) = interp.cache.entries.get_mut("CMAKE_POLICY_VERSION_MINIMUM") {
+            entry.properties.insert("ADVANCED".into(), "1".into());
+        }
+    }
     let mut result = 0;
     for CacheArg { name, value } in args {
         match *name {
