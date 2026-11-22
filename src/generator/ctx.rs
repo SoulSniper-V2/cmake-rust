@@ -366,6 +366,18 @@ impl<'a> GenCtx<'a> {
         language: Option<&str>,
         compile_usage: bool,
     ) -> String {
+        self.genex_with_dag_at(text, owner, head, property, (language, compile_usage), &[])
+    }
+
+    pub fn genex_with_dag_at(
+        &self,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        (language, compile_usage): (Option<&str>, bool),
+        backtrace: &[Frame],
+    ) -> String {
         if !text.contains("$<") {
             return text.to_owned();
         }
@@ -405,6 +417,7 @@ impl<'a> GenCtx<'a> {
             language,
             evaluate_for_buildsystem: true,
             dag: Some(&root),
+            backtrace: (!backtrace.is_empty()).then(|| self.intern_backtrace(backtrace.to_vec())),
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
@@ -523,6 +536,9 @@ impl<'a> GenCtx<'a> {
     /// Runs the whole generate step; returns the diagnostics it raised.
     /// The caller reports them and decides failure from their severity.
     pub fn check_and_generate(&self) -> Vec<Diagnostic> {
+        if !super::flags::validate_compile_features(self) {
+            return self.errors.take();
+        }
         // cmGlobalGenerator::Compute: source resolution diagnostics surface
         // during the pre-generation target computations, and
         // CheckTargetsForMissingSources stops generation before any build

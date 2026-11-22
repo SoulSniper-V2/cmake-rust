@@ -972,6 +972,16 @@ fn render_file_set(
     set: &str,
     indent: &str,
 ) {
+    if !["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"]
+        .iter()
+        .any(|property| {
+            expand_list(tgt.props.get(property).unwrap_or_default(), false)
+                .iter()
+                .any(|name| name == set)
+        })
+    {
+        return;
+    }
     let Some((files, bases, _)) = file_set_properties(tgt, set) else {
         return;
     };

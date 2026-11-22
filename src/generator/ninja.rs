@@ -519,7 +519,7 @@ impl<'a> NinjaGenerator<'a> {
         )?;
         // cmSystemTools::GetErrorOccurredFlag: the streams are marked failed,
         // so neither file is replaced.
-        if self.ctx.interp.error || !self.ctx.errors.borrow().is_empty() {
+        if self.ctx.interp.error || self.ctx.has_error() {
             return Ok(());
         }
         crate::fsutil::write_if_different(
@@ -1321,12 +1321,7 @@ pub fn is_in_build_system(target: &Target) -> bool {
             // or header/C++ module file sets.
             TargetKind::InterfaceLibrary => ["SOURCES", "HEADER_SETS", "CXX_MODULE_SETS"]
                 .iter()
-                .any(|prop| {
-                    target
-                        .props
-                        .get(prop)
-                        .is_some_and(|value| !value.is_empty())
-                }),
+                .any(|prop| target.props.contains(prop)),
             TargetKind::UnknownLibrary => false,
             _ => true,
         }

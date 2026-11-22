@@ -1383,6 +1383,22 @@ const HIP_FEATURES: &[&str] = &[
     "hip_std_26",
 ];
 
+pub(crate) fn compile_feature_language(
+    feature: &str,
+) -> Option<(&'static str, &'static [&'static str])> {
+    if C_FEATURES.contains(&feature) {
+        Some(("C", &["90", "99", "11", "17", "23"]))
+    } else if CXX_FEATURES.contains(&feature) {
+        Some(("CXX", &["98", "11", "14", "17", "20", "23", "26"]))
+    } else if CUDA_FEATURES.contains(&feature) {
+        Some(("CUDA", &["03", "11", "14", "17", "20", "23", "26"]))
+    } else if HIP_FEATURES.contains(&feature) {
+        Some(("HIP", &["98", "11", "14", "17", "20", "23", "26"]))
+    } else {
+        None
+    }
+}
+
 fn add_feature(interp: &mut Interp, key: &str, feature: &str) -> CmdResult {
     if has_genex(feature) {
         interp.ext.targets.get_mut(key).unwrap().insert_entry(
@@ -1395,15 +1411,7 @@ fn add_feature(interp: &mut Interp, key: &str, feature: &str) -> CmdResult {
     }
     let target = &interp.ext.targets[key];
     let name = target.name.clone();
-    let (lang, standards): (&str, &[&str]) = if C_FEATURES.contains(&feature) {
-        ("C", &["90", "99", "11", "17", "23"])
-    } else if CXX_FEATURES.contains(&feature) {
-        ("CXX", &["98", "11", "14", "17", "20", "23", "26"])
-    } else if CUDA_FEATURES.contains(&feature) {
-        ("CUDA", &["03", "11", "14", "17", "20", "23", "26"])
-    } else if HIP_FEATURES.contains(&feature) {
-        ("HIP", &["98", "11", "14", "17", "20", "23", "26"])
-    } else {
+    let Some((lang, standards)) = compile_feature_language(feature) else {
         return err(format!(
             "specified unknown feature \"{feature}\" for target \"{name}\"."
         ));

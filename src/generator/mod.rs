@@ -36,6 +36,7 @@ pub mod pch;
 pub mod target;
 pub mod tests;
 pub mod trace;
+mod verify_header_sets;
 
 #[cfg(test)]
 mod oracle_tests;
@@ -74,6 +75,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
     // become generated sources before target source resolution runs.
     evaluation_files::create_outputs(interp);
+    if !verify_header_sets::add_targets(interp) {
+        return -1;
+    }
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.

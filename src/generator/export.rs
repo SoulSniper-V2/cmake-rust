@@ -1760,7 +1760,7 @@ fn file_set_dirs_files(
             };
             for file in names {
                 file_out.push(format!(
-                    "\"{}{}{}\"",
+                    "\"{}/{}{}\"",
                     dest,
                     escape_nowrap(&prefix),
                     escape_nowrap(&filename_name(file))
@@ -1775,6 +1775,8 @@ fn file_set_dirs_files(
         }
         let dirs_out: Vec<String> = dirs
             .iter()
+            // Kitware emits the first directory for a single configuration.
+            .take(1)
             .map(|d| format!("\"{}\"", escape_nowrap(d)))
             .collect();
         let (files, file_sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
@@ -2054,6 +2056,32 @@ pub fn write_build_exports(ctx: &GenCtx) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `cmExportSet::Compute` also checks for interface file sets added after
+/// install(TARGETS) captured the export's file-set generators.
+fn check_export_file_sets(ctx: &GenCtx, dir: usize, set: &ExportSet) -> bool {
+    for item in &set.targets {
+        let Some(key) = crate::state::find_target_key_at(ctx.interp, dir, &item.name) else {
+            continue;
+        };
+        let target = &ctx.interp.ext.targets[&key];
+        for property in ["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"] {
+            for name in expand_list(target.props.get(property).unwrap_or_default(), false) {
+                if !item.file_sets.contains_key(&name) {
+                    ctx.error(
+                        super::target::directory_backtrace(ctx, dir),
+                        format!(
+                            "File set \"{name}\" is listed in interface file sets of {} but has not been exported",
+                            target.name
+                        ),
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io::Result<()> {
     if let Some(package) = &export.package_info {
         return super::package_info::write_build(ctx, file, export, package);
@@ -2065,6 +2093,9 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
         .and_then(|name| inst.export_sets.get(name));
     if export.set.is_some() && set.is_none() {
         ctx.error(export.backtrace.clone(), "Could not write export file.");
+        return Ok(());
+    }
+    if set.is_some_and(|set| !check_export_file_sets(ctx, export.makefile, set)) {
         return Ok(());
     }
     let mut ex = Exporter {
@@ -2150,13 +2181,16 @@ pub(super) fn write_install_export(
 ) -> std::io::Result<()> {
     let set = ctx.interp.ext.install.export_sets.get(&export.set);
     if set.is_none_or(|set| set.targets.is_empty()) {
-        ctx.error(
-            rule.backtrace.clone(),
-            format!("INSTALL(EXPORT) given unknown export \"{}\"", export.set),
-        );
+        ctx.system_error(format!(
+            "INSTALL(EXPORT) given unknown export \"{}\"",
+            export.set
+        ));
         return Ok(());
     }
     let set = set.unwrap();
+    if !check_export_file_sets(ctx, index, set) {
+        return Ok(());
+    }
     let mut ex = Exporter {
         ctx,
         options: &export.options,

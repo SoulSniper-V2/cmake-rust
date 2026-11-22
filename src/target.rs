@@ -808,7 +808,7 @@ fn imported_location<'a>(target: &'a Target, config: &str) -> Option<&'a str> {
     )
 }
 
-fn file_set_property(prop: &str) -> Option<(&str, &str, bool)> {
+pub(crate) fn file_set_property(prop: &str) -> Option<(&str, &str, bool)> {
     for (kind, dirs_prop, files_prop) in [
         ("HEADERS", "HEADER_DIRS", "HEADER_SET"),
         ("CXX_MODULES", "CXX_MODULE_DIRS", "CXX_MODULE_SET"),
@@ -871,6 +871,16 @@ pub fn target_property<'a>(interp: &'a Interp, name: &str, prop: &str) -> Option
                 Cow::Borrowed,
             )
         });
+    }
+    if let Some((kind, name, dirs)) = file_set_property(prop) {
+        let set = target.file_sets.get(name).filter(|set| set.kind == kind)?;
+        return Some(Cow::Owned(
+            (if dirs { &set.base_dirs } else { &set.files })
+                .iter()
+                .map(|(value, _)| value.as_str())
+                .collect::<Vec<_>>()
+                .join(";"),
+        ));
     }
     computed_property(interp, target, prop).or_else(|| target.props.get(prop).map(Cow::Borrowed))
 }
@@ -1064,7 +1074,18 @@ pub fn write_target_property(
             .map(|(value, _)| value.as_str())
             .collect::<Vec<_>>()
             .join(";");
-        target.props.set(prop, value);
+        let prefix = match (kind, dirs) {
+            ("HEADERS", true) => "HEADER_DIRS",
+            ("HEADERS", false) => "HEADER_SET",
+            (_, true) => "CXX_MODULE_DIRS",
+            (_, false) => "CXX_MODULE_SET",
+        };
+        let canonical = if name == kind {
+            prefix.to_owned()
+        } else {
+            format!("{prefix}_{name}")
+        };
+        target.props.set(&canonical, value);
         return Ok(());
     }
     let target = &interp.ext.targets[&key];
