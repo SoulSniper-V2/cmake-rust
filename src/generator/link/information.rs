@@ -170,7 +170,21 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             if !seen.insert(std::ptr::from_ref(target) as usize) {
                 continue;
             }
-            for value in expand_list(&query.property(target, head, property), false) {
+            // EvaluateInterfaceProperty: each recorded property entry is
+            // evaluated with its own list-file backtrace.
+            let mut raw = Vec::new();
+            match target.provenance.get(property) {
+                Some(entries) if !entries.is_empty() => {
+                    for (value, backtrace) in entries.clone() {
+                        raw.extend(expand_list(
+                            &query.eval_bt(&value, target, head, property, &backtrace),
+                            false,
+                        ));
+                    }
+                }
+                _ => raw.extend(expand_list(&query.property(target, head, property), false)),
+            }
+            for value in raw {
                 if property == "INTERFACE_LINK_DIRECTORIES" && !Path::new(&value).is_absolute() {
                     query.error(format!("Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"", target.name));
                 }
@@ -186,7 +200,20 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             );
         }
     }
-    let mut values = expand_list(&query.property(head, head, property), false);
+    // EvaluateTargetPropertyEntries: the target's own property entries are
+    // evaluated with their own list-file backtraces as well.
+    let mut values = Vec::new();
+    match head.provenance.get(property) {
+        Some(entries) if !entries.is_empty() => {
+            for (value, backtrace) in entries.clone() {
+                values.extend(expand_list(
+                    &query.eval_bt(&value, head, head, property, &backtrace),
+                    false,
+                ));
+            }
+        }
+        _ => values.extend(expand_list(&query.property(head, head, property), false)),
+    }
     if property == "LINK_DIRECTORIES" && query.policy(head, "CMP0081") == PolicyStatus::New {
         for value in values
             .iter()
@@ -198,8 +225,20 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             ));
         }
     }
-    // INTEGRATION: For CMP0099 OLD, traverse in compile mode to exclude
-    // LINK_ONLY edges. The genex evaluator currently provides link mode.
+    // CMP0099 OLD: the transitive interface-property traversal uses
+    // UseTo::Compile, so $<LINK_ONLY:...> edges (private dependencies of
+    // static libraries) are not followed
+    // (cmGeneratorTarget::GetLinkDirectories/GetLinkOptions/GetLinkDepends).
+    let compile_query;
+    let query = if query.policy(head, "CMP0099") != PolicyStatus::New {
+        compile_query = Query {
+            compile_usage: true,
+            ..Query::new(query.ctx, query.config, query.language)
+        };
+        &compile_query
+    } else {
+        query
+    };
     collect(
         query,
         head,
@@ -831,7 +870,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
                 .var(self.head.makefile, &format!("{key}_SUPPORTED"));
         }
         let error = |problem| {
-            self.query.error(format!("Feature '{name}', specified through generator-expression '$<{kind}>' to link target '{}', is not {problem} for the '{}' link language.", self.head.name, self.query.language));
+            self.query.error_bt(self.head.backtrace.clone(), format!("Feature '{name}', specified through generator-expression '$<{kind}>' to link target '{}', is not {problem} for the '{}' link language.", self.head.name, self.query.language));
         };
         if !is_on_opt(supported.as_deref()) {
             error("supported");
@@ -856,7 +895,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
                 format
             }
             _ => {
-                self.query.error(format!("Feature '{name}', specified by variable '{key}', is malformed (wrong number of elements) and cannot be used to link target '{}'.", self.head.name));
+                self.query.error_bt(self.head.backtrace.clone(), format!("Feature '{name}', specified by variable '{key}', is malformed (wrong number of elements) and cannot be used to link target '{}'.", self.head.name));
                 return None;
             }
         };
@@ -871,7 +910,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
                 } else {
                     String::new()
                 };
-                self.query.error(format!("Feature '{name}', specified by variable '{key}', is malformed (\"<LIBRARY>\", \"<LIB_ITEM>\", or \"<LINK_ITEM>\" patterns are missing{alternative}) and cannot be used to link target '{}'.", self.head.name));
+                self.query.error_bt(self.head.backtrace.clone(), format!("Feature '{name}', specified by variable '{key}', is malformed (\"<LIBRARY>\", \"<LIB_ITEM>\", or \"<LINK_ITEM>\" patterns are missing{alternative}) and cannot be used to link target '{}'.", self.head.name));
                 return None;
             }
             let value = linker_wrapper(self.query, self.head, &value);

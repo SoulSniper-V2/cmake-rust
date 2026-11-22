@@ -366,21 +366,52 @@ impl<'a> GenCtx<'a> {
         language: Option<&str>,
         compile_usage: bool,
     ) -> String {
+        self.genex_with_dag_bt(
+            text,
+            owner,
+            head,
+            property,
+            property,
+            language,
+            compile_usage,
+            &[],
+        )
+    }
+
+    /// `genex_with_dag_usage` with an explicit DAG root and the list-file
+    /// `backtrace` of the property entry being evaluated — as
+    /// `cmGeneratorExpression::Evaluate` receives them from
+    /// `EvaluateInterfaceProperty`/`AddInterfaceEntries`: for a transitive
+    /// interface eval the checker's Top stays the entry property on `head`
+    /// (`dagChecker->EvaluatingLinkExpression()` tests `Top->Property`), and
+    /// the entry's own backtrace anchors any diagnostic it raises.
+    #[allow(clippy::too_many_arguments)] // mirrors the upstream signature
+    pub fn genex_with_dag_bt(
+        &self,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        root_property: &str,
+        language: Option<&str>,
+        compile_usage: bool,
+        backtrace: &[Frame],
+    ) -> String {
         if !text.contains("$<") {
             return text.to_owned();
         }
         let owner_key = self.target_key(owner);
         let head_key = self.target_key(head);
         let link = matches!(
-            property,
+            root_property,
             "LINK_LIBRARIES"
                 | "INTERFACE_LINK_LIBRARIES"
                 | "INTERFACE_LINK_LIBRARIES_DIRECT"
                 | "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE"
-        ) || property.starts_with("IMPORTED_LINK_INTERFACE_LIBRARIES");
+        ) || root_property.starts_with("IMPORTED_LINK_INTERFACE_LIBRARIES");
         let host_policy = super::genex_host::CtxHost::new(self, owner.makefile);
         let transitive = link
-            && !property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
+            && !root_property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
             && crate::genex::GenexHost::local_policy_status(&host_policy, "CMP0189")
                 == crate::policy::PolicyStatus::New;
         let interface = property != "LINK_LIBRARIES";
@@ -395,7 +426,17 @@ impl<'a> GenCtx<'a> {
                         owner,
                         crate::policy::index_of("CMP0131").unwrap_or_default(),
                     ) == crate::policy::PolicyStatus::New),
-            ..crate::genex::DagChecker::new(&owner_key, property)
+            ..crate::genex::DagChecker::new(&head_key, root_property)
+        };
+        let frame;
+        let dag = if owner_key == head_key && property == root_property {
+            &root
+        } else {
+            frame = crate::genex::DagChecker {
+                parent: Some(&root),
+                ..crate::genex::DagChecker::new(&owner_key, property)
+            };
+            &frame
         };
         let compiled = crate::genex::parse(text);
         let mut ectx = crate::genex::EvalContext {
@@ -404,7 +445,8 @@ impl<'a> GenCtx<'a> {
             current_target: Some(&owner_key),
             language,
             evaluate_for_buildsystem: true,
-            dag: Some(&root),
+            dag: Some(dag),
+            backtrace: (!backtrace.is_empty()).then(|| self.intern_backtrace(backtrace.to_vec())),
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
@@ -414,8 +456,15 @@ impl<'a> GenCtx<'a> {
             Ok(value) => value,
             Err(error) => {
                 if !error.quiet {
-                    let backtrace = self.backtrace(error.backtrace);
-                    self.error(backtrace, error.to_string());
+                    let frames = self.backtrace(error.backtrace);
+                    self.error(
+                        if frames.is_empty() {
+                            backtrace.to_vec()
+                        } else {
+                            frames
+                        },
+                        error.to_string(),
+                    );
                 }
                 String::new()
             }
@@ -552,6 +601,9 @@ impl<'a> GenCtx<'a> {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
         }
+        // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
+        // validation of the link structures memoized during generation.
+        super::link::check_link_libraries(self);
         std::mem::take(&mut *self.errors.borrow_mut())
     }
 }

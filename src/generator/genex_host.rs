@@ -2,7 +2,7 @@
 //! (cmGeneratorTarget / cmLocalGenerator queries used by generator
 //! expressions).
 
-use crate::genex::{ArtifactComponent, ArtifactKind, GenexHost, PropertyEntry};
+use crate::genex::{ArtifactComponent, ArtifactKind, Backtrace, GenexHost, PropertyEntry};
 use crate::policy::{self, PolicyStatus};
 use crate::state::Target;
 
@@ -119,6 +119,12 @@ impl GenexHost for CtxHost<'_, '_> {
                 backtrace: None,
             })
             .collect()
+    }
+
+    /// `cmGeneratorTarget::GetBacktrace`.
+    fn target_backtrace(&self, name: &str) -> Option<Backtrace> {
+        self.find(name)
+            .map(|target| self.ctx.intern_backtrace(target.backtrace.clone()))
     }
 
     /// `cmTarget::GetSystemIncludeDirectories`.

@@ -150,6 +150,30 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             if let Some(feature) = self.overrides.get(&item.text) {
                 item.feature = feature.clone();
             }
+            // cmComputeLinkDepends::AddLinkEntry: a feature that cannot apply
+            // to the item's target is dropped with an AUTHOR_WARNING carrying
+            // the head target's backtrace.
+            if let Some(target) = item.target {
+                if let Some((group_index, _, _)) = &group
+                    && !self.index.contains_key(&item.identity())
+                    && matches!(
+                        target.kind,
+                        TargetKind::ObjectLibrary | TargetKind::InterfaceLibrary
+                    )
+                {
+                    let group_feature = self.entries[*group_index].item.feature.clone();
+                    self.query.warn(
+                        self.head.backtrace.clone(),
+                        format!("The feature '{group_feature}', specified as part of a generator-expression '$<LINK_GROUP:{group_feature}>', will not be applied to the {} library '{}'.", if target.kind == TargetKind::ObjectLibrary { "OBJECT" } else { "INTERFACE" }, item.text),
+                    );
+                }
+                if item.feature != DEFAULT && !self.attributes(&item.feature).applies(target.kind) {
+                    self.query.warn(
+                        self.head.backtrace.clone(),
+                        format!("The feature '{0}', specified as part of a generator-expression '$<LINK_LIBRARY:{0}>', will not be applied to the {1} '{2}'.", item.feature, target.kind.type_name(), item.text),
+                    );
+                }
+            }
             if kind == Kind::Flag
                 || item
                     .target
@@ -174,7 +198,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 for (&other, existing) in &self.groups {
                     let other_feature = &self.entries[other].item.feature;
                     if group_feature != other_feature && existing.contains(&index) {
-                        self.query.error(format!("Impossible to link target '{}' because the link item '{}', specified with the group feature '{}', has already occurred with the feature '{}', which is not allowed.", self.head.name, self.entries[index].item.text, group_feature, other_feature));
+                        self.query.error_bt(self.head.backtrace.clone(), format!("Impossible to link target '{}' because the link item '{}', specified with the group feature '{}', has already occurred with the feature '{}', which is not allowed.", self.head.name, self.entries[index].item.text, group_feature, other_feature));
                     }
                 }
                 members.push(index);
@@ -393,7 +417,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                         }
                     }
                 }
-                self.query.error(message);
+                self.query.error_bt(self.head.backtrace.clone(), message);
                 return Vec::new();
             }
         }
@@ -429,9 +453,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 }
             }
             strategy => {
-                self.query.error(format!(
-                    "LINK_LIBRARIES_STRATEGY value '{strategy}' is not recognized."
-                ));
+                self.query.error_bt(
+                    self.head.backtrace.clone(),
+                    format!("LINK_LIBRARIES_STRATEGY value '{strategy}' is not recognized."),
+                );
                 return Vec::new();
             }
         }
@@ -449,7 +474,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             .map(|&index| self.entries[index].clone())
             .collect::<Vec<_>>();
         let order = self.dedup(schedule.output, member_groups.into_keys().collect());
-        for index in order {
+        for &index in &order {
             let entry = &self.entries[index];
             result.push(entry.clone());
             if let Some(members) = self.groups.get(&index) {
@@ -460,7 +485,104 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 });
             }
         }
+        // cmComputeLinkDepends::Compute: LINK_DEPENDS_DEBUG_MODE dumps the
+        // constraint graph, the strongly connected components, the computed
+        // ordering and the final link line to stderr.
+        if is_on(&self.query.var(self.head, "CMAKE_LINK_DEPENDS_DEBUG_MODE"))
+            || on(self.head, "LINK_DEPENDS_DEBUG_MODE")
+        {
+            self.display_debug(&components, &order, &result);
+        }
         result
+    }
+
+    /// `cmComputeLinkDepends::Display{ConstraintGraph,Components,
+    /// OrderedEntries,FinalEntries}` — the `LINK_DEPENDS_DEBUG_MODE` dump.
+    fn display_debug(&self, components: &Components, order: &[usize], result: &[Entry<'i>]) {
+        eprintln!(
+            "-------------------------------------------------------------------------------"
+        );
+        eprintln!(
+            "Link dependency analysis for target {}, config {}",
+            self.head.name,
+            if self.query.config.is_empty() {
+                "noconfig"
+            } else {
+                self.query.config
+            }
+        );
+        {
+            use std::fmt::Write as _;
+            let mut graph = String::new();
+            for (index, edges) in self.edges.iter().enumerate() {
+                let _ = writeln!(graph, "item {index} is [{}]", self.entries[index].item.text);
+                if !edges.is_empty() {
+                    let _ = write!(graph, "  item");
+                    for edge in edges {
+                        let _ = write!(graph, " {edge}");
+                    }
+                    let _ = writeln!(graph, " must follow it\n");
+                }
+            }
+            eprint!("{graph}");
+        }
+        eprintln!("The strongly connected components are:");
+        for (component, members) in components.members.iter().enumerate() {
+            eprintln!("Component ({component}):");
+            for &index in members {
+                eprintln!("  item {index} [{}]", self.entries[index].item.text);
+            }
+            for &edge in &components.edges[component] {
+                eprintln!("  followed by Component ({edge})");
+            }
+            eprintln!(
+                "  topo order index {}",
+                components.members.len() - 1 - component
+            );
+        }
+        eprintln!();
+        eprintln!("target [{}] link dependency ordering:", self.head.name);
+        let mut count = 2;
+        for &index in order {
+            Self::display_entry(&mut count, &self.entries[index]);
+        }
+        eprintln!();
+        eprintln!("target [{}] link line:", self.head.name);
+        let mut count = 2;
+        for entry in result {
+            Self::display_entry(&mut count, entry);
+        }
+        eprintln!();
+    }
+
+    /// `DisplayLinkEntry`: `  target [A]`/`  item [-Flag1]` lines with the
+    /// `, feature [x]` suffix; group entries carry the group's indentation.
+    fn display_entry(count: &mut usize, entry: &Entry<'_>) {
+        match entry.kind {
+            Kind::Group => {
+                eprint!("  start group");
+                *count = 4;
+            }
+            Kind::GroupEnd => {
+                eprint!("  end group");
+                *count = 2;
+            }
+            _ if entry.item.target.is_some() => {
+                eprint!(
+                    "{:>width$}target [{}]",
+                    "",
+                    entry.item.target.unwrap().name,
+                    width = *count
+                );
+            }
+            _ => {
+                eprint!("{:>width$}item [{}]", "", entry.item.text, width = *count);
+            }
+        }
+        if entry.item.feature != DEFAULT {
+            eprint!(", feature [{}]", entry.item.feature);
+        }
+        eprintln!();
     }
 
     fn dedup(&self, mut entries: Vec<usize>, mut emitted: HashSet<usize>) -> Vec<usize> {
@@ -481,8 +603,10 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 }
             }
             if !invalid.is_empty() {
-                self.query
-                    .error(format!("Erroneous option(s) for '{variable}':\n{invalid}"));
+                self.query.error_bt(
+                    self.head.backtrace.clone(),
+                    format!("Erroneous option(s) for '{variable}':\n{invalid}"),
+                );
             }
             if !first_static
                 && mode == "ALL"
@@ -542,7 +666,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
         if new && !old {
             self.entries[index].item.feature = feature.to_owned();
         } else if new && old {
-            self.query.error(format!("Impossible to link target '{}' because the link item '{}' is specified with the features '{}' and '{}', and both have an 'OVERRIDE' attribute that overrides the other. Such cycles are not allowed.", self.head.name, entry.text, feature, entry.feature));
+            self.query.error_bt(self.head.backtrace.clone(), format!("Impossible to link target '{}' because the link item '{}' is specified with the features '{}' and '{}', and both have an 'OVERRIDE' attribute that overrides the other. Such cycles are not allowed.", self.head.name, entry.text, feature, entry.feature));
         } else if !old {
             fn description(feature: &str) -> String {
                 if feature == DEFAULT {
@@ -551,7 +675,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                     format!("with the feature '{feature}'")
                 }
             }
-            self.query.error(format!("Impossible to link target '{}' because the link item '{}', specified {}, has already occurred {}, which is not allowed.", self.head.name, entry.text, description(feature), description(&entry.feature)));
+            self.query.error_bt(self.head.backtrace.clone(), format!("Impossible to link target '{}' because the link item '{}', specified {}, has already occurred {}, which is not allowed.", self.head.name, entry.text, description(feature), description(&entry.feature)));
         }
     }
 
@@ -604,6 +728,8 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             }
         }
         if !invalid.is_empty() {
+            // cmComputeLinkDepends::GetFeatureAttributes: this IssueMessage
+            // site passes no backtrace, so the diagnostic has no location.
             self.query
                 .error(format!("Erroneous option(s) for '{key}':\n{invalid}"));
         }

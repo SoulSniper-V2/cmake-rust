@@ -1132,10 +1132,13 @@ impl Evaluator<'_, '_> {
                 continue;
             }
             if options.iter().any(|option| option.contains("SHELL:")) {
-                let _ = target;
-                return Err(self.usage_error(
+                // cmGeneratorTarget::ResolveLinkerWrapper issues the
+                // diagnostic at the target's own backtrace.
+                let mut error = self.usage_error(
                     "'SHELL:' prefix is not supported as part of 'LINKER:' arguments.".to_owned(),
-                ));
+                );
+                error.backtrace = self.host.target_backtrace(target).or(error.backtrace);
+                return Err(error);
             }
             for value in wrap_options(options, &flags, &separator, concatenate, false) {
                 out.push(UsageItem {

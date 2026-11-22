@@ -97,6 +97,11 @@ pub trait GenexHost {
             })
             .collect()
     }
+    /// cmGeneratorTarget::GetBacktrace (the target's creation backtrace),
+    /// for diagnostics upstream anchors there rather than at the entry.
+    fn target_backtrace(&self, _target: &str) -> Option<Backtrace> {
+        None
+    }
     /// cmLocalGenerator::FindGeneratorTargetToUse in the named target's directory.
     fn resolve_target(&self, name: &str, _current_target: Option<&str>) -> Option<String> {
         self.resolve_alias(name)
