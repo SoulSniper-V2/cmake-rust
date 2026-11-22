@@ -131,7 +131,7 @@ fn find_make_program(interp: &mut Interp) -> bool {
             }
             _ => {
                 let text = format!(
-                    "Running\n\n '{program}' '--version'\n\nfailed with:\n\n no such file or directory"
+                    "Running\n '{program}' '--version'\nfailed with:\n no such file or directory"
                 );
                 interp.issue(MessageType::FatalError, &text);
                 interp.set_fatal();

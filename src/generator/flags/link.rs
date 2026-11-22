@@ -351,12 +351,23 @@ pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Op
         .join("CMakeFiles")
         .join(format!("{}.dir", target.name))
         .join("link.d");
-    Some(
-        path.strip_prefix(&ctx.interp.home_binary)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .into_owned(),
-    )
+    let relative = path
+        .strip_prefix(&ctx.interp.home_binary)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .into_owned();
+    // cmGlobalNinjaGenerator::NinjaOutputPath (via ConvertToNinjaPath).
+    let mut prefix = ctx
+        .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
+        .unwrap_or_default();
+    if !prefix.is_empty() && !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+    if !prefix.is_empty() && !crate::util::is_full_path(&relative) {
+        Some(format!("{prefix}{relative}"))
+    } else {
+        Some(relative)
+    }
 }
 
 fn append_depfile_flag(inputs: &Flags<'_, '_>, flags: &mut String) {

@@ -4,7 +4,7 @@
 
 use crate::genex::{ArtifactComponent, ArtifactKind, GenexHost, PropertyEntry};
 use crate::policy::{self, PolicyStatus};
-use crate::state::Target;
+use crate::state::{Target, TargetKind};
 
 use super::ctx::GenCtx;
 use super::target::{self as gt, ArtifactType, SourceKind};
@@ -36,18 +36,42 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         let ctx = self.ctx;
         let names = gt::names(ctx, target, config);
         let runtime = gt::directory(ctx, target, config, ArtifactType::Runtime);
+        let dir_name = |path: &str| {
+            (
+                crate::util::filename_path(path),
+                crate::util::filename_name(path),
+            )
+        };
         Ok(match kind {
-            ArtifactKind::File | ArtifactKind::LinkerFile | ArtifactKind::LinkerLibraryFile => {
-                let artifact = if kind == ArtifactKind::File {
-                    ArtifactType::Runtime
-                } else {
+            ArtifactKind::File | ArtifactKind::LinkerFile => {
+                // ArtifactTag / ArtifactLinkerTag: TARGET_FILE uses the real
+                // name; TARGET_LINKER_FILE is the import library when the
+                // target has one and the link-time (non-real) artifact
+                // otherwise (cmGeneratorExpressionNode result creators).
+                let artifact = if kind == ArtifactKind::LinkerFile
+                    && gt::has_import_library(ctx, target, config)
+                {
                     ArtifactType::Import
+                } else {
+                    ArtifactType::Runtime
                 };
                 let path = gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File);
-                (
-                    crate::util::filename_path(&path),
-                    crate::util::filename_name(&path),
-                )
+                dir_name(&path)
+            }
+            ArtifactKind::LinkerLibraryFile => {
+                // ArtifactLinkerLibraryTag: empty on DLL platforms for
+                // targets other than static libraries.
+                if gt::is_dll_platform(ctx, target) && target.kind != TargetKind::StaticLibrary {
+                    (String::new(), String::new())
+                } else {
+                    dir_name(&gt::full_path(
+                        ctx,
+                        target,
+                        config,
+                        ArtifactType::Runtime,
+                        false,
+                    ))
+                }
             }
             ArtifactKind::ImportFile | ArtifactKind::LinkerImportFile => {
                 if names.import_library.is_empty() {

@@ -50,6 +50,9 @@ pub enum SourceKind {
     Extra,
     CustomCommandOutput,
     ModuleDefinition,
+    /// `SourceKindManifest`: user-specified manifest files that become
+    /// dependencies of the link step.
+    Manifest,
     Resource,
 }
 
@@ -63,8 +66,7 @@ pub struct SourceInfo {
     /// Object file name relative to the target's object directory, e.g.
     /// `src/foo.c.o` (empty for non-object sources).
     pub object_name: String,
-    /// Whether this source is GENERATED (checked by the resolution tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether this source is GENERATED.
     pub generated: bool,
     /// For an object file of a linked OBJECT library
     /// (`cmSourceFile::GetObjectLibrary`), that library's name.
@@ -523,6 +525,57 @@ pub fn has_soname(ctx: &GenCtx, target: &Target, config: &str) -> bool {
 #[allow(dead_code, reason = "target query for generator consumers")]
 pub fn is_framework_on_apple(_ctx: &GenCtx, _target: &Target, _config: &str) -> bool {
     false
+}
+
+/// `cmTarget::IsDLLPlatform`.
+pub fn is_dll_platform(ctx: &GenCtx, target: &Target) -> bool {
+    !ctx.var(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
+        .unwrap_or_default()
+        .is_empty()
+}
+
+/// `cmTarget::IsExecutableWithExports`.
+pub fn executable_with_exports(target: &Target) -> bool {
+    target.kind == TargetKind::Executable && is_on_opt(target.props.get("ENABLE_EXPORTS"))
+}
+
+/// `cmGeneratorTarget::IsCSharpOnly`: the only language compiled by the
+/// target (plus an explicit LINKER_LANGUAGE) is CSharp.
+fn is_csharp_only(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    let mut languages: BTreeSet<String> = sources(ctx, target, config)
+        .iter()
+        .filter(|source| !source.language.is_empty())
+        .map(|source| source.language.clone())
+        .collect();
+    if let Some(language) = target.props.get("LINKER_LANGUAGE") {
+        let language = ctx.genex(language, Some(target), None);
+        if !language.is_empty() {
+            languages.insert(language);
+        }
+    }
+    languages.len() == 1 && languages.contains("CSharp")
+}
+
+/// `cmGeneratorTarget::HasImportLibrary` (without the Xcode
+/// GENERATE_TEXT_BASED_STUBS attribute override).
+pub fn has_import_library(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    let dll = is_dll_platform(ctx, target)
+        && (target.kind == TargetKind::SharedLibrary || executable_with_exports(target))
+        && !is_csharp_only(ctx, target, config);
+    let aix = {
+        let system = ctx
+            .var(target.makefile, "CMAKE_SYSTEM_NAME")
+            .unwrap_or_default();
+        (system == "AIX" || system == "OS400") && executable_with_exports(target)
+    };
+    // cmMakefile::PlatformSupportsAppleTextStubs.
+    let apple_stubs = ctx
+        .var(target.makefile, "APPLE")
+        .is_some_and(|value| crate::util::is_on(&value))
+        && ctx.var(target.makefile, "CMAKE_TAPI").is_some()
+        && target.kind == TargetKind::SharedLibrary
+        && is_on_opt(target.props.get("ENABLE_EXPORTS"));
+    dll || aix || apple_stubs
 }
 
 #[derive(Debug)]
@@ -1099,6 +1152,7 @@ fn classify_source(
         // resources retain their classification even if the compiler ignores them.
         match extension.to_ascii_lowercase().as_str() {
             "def" => SourceKind::ModuleDefinition,
+            "manifest" if !enabled("VS_DEPLOYMENT_CONTENT") => SourceKind::Manifest,
             "idl" | "resx" | "appxmanifest" | "manifest" | "pfx" | "xaml" => SourceKind::Resource,
             _ if matches!(
                 extension,

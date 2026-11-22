@@ -295,10 +295,23 @@ impl<'a, 'i> Query<'a, 'i> {
 
     fn ninja_path(&self, path: &str) -> String {
         let path = Path::new(path);
-        match path.strip_prefix(self.top_binary()) {
+        let relative = match path.strip_prefix(self.top_binary()) {
             Ok(relative) if relative.as_os_str().is_empty() => ".".into(),
             Ok(relative) => relative.to_string_lossy().into_owned(),
             Err(_) => path.to_string_lossy().into_owned(),
+        };
+        // cmGlobalNinjaGenerator::NinjaOutputPath (via ConvertToNinjaPath).
+        let mut prefix = self
+            .ctx
+            .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
+            .unwrap_or_default();
+        if !prefix.is_empty() && !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        if !prefix.is_empty() && !crate::util::is_full_path(&relative) {
+            format!("{prefix}{relative}")
+        } else {
+            relative
         }
     }
 }

@@ -264,12 +264,17 @@ pub struct NinjaGenerator<'a> {
     depends_closures: HashMap<String, BTreeSet<String>>,
     /// `CompileCommandsStream` entries (compile_commands.json).
     compile_commands: Vec<String>,
+    /// `cmGlobalNinjaGenerator::AssumedSourceDependencies` (std::map:
+    /// sorted by absolute source path).
+    assumed_source_dependencies: BTreeMap<String, BTreeSet<String>>,
     pub cmake_cmd: String,
     pub ninja_cmd: String,
     home_binary: String,
     home_source: String,
     config: String,
     install_target_enabled: bool,
+    /// `cmGlobalNinjaGenerator::OutputPathPrefix` (with trailing slash).
+    output_prefix: String,
 }
 
 impl<'a> NinjaGenerator<'a> {
@@ -301,29 +306,49 @@ impl<'a> NinjaGenerator<'a> {
             local_custom_commands: Vec::new(),
             depends_closures: HashMap::new(),
             compile_commands: Vec::new(),
+            assumed_source_dependencies: BTreeMap::new(),
             cmake_cmd: cmake,
             ninja_cmd: ninja,
             home_binary: interp.home_binary.clone(),
             home_source: interp.home_source.clone(),
             config: ctx.config.clone(),
             install_target_enabled: interp.ext.misc.contains_key("install-target-enabled"),
+            output_prefix: {
+                // cmGlobalNinjaGenerator::InitOutputPathPrefix
+                let mut prefix = ctx
+                    .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
+                    .unwrap_or_default();
+                if !prefix.is_empty() && !prefix.ends_with('/') {
+                    prefix.push('/');
+                }
+                prefix
+            },
         }
     }
 
     // ------------------------------------------------------------------
     // Path helpers
 
+    /// `cmGlobalNinjaGenerator::NinjaOutputPath`: prepend
+    /// `CMAKE_NINJA_OUTPUT_PATH_PREFIX` to relative output paths.
+    pub fn output_path(&self, path: &str) -> String {
+        if self.output_prefix.is_empty() || util::is_full_path(path) {
+            return path.to_owned();
+        }
+        format!("{}{}", self.output_prefix, path)
+    }
+
     /// `cmOutputConverter::MaybeRelativeToTopBinDir` +
     /// `cmGlobalNinjaGenerator::ConvertToNinjaPath`.
     pub fn ninja_path(&self, path: &str) -> String {
         let bin = &self.home_binary;
         if path == bin {
-            return ".".to_owned();
+            return self.output_path(".");
         }
         if util::is_subdirectory(path, bin) {
-            return path[bin.len() + 1..].to_owned();
+            return self.output_path(&path[bin.len() + 1..]);
         }
-        path.to_owned()
+        self.output_path(path)
     }
 
     /// `cmGlobalNinjaGenerator::ConvertToNinjaAbsPath`.
@@ -351,6 +376,17 @@ impl<'a> NinjaGenerator<'a> {
 
     fn write_build(&mut self, build: &Build) {
         write_build(&mut self.build, build, 0);
+    }
+
+    /// `cmNinjaTargetGenerator::AddDepfileBinding`: `DEP_FILE` holds the
+    /// shell-escaped path for the command line while `depfile` holds the
+    /// raw path for ninja's `depfile` attribute when they differ.
+    fn add_depfile_binding(&self, vars: &mut BTreeMap<String, String>, depfile: String) {
+        let depfile_shell = self.shell(&depfile);
+        if depfile_shell != depfile {
+            vars.insert("depfile".into(), depfile);
+        }
+        vars.insert("DEP_FILE".into(), depfile_shell);
     }
 
     /// `cmLocalNinjaGenerator::BuildCommandLine` (Unix).
@@ -396,21 +432,31 @@ impl<'a> NinjaGenerator<'a> {
                     return;
                 }
                 let dir = self.target_dir_prefix(target.makefile);
-                out.push(format!("{dir}{}", target.name));
+                out.push(self.output_path(&format!("{dir}{}", target.name)));
             }
             TargetKind::Utility | TargetKind::GlobalTarget | TargetKind::InterfaceLibrary => {
                 let dir = self.target_dir_prefix(target.makefile);
-                out.push(format!("{dir}{}", target.name));
+                out.push(self.output_path(&format!("{dir}{}", target.name)));
             }
             _ => {}
         }
     }
 
     /// The `<dir>/` prefix used for utility/global targets in subdirectories.
+    /// Callers apply `output_path` to the formatted target name, so the
+    /// directory part must not carry `CMAKE_NINJA_OUTPUT_PATH_PREFIX`.
     fn target_dir_prefix(&self, makefile: usize) -> String {
         let binary = &self.ctx.interp.makefiles[makefile].binary_dir;
-        let relative = self.ninja_path(binary);
-        if relative == "." || relative.is_empty() {
+        let bin = &self.home_binary;
+        if binary == bin {
+            return String::new();
+        }
+        let relative = if util::is_subdirectory(binary, bin) {
+            &binary[bin.len() + 1..]
+        } else {
+            binary.as_str()
+        };
+        if relative.is_empty() {
             String::new()
         } else {
             format!("{relative}/")
@@ -448,7 +494,7 @@ impl<'a> NinjaGenerator<'a> {
             self.target_aliases.insert(output, None);
         }
         self.target_aliases
-            .entry(alias.to_owned())
+            .entry(self.output_path(alias))
             .or_insert_with(|| Some(target.name.clone()));
     }
 
@@ -464,6 +510,7 @@ impl<'a> NinjaGenerator<'a> {
         for index in 0..interp.makefiles.len() {
             self.generate_local(index);
         }
+        self.write_assumed_source_dependencies();
         self.write_target_aliases();
         self.write_folder_targets();
         self.write_builtin_targets();
@@ -586,17 +633,21 @@ impl<'a> NinjaGenerator<'a> {
             write_divider(&mut top);
             top.push_str("# Include auxiliary files.\n\n");
             write_comment(&mut top, "Include rules file.");
-            top.push_str("include CMakeFiles/rules.ninja\n\n");
+            // cmLocalNinjaGenerator::WriteNinjaFilesInclusionCommon
+            let rules_include = self.output_path("CMakeFiles/rules.ninja");
+            let _ = writeln!(top, "include {}", encode_path(&rules_include));
+            top.push('\n');
             write_divider(&mut top);
             write_comment(
                 &mut top,
                 "Logical path to working directory; prefix for absolute paths.",
             );
-            let _ = writeln!(
-                top,
-                "cmake_ninja_workdir = {}",
-                encode_path(&format!("{}/", self.home_binary))
-            );
+            // cmGlobalNinjaGenerator::StripNinjaOutputPathPrefixAsSuffix
+            let mut workdir = format!("{}/", self.home_binary);
+            if !self.output_prefix.is_empty() && workdir.ends_with(&self.output_prefix) {
+                workdir.truncate(workdir.len() - self.output_prefix.len());
+            }
+            let _ = writeln!(top, "cmake_ninja_workdir = {}", encode_path(&workdir));
             self.build.push_str(&top);
             let mut rules_top = String::new();
             self.write_project_header(&mut rules_top, 0);
@@ -662,6 +713,30 @@ impl<'a> NinjaGenerator<'a> {
         self.write_custom_command_build_statements(makefile);
     }
 
+    /// `cmGlobalNinjaGenerator::WriteAssumedSourceDependencies`: for
+    /// GENERATED sources with no known producing rule, write an empty
+    /// custom-command edge resting on the consuming targets' order-only
+    /// dependencies.
+    fn write_assumed_source_dependencies(&mut self) {
+        let assumed = std::mem::take(&mut self.assumed_source_dependencies);
+        for (source, deps) in assumed {
+            let mut outputs = CcOutputs::default();
+            outputs.explicit.push(source);
+            self.write_custom_command_build(
+                "",
+                "",
+                "Assume dependencies for generated source file.",
+                "",
+                "",
+                false,
+                true,
+                outputs,
+                Vec::new(),
+                deps.into_iter().collect(),
+            );
+        }
+    }
+
     // ------------------------------------------------------------------
     // Global targets
 
@@ -703,7 +778,7 @@ impl<'a> NinjaGenerator<'a> {
                 .var(0, "CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY")
                 .is_none_or(|value| util::is_off(&value))
             {
-                depends.push("all".to_owned());
+                depends.push(self.output_path("all"));
             }
             infos.push((
                 "package".into(),
@@ -755,7 +830,7 @@ impl<'a> NinjaGenerator<'a> {
                 .var(0, "CMAKE_SKIP_TEST_ALL_DEPENDENCY")
                 .is_some_and(|value| util::is_off(&value))
             {
-                depends.push("all".to_owned());
+                depends.push(self.output_path("all"));
             }
             infos.push((
                 "test".into(),
@@ -825,7 +900,7 @@ impl<'a> NinjaGenerator<'a> {
                 .var(0, "CMAKE_SKIP_INSTALL_ALL_DEPENDENCY")
                 .is_none_or(|value| util::is_off(&value))
             {
-                depends.push("all".to_owned());
+                depends.push(self.output_path("all"));
             }
             // We are building CMake itself: the original executable cannot
             // install over itself, so the in-tree `cmake` target is used.
@@ -906,8 +981,8 @@ impl<'a> NinjaGenerator<'a> {
                 .binary_dir
                 .clone()
         });
-        let output_name = format!("{prefix}{}", global.name);
-        let util_name = format!("{prefix}CMakeFiles/{}.util", global.name);
+        let output_name = self.output_path(&format!("{prefix}{}", global.name));
+        let util_name = self.output_path(&format!("{prefix}CMakeFiles/{}.util", global.name));
         let mut lines: Vec<String> = Vec::new();
         let real_lines: Vec<&Vec<String>> = global
             .command_lines
@@ -1149,8 +1224,12 @@ impl<'a> NinjaGenerator<'a> {
         self.write_rebuild_manifest(&mut out);
         self.write_target_clean(&mut out);
         self.write_target_help(&mut out);
-        write_comment(&mut out, "Make the all target the default.");
-        out.push_str("default all\n");
+        // cmGlobalNinjaGenerator::WriteTargetDefault: no default statement
+        // when CMAKE_NINJA_OUTPUT_PATH_PREFIX is used.
+        if self.output_prefix.is_empty() {
+            write_comment(&mut out, "Make the all target the default.");
+            out.push_str("default all\n");
+        }
         if self.install_target_enabled
             && self
                 .ctx
@@ -1165,7 +1244,7 @@ impl<'a> NinjaGenerator<'a> {
         {
             let mut build = Build::new("phony");
             build.comment = "Install every subdirectory in parallel".into();
-            build.outputs.push("install/parallel".into());
+            build.outputs.push(self.output_path("install/parallel"));
             for makefile in &self.ctx.interp.makefiles {
                 build
                     .explicit_deps
@@ -1201,7 +1280,7 @@ impl<'a> NinjaGenerator<'a> {
         self.rule_names.insert(rule.name.clone());
         let mut rebuild = Build::new("RERUN_CMAKE");
         rebuild.comment = "Re-run CMake if any of its inputs changed.".into();
-        rebuild.outputs.push("build.ninja".into());
+        rebuild.outputs.push(self.output_path("build.ninja"));
         for makefile in &self.ctx.interp.makefiles {
             rebuild
                 .outputs
@@ -1230,7 +1309,7 @@ impl<'a> NinjaGenerator<'a> {
         {
             deps.push(self.ninja_path(&extra));
         }
-        deps.push("CMakeCache.txt".into());
+        deps.push(self.output_path("CMakeCache.txt"));
         rebuild.variables.insert("pool".into(), "console".into());
         deps.sort();
         deps.dedup();
@@ -1252,7 +1331,7 @@ impl<'a> NinjaGenerator<'a> {
         // AddRebuildManifestOutputs: build.ninja, then
         // cmGlobalGenerator::AddCMakeFilesToRebuild (install scripts of all
         // directories, then test files of directories with testing on).
-        let mut outputs = vec!["build.ninja".to_owned()];
+        let mut outputs = vec![self.output_path("build.ninja")];
         let skip_install = self
             .ctx
             .var(0, "CMAKE_SKIP_INSTALL_RULES")
@@ -1292,7 +1371,7 @@ impl<'a> NinjaGenerator<'a> {
         write_rule(&mut self.rules, &rule);
         let mut build = Build::new("CLEAN");
         build.comment = "Clean all the built files.".into();
-        build.outputs.push("clean".into());
+        build.outputs.push(self.output_path("clean"));
         write_build(out, &build, 0);
     }
 
@@ -1307,7 +1386,7 @@ impl<'a> NinjaGenerator<'a> {
         write_rule(&mut self.rules, &rule);
         let mut build = Build::new("HELP");
         build.comment = "Print all primary targets available.".into();
-        build.outputs.push("help".into());
+        build.outputs.push(self.output_path("help"));
         write_build(out, &build, 0);
     }
 }
@@ -1530,7 +1609,7 @@ impl<'a> NinjaGenerator<'a> {
             order.sort();
             order.dedup();
             if order.is_empty() {
-                order.push(".".into());
+                order.push(self.output_path("."));
             }
             build.order_only_deps = order;
             write_build(&mut out, &build, 0);
@@ -1576,7 +1655,8 @@ impl<'a> NinjaGenerator<'a> {
             build.outputs.push(object.clone());
             // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
             // passed to the compiler by absolute path.
-            build.explicit_deps.push(self.ninja_abs_path(&source.path));
+            let source_abs = self.ninja_abs_path(&source.path);
+            build.explicit_deps.push(source_abs.clone());
             // Precompiled header dependencies.
             let pch_source = super::pch::pch_source(self.ctx, target, &config, &source.language);
             if !pch_source.is_empty() && source_props.get("SKIP_PRECOMPILE_HEADERS").is_none() {
@@ -1598,6 +1678,24 @@ impl<'a> NinjaGenerator<'a> {
                 }
             }
             build.order_only_deps.push(order_target.clone());
+            // A GENERATED source with no custom command (on itself or on
+            // any other source) is assumed to be produced by one of the
+            // order-only dependencies (cmNinjaTargetGenerator's
+            // AddAssumedSourceDependencies).
+            if source.generated
+                && !source_props
+                    .get("__CMAKE_GENERATED_BY_CMAKE")
+                    .is_some_and(util::is_on)
+                && self
+                    .attached_command(target.makefile, &source.path)
+                    .is_none()
+                && !self.custom_command_outputs.contains(&source_abs)
+            {
+                self.assumed_source_dependencies
+                    .entry(source_abs)
+                    .or_default()
+                    .extend(build.order_only_deps.iter().cloned());
+            }
             build.variables.insert("FLAGS".into(), vars.flags.clone());
             build.variables.insert("DEFINES".into(), vars.defines);
             build.variables.insert("INCLUDES".into(), vars.includes);
@@ -1607,19 +1705,35 @@ impl<'a> NinjaGenerator<'a> {
                 &format!("CMAKE_{}_DEPFILE_FORMAT", source.language),
             );
             if depfile_format != "msvc" {
-                build
-                    .variables
-                    .insert("DEP_FILE".into(), format!("{object}.d"));
+                // cmNinjaTargetGenerator::AddDepfileBinding.
+                let replace_ext = !source.language.is_empty()
+                    && self
+                        .ctx
+                        .var(
+                            target.makefile,
+                            &format!("CMAKE_{}_DEPFILE_EXTENSION_REPLACE", source.language),
+                        )
+                        .is_some_and(|value| util::is_on(&value));
+                let depfile = if replace_ext {
+                    let name = util::filename_name(&object);
+                    let stem = name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&name);
+                    format!("{object_file_dir}/{stem}.d")
+                } else {
+                    format!("{object}.d")
+                };
+                self.add_depfile_binding(&mut build.variables, depfile);
             }
             build.variables.insert(
                 "LAUNCHER".into(),
                 flags::compiler_launcher(self.ctx, target, &source.language),
             );
             let object_dir_rel = self.ninja_path(&object_dir);
-            build.variables.insert("OBJECT_DIR".into(), object_dir_rel);
             build
                 .variables
-                .insert("OBJECT_FILE_DIR".into(), object_file_dir);
+                .insert("OBJECT_DIR".into(), self.shell(&object_dir_rel));
+            build
+                .variables
+                .insert("OBJECT_FILE_DIR".into(), self.shell(&object_file_dir));
             self.set_msvc_target_pdb_variable(target, &mut build.variables);
             let mut export_vars = build.variables.clone();
             export_vars.insert("FLAGS".into(), vars.flags_untrimmed.clone());
@@ -1641,7 +1755,9 @@ impl<'a> NinjaGenerator<'a> {
             let mut build = Build::new("phony");
             build.comment = format!("Object library {}", target.name);
             let prefix = self.target_dir_prefix(target.makefile);
-            build.outputs.push(format!("{prefix}{}", target.name));
+            build
+                .outputs
+                .push(self.output_path(&format!("{prefix}{}", target.name)));
             build.explicit_deps = objects;
             self.write_build(&build);
             self.add_target_alias(&target.name.clone(), target);
@@ -1716,6 +1832,30 @@ impl<'a> NinjaGenerator<'a> {
         let link_depfile = flags::link_dependency_file(self.ctx, target, language);
         let use_rsp = false;
         if !self.has_rule(&rule_name) {
+            // cmNinjaNormalTargetGenerator::WriteLinkStatement: PRE_BUILD and
+            // PRE_LINK comments precede the link description, POST_BUILD
+            // follows.
+            let mut pre_link_comments: Vec<String> = Vec::new();
+            let mut post_build_comments: Vec<String> = Vec::new();
+            for stage in [
+                CustomCommandKind::PreBuild,
+                CustomCommandKind::PreLink,
+                CustomCommandKind::PostBuild,
+            ] {
+                for command in target
+                    .custom_commands
+                    .iter()
+                    .filter(|command| command.kind == stage)
+                {
+                    if let Some(comment) = self.evaluate_command(command).comment {
+                        if stage == CustomCommandKind::PostBuild {
+                            post_build_comments.push(comment);
+                        } else {
+                            pre_link_comments.push(comment);
+                        }
+                    }
+                }
+            }
             let mut rule = Rule {
                 name: rule_name.clone(),
                 ..Rule::default()
@@ -1780,7 +1920,19 @@ impl<'a> NinjaGenerator<'a> {
             rule.command = self.build_command_line(&expanded);
             let visible = visible_type_name(target.kind);
             rule.comment = format!("Rule for linking {language} {visible}.");
-            rule.description = format!("Linking {language} {visible} $TARGET_FILE");
+            let prelink = pre_link_comments.join("; ");
+            let postbuild = post_build_comments.join("; ");
+            let mut description = String::new();
+            if !prelink.is_empty() {
+                description.push_str(&prelink);
+                description.push_str("; ");
+            }
+            description.push_str(&format!("Linking {language} {visible} $TARGET_FILE"));
+            if !postbuild.is_empty() {
+                description.push_str("; ");
+                description.push_str(&postbuild);
+            }
+            rule.description = description;
             rule.restat = "$RESTAT".into();
             self.add_rule(&rule);
         }
@@ -1843,6 +1995,13 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .map(|dep| self.ninja_path(dep))
                 .collect();
+            // cmNinjaTargetGenerator::ComputeLinkDeps: user-specified
+            // manifest sources (GetManifests).
+            for source in gt::sources(self.ctx, target, &config).iter() {
+                if source.kind == SourceKind::Manifest {
+                    build.implicit_deps.push(self.ninja_path(&source.path));
+                }
+            }
             shared_symlinks = line
                 .shared_symlinks
                 .iter()
@@ -1874,10 +2033,10 @@ impl<'a> NinjaGenerator<'a> {
         build.variables.insert("CONFIG".into(), config.clone());
         build
             .variables
-            .insert("OBJECT_DIR".into(), object_dir.clone());
+            .insert("OBJECT_DIR".into(), self.shell(&object_dir));
         build
             .variables
-            .insert("TARGET_FILE".into(), target_real.clone());
+            .insert("TARGET_FILE".into(), self.shell(&target_real));
         // Build-event commands: PRE_BUILD and PRE_LINK run before the link,
         // POST_BUILD after it.
         let mut byproducts = CcOutputs::default();
@@ -1935,7 +2094,7 @@ impl<'a> NinjaGenerator<'a> {
             );
             build
                 .variables
-                .insert("SONAME".into(), names.shared_object.clone());
+                .insert("SONAME".into(), self.shell(&names.shared_object));
         }
         if !names.import_library.is_empty() {
             let implib = gt::full_path(self.ctx, target, &config, ArtifactType::Import, false);
@@ -2398,10 +2557,14 @@ impl<'a> NinjaGenerator<'a> {
             let out = self.ninja_path(path);
             if !util::is_full_path(&out) {
                 outputs.workdir.push(out.clone());
-                self.custom_command_outputs
-                    .insert(self.ninja_abs_path(path));
+                let abs = self.ninja_abs_path(path);
+                self.custom_command_outputs.insert(abs.clone());
+                self.assumed_source_dependencies.remove(&abs);
             }
             self.custom_command_outputs.insert(out.clone());
+            // SeenCustomCommandOutput: a known producer retires the assumed
+            // dependencies recorded for the same path.
+            self.assumed_source_dependencies.remove(&out);
             outputs.explicit.push(out);
         }
     }
