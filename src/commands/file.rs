@@ -1,6 +1,8 @@
 //! cmFileCommand and its filesystem subcommands.
 
 mod copy;
+mod curl_strerror;
+mod download;
 mod glob;
 mod lock;
 mod generate;
@@ -61,9 +63,9 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "RPATH_CHANGE" | "CHRPATH" | "RPATH_SET" | "RPATH_CHECK" | "RPATH_REMOVE"
         | "READ_ELF" => rpath::run(interp, args),
         "GENERATE" => generate::run(interp, args),
-        "DOWNLOAD"
-        | "UPLOAD"
-        | "ARCHIVE_CREATE"
+        "DOWNLOAD" => download::download(interp, args),
+        "UPLOAD" => download::upload(interp, args),
+        "ARCHIVE_CREATE"
         | "ARCHIVE_EXTRACT"
         | "GET_RUNTIME_DEPENDENCIES"
         | "READ_MACHO" => {
