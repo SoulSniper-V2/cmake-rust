@@ -69,6 +69,8 @@ pub struct Target {
     pub traced_utilities: Vec<(String, bool)>,
     /// `cmTarget::AddCodegenDependency`.
     pub codegen_dependencies: BTreeSet<String>,
+    /// `cmGeneratorTarget::UnityBatchedSourceFiles`.
+    pub unity_batched: BTreeSet<String>,
     /// `cmTarget::GetFindPackageStack` (enclosing find_package calls).
     pub find_package_stack: Vec<String>,
 }
@@ -97,6 +99,7 @@ impl Target {
             have_install_rule: false,
             traced_utilities: Vec::new(),
             codegen_dependencies: BTreeSet::new(),
+            unity_batched: BTreeSet::new(),
             find_package_stack: Vec::new(),
         }
     }

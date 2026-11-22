@@ -20,6 +20,7 @@
 //! - `tests.rs`    cmTestGenerator -> CTestTestfile.cmake.
 //! - `export.rs`   export()/install(EXPORT) files.
 
+pub mod automatic;
 pub mod ctx;
 pub mod custom;
 pub mod export;
@@ -29,6 +30,7 @@ pub mod genex_host;
 pub mod graphviz;
 pub mod install;
 pub mod link;
+pub mod pch;
 pub mod ninja;
 pub mod target;
 pub mod tests;
@@ -48,6 +50,8 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::Compute -> cmMakefile::Generate: deferred custom
     // command actions attach to sources/targets before anything is computed.
     crate::commands::custom_actions::run_generator_actions(interp, &mut expand_output_genex);
+    // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
+    automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
     let result = {

@@ -60,6 +60,17 @@ pub fn compile_vars_with_source_props(
         // Source options have neither SHELL processing nor deduplication.
         append_options(&mut flags, expand_list(&inputs.eval(options), false));
     }
+    // Precompile headers compile options (cmNinjaTargetGenerator::
+    // ComputeFlagsForObject).
+    let pch_source = crate::generator::pch::pch_source(ctx, target, config, &source.language);
+    if !pch_source.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+        let options = if source.path == pch_source {
+            crate::generator::pch::pch_create_options(ctx, target, config, &source.language)
+        } else {
+            crate::generator::pch::pch_use_options(ctx, target, config, &source.language)
+        };
+        append_options(&mut flags, expand_list(&inputs.eval(&options), false));
+    }
     CompileVars {
         flags_untrimmed: flags.clone(),
         flags: flags.trim_matches(cmake_space).to_owned(),

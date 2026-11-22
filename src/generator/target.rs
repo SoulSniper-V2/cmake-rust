@@ -43,6 +43,8 @@ pub struct Names {
 pub enum SourceKind {
     /// Compiled to an object file.
     ObjectSource,
+    /// Included by a unity source (`SourceKindUnityBatched`).
+    UnityBatched,
     Header,
     ExternalObject,
     /// Source without a build action.
@@ -967,6 +969,9 @@ fn classify_source(
     ) {
         return SourceKind::Extra;
     }
+    if target.unity_batched.contains(path) {
+        return SourceKind::UnityBatched;
+    }
     let extension = source_extension(path);
     if file_set_kind == Some(SourceKind::Header) || enabled("HEADER_FILE_ONLY") {
         SourceKind::Header
@@ -1324,7 +1329,7 @@ fn evaluated_entries(
 
 /// `cmLocalGenerator::DirectoryBacktrace`: the makefile's persistent
 /// file-scope frame, used for diagnostics issued through the local generator.
-fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
+pub(crate) fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
     let makefile = &ctx.interp.makefiles[makefile];
     let file = makefile
         .list_files
@@ -1525,7 +1530,6 @@ fn collect_sources(
     let mut found = Vec::new();
     let mut seen = HashSet::new();
     let mut bad_objects = Vec::new();
-    let mut unity_objects = false;
     'groups: for group in groups {
         for entry in group {
             // Resolve the whole entry first; an unresolvable source drops the
@@ -1587,8 +1591,6 @@ fn collect_sources(
                     bad_objects.push(filename_name(&listed));
                 }
                 let object_name = if kind == SourceKind::ObjectSource {
-                    unity_objects |=
-                        !is_on_opt(property(&path, "SKIP_UNITY_BUILD_INCLUSION").as_deref());
                     object_file_name(ctx, target, config, &path, &language, property)
                 } else {
                     String::new()
@@ -1609,20 +1611,6 @@ fn collect_sources(
             "OBJECT library \"{}\" contains:\n  {}\nbut may contain only sources that compile, header files, and other files that would not affect linking of a normal library.",
             target.name, bad_objects.join("\n  ")
         ));
-    }
-    if unity_objects && is_on_opt(target.props.get("UNITY_BUILD")) {
-        // cmLocalGenerator::AddUnityBuild is not ported; fail loudly rather
-        // than silently generating a non-unity build.
-        let key = memo_key("unity-build", target, config);
-        if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
-            ctx.error(
-                Vec::new(),
-                format!(
-                    "UNITY_BUILD is not supported for target \"{}\".",
-                    target.name
-                ),
-            );
-        }
     }
     found
 }

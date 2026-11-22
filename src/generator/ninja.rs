@@ -1272,10 +1272,12 @@ impl<'a> NinjaGenerator<'a> {
             write_build(&mut out, &build, 0);
         }
         // GetExternalObjects precede the compiled objects.
+        let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
         let mut objects: Vec<String> = sources
             .iter()
             .filter(|source| source.kind == SourceKind::ExternalObject)
             .map(|source| self.ninja_path(&source.path))
+            .filter(|object| pch_extension.as_ref().is_none_or(|extension| !object.ends_with(extension)))
             .collect();
         for source in sources.iter() {
             if source.kind != SourceKind::ObjectSource {
@@ -1293,7 +1295,16 @@ impl<'a> NinjaGenerator<'a> {
             // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
             // passed to the compiler by absolute path.
             build.explicit_deps.push(self.ninja_abs_path(&source.path));
-            // INTEGRATION: precompiled header dependencies.
+            // Precompiled header dependencies.
+            let pch_source = super::pch::pch_source(self.ctx, target, &config, &source.language);
+            if !pch_source.is_empty() && source_props.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+                let header = super::pch::pch_header(self.ctx, target, &config, &source.language);
+                build.implicit_deps.push(self.ninja_path(&header));
+                if source.path != pch_source {
+                    let file = super::pch::pch_file(self.ctx, target, &config, &source.language);
+                    build.implicit_deps.push(self.ninja_path(&file));
+                }
+            }
             if let Some(depends) = source_props.get("OBJECT_DEPENDS") {
                 for dep in util::expand_list(depends, false) {
                     let dep = if util::is_full_path(&dep) { util::collapse_full_path(&dep, "") } else { dep };
@@ -1321,7 +1332,14 @@ impl<'a> NinjaGenerator<'a> {
             export_vars.insert("FLAGS".into(), vars.flags_untrimmed.clone());
             self.export_object_compile_command(target, source, &object, &export_vars);
             write_build(&mut out, &build, 0);
-            objects.push(object);
+            // PCH objects are not linked.
+            let is_pch = self
+                .ctx
+                .var(target.makefile, "CMAKE_PCH_EXTENSION")
+                .is_some_and(|extension| object.ends_with(&extension));
+            if !is_pch {
+                objects.push(object);
+            }
         }
         out.push('\n');
         self.build.push_str(&out);

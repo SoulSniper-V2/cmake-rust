@@ -493,6 +493,25 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
             return false;
         }
     }
+    // cmTarget::SetProperty's PRECOMPILE_HEADERS_REUSE_FROM handling (and
+    // the matching AppendProperty check) live in write_target_property.
+    let reuse_set = property == "PRECOMPILE_HEADERS_REUSE_FROM" && matches!(change, Change::Set(_));
+    let pch_append = property == "PRECOMPILE_HEADERS"
+        && matches!(change, Change::Append(..))
+        && target.props.contains("PRECOMPILE_HEADERS_REUSE_FROM");
+    if reuse_set || pch_append {
+        let (value, how) = match change {
+            Change::Set(value) => (value, crate::commands::target::PropertyWrite::Set),
+            Change::Append(value, true) => (Some(value), crate::commands::target::PropertyWrite::AppendString),
+            Change::Append(value, false) => (Some(value), crate::commands::target::PropertyWrite::Append),
+        };
+        if let Err(crate::interp::CmdErr::Error(message)) =
+            crate::commands::target::write_target_property(interp, name, property, value, how)
+        {
+            interp.issue(MessageType::FatalError, &message);
+        }
+        return false;
+    }
     if property == "IMPORTED_GLOBAL" {
         let error = if matches!(change, Change::Append(_, _)) {
             format!(
