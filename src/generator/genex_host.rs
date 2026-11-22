@@ -241,6 +241,38 @@ impl GenexHost for CtxHost<'_, '_> {
             .is_some_and(|target| gt::dll_platform(self.ctx, target))
     }
 
+    /// `TargetRuntimeDllsBaseNode::CollectDlls`: the target's
+    /// cmComputeLinkInformation (`GetLinkInformation`) and its RuntimeDLLs.
+    /// Computing the link information evaluates the target's linker
+    /// language and link libraries, which is where a target whose SOURCES
+    /// depend on its own runtime DLLs is diagnosed.
+    fn runtime_dlls(&self, name: &str, config: &str) -> Result<Vec<String>, String> {
+        let Some(target) = self.find(name) else {
+            return Ok(Vec::new());
+        };
+        let key = format!("runtime-dlls:{}:{config}", self.ctx.target_key(target));
+        if self
+            .ctx
+            .memo
+            .borrow_mut()
+            .insert(key, String::new())
+            .is_none()
+        {
+            let language = gt::linker_language(self.ctx, target, config);
+            if !language.is_empty() {
+                let _ = super::link::link_line(self.ctx, target, config, &language);
+            }
+        }
+        // cmComputeLinkInformation::AddRuntimeDLL records shared libraries
+        // only on DLL platforms, which cmake-rust does not target.
+        if gt::is_dll_platform(self.ctx, target) {
+            return Err(
+                "TARGET_RUNTIME_DLLS on DLL platforms is not supported by cmake-rust.".to_owned(),
+            );
+        }
+        Ok(Vec::new())
+    }
+
     fn target_objects(&self, name: &str, config: &str) -> Result<Vec<String>, String> {
         let target = self
             .find(name)

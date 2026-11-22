@@ -1216,7 +1216,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
                     } else {
                         bt
                     };
-                    self.ctx.error(bt, error.to_string());
+                    self.ctx.genex_error(bt, &error);
                 }
                 (String::new(), ectx.context_sensitive)
             }

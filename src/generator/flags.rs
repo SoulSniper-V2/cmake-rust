@@ -121,7 +121,7 @@ impl Flags<'_, '_> {
                 Err(error) => {
                     if !error.quiet {
                         let backtrace = self.ctx.backtrace(error.backtrace);
-                        self.ctx.error(backtrace, error.to_string());
+                        self.ctx.genex_error(backtrace, &error);
                     }
                     Vec::new()
                 }

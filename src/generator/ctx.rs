@@ -116,6 +116,17 @@ impl<'a> GenCtx<'a> {
         );
     }
 
+    /// Reports a generator-expression error at `backtrace`, followed by
+    /// the "Loop step N" messages of a dependency loop
+    /// (cmGeneratorExpressionDAGChecker::ReportError), each at its
+    /// checker's backtrace.
+    pub fn genex_error(&self, backtrace: Vec<Frame>, error: &crate::genex::GenexError) {
+        self.error(backtrace, error.to_string());
+        for (text, step_backtrace) in &error.loop_steps {
+            self.error(self.backtrace(*step_backtrace), text.clone());
+        }
+    }
+
     pub fn error(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
         self.errors.borrow_mut().push(Diagnostic::Message(
             MessageType::FatalError,
@@ -290,13 +301,13 @@ impl<'a> GenCtx<'a> {
                 Err(error) => {
                     if !error.quiet {
                         let frames = self.backtrace(error.backtrace);
-                        self.error(
+                        self.genex_error(
                             if frames.is_empty() {
                                 backtrace.to_vec()
                             } else {
                                 frames
                             },
-                            error.to_string(),
+                            &error,
                         );
                     }
                     String::new()
@@ -448,7 +459,7 @@ impl<'a> GenCtx<'a> {
             Err(error) => {
                 if !error.quiet {
                     let backtrace = self.backtrace(error.backtrace);
-                    self.error(backtrace, error.to_string());
+                    self.genex_error(backtrace, &error);
                 }
                 String::new()
             }
@@ -478,7 +489,7 @@ impl<'a> GenCtx<'a> {
                         .map(|id| self.backtrace(Some(id)))
                         .filter(|frames| !frames.is_empty())
                         .unwrap_or_else(|| backtrace.to_vec());
-                    self.error(frames, error.to_string());
+                    self.genex_error(frames, &error);
                 }
                 String::new()
             }
@@ -546,7 +557,7 @@ impl<'a> GenCtx<'a> {
                         .map(|id| self.backtrace(Some(id)))
                         .filter(|frames| !frames.is_empty())
                         .unwrap_or_else(|| backtrace.to_vec());
-                    self.error(frames, error.to_string());
+                    self.genex_error(frames, &error);
                 }
                 String::new()
             }

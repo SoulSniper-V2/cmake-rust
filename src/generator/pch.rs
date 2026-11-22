@@ -29,7 +29,7 @@ pub fn precompile_headers(
         Err(error) => {
             if !error.quiet {
                 let backtrace = ctx.backtrace(error.backtrace);
-                ctx.error(backtrace, error.to_string());
+                ctx.genex_error(backtrace, &error);
             }
             Vec::new()
         }

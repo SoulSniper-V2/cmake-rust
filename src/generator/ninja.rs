@@ -1673,7 +1673,7 @@ impl<'a> NinjaGenerator<'a> {
         let std_prop_value = match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
             Ok(value) => value,
             Err(error) => {
-                self.ctx.error(Vec::new(), error.to_string());
+                self.ctx.genex_error(Vec::new(), &error);
                 return;
             }
         };
