@@ -20,6 +20,7 @@ mod languages;
 mod lexer;
 mod messages;
 mod outconv;
+mod pkgconfig;
 mod policy;
 mod policy_table;
 pub mod properties;
