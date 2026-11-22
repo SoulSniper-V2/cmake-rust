@@ -65,6 +65,52 @@ pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<S
     target_graph::dependencies(ctx, target, config)
 }
 
+/// A `cmLinkItem` for dependency-graph consumers: a target or a string.
+pub struct GraphLinkItem<'i> {
+    pub name: String,
+    pub target: Option<&'i Target>,
+}
+
+/// `GetLinkImplementationLibraries(config, UseTo::Link)` and
+/// `GetLinkInterfaceLibraries(config, target, UseTo::Compile)` as used by
+/// cmLinkItemGraphVisitor; `None` where CMake has no such list.
+#[allow(clippy::type_complexity)]
+pub fn graph_link_libraries<'i>(
+    ctx: &GenCtx<'i>,
+    target: &Target,
+    config: &str,
+) -> (Option<Vec<GraphLinkItem<'i>>>, Option<Vec<GraphLinkItem<'i>>>) {
+    let query = Query::new(ctx, config, "");
+    let compile_query = Query {
+        compile_usage: true,
+        ..Query::new(ctx, config, "")
+    };
+    let convert = |items: Vec<Item<'i>>| -> Vec<GraphLinkItem<'i>> {
+        items
+            .into_iter()
+            .map(|item| GraphLinkItem {
+                name: item.text,
+                target: item.target,
+            })
+            .collect()
+    };
+    // cmTarget::CanCompileSources
+    let can_compile = !target.imported
+        && matches!(
+            target.kind,
+            TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+        );
+    let implementation = can_compile.then(|| convert(implementation(&query, target)));
+    let has_interface =
+        target.imported || target.kind != TargetKind::Executable || on(target, "ENABLE_EXPORTS");
+    let interface = has_interface.then(|| convert(interface(&compile_query, target, target).libraries));
+    (implementation, interface)
+}
+
 trait GeneratorQueries {
     fn eval(
         &self,
@@ -118,6 +164,8 @@ struct Query<'a, 'i> {
     config: &'a str,
     language: &'a str,
     generator: &'a dyn GeneratorQueries,
+    /// Evaluate for `UseTo::Compile` (usage requirements only).
+    compile_usage: bool,
 }
 
 impl<'a, 'i> Query<'a, 'i> {
@@ -127,6 +175,7 @@ impl<'a, 'i> Query<'a, 'i> {
             config,
             language,
             generator: &Generator,
+            compile_usage: false,
         }
     }
 
@@ -142,6 +191,11 @@ impl<'a, 'i> Query<'a, 'i> {
     fn eval(&self, raw: &str, owner: &Target, head: &Target, property: &str) -> String {
         if raw.contains("$<") {
             let language = (!self.language.is_empty()).then_some(self.language);
+            if self.compile_usage {
+                return self
+                    .ctx
+                    .genex_with_dag_usage(raw, owner, head, property, language, true);
+            }
             self.generator.eval(self.ctx, raw, owner, head, property, language)
         } else {
             raw.to_owned()

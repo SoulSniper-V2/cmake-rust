@@ -276,6 +276,7 @@ fn cmake_4_1_ninja_edges() {
             config: &fixture.config,
             language: "C",
             generator: &FixtureGenerator,
+            compile_usage: false,
         };
         let graph = target_graph::compute(&query);
         if let Some(failure) = fixture.failure {

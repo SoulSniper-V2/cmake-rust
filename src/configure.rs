@@ -48,6 +48,8 @@ pub struct ConfigureOptions {
     pub explain: Option<(String, String)>,
     /// Configure for a try_compile project (no progress output).
     pub in_try_compile: bool,
+    /// `--graphviz=<file>` (or the preset's "graphviz" field).
+    pub graphviz: Option<String>,
     /// A path argument named an existing build tree whose cache was read
     /// (`cmState::IsCacheLoaded` during argument processing).
     pub cache_loaded: bool,

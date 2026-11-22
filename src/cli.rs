@@ -569,6 +569,8 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             }
             match name {
                 "--preset" => preset_name = value.clone(),
+                // cmSystemTools::ToNormalizedPathOnDisk
+                "--graphviz" => options.graphviz = Some(util::collapse_full_path(&value, cwd)),
                 "-B" => have_b_arg = true,
                 "--trace-format" => trace_json = value.eq_ignore_ascii_case("json-v1"),
                 "--trace-redirect" => trace_output = Some(cache::convert_to_unix_slashes(&value)),
@@ -576,8 +578,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             }
             if matches!(
                 name,
-                "--graphviz"
-                    | "--project-file"
+                "--project-file"
                     | "--debugger-pipe"
                     | "--debugger-dap-log"
             ) {

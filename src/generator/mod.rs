@@ -26,6 +26,7 @@ pub mod export;
 pub mod evaluation_files;
 pub mod flags;
 pub mod genex_host;
+pub mod graphviz;
 pub mod install;
 pub mod link;
 pub mod ninja;
@@ -66,6 +67,11 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     if !options.in_try_compile {
         let elapsed = start.elapsed().as_secs_f64();
         crate::commands::core::status_line(interp, &format!("Generating done ({elapsed:.1}s)"));
+    }
+    if let Some(file) = &options.graphviz {
+        println!("Generate graphviz: {file}");
+        let ctx = ctx::GenCtx::new(interp);
+        graphviz::generate_graphviz(&ctx, file);
     }
     // cmake::Generate: "Generating done" precedes the error-flag check.
     if interp.error {

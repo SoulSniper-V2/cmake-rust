@@ -210,9 +210,8 @@ pub fn apply_configure_preset(
     {
         options.toolset = Some(expanded.toolset.clone());
     }
-    if !expanded.graphviz_file.is_empty() {
-        error("Preset field \"graphviz\" is not supported");
-        return Err(1);
+    if !expanded.graphviz_file.is_empty() && options.graphviz.is_none() {
+        options.graphviz = Some(crate::util::collapse_full_path(&expanded.graphviz_file, ""));
     }
 
     set_warning_from_preset(

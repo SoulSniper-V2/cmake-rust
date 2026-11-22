@@ -194,6 +194,21 @@ impl<'a> GenCtx<'a> {
         property: &str,
         language: Option<&str>,
     ) -> String {
+        self.genex_with_dag_usage(text, owner, head, property, language, false)
+    }
+
+    /// `genex_with_dag` for `UseTo::Compile` link evaluation: the DAG
+    /// checker evaluates transitive properties only, so `$<LINK_ONLY:...>`
+    /// is dropped from link interfaces (cmGeneratorTarget::ExpandLinkItems).
+    pub fn genex_with_dag_usage(
+        &self,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        language: Option<&str>,
+        compile_usage: bool,
+    ) -> String {
         if !text.contains("$<") {
             return text.to_owned();
         }
@@ -211,9 +226,18 @@ impl<'a> GenCtx<'a> {
             && !property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
             && crate::genex::GenexHost::local_policy_status(&host_policy, "CMP0189")
                 == crate::policy::PolicyStatus::New;
+        let interface = property != "LINK_LIBRARIES";
         let root = crate::genex::DagChecker {
             computing_link_libraries: link,
             transitive,
+            transitive_properties_only: compile_usage,
+            transitive_properties_only_cmp0131: compile_usage
+                && (interface
+                    || crate::generator::target::target_policy(
+                        self,
+                        owner,
+                        crate::policy::index_of("CMP0131").unwrap_or_default(),
+                    ) == crate::policy::PolicyStatus::New),
             ..crate::genex::DagChecker::new(&owner_key, property)
         };
         let compiled = crate::genex::parse(text);
