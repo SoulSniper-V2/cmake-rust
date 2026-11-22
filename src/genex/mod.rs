@@ -11,7 +11,7 @@ pub use artifacts::{ArtifactComponent, ArtifactKind};
 pub use dag::DagChecker;
 #[allow(unused_imports)]
 pub use preprocess::{
-    PreprocessContext, contains_genex, find, is_valid_target_name, preprocess,
+    PreprocessContext, collect, contains_genex, find, is_valid_target_name, preprocess,
     replace_install_prefix, split, strip, strip_empty_list_elements,
 };
 #[allow(unused_imports)]

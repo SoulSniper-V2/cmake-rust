@@ -328,6 +328,9 @@ pub struct Ext {
     /// `cmake::FindPackageStack`: package names of active find_package
     /// calls for `cmTarget::GetFindPackageStack` snapshots.
     pub find_package_stack: Vec<String>,
+    /// `cmState::PackageStateMap` for CPS packages: root `*.cps` file ->
+    /// names of the CPS files (base plus appendices) already imported.
+    pub cps_imported: HashMap<String, BTreeSet<String>>,
     pub next_defer_id: usize,
     pub experimental_warnings: std::collections::HashSet<(String, String)>,
     pub in_top_level_includes: bool,

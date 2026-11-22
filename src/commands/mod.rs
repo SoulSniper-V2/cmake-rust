@@ -21,6 +21,7 @@ pub mod list;
 pub mod math;
 pub mod message;
 pub mod parse_arguments;
+pub mod pkg_config;
 pub mod process;
 pub mod property;
 pub mod separate_arguments;
@@ -52,6 +53,7 @@ pub fn register_all(interp: &mut Interp) {
     math::register(interp);
     message::register(interp);
     parse_arguments::register(interp);
+    pkg_config::register(interp);
     process::register(interp);
     property::register(interp);
     separate_arguments::register(interp);

@@ -58,6 +58,7 @@ impl MacMode {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Options {
     pub(super) no_default: bool,
     pub(super) enabled: [bool; SOURCES.len()],

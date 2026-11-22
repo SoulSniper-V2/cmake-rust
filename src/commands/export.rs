@@ -4,12 +4,14 @@ use std::path::Path;
 use md5::{Digest, Md5};
 
 use super::install::{package_dependencies_enabled, parse};
+use super::project::export_package_info_enabled;
 use crate::install_model::{BuildExport, ExportOptions};
 use crate::interp::{CmdResult, Interp, Mode, err};
 use crate::messages::MessageType;
+use crate::package_info::PackageInfoArguments;
 use crate::policy::{PolicyStatus, index_of, policy_warning};
 use crate::state::TargetKind;
-use crate::util::{is_full_path, is_off, is_on};
+use crate::util::{filename_name, is_full_path, is_off, is_on};
 
 pub fn register(interp: &mut Interp) {
     interp.register("export", export);
@@ -28,6 +30,11 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
         "EXPORT" => {
             singles.push(mode);
             if experimental { flags.push("EXPORT_PACKAGE_DEPENDENCIES"); }
+            if export_package_info_enabled(interp) {
+                singles.extend(crate::package_info::SINGLE_KEYS);
+                lists.extend(crate::package_info::LIST_KEYS);
+                flags.extend(crate::package_info::FLAG_KEYS);
+            }
         }
         "SETUP" => return setup(interp, args, experimental),
         _ => {
@@ -39,11 +46,30 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
     let parsed = parse(args, &singles, &lists, &flags);
     if let Some(arg) = parsed.unknown.first() { return err(format!("Unknown argument: \"{arg}\".")); }
     if parsed.has("ANDROID_MK") { return err("ANDROID_MK is not supported by cmake-rust"); }
+    let mut package = PackageInfoArguments::from_args(&parsed);
+    let mut cps = false;
+    if package.package_name.is_empty() {
+        package.check(false)?;
+    } else {
+        if !parsed.get("FILE").is_empty() {
+            return err("PACKAGE_INFO and FILE are mutually exclusive.");
+        }
+        if !parsed.get("NAMESPACE").is_empty() {
+            return err("PACKAGE_INFO and NAMESPACE are mutually exclusive.");
+        }
+        package.check(true)?;
+        package.set_metadata_from_project(interp)?;
+    }
     let set = parsed.get("EXPORT");
     let file = parsed.get("FILE");
     let fname = if file.is_empty() {
         if mode != "EXPORT" { return err("FILE <filename> option missing."); }
-        format!("{set}.cmake")
+        if package.package_name.is_empty() {
+            format!("{set}.cmake")
+        } else {
+            cps = true;
+            package.package_file_name()
+        }
     } else {
         if !file.ends_with(".cmake") {
             return err(format!("FILE option given filename \"{file}\" which does not have an extension of \".cmake\".\n"));
@@ -75,12 +101,20 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
                 return err(format!("given custom target \"{name}\" which may not be exported."));
             }
         }
+        if parsed.has("APPEND")
+            && let Some(existing) = interp.ext.install.build_exports.get_mut(&path)
+        {
+            existing.targets.extend_from_slice(targets);
+            return Ok(());
+        }
     } else { return err("EXPORT or TARGETS specifier missing."); }
     let append = parsed.has("APPEND");
     if interp.ext.install.build_exports.contains_key(&path) {
-        if append {
-            interp.ext.install.build_exports.get_mut(&path).unwrap().targets.extend_from_slice(targets);
-            return Ok(());
+        if cps {
+            return err(format!(
+                "command already specified for the file {}.",
+                filename_name(&path)
+            ));
         }
         let message = format!("command already specified for the file\n  {file}\nDid you miss 'APPEND' keyword?");
         match interp.policy_status("CMP0103") {
@@ -104,6 +138,7 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
         targets: targets.to_vec(),
         options,
         append,
+        package_info: cps.then_some(package),
         backtrace: interp.backtrace.clone(),
     });
     Ok(())
