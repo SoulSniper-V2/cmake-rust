@@ -226,6 +226,16 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
     if read_system {
         let system = interp.get_safe("CMAKE_SYSTEM_NAME");
         let _ = system;
+        // cmGlobalGenerator::SetGeneratorInstance.
+        let instance = interp.get_safe("CMAKE_GENERATOR_INSTANCE");
+        if !instance.is_empty() {
+            let text = format!(
+                "Generator\n  Ninja\ndoes not support instance specification, but instance\n  {instance}\nwas specified."
+            );
+            interp.issue(MessageType::FatalError, &text);
+            interp.set_fatal();
+            return;
+        }
         let platform = interp.get_safe("CMAKE_GENERATOR_PLATFORM");
         if !platform.is_empty() {
             let text = format!(
