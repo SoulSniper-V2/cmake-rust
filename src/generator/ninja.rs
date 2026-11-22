@@ -1226,6 +1226,33 @@ impl<'a> NinjaGenerator<'a> {
             }
         }
         languages.sort();
+        // cmCommonTargetGenerator::HaveRequiredLanguages: the first object
+        // language (in sorted order) that was never enabled is a fatal
+        // error reported against the directory's list-file scope, which
+        // cmMakefile::Configure leaves on the backtrace for the generate
+        // step.
+        if let Some(language) = languages
+            .iter()
+            .find(|language| !self.ctx.interp.langs.enabled.contains(*language))
+        {
+            let directory = &self.ctx.interp.makefiles[target.makefile];
+            let file = directory
+                .list_files
+                .first()
+                .cloned()
+                .unwrap_or_else(|| format!("{}/CMakeLists.txt", directory.source_dir));
+            self.ctx.error(
+                vec![crate::messages::Frame {
+                    file: std::rc::Rc::from(file.as_str()),
+                    line: 0,
+                    name: None,
+                    deferred: false,
+                }],
+                format!(
+                    "The language {language} was requested for compilation but was not enabled. To enable a language it needs to be specified in a 'project' or 'enable_language' command in the root CMakeLists.txt"
+                ),
+            );
+        }
         for language in &languages {
             self.write_compile_rule(language, target);
         }

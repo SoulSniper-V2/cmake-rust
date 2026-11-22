@@ -218,6 +218,61 @@ pub fn find_module(interp: &Interp, name: &str) -> Option<String> {
     None
 }
 
+/// `cmMakefile::GetModulesFile` as used by `include()`: looks for
+/// `filename` (which already carries the `.cmake` suffix) in every
+/// CMAKE_MODULE_PATH directory and then in `<cmake_root>/Modules`.
+/// Returns the found path (empty when nothing matched) and the `system`
+/// flag that `cmIncludeCommand` uses for its deprecated-module checks:
+/// a CMAKE_MODULE_PATH hit is not "system" unless the calling list file
+/// itself lives under `<cmake_root>/Modules`, in which case the
+/// CMake-root copy wins.
+fn find_modules_file(interp: &Interp, filename: &str) -> (String, bool) {
+    let mut in_module_path = String::new();
+    if let Some(paths) = interp.get_def("CMAKE_MODULE_PATH") {
+        for directory in util::expand_list(paths, false) {
+            let candidate = format!("{directory}/{filename}");
+            if std::path::Path::new(&candidate).exists() {
+                in_module_path = candidate;
+                break;
+            }
+        }
+    }
+    let mut in_root = format!("{}/Modules/{filename}", interp.cmake_root);
+    if !std::path::Path::new(&in_root).exists() {
+        in_root.clear();
+    }
+    if !in_module_path.is_empty() && !in_root.is_empty() {
+        let modules = format!("{}/Modules/", interp.cmake_root);
+        match interp.get_def("CMAKE_CURRENT_LIST_FILE") {
+            Some(current) if util::is_subdirectory(current, &modules) => (in_root, true),
+            _ => (in_module_path, false),
+        }
+    } else if !in_module_path.is_empty() {
+        (in_module_path, false)
+    } else {
+        (in_root, true)
+    }
+}
+
+/// The `DeprecatedModules` table of `cmIncludeCommand`: module name to the
+/// policy whose status decides whether including it is allowed.
+fn deprecated_module_policy(name: &str) -> Option<&'static str> {
+    let id = match name {
+        "CMakeDetermineVSServicePack" => "CMP0196",
+        "CMakeFindFrameworks" => "CMP0173",
+        "Dart" | "FindDart" => "CMP0145",
+        "Documentation" => "CMP0106",
+        "FindBoost" => "CMP0167",
+        "FindCABLE" => "CMP0191",
+        "FindCUDA" => "CMP0146",
+        "FindGCCXML" => "CMP0188",
+        "FindPythonInterp" | "FindPythonLibs" => "CMP0148",
+        "WriteCompilerDetectionHeader" => "CMP0120",
+        _ => return None,
+    };
+    Some(id)
+}
+
 /// `cmIncludeCommand`.
 fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.is_empty() || args.len() > 4 {
@@ -225,34 +280,31 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let mut optional = false;
     let mut no_policy_scope = false;
-    let mut result_var: Option<String> = None;
+    let mut result_var = String::new();
     let mut index = 1;
     while index < args.len() {
-        match args[index].as_str() {
-            "OPTIONAL" => {
-                if optional {
-                    return err("called with invalid arguments: OPTIONAL used twice");
-                }
-                optional = true;
+        if args[index] == "OPTIONAL" {
+            if optional {
+                return err("called with invalid arguments: OPTIONAL used twice");
             }
-            "RESULT_VARIABLE" => {
-                if result_var.is_some() {
-                    return err("called with invalid arguments: only one result variable allowed");
-                }
-                index += 1;
-                if index < args.len() {
-                    result_var = Some(args[index].clone());
-                } else {
-                    return err("called with no value for RESULT_VARIABLE.");
-                }
+            optional = true;
+        } else if args[index] == "RESULT_VARIABLE" {
+            if !result_var.is_empty() {
+                return err("called with invalid arguments: only one result variable allowed");
             }
-            "NO_POLICY_SCOPE" => no_policy_scope = true,
-            other => {
-                if index > 1 {
-                    let text = format!("called with invalid argument: {other}");
-                    return err(text);
-                }
+            index += 1;
+            if index < args.len() {
+                result_var = args[index].clone();
+            } else {
+                return err("called with no value for RESULT_VARIABLE.");
             }
+        } else if args[index] == "NO_POLICY_SCOPE" {
+            no_policy_scope = true;
+        } else if index > 1 {
+            // compat.: in previous cmake versions the second parameter was
+            // ignored if it wasn't "OPTIONAL"
+            let text = format!("called with invalid argument: {}", args[index]);
+            return err(text);
         }
         index += 1;
     }
@@ -261,20 +313,41 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.issue(MessageType::AuthorWarning, "include() given empty file name (ignored).");
         return Ok(());
     }
-    if !util::is_full_path(&file)
-        && let Some(path) = find_module(interp, &file)
-    {
+    if !util::is_full_path(&file) {
         // Not a path.  Maybe a module (<name>.cmake in CMAKE_MODULE_PATH
         // or the CMake module directory).
-        file = path;
+        let (mut mfile, system) = find_modules_file(interp, &format!("{file}.cmake"));
+        if system && let Some(policy_id) = deprecated_module_policy(&file) {
+            match interp.policy_status(policy_id) {
+                PolicyStatus::Warn => {
+                    if let Some(policy_index) = policy::index_of(policy_id) {
+                        let text = format!("{}\n", policy::policy_warning(policy_index));
+                        interp.issue(MessageType::AuthorWarning, &text);
+                    }
+                }
+                PolicyStatus::Old => {}
+                PolicyStatus::New => mfile.clear(),
+            }
+        }
+        if !mfile.is_empty() {
+            file = mfile;
+        }
     }
     let full = util::collapse_full_path(&file, &interp.current_source_dir());
+    // cmGlobalGenerator::IsExportedTargetsFile (CMP0024).
+    if interp.is_exported_targets_file(&full) {
+        let text = format!(
+            "The file\n  {full}\nwas generated by the export() command.  It may not be used as the argument to the include() command.  Use ALIAS targets instead to refer to targets by alternative names.\n"
+        );
+        interp.issue(MessageType::FatalError, &text);
+        return Err(CmdErr::Reported);
+    }
     let path = std::path::Path::new(&full);
     let missing = !path.exists();
     let directory = path.is_dir();
     if missing || directory {
-        if let Some(var) = &result_var {
-            interp.set_def(var.clone(), "NOTFOUND");
+        if !result_var.is_empty() {
+            interp.set_def(result_var.clone(), "NOTFOUND");
         }
         if optional {
             return Ok(());
@@ -284,9 +357,13 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         return err(format!("requested file is a directory:\n  {file}"));
     }
+    let policy_depth = interp.mf().policies.len();
     let ok = interp.read_dependent_file(&full, no_policy_scope);
-    if let Some(var) = &result_var {
-        interp.set_def(var.clone(), if ok { full.clone() } else { "NOTFOUND".to_owned() });
+    // `cmMakefile::PopSnapshot` rejects policy scopes the included file
+    // left open even when NO_POLICY_SCOPE skipped the include's own push.
+    interp.include_policy_scope_cleanup(&full, policy_depth);
+    if !result_var.is_empty() {
+        interp.set_def(result_var.clone(), if ok { full.clone() } else { "NOTFOUND".to_owned() });
     }
     if !optional && !ok && !interp.fatal {
         return err(format!("could not load requested file:\n  {file}"));

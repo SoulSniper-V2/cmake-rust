@@ -10,7 +10,7 @@ use std::rc::Rc;
 use crate::cache::{Cache, CacheType};
 use crate::lexer::{self, Arg, Command, Delim};
 use crate::messages::{self, Frame, MessageType};
-use crate::policy::{PolicyMap, PolicyStatus};
+use crate::policy::{self, PolicyMap, PolicyStatus};
 use crate::props::Props;
 use crate::util;
 
@@ -818,7 +818,13 @@ impl Interp {
 
     pub fn top_source(&self) -> Option<&str> {
         // cmake::SetHomeDirectory sets the messenger's top source for both
-        // project and script mode (normal project kind).
+        // project and script mode (normal project kind). A try_compile
+        // project uses cmState::ProjectKind::TryCompile, for which
+        // SetTopSource receives nullopt, so its diagnostics keep absolute
+        // paths even when they live under the outer project's source tree.
+        if self.in_try_compile {
+            return None;
+        }
         self.top_source_root.as_deref().or(Some(&self.home_source))
     }
 
@@ -900,8 +906,11 @@ impl Interp {
             name: None,
             deferred: false,
         });
-        self.set_def("CMAKE_PARENT_LIST_FILE", path);
         let saved = self.push_list_file_vars(path);
+        // `cmMakefile::Configure` sets CMAKE_PARENT_LIST_FILE to the
+        // directory's own list file for the duration of the configure;
+        // `pop_list_file_vars` then restores the inherited (unset) value.
+        self.set_def("CMAKE_PARENT_LIST_FILE", path);
         if let Some(parsed) = self.parse_file(path) {
             let mut commands = parsed.commands.clone();
             let has_version = commands.iter().any(|c| c.lname == "cmake_minimum_required");
@@ -981,7 +990,30 @@ impl Interp {
             return Some(parsed);
         }
         let bytes = std::fs::read(path).ok()?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        // `cmListFileLexer_SetFileName`/`cmListFileLexer_ReadBOM`: only a
+        // UTF-8 BOM is accepted (and skipped); UTF-16/32 BOMs are rejected
+        // before parsing with a file-level error that does not set the
+        // fatal-error flag.
+        let bytes = match bytes.as_slice() {
+            [0xEF, 0xBB, 0xBF, rest @ ..] => rest,
+            [0xFE, 0xFF, ..] | [0x00, 0x00, 0xFE, 0xFF, ..] | [0xFF, 0xFE, 0x00, 0x00, ..]
+            | [0xFF, 0xFE, ..] => {
+                self.issue(
+                    MessageType::FatalError,
+                    "File starts with a Byte-Order-Mark that is not UTF-8.",
+                );
+                return None;
+            }
+            _ => &bytes[..],
+        };
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        // `cmListFileLexerInput` converts CRLF to LF for file input only
+        // (strings/EVAL keep their bytes).
+        let text = if text.contains("\r\n") {
+            text.replace("\r\n", "\n")
+        } else {
+            text
+        };
         let rc_path: Rc<str> = Rc::from(path);
         let parsed = self.parse_text(rc_path, &text)?;
         PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
@@ -1004,7 +1036,7 @@ impl Interp {
                 MessageType::FatalError
             };
             self.issue_at(kind, &diag.message, &backtrace);
-            if !diag.warning {
+            if diag.fatal {
                 self.set_fatal();
             }
         }
@@ -1080,6 +1112,10 @@ impl Interp {
             deferred: false,
         });
         let saved = self.push_list_file_vars(path);
+        // `cmMakefile::Configure` explicitly sets CMAKE_PARENT_LIST_FILE to
+        // the directory's own list file for the duration of the configure;
+        // `pop_list_file_vars` restores the inherited value afterwards.
+        self.set_def("CMAKE_PARENT_LIST_FILE", path);
         let parsed = self.parse_file(path);
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
@@ -1235,23 +1271,30 @@ impl Interp {
                     ctl
                 }
                 "foreach" if self.is_flow("foreach") => {
-                    let ctl = self.run_foreach(file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_foreach(file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     ctl
                 }
                 "while" if self.is_flow("while") => {
-                    let ctl = self.run_while(file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_while(file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     ctl
                 }
                 "function" | "macro" if self.is_flow(&command.lname) => {
-                    self.define_callable(file, index, subst);
-                    index = jumps[0];
+                    if self.define_callable(file, index, subst) {
+                        index = jumps[0];
+                    }
                     Ctl::Normal
                 }
                 "block" if self.is_flow("block") => {
-                    let ctl = self.run_block(file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_block(file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     ctl
                 }
                 _ => self.execute(file, command, subst).1,
@@ -1402,13 +1445,26 @@ impl Interp {
         result
     }
 
+    /// `cmMakefile::GetRecursionDepthLimit`: the normal variable wins over
+    /// the environment; an invalid value falls back to the default without
+    /// consulting the environment.
+    fn recursion_depth_limit(&self) -> usize {
+        const DEFAULT: usize = 1000;
+        if let Some(value) = self.get_def("CMAKE_MAXIMUM_RECURSION_DEPTH") {
+            return str_to_ulong(value).map_or(DEFAULT, |v| v as usize);
+        }
+        if let Some(value) = std::env::var_os("CMAKE_MAXIMUM_RECURSION_DEPTH")
+            && let Some(value) = value.to_str()
+        {
+            return str_to_ulong(value).map_or(DEFAULT, |v| v as usize);
+        }
+        DEFAULT
+    }
+
     fn execute_inner(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         self.recursion_depth += 1;
         let depth = self.recursion_depth + self.recursion_depth_base;
-        let limit = self
-            .get_def("CMAKE_MAXIMUM_RECURSION_DEPTH")
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(1000);
+        let limit = self.recursion_depth_limit();
         if depth > limit {
             self.recursion_depth -= 1;
             self.issue(
@@ -1587,23 +1643,30 @@ impl Interp {
                     (true, ctl)
                 }
                 "foreach" if self.is_flow("foreach") => {
-                    let ctl = self.run_foreach(&file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_foreach(&file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     (true, ctl)
                 }
                 "while" if self.is_flow("while") => {
-                    let ctl = self.run_while(&file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_while(&file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     (true, ctl)
                 }
                 "function" | "macro" if self.is_flow(&command.lname) => {
-                    self.define_callable(&file, index, subst);
-                    index = jumps[0];
+                    if self.define_callable(&file, index, subst) {
+                        index = jumps[0];
+                    }
                     (true, Ctl::Normal)
                 }
                 "block" if self.is_flow("block") => {
-                    let ctl = self.run_block(&file, index, subst);
-                    index = jumps[0];
+                    let (opened, ctl) = self.run_block(&file, index, subst);
+                    if opened {
+                        index = jumps[0];
+                    }
                     (true, ctl)
                 }
                 _ => self.execute(&file, command, subst),
@@ -1625,7 +1688,9 @@ impl Interp {
         BodyResult::Ctl(Ctl::Normal)
     }
 
-    fn define_callable(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) {
+    /// Returns false when no function blocker was created (bad arguments),
+    /// in which case the body and end command run as ordinary commands.
+    fn define_callable(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> bool {
         let command = &file.commands[index];
         let end = file.jumps[index][0];
         self.backtrace.push(self.frame_for(file, command));
@@ -1633,14 +1698,14 @@ impl Interp {
         let is_macro = command.lname == "macro";
         let Some(args) = args else {
             self.backtrace.pop();
-            return;
+            return false;
         };
         if args.is_empty() {
             let text = format!("{} called with incorrect number of arguments", command.name);
             self.issue(MessageType::FatalError, &text);
             self.command_failed();
             self.backtrace.pop();
-            return;
+            return false;
         }
         let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
         // Materialize the body if a macro substitution is active.
@@ -1673,14 +1738,41 @@ impl Interp {
             policies: self.effective_policies(),
             is_macro,
         });
+        // `cmFunctionFunctionBlocker`/`cmMacroFunctionBlocker`: the end
+        // command's first expanded argument must match the name; the
+        // mismatch warning precedes `AddScriptedCommand` (which runs at
+        // `endfunction`/`endmacro` time in C++ with the function context on
+        // the backtrace).
+        let end_command = &file.commands[end];
+        let matched = match self.expand_arguments(&file.path, &end_command.args, subst) {
+            Some(end_args) => {
+                let end_args: Vec<String> =
+                    end_args.into_iter().map(|(value, _)| value).collect();
+                end_args.is_empty() || end_args[0] == values[0]
+            }
+            None => true,
+        };
+        self.backtrace.pop();
+        self.warn_end_args(file, command, end, matched, true);
+        self.backtrace.push(self.frame_for(file, command));
         self.add_user_command(&values[0], callable);
         self.backtrace.pop();
+        true
     }
 
     /// `cmState::AddScriptedCommand`: overriding renames the previous
-    /// definition to `_<name>`.
+    /// definition to `_<name>`; built-in flow control commands cannot be
+    /// overridden at all.
     pub fn add_user_command(&mut self, name: &str, callable: Rc<Callable>) {
         let lname = name.to_ascii_lowercase();
+        if matches!(self.commands.get(&lname), Some(CommandDef::Flow)) {
+            let message = format!(
+                "Built-in flow control command \"{lname}\" cannot be overridden."
+            );
+            self.issue(MessageType::FatalError, &message);
+            self.set_fatal();
+            return;
+        }
         if callable.is_macro {
             self.mf_mut().props.append("MACROS", name, false);
         }
@@ -1745,9 +1837,32 @@ impl Interp {
                 (true, Ctl::Return(Some(values[1..].to_vec())))
             }
             "else" | "elseif" | "endif" | "endforeach" | "endwhile" | "endfunction" | "endmacro" | "endblock" => {
-                let message = format!("Flow control statements are not properly nested.");
-                self.issue(MessageType::FatalError, &message);
-                self.set_fatal();
+                // `cmState::AddUnexpectedCommand`: `endif` is silently
+                // accepted for ancient `cmake_minimum_required` versions;
+                // otherwise this is a command failure (fatal only in script
+                // mode).
+                if command.lname == "endif" {
+                    let quiet = self
+                        .get_def("CMAKE_MINIMUM_REQUIRED_VERSION")
+                        .map_or(true, |value| atof_prefix(value) <= 1.4);
+                    if quiet {
+                        return (true, Ctl::Normal);
+                    }
+                }
+                let error = match command.lname.as_str() {
+                    "else" => "An ELSE command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command.",
+                    "elseif" => "An ELSEIF command was found outside of a proper IF ENDIF structure.",
+                    "endforeach" => "An ENDFOREACH command was found outside of a proper FOREACH ENDFOREACH structure. Or its arguments did not match the opening FOREACH command.",
+                    "endfunction" => "An ENDFUNCTION command was found outside of a proper FUNCTION ENDFUNCTION structure. Or its arguments did not match the opening FUNCTION command.",
+                    "endif" => "An ENDIF command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command.",
+                    "endmacro" => "An ENDMACRO command was found outside of a proper MACRO ENDMACRO structure. Or its arguments did not match the opening MACRO command.",
+                    "endwhile" => "An ENDWHILE command was found outside of a proper WHILE ENDWHILE structure. Or its arguments did not match the opening WHILE command.",
+                    "endblock" => "An ENDBLOCK command was found outside of a proper BLOCK ENDBLOCK structure.",
+                    _ => unreachable!(),
+                };
+                let text = format!("{} {}", command.name, error);
+                self.issue(MessageType::FatalError, &text);
+                self.command_failed();
                 (false, Ctl::Normal)
             }
             other => {
@@ -1763,6 +1878,12 @@ impl Interp {
     fn run_if(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> Ctl {
         let jumps = file.jumps[index].clone();
         let command = &file.commands[index];
+        // `cmIfFunctionBlocker::ArgumentsMatch`: `endif` arguments must be
+        // empty or identical to the `if` arguments.
+        let end_index = *jumps.last().expect("endif");
+        let end_command = &file.commands[end_index];
+        let matched = end_command.args.is_empty() || raw_args_equal(&end_command.args, &command.args);
+        self.warn_end_args(file, command, end_index, matched, true);
         // Evaluate the `if` condition.
         self.backtrace.push(self.frame_for(file, command));
         let mut taken = self.evaluate_if_condition(file, command, subst, "if");
@@ -1864,20 +1985,68 @@ impl Interp {
         result
     }
 
-    fn run_foreach(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> Ctl {
+    /// `cmFunctionBlocker::IsFunctionBlocked` end-command diagnostics: the
+    /// author warning issued when the end command's arguments do not match
+    /// the opener (`EndCommandSupportsArguments` is false only for `block`,
+    /// which instead warns about any arguments at all).
+    fn warn_end_args(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        opener: &Command,
+        end_index: usize,
+        args_match: bool,
+        supports_args: bool,
+    ) {
+        let end = &file.commands[end_index];
+        let warn = if supports_args {
+            !end.args.is_empty() && !args_match
+        } else {
+            !end.args.is_empty()
+        };
+        if !warn {
+            return;
+        }
+        let opening = format!("{}:{} ({})", file.path, opener.line, opener.name);
+        let closing = format!("{}:{} ({})", file.path, end.line, end.name);
+        let text = if supports_args {
+            format!(
+                "A logical block opening on the line\n  {opening}\ncloses on the line\n  {closing}\nwith mis-matching arguments."
+            )
+        } else {
+            format!("A logical block closing on the line\n  {closing}\nhas unexpected arguments.")
+        };
+        self.issue(MessageType::AuthorWarning, &text);
+    }
+
+    /// Returns `(block_opened, ctl)`: `block_opened` is false when the
+    /// command failed before creating its function blocker, in which case
+    /// the body and end command run as ordinary commands.
+    fn run_foreach(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
         let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
             self.backtrace.pop();
-            return Ctl::Normal;
+            return (true, Ctl::Normal);
         };
         let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
         let plan = crate::flow::foreach_plan(self, &values);
         self.backtrace.pop();
         let Some(plan) = plan else {
-            return Ctl::Normal;
+            return (false, Ctl::Normal);
         };
+        // `cmForEachFunctionBlocker::ArgumentsMatch`: the endforeach's first
+        // expanded argument must match the first loop variable name.
+        let end_command = &file.commands[end];
+        let matched = match self.expand_arguments(&file.path, &end_command.args, subst) {
+            Some(end_args) => {
+                let end_args: Vec<String> =
+                    end_args.into_iter().map(|(value, _)| value).collect();
+                end_args.is_empty() || end_args[0] == values[0]
+            }
+            None => true,
+        };
+        self.warn_end_args(file, command, end, matched, true);
         // Save the loop variables (restored afterwards unless fatal).
         // CMP0124: OLD restores the loop variables to their (possibly
         // empty) prior values instead of unsetting undefined ones.
@@ -1906,7 +2075,7 @@ impl Interp {
             let ctl = self.run_range(file, index + 1, end, subst);
             if self.fatal {
                 *self.loop_depth.last_mut().expect("loop depth") -= 1;
-                return Ctl::Normal;
+                return (true, Ctl::Normal);
             }
             match ctl {
                 Ctl::Break => break,
@@ -1929,21 +2098,53 @@ impl Interp {
                 None => self.unset_def(&name),
             }
         }
-        result
+        (true, result)
     }
 
-    fn run_while(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> Ctl {
+    /// Returns `(block_opened, ctl)` like `run_foreach`.
+    fn run_while(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
+        // `cmWhileCommand`: no arguments means no blocker was created; the
+        // body and `endwhile` then run as ordinary commands.
+        if command.args.is_empty() {
+            self.backtrace.push(self.frame_for(file, command));
+            self.issue(
+                MessageType::FatalError,
+                "while called with incorrect number of arguments",
+            );
+            self.command_failed();
+            self.backtrace.pop();
+            return (false, Ctl::Normal);
+        }
+        // `cmWhileFunctionBlocker::ArgumentsMatch`: raw argument equality or
+        // no endwhile arguments.
+        let end_command = &file.commands[end];
+        let matched = end_command.args.is_empty()
+            || raw_args_equal(&end_command.args, &command.args);
+        self.warn_end_args(file, command, end, matched, true);
         let max_iterations: usize = 1_000_000_000;
         let mut count = 0usize;
         *self.loop_depth.last_mut().expect("loop depth") += 1;
         let mut result = Ctl::Normal;
+        // `cmWhileFunctionBlocker::Replay`: the condition is re-expanded and
+        // re-evaluated every iteration; the last evaluation's error is
+        // enforced after the loop per CMP0130.
+        let mut last_args: Vec<(String, bool)> = Vec::new();
+        let mut last_error: Option<(MessageType, String)> = None;
+        let mut completed = false;
         loop {
             self.backtrace.push(self.frame_for(file, command));
-            let condition = self.evaluate_if_condition(file, command, subst, "while");
+            let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
+                self.backtrace.pop();
+                break;
+            };
+            last_args = args.clone();
+            let (condition, error) = crate::condition::evaluate(self, &args);
+            last_error = error;
             self.backtrace.pop();
             if !condition || self.fatal {
+                completed = true;
                 break;
             }
             count += 1;
@@ -1964,16 +2165,56 @@ impl Interp {
             }
         }
         *self.loop_depth.last_mut().expect("loop depth") -= 1;
-        result
+        // CMP0130 diagnostics apply only when the loop ended by a false
+        // condition evaluation (early exits skip error enforcement).
+        if completed && result == Ctl::Normal {
+            if let Some((kind, message)) = last_error {
+                match self.policy_status("CMP0130") {
+                    PolicyStatus::Warn => {
+                        let mut text = format!(
+                            "{}\nwhile() given incorrect arguments:\n ",
+                            policy::policy_warning(policy::index_of("CMP0130").expect("registered policy"))
+                        );
+                        for (value, _) in &last_args {
+                            text.push(' ');
+                            text.push_str(&util::escape_for_cmake(value));
+                        }
+                        text.push('\n');
+                        text.push_str(&message);
+                        self.backtrace.push(self.frame_for(file, command));
+                        self.issue(MessageType::AuthorWarning, &text);
+                        self.backtrace.pop();
+                    }
+                    PolicyStatus::Old => {}
+                    PolicyStatus::New => {
+                        let mut text = String::from("while() given incorrect arguments:\n ");
+                        for (value, _) in &last_args {
+                            text.push(' ');
+                            text.push_str(&util::escape_for_cmake(value));
+                        }
+                        text.push('\n');
+                        text.push_str(&message);
+                        self.backtrace.push(self.frame_for(file, command));
+                        self.issue(kind, &text);
+                        if kind == MessageType::FatalError {
+                            self.set_fatal();
+                        }
+                        self.backtrace.pop();
+                    }
+                }
+            }
+        }
+        (true, result)
     }
 
-    fn run_block(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> Ctl {
+    /// Returns `(block_opened, ctl)` like `run_foreach`.
+    fn run_block(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
         let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
             self.backtrace.pop();
-            return Ctl::Normal;
+            return (true, Ctl::Normal);
         };
         let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
         let options = match crate::flow::parse_block(&values) {
@@ -1983,10 +2224,12 @@ impl Interp {
                 self.issue(MessageType::FatalError, &text);
                 self.command_failed();
                 self.backtrace.pop();
-                return Ctl::Normal;
+                return (false, Ctl::Normal);
             }
         };
         self.backtrace.pop();
+        // `cmBlockFunctionBlocker`: `endblock` takes no arguments.
+        self.warn_end_args(file, command, end, true, false);
         let policy_depth = self.mf().policies.len();
         if options.variables {
             self.push_scope();
@@ -2009,7 +2252,7 @@ impl Interp {
         if options.policies {
             self.end_policy_scope(policy_depth);
         }
-        ctl
+        (true, ctl)
     }
 
     // ------------------------------------------------------------------
@@ -2333,4 +2576,194 @@ impl Interp {
     pub fn has_command(&self, name: &str) -> bool {
         self.commands.contains_key(&name.to_ascii_lowercase())
     }
+}
+
+// ---- include() helpers (langcore) ----
+
+impl Interp {
+    /// `cmMakefile::PopSnapshot` for the `NO_POLICY_SCOPE` case of
+    /// `include()`: `cmMakefile::ReadDependentFile` only calls
+    /// `end_policy_scope` when it pushed a policy frame itself, but
+    /// `~IncludeScope` always runs `PopSnapshot`, which pops policy
+    /// scopes the included file left open and reports
+    /// "cmake_policy PUSH without matching POP". That diagnostic is
+    /// issued while the included file is still the top backtrace entry
+    /// (`Backtrace.Pop()` is the last step of `~IncludeScope`), so the
+    /// frame is reconstructed here: `read_dependent_file` has already
+    /// popped it by the time `include()` regains control.
+    pub fn include_policy_scope_cleanup(&mut self, path: &str, depth: usize) {
+        if self.mf().policies.len() <= depth {
+            return;
+        }
+        if !self.fatal {
+            let mut backtrace = self.backtrace.clone();
+            backtrace.push(Frame {
+                file: Rc::from(path),
+                line: 0,
+                name: None,
+                deferred: false,
+            });
+            self.issue_at(
+                MessageType::FatalError,
+                "cmake_policy PUSH without matching POP",
+                &backtrace,
+            );
+        }
+        self.mf_mut().policies.truncate(depth);
+    }
+
+    /// `cmGlobalGenerator::IsExportedTargetsFile`: `path` names a file
+    /// registered by export() as a build-export file, which CMP0024
+    /// forbids passing to include(). Files generated for an export set
+    /// (`export(EXPORT ...)`) are exempt; `BuildExport::set` records which
+    /// kind was requested (`AddBuildExportExportSet` vs
+    /// `AddBuildExportSet` in cmExportCommand.cxx).
+    pub fn is_exported_targets_file(&self, path: &str) -> bool {
+        self.ext
+            .install
+            .build_exports
+            .get(path)
+            .is_some_and(|export| export.set.is_none())
+    }
+
+    /// `cmMakefile::ConfigureSubDirectory` followed by the list-file part
+    /// of `cmMakefile::Configure` for the child directory. The child
+    /// inherits the parent's variable scope through the scope stack, so
+    /// `read_list_file_directory` derives the same CMAKE_CURRENT_LIST_FILE /
+    /// CMAKE_PARENT_LIST_FILE state as `BuildsystemFileScope` + the explicit
+    /// `AddDefinition(kCMAKE_PARENT_LIST_FILE, ...)` in `cmMakefile::Configure`:
+    /// both name the child's own list file while it executes, and the
+    /// inherited values are restored once it finishes.
+    pub fn configure_subdirectory_dirscope(&mut self, index: usize, system: bool) -> bool {
+        let parent = self.mf_index();
+        self.save_directory_definitions(parent);
+        let flattened = self.effective_policies();
+        // Directory properties inherited at configure (InitializeFromParent).
+        let parent_props = self.makefiles[parent].props.clone();
+        for key in [
+            "INCLUDE_DIRECTORIES",
+            "COMPILE_DEFINITIONS",
+            "COMPILE_OPTIONS",
+            "LINK_OPTIONS",
+            "LINK_DIRECTORIES",
+            "INCLUDE_REGULAR_EXPRESSION",
+        ] {
+            if let Some(value) = parent_props.get(key) {
+                self.makefiles[index].props.set(key, value.to_owned());
+            }
+        }
+        for (key, value) in parent_props.iter() {
+            if key.starts_with("COMPILE_DEFINITIONS_") {
+                self.makefiles[index].props.set(key, value.to_owned());
+            }
+        }
+        self.makefiles[index].policies = vec![PolicyFrame {
+            map: flattened,
+            weak: false,
+        }];
+        crate::commands::directory::initialize_subdirectory(self, parent, index, system);
+        let source = self.makefiles[index].source_dir.clone();
+        let binary = self.makefiles[index].binary_dir.clone();
+        self.mf_stack.push(index);
+        // cmMakefile::InitializeFromParent copies RecursionDepth; the new
+        // makefile's ExecutionStatusStack starts empty.
+        self.trace_frame_base.push(self.recursion_depth);
+        self.push_scope();
+        self.set_def("CMAKE_CURRENT_SOURCE_DIR", &source);
+        self.set_def("CMAKE_CURRENT_BINARY_DIR", &binary);
+        // The child's backtrace starts at its own list file, independent of
+        // the parent's call stack (cmMakefile::Configure).
+        let saved_backtrace = std::mem::take(&mut self.backtrace);
+        let list = format!("{source}/CMakeLists.txt");
+        let ok = self.read_list_file_directory(&list);
+        self.backtrace = saved_backtrace;
+        self.save_directory_definitions(index);
+        self.record_directory_vars();
+        self.pop_scope();
+        self.trace_frame_base.pop();
+        self.mf_stack.pop();
+        ok
+    }
+}
+
+/// `cmStrToULong`: skips leading `isspace`, rejects `-`, parses a base-10
+/// `strtoul` that must consume the whole string without overflow.
+fn str_to_ulong(text: &str) -> Option<u64> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len()
+        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    {
+        index += 1;
+    }
+    if bytes.get(index) == Some(&b'-') {
+        return None;
+    }
+    if bytes.get(index) == Some(&b'+') {
+        index += 1;
+    }
+    let digits = index;
+    let mut value: u64 = 0;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        value = value.checked_mul(10)?.checked_add(u64::from(bytes[index] - b'0'))?;
+        index += 1;
+    }
+    if index == digits || index != bytes.len() {
+        return None;
+    }
+    Some(value)
+}
+
+/// C `atof`: parses the longest valid floating-point prefix of `text`
+/// (leading `isspace` skipped, no digits yields 0).
+fn atof_prefix(text: &str) -> f64 {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len()
+        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    {
+        index += 1;
+    }
+    let start = index;
+    if matches!(bytes.get(index), Some(b'+') | Some(b'-')) {
+        index += 1;
+    }
+    let mut digits = 0;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+        digits += 1;
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return 0.0;
+    }
+    if matches!(bytes.get(index), Some(b'e') | Some(b'E')) {
+        let mut end = index + 1;
+        if matches!(bytes.get(end), Some(b'+') | Some(b'-')) {
+            end += 1;
+        }
+        let exp_start = end;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if end > exp_start {
+            index = end;
+        }
+    }
+    text[start..index].parse::<f64>().unwrap_or(0.0)
+}
+
+/// `cmListFileArgument::operator==`: value and delimiter kind, ignoring the
+/// line number.
+fn raw_args_equal(a: &[Arg], b: &[Arg]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| x.value == y.value && x.delim == y.delim)
 }

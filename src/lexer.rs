@@ -48,6 +48,11 @@ pub struct ParseDiag {
     pub message: String,
     /// When true, the diagnostic is an AUTHOR_WARNING and parsing continued.
     pub warning: bool,
+    /// When true, the diagnostic calls `cmSystemTools::SetFatalErrorOccurred`.
+    /// `cmListFileParser::IssueError` and the nesting check do; the
+    /// end-of-file and argument-separation diagnostics only issue a
+    /// FATAL_ERROR message without stopping execution.
+    pub fatal: bool,
     /// Command name for the diagnostic's context (`cmListFileContext::
     /// FromListFileFunction` for nesting errors).
     pub command: Option<String>,
@@ -431,8 +436,10 @@ impl<'a> Lexer<'a> {
 /// Parses a list file. Returns the commands and any diagnostics; when the
 /// final diagnostic is not a warning, parsing failed.
 pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
+    // Byte-order marks are handled by the caller: `cmListFileLexer` only
+    // sees file content after `ReadBOM` consumed a UTF-8 BOM, and string
+    // input is never BOM-checked.
     let bytes = text.as_bytes();
-    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let mut lexer = Lexer {
         src: bytes,
         pos: 0,
@@ -457,26 +464,30 @@ pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
             }
             Tok::Identifier => {
                 diags.push(ParseDiag {
-                    line: token.line,
+                    // `cmListFileParser::IssueError` reports the lexer's
+                    // current line, which is past the offending token.
+                    line: lexer.line,
                     message: format!(
                         "Parse error.  Expected a newline, got {} with text \"{}\".",
                         token.kind.describe(),
                         token.text
                     ),
                     warning: false,
+                    fatal: true,
                     command: None,
                 });
                 return (None, diags);
             }
             other => {
                 diags.push(ParseDiag {
-                    line: token.line,
+                    line: lexer.line,
                     message: format!(
                         "Parse error.  Expected a command name, got {} with text \"{}\".",
                         other.describe(),
                         token.text
                     ),
                     warning: false,
+                    fatal: true,
                     command: None,
                 });
                 return (None, diags);
@@ -488,6 +499,7 @@ pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
             line,
             message: "Flow control statements are not properly nested.".into(),
             warning: false,
+            fatal: true,
             command: Some(name),
         });
         return (None, diags);
@@ -520,19 +532,21 @@ fn parse_function(
             message: "Unexpected end of file.\nParse error.  Function missing opening \"(\"."
                 .into(),
             warning: false,
+            fatal: true,
             command: None,
         });
         return None;
     };
     if token.kind != Tok::ParenLeft {
         diags.push(ParseDiag {
-            line: token.line,
+            line: lexer.line,
             message: format!(
                 "Parse error.  Expected \"(\", got {} with text \"{}\".",
                 token.kind.describe(),
                 token.text
             ),
             warning: false,
+            fatal: true,
             command: None,
         });
         return None;
@@ -563,6 +577,9 @@ fn parse_function(
                 token.column
             ),
             warning: !error,
+            // `cmListFileParser::AddArgument` issues FATAL_ERROR without
+            // `SetFatalErrorOccurred`.
+            fatal: false,
             command: None,
         });
         !error
@@ -616,23 +633,27 @@ fn parse_function(
             Tok::CommentBracket => separation = Separation::Error,
             other => {
                 diags.push(ParseDiag {
-                    line: token.line,
+                    line: lexer.line,
                     message: format!(
                         "Parse error.  Function missing ending \")\".  Instead found {} with text \"{}\".",
                         other.describe(),
                         token.text
                     ),
                     warning: false,
+                    fatal: true,
                     command: None,
                 });
                 return None;
             }
         }
     }
+    // `cmListFileParser::ParseFunction` reports this at the function's
+    // starting line and does not set the fatal-error flag.
     diags.push(ParseDiag {
         line,
         message: "Parse error.  Function missing ending \")\".  End of file reached.".into(),
         warning: false,
+        fatal: false,
         command: None,
     });
     None

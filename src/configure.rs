@@ -805,9 +805,6 @@ pub fn try_compile_project(
     };
     let root = outer.cmake_root.clone();
     let mut inner = new_project_interp(&options, &root);
-    // The shared `cmake` instance keeps the outer project's top source, so
-    // diagnostics inside the scratch project print absolute paths.
-    inner.top_source_root = outer.top_source().map(str::to_owned);
     inner.recursion_depth_base = outer.recursion_depth_now();
     let _ = inner.cache.load(std::path::Path::new(bindir));
     add_cmake_paths(&mut inner);

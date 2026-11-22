@@ -126,7 +126,10 @@ fn configure_subdirectory(
             &format!("The source directory\n  {source}\ndoes not contain a CMakeLists.txt file."),
         );
     }
-    interp.configure_subdirectory(index, system);
+    // configure_subdirectory_dirscope additionally gives the child's
+    // CMakeLists.txt the CMAKE_PARENT_LIST_FILE=self state of
+    // cmMakefile::Configure.
+    interp.configure_subdirectory_dirscope(index, system);
     Ok(())
 }
 
@@ -240,7 +243,7 @@ pub fn finish_directory(interp: &mut Interp) {
         // parent's list file; diagnostics use the parent's file-scope
         // backtrace, which is the interpreter's current backtrace here.
         if Path::new(&dir.source).join("CMakeLists.txt").is_file() {
-            interp.configure_subdirectory(dir.index, false);
+            interp.configure_subdirectory_dirscope(dir.index, false);
         } else {
             let _: CmdResult = report(
                 interp,

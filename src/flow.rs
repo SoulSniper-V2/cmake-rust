@@ -23,69 +23,157 @@ pub fn foreach_plan(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan>
         interp.set_fatal_if_script();
         return None;
     }
-    // RANGE
-    if args.len() >= 2 && args[1] == "RANGE" {
-        let parse = |text: &str| -> Option<i64> {
-            let (value, ok) = util::strtol(text, 10);
-            ok.then_some(value)
-        };
-        let numbers: Vec<Option<i64>> = args[2..].iter().map(|text| parse(text)).collect();
-        let (start, stop, step) = match numbers.as_slice() {
-            [Some(stop)] => (0, *stop, 1),
-            [Some(start), Some(stop)] => (*start, *stop, 1),
-            [Some(start), Some(stop), Some(step)] => (*start, *stop, *step),
-            _ => {
-                let text = if numbers.iter().any(Option::is_none) && !numbers.is_empty() && numbers.len() <= 3 {
-                    format!(
-                        "foreach called with incorrect range specification: {}",
-                        args[2..].join(" ")
-                    )
-                } else {
-                    "foreach called with incorrect number of arguments".to_owned()
-                };
-                let _ = text;
-                interp.issue(
-                    MessageType::FatalError,
-                    "foreach called with incorrect number of arguments",
-                );
-                interp.set_fatal_if_script();
-                return None;
-            }
-        };
-        let step = if step == 0 {
-            if start > stop { -1 } else { 1 }
-        } else {
-            step
-        };
-        if (start > stop && step > 0) || (start < stop && step < 0) {
-            let text = format!(
-                "called with incorrect range specification: start {start}, stop {stop}, step {step}"
-            );
-            interp.issue(MessageType::FatalError, &format!("foreach {text}"));
-            interp.set_fatal_if_script();
-            return None;
-        }
-        let mut iterations = Vec::new();
-        let mut value = start;
-        loop {
-            if (step > 0 && value > stop) || (step < 0 && value < stop) {
-                break;
-            }
-            iterations.push(vec![Some(value.to_string())]);
-            value += step;
-        }
-        return Some(ForeachPlan {
-            vars: vec![args[0].clone()],
-            iterations,
-        });
-    }
-    // HandleInMode: IN [LISTS ...] [ITEMS ...] | IN ZIP_LISTS ...
+    // cmForEachCommand looks for "IN" before considering RANGE, so
+    // `foreach(x RANGE IN ...)` is IN-mode, not RANGE-mode.
     if let Some(position) = args.iter().position(|arg| arg == "IN") {
         return foreach_in_mode(interp, &args[..position], &args[position + 1..]);
+    }
+    // RANGE
+    if args.len() >= 2 && args[1] == "RANGE" {
+        return foreach_range(interp, args);
     }
     Some(ForeachPlan {
         vars: vec![args[0].clone()],
         iterations: args[1..].iter().map(|item| vec![Some(item.clone())]).collect(),
+    })
+}
+
+/// `std::stoi` result as used by `TryParseInteger` in cmForEachCommand.cxx.
+enum Stoi {
+    Ok(i32),
+    /// `std::invalid_argument`: no digits after optional whitespace/sign.
+    Invalid,
+    /// `std::out_of_range`: the value does not fit in `int`.
+    OutOfRange,
+}
+
+/// `std::stoi(str)`: skips leading `isspace` characters (C locale), accepts
+/// one optional sign, then requires at least one decimal digit. Trailing
+/// characters are ignored (`"12x"` parses as 12). The parsed value must fit
+/// in `int`.
+fn stoi(text: &str) -> Stoi {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len()
+        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    {
+        index += 1;
+    }
+    let negative = match bytes.get(index) {
+        Some(b'-') => {
+            index += 1;
+            true
+        }
+        Some(b'+') => {
+            index += 1;
+            false
+        }
+        _ => false,
+    };
+    let digits = index;
+    let mut magnitude: u64 = 0;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        magnitude = magnitude
+            .saturating_mul(10)
+            .saturating_add(u64::from(bytes[index] - b'0'));
+        index += 1;
+    }
+    if index == digits {
+        return Stoi::Invalid;
+    }
+    // strtol accumulates into long and std::stoi range-checks against int;
+    // any magnitude beyond the int bounds — including u64 saturation on
+    // absurdly long inputs — is out_of_range either way.
+    let value = if negative {
+        -(magnitude as i128)
+    } else {
+        magnitude as i128
+    };
+    if value < i128::from(i32::MIN) || value > i128::from(i32::MAX) {
+        Stoi::OutOfRange
+    } else {
+        Stoi::Ok(value as i32)
+    }
+}
+
+/// The `args[1] == "RANGE"` branch of `cmForEachCommand`, including its
+/// `TryParseInteger` diagnostics.
+fn foreach_range(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan> {
+    // TryParseInteger: on failure the command error is `<name> <text>`
+    // (cmMakefile::ExecuteCommand prefixes the command name) and the fatal
+    // flag is set.
+    let parse = |interp: &mut Interp, text: &str| -> Option<i32> {
+        match stoi(text) {
+            Stoi::Ok(value) => Some(value),
+            Stoi::Invalid => {
+                interp.issue(
+                    MessageType::FatalError,
+                    &format!("foreach Invalid integer: '{text}'"),
+                );
+                interp.set_fatal();
+                None
+            }
+            Stoi::OutOfRange => {
+                interp.issue(
+                    MessageType::FatalError,
+                    &format!("foreach Integer out of range: '{text}'"),
+                );
+                interp.set_fatal();
+                None
+            }
+        }
+    };
+    // Only the 3/4/5-argument forms parse integers. Any other count leaves
+    // start = stop = step = 0, which degenerates to a single "0" iteration.
+    let mut start = 0i32;
+    let mut stop = 0i32;
+    let mut step = 0i32;
+    match args.len() {
+        3 => stop = parse(interp, &args[2])?,
+        4 => {
+            start = parse(interp, &args[2])?;
+            stop = parse(interp, &args[3])?;
+        }
+        5 => {
+            start = parse(interp, &args[2])?;
+            stop = parse(interp, &args[3])?;
+            step = parse(interp, &args[4])?;
+        }
+        _ => {}
+    }
+    let step = if step == 0 {
+        if start > stop {
+            -1
+        } else {
+            1
+        }
+    } else {
+        step
+    };
+    if (start > stop && step > 0) || (start < stop && step < 0) || step == 0 {
+        interp.issue(
+            MessageType::FatalError,
+            &format!(
+                "foreach called with incorrect range specification: start {start}, stop {stop}, step {step}"
+            ),
+        );
+        interp.set_fatal();
+        return None;
+    }
+    let mut iterations = Vec::new();
+    let mut value = i64::from(start);
+    let stop = i64::from(stop);
+    let step = i64::from(step);
+    loop {
+        if (step > 0 && value > stop) || (step < 0 && value < stop) {
+            break;
+        }
+        iterations.push(vec![Some(value.to_string())]);
+        value += step;
+    }
+    Some(ForeachPlan {
+        vars: vec![args[0].clone()],
+        iterations,
     })
 }
 
@@ -98,9 +186,10 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
         Items,
         ZipLists,
     }
+    // HandleInMode reports FATAL_ERROR but returns success without a
+    // blocker; no fatal flag is set in any mode.
     let fatal = |interp: &mut Interp, text: &str| {
         interp.issue(MessageType::FatalError, text);
-        interp.set_fatal_if_script();
         None
     };
     let vars_count = vars.len();
@@ -140,15 +229,15 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
         );
     }
     if !zip {
-        // ReplayItems asserts exactly one variable; with none of the keywords
-        // given (`foreach(a b IN)`) there is nothing to iterate.
+        // ReplayItems uses `Args.front()` as the loop variable and
+        // `Args[1..]` — any additional variable names followed by the items —
+        // as its values (the `IterationVarsCount == 1` assert is debug-only;
+        // extra names reach here only via `foreach(a b IN)` with an empty
+        // tail, which iterates `a` over `"b"`).
+        let values: Vec<String> = vars.iter().skip(1).cloned().chain(args).collect();
         return Some(ForeachPlan {
             vars: vars.iter().take(1).cloned().collect(),
-            iterations: if vars_count == 1 {
-                args.into_iter().map(|item| vec![Some(item)]).collect()
-            } else {
-                Vec::new()
-            },
+            iterations: values.into_iter().map(|item| vec![Some(item)]).collect(),
         });
     }
     let lists: Vec<Vec<String>> = args
@@ -166,7 +255,15 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
     let names: Vec<String> = if vars_count > 1 {
         vars.to_vec()
     } else {
-        (0..lists.len()).map(|index| format!("{}_{index}", vars[0])).collect()
+        // ReplayZipLists derives `var_N` names from `Args.front()` — the
+        // first variable name, or the first list name when `IN` came first
+        // (`foreach(IN ZIP_LISTS ...)`).
+        let prefix = vars
+            .first()
+            .or_else(|| args.first())
+            .cloned()
+            .unwrap_or_default();
+        (0..lists.len()).map(|index| format!("{prefix}_{index}")).collect()
     };
     let iterations = (0..longest)
         .map(|index| lists.iter().map(|list| list.get(index).cloned()).collect())

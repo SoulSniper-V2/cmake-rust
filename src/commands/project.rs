@@ -16,6 +16,99 @@ fn is_root(interp: &Interp) -> bool {
     interp.mf_index() == 0
 }
 
+const KEYWORDS: [&str; 4] = ["VERSION", "DESCRIPTION", "HOMEPAGE_URL", "LANGUAGES"];
+const COMPAT_VERSION_KEYWORD: &str = "COMPAT_VERSION";
+/// Activation UUID for `cmExperimental::Feature::ExportPackageInfo`.
+const EXPORT_PACKAGE_INFO_UUID: &str = "b80be207-778e-46ba-8080-b23bba22639e";
+const EXPORT_PACKAGE_INFO_VARIABLE: &str = "CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_INFO";
+const EXPORT_PACKAGE_INFO_DESCRIPTION: &str = "CMake's support for exporting package information in the Common Package Specification format is experimental. It is meant only for experimentation and feedback to CMake developers.";
+
+/// `cmExperimental::HasSupportEnabled(Feature::ExportPackageInfo)`.
+fn export_package_info_enabled(interp: &mut Interp) -> bool {
+    let Some(value) = interp.read_definition(EXPORT_PACKAGE_INFO_VARIABLE) else {
+        return false;
+    };
+    let enabled = value == EXPORT_PACKAGE_INFO_UUID;
+    // `cmGlobalGenerator::ShouldWarnExperimental`: warn once per
+    // feature-name/value pair.
+    if interp
+        .ext
+        .experimental_warnings
+        .insert(("ExportPackageInfo".to_owned(), value.clone()))
+    {
+        let warning = if enabled {
+            EXPORT_PACKAGE_INFO_DESCRIPTION.to_owned()
+        } else {
+            format!("{EXPORT_PACKAGE_INFO_VARIABLE} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
+        };
+        interp.issue(MessageType::AuthorWarning, &warning);
+    }
+    enabled
+}
+
+/// The `vx` regular expression in cmProjectCommand.cxx:
+/// `^([0-9]+(\.[0-9]+(\.[0-9]+(\.[0-9]+)?)?)?)?$`
+fn valid_version(version: &str) -> bool {
+    if version.is_empty() {
+        return true;
+    }
+    let parts: Vec<&str> = version.split('.').collect();
+    parts.len() <= 4
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `cmMakefile::EnableLanguage`: reports duplicate languages, moves RC last,
+/// and only invokes the global generator for non-empty language sets.
+fn enable_languages(interp: &mut Interp, languages: &[String], optional: bool) {
+    if interp.ext.defer_current_id.is_some() {
+        interp.issue(
+            MessageType::FatalError,
+            "Languages may not be enabled during deferred execution.",
+        );
+        interp.set_fatal();
+        return;
+    }
+    if languages.is_empty() {
+        return;
+    }
+    let mut unique: Vec<&str> = Vec::new();
+    let mut duplicates: Vec<&str> = Vec::new();
+    for language in languages {
+        let language = language.as_str();
+        if !unique.contains(&language) {
+            unique.push(language);
+        } else if !duplicates.contains(&language) {
+            duplicates.push(language);
+        }
+    }
+    if !duplicates.is_empty() {
+        let quantity = if duplicates.len() == 1 { " has" } else { "s have" };
+        let text = format!(
+            "Languages to be enabled may not be specified more than once at the same time. The following language{quantity} been specified multiple times: {}",
+            duplicates.join(", ")
+        );
+        interp.issue(MessageType::AuthorWarning, &text);
+    }
+    // If RC is explicitly listed we need to do it after other languages.
+    let mut without_rc: Vec<String> = Vec::new();
+    let mut for_rc: Vec<String> = Vec::new();
+    for language in unique {
+        if language == "RC" {
+            for_rc.push(language.to_owned());
+        } else {
+            without_rc.push(language.to_owned());
+        }
+    }
+    if !without_rc.is_empty() {
+        crate::languages::enable_language(interp, &without_rc, optional);
+    }
+    if !for_rc.is_empty() {
+        crate::languages::enable_language(interp, &for_rc, optional);
+    }
+}
+
 /// TopLevelCMakeVarCondSet.
 fn top_level_set(interp: &mut Interp, name: &str, value: &str) {
     if interp.get_def(name).is_none() || is_root(interp) {
@@ -60,30 +153,42 @@ fn include_by_variable(interp: &mut Interp, variable: &str) -> CmdResult {
 }
 
 fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
+    // cmExperimental::HasSupportEnabled is queried before the argument check
+    // so that COMPAT_VERSION is only a keyword when the feature is enabled.
+    let compat_enabled = export_package_info_enabled(interp);
     if args.is_empty() {
         return err("PROJECT called with incorrect number of arguments");
     }
-    const KEYWORDS: [&str; 4] = ["VERSION", "DESCRIPTION", "HOMEPAGE_URL", "LANGUAGES"];
     let name = args[0].clone();
-    if KEYWORDS.contains(&name.as_str()) {
+    if KEYWORDS.contains(&name.as_str()) || (compat_enabled && name == COMPAT_VERSION_KEYWORD) {
         let text = format!(
             "project() called with '{name}' as first argument. The first parameter should be the project name, not a keyword argument. See the cmake-commands(7) manual for correct usage of the project() command."
         );
         interp.issue(MessageType::AuthorWarning, &text);
     }
-    // cmArgumentParser semantics.
+    // cmArgumentParser semantics. Keyword-bound optionals are "engaged" as
+    // soon as the keyword is parsed, even if no value follows.
     let mut version: Option<String> = None;
     let mut description: Option<String> = None;
     let mut homepage: Option<String> = None;
+    let mut compat_version: Option<String> = None;
     let mut languages: Option<Vec<String>> = None;
     let mut unparsed: Vec<String> = Vec::new();
-    let mut parsed_keywords: Vec<&str> = Vec::new();
-    let mut missing: Vec<&str> = Vec::new();
-    let mut current: Option<&str> = None;
+    let mut parsed_keywords: Vec<&'static str> = Vec::new();
+    let mut missing: Vec<&'static str> = Vec::new();
+    let mut current: Option<&'static str> = None;
     let mut index = 1;
     while index < args.len() {
         let arg = args[index].as_str();
-        if let Some(keyword) = KEYWORDS.iter().find(|keyword| **keyword == arg) {
+        let keyword = KEYWORDS
+            .iter()
+            .copied()
+            .find(|keyword| *keyword == arg)
+            .or_else(|| {
+                (compat_enabled && arg == COMPAT_VERSION_KEYWORD)
+                    .then_some(COMPAT_VERSION_KEYWORD)
+            });
+        if let Some(keyword) = keyword {
             if let Some(previous) = current
                 && previous != "LANGUAGES"
             {
@@ -91,23 +196,34 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
             parsed_keywords.push(keyword);
             current = Some(keyword);
-            if *keyword == "LANGUAGES" {
-                languages = Some(Vec::new());
+            match keyword {
+                "VERSION" => version = Some(String::new()),
+                "DESCRIPTION" => description = Some(String::new()),
+                "HOMEPAGE_URL" => homepage = Some(String::new()),
+                "COMPAT_VERSION" => compat_version = Some(String::new()),
+                "LANGUAGES" => {
+                    languages.get_or_insert_with(Vec::new);
+                }
+                _ => {}
             }
             index += 1;
             continue;
         }
         match current {
             Some("VERSION") => {
-                version = Some(arg.to_owned());
+                *version.as_mut().expect("version") = arg.to_owned();
                 current = None;
             }
             Some("DESCRIPTION") => {
-                description = Some(arg.to_owned());
+                *description.as_mut().expect("description") = arg.to_owned();
                 current = None;
             }
             Some("HOMEPAGE_URL") => {
-                homepage = Some(arg.to_owned());
+                *homepage.as_mut().expect("homepage") = arg.to_owned();
+                current = None;
+            }
+            Some("COMPAT_VERSION") => {
+                *compat_version.as_mut().expect("compat_version") = arg.to_owned();
                 current = None;
             }
             Some("LANGUAGES") => languages.as_mut().expect("languages").push(arg.to_owned()),
@@ -192,15 +308,18 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
     } else if languages.as_ref().is_some_and(Vec::is_empty) {
         languages = Some(vec!["NONE".to_owned()]);
     }
+    if compat_version.is_some() && version.is_none() {
+        interp.issue(
+            MessageType::FatalError,
+            "project with COMPAT_VERSION must also provide VERSION.",
+        );
+        interp.set_fatal();
+        return Ok(());
+    }
     let mut version_string = String::new();
     let mut components: [String; 4] = Default::default();
     if let Some(version) = &version {
-        let valid = {
-            let parts: Vec<&str> = version.split('.').collect();
-            version.is_empty()
-                || (parts.len() <= 4 && parts.iter().all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
-        };
-        if !valid {
+        if !valid_version(version) {
             let text = format!("VERSION \"{version}\" format invalid.");
             interp.issue(MessageType::FatalError, &text);
             interp.set_fatal();
@@ -228,7 +347,23 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }
     }
-    let mut create = |interp: &mut Interp, variable: &str, value: &str| {
+    if let Some(compat_version) = &compat_version {
+        if !valid_version(compat_version) {
+            let text = format!("COMPAT_VERSION \"{compat_version}\" format invalid.");
+            interp.issue(MessageType::FatalError, &text);
+            interp.set_fatal();
+            return Ok(());
+        }
+        if util::version_compare(util::CompareOp::Greater, compat_version, &version_string) {
+            interp.issue(
+                MessageType::FatalError,
+                "COMPAT_VERSION must be less than or equal to VERSION",
+            );
+            interp.set_fatal();
+            return Ok(());
+        }
+    }
+    let create = |interp: &mut Interp, variable: &str, value: &str| {
         interp.set_def(format!("PROJECT_{variable}"), value);
         interp.set_def(format!("{name}_{variable}"), value);
         top_level_set(interp, &format!("CMAKE_PROJECT_{variable}"), value);
@@ -238,17 +373,18 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
     create(interp, "VERSION_MINOR", &components[1].clone());
     create(interp, "VERSION_PATCH", &components[2].clone());
     create(interp, "VERSION_TWEAK", &components[3].clone());
-    create(interp, "COMPAT_VERSION", "");
+    create(interp, "COMPAT_VERSION", compat_version.as_deref().unwrap_or(""));
     create(interp, "DESCRIPTION", description.as_deref().unwrap_or(""));
     create(interp, "HOMEPAGE_URL", homepage.as_deref().unwrap_or(""));
     if unparsed.is_empty() && languages.is_none() {
-        crate::languages::enable_language(interp, &["C".into(), "CXX".into()], false);
+        // if no language is specified do c and c++
+        enable_languages(interp, &["C".to_owned(), "CXX".to_owned()], false);
     } else {
         if !unparsed.is_empty() {
-            crate::languages::enable_language(interp, &unparsed, false);
+            enable_languages(interp, &unparsed, false);
         }
         if let Some(languages) = &languages {
-            crate::languages::enable_language(interp, languages, false);
+            enable_languages(interp, languages, false);
         }
     }
     include_by_variable(interp, "CMAKE_PROJECT_INCLUDE")?;
@@ -261,6 +397,23 @@ fn enable_language(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.is_empty() {
         return err("called with incorrect number of arguments");
     }
+    if interp.get_normal_def("PROJECT_NAME").is_none() {
+        match interp.policy_status("CMP0165") {
+            PolicyStatus::Warn => interp.issue(
+                MessageType::AuthorWarning,
+                "project() should be called prior to this enable_language() call.",
+            ),
+            PolicyStatus::New => {
+                interp.issue(
+                    MessageType::FatalError,
+                    "project() must be called prior to this enable_language() call.",
+                );
+                interp.set_fatal();
+                return Err(CmdErr::Reported);
+            }
+            _ => {}
+        }
+    }
     let mut optional = false;
     let mut languages = Vec::new();
     for arg in args {
@@ -270,12 +423,7 @@ fn enable_language(interp: &mut Interp, args: &[String]) -> CmdResult {
             languages.push(arg.clone());
         }
     }
-    if languages.is_empty() {
-        return err("called with incorrect number of arguments");
-    }
-    // cmMakefile::EnableLanguage: must be called at directory scope for
-    // the first time languages are enabled (cmGlobalGenerator handles it).
-    crate::languages::enable_language(interp, &languages, optional);
+    enable_languages(interp, &languages, optional);
     if interp.fatal {
         return Err(CmdErr::Reported);
     }

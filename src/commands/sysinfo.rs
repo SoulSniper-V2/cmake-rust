@@ -64,14 +64,42 @@ pub fn notify_variable(interp: &mut Interp, variable: &str, access: &str, value:
         } else {
             let stack = properties::listfile_stack(interp);
             let file = interp.get_safe("CMAKE_CURRENT_LIST_FILE");
-            let args = [
+            // `cmVariableWatchCommandVariableAccessed`: the callback runs
+            // through `cmMakefile::ExecuteCommand` on a synthetic function
+            // whose arguments carry the maximum fake line number.
+            let fake_line = i64::MAX as usize;
+            let args: Vec<crate::lexer::Arg> = [
                 variable.to_owned(),
                 access.to_owned(),
                 value.to_owned(),
-                file,
+                file.clone(),
                 stack,
-            ];
-            if !interp.call_command(&callback, &args) {
+            ]
+            .into_iter()
+            .map(|value| crate::lexer::Arg {
+                value,
+                delim: crate::lexer::Delim::Quoted,
+                line: fake_line,
+            })
+            .collect();
+            let command = crate::lexer::Command {
+                name: callback.clone(),
+                lname: callback.to_ascii_lowercase(),
+                line: fake_line,
+                line_end: fake_line,
+                args,
+            };
+            let parsed = std::rc::Rc::new(crate::interp::ParsedFile::new(
+                std::rc::Rc::from(file.as_str()),
+                vec![command],
+            ));
+            let command = parsed.commands[0].clone();
+            let (ok, _) = if interp.fatal {
+                (true, crate::interp::Ctl::Normal)
+            } else {
+                interp.execute(&parsed, &command, None)
+            };
+            if !ok {
                 eprintln!(
                     "CMake Error: Error in cmake code at\nUnknown:0:\nA command failed during the invocation of callback \"{callback}\"."
                 );
