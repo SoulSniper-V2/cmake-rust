@@ -1,5 +1,6 @@
 //! cmFileCommand and its filesystem subcommands.
 
+mod archive;
 mod copy;
 mod curl_strerror;
 mod download;
@@ -65,7 +66,9 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "GENERATE" => generate::run(interp, args),
         "DOWNLOAD" => download::download(interp, args),
         "UPLOAD" => download::upload(interp, args),
-        "ARCHIVE_CREATE" | "ARCHIVE_EXTRACT" | "GET_RUNTIME_DEPENDENCIES" | "READ_MACHO" => {
+        "ARCHIVE_CREATE" => archive::archive_create(interp, args),
+        "ARCHIVE_EXTRACT" => archive::archive_extract(interp, args),
+        "GET_RUNTIME_DEPENDENCIES" | "READ_MACHO" => {
             // SetError prefixes the command name. The unsupported command is
             // named explicitly in the diagnostic.
             Err(fatal(interp, &format!("file({action}) not yet supported")))
