@@ -12,31 +12,31 @@ use crate::util::is_full_path;
 /// optional single-value (`Maybe<std::string>`), and flag (`bool`)
 /// keywords.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(super) enum Kind {
     Single,
     Multi,
     Maybe,
     Flag,
 }
 
-struct Parsed {
-    singles: Vec<(String, String)>,
-    multis: Vec<(String, Vec<String>)>,
-    maybes: Vec<(String, String)>,
-    flags: Vec<String>,
-    unrecognized: Vec<String>,
-    keyword_errors: Vec<(String, String)>,
+pub(super) struct Parsed {
+    pub(super) singles: Vec<(String, String)>,
+    pub(super) multis: Vec<(String, Vec<String>)>,
+    pub(super) maybes: Vec<(String, String)>,
+    pub(super) flags: Vec<String>,
+    pub(super) unrecognized: Vec<String>,
+    pub(super) keyword_errors: Vec<(String, String)>,
 }
 
 impl Parsed {
-    fn single(&self, key: &str) -> Option<&str> {
+    pub(super) fn single(&self, key: &str) -> Option<&str> {
         self.singles
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     }
 
-    fn multi(&self, key: &str) -> &[String] {
+    pub(super) fn multi(&self, key: &str) -> &[String] {
         self.multis
             .iter()
             .find(|(name, _)| name == key)
@@ -44,19 +44,19 @@ impl Parsed {
             .unwrap_or(&[])
     }
 
-    fn maybe(&self, key: &str) -> Option<&str> {
+    pub(super) fn maybe(&self, key: &str) -> Option<&str> {
         self.maybes
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     }
 
-    fn flag(&self, key: &str) -> bool {
+    pub(super) fn flag(&self, key: &str) -> bool {
         self.flags.iter().any(|name| name == key)
     }
 }
 
-fn parse(args: &[String], keywords: &[(&'static str, Kind)]) -> Parsed {
+pub(super) fn parse(args: &[String], keywords: &[(&'static str, Kind)]) -> Parsed {
     let mut parsed = Parsed {
         singles: Vec::new(),
         multis: Vec::new(),
@@ -115,7 +115,7 @@ fn parse(args: &[String], keywords: &[(&'static str, Kind)]) -> Parsed {
 }
 
 /// `ParseResult::MaybeReportError`: issue FATAL_ERROR and report handled.
-fn maybe_report_error(interp: &mut Interp, parsed: &Parsed) -> bool {
+pub(super) fn maybe_report_error(interp: &mut Interp, parsed: &Parsed) -> bool {
     if parsed.keyword_errors.is_empty() {
         return false;
     }
