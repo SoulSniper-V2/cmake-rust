@@ -637,5 +637,117 @@
    "src/inc.cmake": "function(f)\n  message(STATUS \"in f\")\n  get_property(s DIRECTORY PROPERTY LISTFILE_STACK)\n  message(STATUS \"stack=${s}\")\nendfunction()\nf()\n",
    "src/sub/CMakeLists.txt": "install(CODE \"message(sub)\")\n"
   }
+ },
+ {
+  "name": "help-help-command-add_library",
+  "argv": [
+   "--help-command",
+   "add_library"
+  ]
+ },
+ {
+  "name": "help-help-command-nope",
+  "argv": [
+   "--help-command",
+   "nope"
+  ]
+ },
+ {
+  "name": "help-help-module-CheckCSourceCompiles",
+  "argv": [
+   "--help-module",
+   "CheckCSourceCompiles"
+  ]
+ },
+ {
+  "name": "help-help-policy-CMP0082",
+  "argv": [
+   "--help-policy",
+   "CMP0082"
+  ]
+ },
+ {
+  "name": "help-help-property-CONFIG_POSTFIX",
+  "argv": [
+   "--help-property",
+   "<CONFIG>_POSTFIX"
+  ]
+ },
+ {
+  "name": "help-help-variable-CMAKE_LANG_FLAGS",
+  "argv": [
+   "--help-variable",
+   "CMAKE_<LANG>_FLAGS"
+  ]
+ },
+ {
+  "name": "help-help-manual-cmake1",
+  "argv": [
+   "--help-manual",
+   "cmake(1)"
+  ]
+ },
+ {
+  "name": "help-help-manual-list",
+  "argv": [
+   "--help-manual-list"
+  ]
+ },
+ {
+  "name": "help-help-CMAKE_CXX_IGNORE_EXTENSIONS",
+  "argv": [
+   "--help",
+   "CMAKE_CXX_IGNORE_EXTENSIONS"
+  ]
+ },
+ {
+  "name": "help-help-nothing_matches",
+  "argv": [
+   "--help",
+   "nothing_matches"
+  ]
+ },
+ {
+  "name": "help-help-policies",
+  "argv": [
+   "--help-policies"
+  ]
+ },
+ {
+  "name": "help-help-full",
+  "argv": [
+   "--help-full"
+  ]
+ },
+ {
+  "name": "help-help-custom-modules-cm.1",
+  "argv": [
+   "--help-custom-modules",
+   "cm.1"
+  ]
+ },
+ {
+  "name": "help-version-help-command-list",
+  "argv": [
+   "--version",
+   "--help-command-list"
+  ]
+ },
+ {
+  "name": "help-help-module-list",
+  "argv": [
+   "--help-module-list"
+  ]
+ },
+ {
+  "name": "help-help-variable-CMAKE_BUILD_TYPE-out.txt",
+  "argv": [
+   "--help-variable",
+   "CMAKE_BUILD_TYPE",
+   "out.txt"
+  ],
+  "inspect": [
+   "out.txt"
+  ]
  }
 ]

@@ -65,70 +65,46 @@ pub fn main() -> i32 {
     }
 }
 
+/// cmakemain's `cmDocumentation::CheckOptions` / `PrintRequestedDocumentation`.
 fn documentation(args: &[String]) -> Option<i32> {
-    if args.is_empty() {
-        print!("{}", include_str!("cmcmd/usage.txt"));
-        return Some(0);
-    }
-    let mut handled = false;
-    let mut printed = false;
-    let mut index = 0;
-    while index < args.len() {
-        let arg = &args[index];
-        let mut destination = None;
-        let output = match arg.as_str() {
-            "--" => break,
-            "--version" | "-version" | "/V" => {
-                destination = args.get(index + 1).filter(|arg| !is_flag(arg));
-                format!(
+    use crate::help::{Documentation, HelpType, check_options};
+    let items = check_options(args)?;
+    let root = configure::find_cmake_root().unwrap_or_default();
+    let docs = Documentation::new(&root);
+    let mut result = true;
+    let mut count = 0;
+    for item in items {
+        let mut out = String::new();
+        let ok = match item.kind {
+            HelpType::Version => {
+                out = format!(
                     "cmake version {}\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).\n",
                     interp::VERSION_STRING
-                )
+                );
+                true
             }
-            "--help-command-list" => {
-                destination = args.get(index + 1).filter(|arg| !is_flag(arg));
-                include_str!("cmcmd/command-list.txt").to_owned()
+            HelpType::Usage => {
+                out = include_str!("cmcmd/usage.txt").to_owned();
+                true
             }
-            "--help" | "-help" | "-h" | "-H" | "-usage" | "/?" => {
-                if let Some(keyword) = args
-                    .get(index + 1)
-                    .filter(|arg| !arg.is_empty() && !is_flag(arg))
-                {
-                    eprintln!(
-                        "Argument \"{keyword}\" to --help is not a CMake manual.  Use --help-manual-list to see all manuals."
-                    );
-                    return Some(1);
-                }
-                generator_documentation(HELP)
+            HelpType::Help => {
+                out = generator_documentation(HELP);
+                true
             }
-            other if other.starts_with("--help-") => {
-                cmcmd::error(format!("{other} is not supported"));
-                return Some(1);
-            }
-            _ => {
-                index += 1;
-                continue;
-            }
+            _ => docs.print(&item, &mut out),
         };
-        handled = true;
-        if let Some(path) = destination {
-            if let Err(error) = std::fs::write(path, output) {
-                cmcmd::error(format!(
-                    "Could not open file for write in copy operation {path}: {error}"
-                ));
-                return Some(1);
-            }
-            index += 1;
-        } else {
-            if printed {
+        if item.filename.is_empty() {
+            count += 1;
+            if count > 1 {
                 print!("\n\n");
             }
-            print!("{output}");
-            printed = true;
+            print!("{out}");
+        } else if std::fs::write(&item.filename, out).is_err() {
+            result = false;
         }
-        index += 1;
+        result &= ok;
     }
-    handled.then_some(0)
+    Some(i32::from(!result))
 }
 
 fn mark_generator(text: &str, generator: &str) -> String {

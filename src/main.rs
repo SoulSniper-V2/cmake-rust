@@ -13,6 +13,7 @@ mod flow;
 mod fileapi;
 mod fsutil;
 mod generator;
+mod help;
 mod install_model;
 #[allow(dead_code)] mod genex;
 mod interp;

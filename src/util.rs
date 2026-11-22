@@ -244,6 +244,34 @@ pub fn filename_name(path: &str) -> String {
     }
 }
 
+/// `cmSystemTools::GetFilenameLastExtension`.
+pub fn filename_last_extension(path: &str) -> String {
+    let name = filename_name(path);
+    name.rfind('.').map_or_else(String::new, |dot| name[dot..].to_owned())
+}
+
+/// `cmSystemTools::GetFilenameWithoutLastExtension`.
+pub fn filename_without_last_extension(path: &str) -> String {
+    let name = filename_name(path);
+    name.rfind('.').map_or_else(|| name.clone(), |dot| name[..dot].to_owned())
+}
+
+/// `cmSystemTools::GetCurrentDateTime`: `strftime` of the local time.
+pub fn current_date_time(format: &str) -> String {
+    let Ok(format) = CString::new(format) else {
+        return String::new();
+    };
+    // SAFETY: time/localtime_r/strftime with valid buffers.
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&now, &mut tm);
+        let mut buffer = [0u8; 1024];
+        let n = libc::strftime(buffer.as_mut_ptr().cast(), buffer.len(), format.as_ptr(), &tm);
+        String::from_utf8_lossy(&buffer[..n]).into_owned()
+    }
+}
+
 /// `cmSystemTools::FileIsFullPath` (POSIX).
 pub fn is_full_path(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('~')

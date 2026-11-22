@@ -40,6 +40,10 @@ for tool in ctest cpack; do
         ln -s -- "$reference_bin/$tool" "$scratch/bin/$tool"
     fi
 done
+# CMake installs Help, Modules and Templates into its data directory
+# (CMakeLists.txt: install(DIRECTORY Help Modules Templates ...)); the
+# oracle reads all three from its source tree.
+ln -s -- "$source_dir/Help" "$scratch/share/cmake-4.1/Help"
 ln -s -- "$source_dir/Modules" "$scratch/share/cmake-4.1/Modules"
 ln -s -- "$source_dir/Templates" "$scratch/share/cmake-4.1/Templates"
 mv -nT -- "$scratch" "$prefix"
