@@ -141,6 +141,7 @@ fn model(fixture: &Fixture) -> Interp {
                 exclude_from_all: false,
                 deferred: Vec::new(),
                 defer_counter: 0,
+                backtrace: Vec::new(),
             });
         }
         let kind = match record.kind.as_str() {

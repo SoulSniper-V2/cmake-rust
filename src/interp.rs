@@ -178,6 +178,11 @@ pub struct Makefile {
     /// Deferred calls registered with cmake_language(DEFER).
     pub deferred: Vec<Deferred>,
     pub defer_counter: usize,
+    /// `cmMakefile::Backtrace`: this directory's own diagnostic stack.  It
+    /// is frozen (with the `add_subdirectory`/`include` frame on top) while
+    /// a descendant directory configures, and otherwise holds the
+    /// directory's permanent `CMakeLists.txt` entry frame.
+    pub backtrace: Vec<Frame>,
 }
 
 #[derive(Debug, Clone)]
@@ -349,6 +354,12 @@ impl Interp {
             exclude_from_all: false,
             deferred: Vec::new(),
             defer_counter: 0,
+            backtrace: vec![Frame {
+                file: Rc::from(format!("{home_source}/CMakeLists.txt").as_str()),
+                line: 0,
+                name: None,
+                deferred: false,
+            }],
         });
         interp.mf_stack.push(0);
         crate::commands::register_all(&mut interp);
@@ -768,6 +779,14 @@ impl Interp {
             exclude_from_all: exclude,
             deferred: Vec::new(),
             defer_counter: 0,
+            // cmMakefile::Configure pushes the directory's list-file
+            // context as the permanent bottom of its backtrace.
+            backtrace: vec![Frame {
+                file: Rc::from(format!("{source}/CMakeLists.txt").as_str()),
+                line: 0,
+                name: None,
+                deferred: false,
+            }],
         });
         self.makefiles[parent].children.push(index);
         let _ = std::fs::create_dir_all(binary);
@@ -804,6 +823,10 @@ impl Interp {
             weak: false,
         }];
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
+        // Freeze the parent's own backtrace (its stack still holds the
+        // add_subdirectory frame) for diagnostics issued on its behalf
+        // while the child configures (cmMakefile::Backtrace).
+        self.makefiles[parent].backtrace = self.backtrace.clone();
         let source = self.makefiles[index].source_dir.clone();
         let binary = self.makefiles[index].binary_dir.clone();
         if self.debug.output {
@@ -942,6 +965,18 @@ impl Interp {
     pub fn issue(&mut self, kind: MessageType, text: &str) {
         let backtrace = self.backtrace.clone();
         self.issue_at(kind, text, &backtrace);
+    }
+
+    /// The backtrace `mf.IssueMessage` uses for directory `dir`: the live
+    /// stack when `dir` is the directory currently executing, otherwise the
+    /// stack frozen when its configure ran (or its `CMakeLists.txt` entry
+    /// frame for directories that already finished).
+    pub fn directory_backtrace(&self, dir: usize) -> Vec<Frame> {
+        if dir == self.mf_index() {
+            self.backtrace.clone()
+        } else {
+            self.makefiles[dir].backtrace.clone()
+        }
     }
 
     pub fn issue_at(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
@@ -2993,6 +3028,10 @@ impl Interp {
             weak: false,
         }];
         crate::commands::directory::initialize_subdirectory(self, parent, index, system);
+        // Freeze the parent's own backtrace (its stack still holds the
+        // add_subdirectory frame) for diagnostics issued on its behalf
+        // while the child configures (cmMakefile::Backtrace).
+        self.makefiles[parent].backtrace = self.backtrace.clone();
         let source = self.makefiles[index].source_dir.clone();
         let binary = self.makefiles[index].binary_dir.clone();
         if self.debug.output {

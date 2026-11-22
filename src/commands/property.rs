@@ -311,6 +311,31 @@ fn get_property(interp: &mut Interp, args: &[String]) -> CmdResult {
             Object::Target(name)
         }
         Scope::Source => {
+            // cmGetPropertyCommand::HandleSourceMode: GENERATED under
+            // CMP0163 NEW consults only the global generated registry
+            // (caller's binary then source directory) and never creates a
+            // source file entry.
+            let cmp0163 = interp.policy_status_at(dirs[0], "CMP0163");
+            if property == "GENERATED"
+                && cmp0163 != PolicyStatus::Old
+                && cmp0163 != PolicyStatus::Warn
+            {
+                let generated = [interp.current_binary_dir(), interp.current_source_dir()]
+                    .iter()
+                    .any(|dir| {
+                        interp
+                            .ext
+                            .generated_sources
+                            .contains(&collapse_full_path(name, dir))
+                    });
+                store(
+                    interp,
+                    output,
+                    query,
+                    Some(if generated { "1".into() } else { "0".into() }),
+                );
+                return Ok(());
+            }
             prop::ensure_source(interp, dirs[0], &path);
             Object::Source(dirs[0], &path)
         }
@@ -388,8 +413,9 @@ fn handle_generated(interp: &mut Interp, index: usize, path: &str, change: Chang
         Change::Set(value) => (value.unwrap_or_default(), false),
         Change::Append(value, _) => (value, true),
     };
-    let cmp0118 = interp.policy_status("CMP0118");
-    let policy = if interp.policy_status("CMP0163") == PolicyStatus::New {
+    let cmp0163 = interp.policy_status_at(index, "CMP0163");
+    let cmp0118 = interp.policy_status_at(index, "CMP0118");
+    let policy = if cmp0163 == PolicyStatus::New {
         Some("CMP0163")
     } else if cmp0118 == PolicyStatus::New {
         Some("CMP0118")
@@ -412,25 +438,41 @@ fn handle_generated(interp: &mut Interp, index: usize, path: &str, change: Chang
         } else {
             None
         };
+        // mf.IssueMessage uses the source directory's own backtrace (the
+        // add_subdirectory/include frame for other directories).
+        let backtrace = interp.directory_backtrace(index);
         if let Some(error) = error {
-            interp.issue_at_unsuppressed(MessageType::AuthorError, &error);
+            // cmMessenger::ConvertMessageType demotes AUTHOR_ERROR to a
+            // developer warning unless dev warnings are errors.
+            interp.issue_at(MessageType::AuthorError, &error, &backtrace);
         } else {
-            prop::mark_generated(interp, index, path);
+            // cmSourceFile::MarkAsGenerated on the ambiguously-located
+            // source created by ensure_source: the binary directory wins.
+            crate::commands::target::mark_generated_ambiguous(interp, index, path);
         }
         return true;
     }
     if cmp0118 == PolicyStatus::Warn {
+        let backtrace = interp.directory_backtrace(index);
         let warning = crate::policy::index_of("CMP0118")
             .map(crate::policy::policy_warning)
             .unwrap_or_default();
         if !is_on(value) && !is_off(value) {
-            interp.issue(MessageType::AuthorWarning, &format!("{warning}\nAttempt to set property 'GENERATED' with the following non-boolean value (which will be interpreted as \"0\"):\n{value}\nThat exact value will not be retrievable. A value of \"0\" will be returned instead.\nThis will be an error under policy CMP0118.\n"));
+            interp.issue_at(MessageType::AuthorWarning, &format!("{warning}\nAttempt to set property 'GENERATED' with the following non-boolean value (which will be interpreted as \"0\"):\n{value}\nThat exact value will not be retrievable. A value of \"0\" will be returned instead.\nThis will be an error under policy CMP0118.\n"), &backtrace);
         }
         if is_off(value) {
-            interp.issue(MessageType::AuthorWarning, &format!("{warning}\nUnsetting property 'GENERATED' will not be allowed under policy CMP0118!\n"));
+            interp.issue_at(
+                MessageType::AuthorWarning,
+                &format!("{warning}\nUnsetting property 'GENERATED' will not be allowed under policy CMP0118!\n"),
+                &backtrace,
+            );
         }
         if append {
-            interp.issue(MessageType::AuthorWarning, &format!("{warning}\nAppending to property 'GENERATED' will not be allowed under policy CMP0118!\n"));
+            interp.issue_at(
+                MessageType::AuthorWarning,
+                &format!("{warning}\nAppending to property 'GENERATED' will not be allowed under policy CMP0118!\n"),
+                &backtrace,
+            );
         }
     }
     false
@@ -747,7 +789,9 @@ fn get_directory_property(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let property = rest.first().ok_or(WRONG_COUNT)?;
     let value = if property == "DEFINITION" {
-        let name = rest.get(1).ok_or("A request for a variable definition was made without providing the name of the variable to get.")?;
+        let name = rest
+            .get(1)
+            .ok_or("A request for a variable definition was made without providing the name of the variable to get.")?;
         if index == interp.mf_index() {
             interp.read_definition(name).unwrap_or_default()
         } else {
@@ -809,10 +853,25 @@ fn get_source_file_property(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let index = source.resolve(interp)?[0];
     let path = source.source_path(interp, &args[1]);
+    // cmGetSourceFilePropertyCommand: GENERATED under CMP0163 NEW
+    // (policy of the source's directory) consults only the global
+    // generated registry -- the caller's binary then source directory --
+    // and never looks up or creates a source file.
+    let cmp0163 = interp.policy_status_at(index, "CMP0163");
+    if property == "GENERATED" && cmp0163 != PolicyStatus::Old && cmp0163 != PolicyStatus::Warn {
+        let generated = [interp.current_binary_dir(), interp.current_source_dir()]
+            .iter()
+            .any(|dir| {
+                interp
+                    .ext
+                    .generated_sources
+                    .contains(&collapse_full_path(&args[1], dir))
+            });
+        interp.set_def(&args[0], if generated { "1" } else { "0" });
+        return Ok(());
+    }
     let value = if !property.is_empty()
-        && (prop::has_source(interp, index, &path)
-            || property == "LOCATION"
-            || (property == "GENERATED" && interp.policy_status("CMP0163") == PolicyStatus::New))
+        && (prop::has_source(interp, index, &path) || property == "LOCATION")
     {
         prop::get(interp, Object::Source(index, &path), property)
     } else {

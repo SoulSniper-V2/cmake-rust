@@ -292,6 +292,36 @@ impl<'a> GenCtx<'a> {
         }
     }
 
+    /// `cmCompiledGeneratorExpression::Evaluate` as used by
+    /// `cmLocalGenerator::ExpandCustomCommandOutputPaths`: a plain
+    /// evaluation (OUTPUT_CONFIG/COMMAND_CONFIG have no special meaning
+    /// here) whose diagnostics fall back to the command's `backtrace`.
+    pub fn genex_output(&self, text: &str, dir: usize, backtrace: &[Frame]) -> String {
+        if !text.contains("$<") {
+            return text.to_owned();
+        }
+        let compiled = crate::genex::parse(text);
+        let mut ectx = crate::genex::EvalContext {
+            config: &self.config,
+            ..crate::genex::EvalContext::default()
+        };
+        let mut host = super::genex_host::CtxHost::new(self, dir);
+        match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
+            Ok(value) => value,
+            Err(error) => {
+                if !error.quiet {
+                    let frames = error
+                        .backtrace
+                        .map(|id| self.backtrace(Some(id)))
+                        .filter(|frames| !frames.is_empty())
+                        .unwrap_or_else(|| backtrace.to_vec());
+                    self.error(frames, error.to_string());
+                }
+                String::new()
+            }
+        }
+    }
+
     /// `EvaluateSplitConfigGenex` of cmCustomCommandGenerator.cxx (single
     /// config): evaluates `text` as `cge->Evaluate(lg, config, target)` per
     /// top-level expression and records the targets the expressions depend

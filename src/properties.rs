@@ -242,7 +242,6 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
             return inherited(interp, Scope::Target, target.makefile, name);
         }
         Object::Source(index, path) => {
-            let mf = &interp.makefiles[index];
             let source = crate::commands::target::find_source(interp, index, path);
             let location = source.map_or_else(
                 || SourceLocation::new(interp, index, path),
@@ -251,19 +250,19 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
             let location = &location;
             let value = source.and_then(|source| source.props.get(name));
             match name {
+                // cmSourceFile::GetPropertyForUser("GENERATED"): the
+                // IsGenerated flag plus the local property unless the
+                // source directory's CMP0118/CMP0163 policies make the
+                // check global-only.  The global generated-file registry is
+                // consulted by FindFullPath (which sets the flag), not here.
                 "GENERATED" => {
-                    let generated = [mf.binary_dir.as_str(), mf.source_dir.as_str()]
-                        .into_iter()
-                        .map(|directory| collapse_full_path(path, directory))
-                        .any(|path| interp.ext.generated_sources.contains(&path))
-                        // cmSourceFile::MarkAsGenerated (CreateSource(name, true)).
-                        || source.is_some_and(|source| source.generated);
                     return Some(
-                        if generated || value.is_some_and(is_on) {
-                            "1"
-                        } else {
-                            "0"
-                        }
+                        crate::commands::target::generated_for_user(
+                            interp,
+                            index,
+                            source.is_some_and(|source| source.generated),
+                            value,
+                        )
                         .into(),
                     );
                 }
@@ -281,7 +280,7 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                             .into(),
                     );
                 }
-                "LOCATION" => return source_full_path(interp, index, location),
+                "LOCATION" => return source_full_path(interp, index, source, location),
                 _ => {}
             }
             return value
@@ -424,6 +423,7 @@ const SOURCE_EXTENSIONS: &[&str] = &[
 struct SourceLocation {
     directory: String,
     name: String,
+    ambiguous_directory: bool,
 }
 
 impl SourceLocation {
@@ -431,13 +431,14 @@ impl SourceLocation {
         Self {
             directory: location.directory.clone(),
             name: location.name.clone(),
+            ambiguous_directory: location.ambiguous_directory,
         }
     }
 
     fn new(interp: &Interp, index: usize, path: &str) -> Self {
         let mf = &interp.makefiles[index];
         let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-        let ambiguous_directory = !path.starts_with('/');
+        let mut ambiguous_directory = !path.starts_with('/');
         let mut directory = if ambiguous_directory {
             dir.to_owned()
         } else {
@@ -456,33 +457,78 @@ impl SourceLocation {
             && std::path::Path::new(&collapse_full_path(path, &mf.source_dir)).is_file()
         {
             directory = collapse_full_path(dir, &mf.source_dir);
+            ambiguous_directory = false;
         }
         Self {
             directory,
             name: name.into(),
+            ambiguous_directory,
         }
-    }
-
-    fn path(&self, base: &str) -> String {
-        let directory = collapse_full_path(&self.directory, base);
-        collapse_full_path(&self.name, &directory)
     }
 }
 
-fn source_full_path(interp: &Interp, index: usize, location: &SourceLocation) -> Option<String> {
+/// `cmSourceFile::FindFullPath` for the LOCATION property: a generated
+/// source resolves against the binary directory without a disk check;
+/// otherwise the source then binary directory are tried (binary only when
+/// the location is not directory-ambiguous), with CMP0115 extension
+/// guessing and the CMP0118/CMP0163 global generated registry.
+fn source_full_path(
+    interp: &Interp,
+    index: usize,
+    source: Option<&crate::state::SourceFile>,
+    location: &SourceLocation,
+) -> Option<String> {
     let mf = &interp.makefiles[index];
-    for dir in [&mf.source_dir, &mf.binary_dir] {
-        let path = location.path(dir);
-        let exists = |path: &str| {
-            std::path::Path::new(path).is_file() || interp.ext.generated_sources.contains(path)
+    let lpath = if location.directory.is_empty() {
+        location.name.clone()
+    } else {
+        format!(
+            "{}/{}",
+            location.directory.trim_end_matches('/'),
+            location.name
+        )
+    };
+    // GetIsGenerated(CheckScope::GlobalAndLocal): flag or local property.
+    let generated = source.is_some_and(|source| source.generated)
+        || source
+            .and_then(|source| source.props.get("GENERATED"))
+            .is_some_and(is_on);
+    if generated {
+        // DirectoryUseBinary for ambiguous directories.
+        let directory = if location.ambiguous_directory {
+            collapse_full_path(&location.directory, &mf.binary_dir)
+        } else {
+            location.directory.clone()
         };
-        if exists(&path) {
-            return Some(path);
+        return Some(if directory.is_empty() {
+            location.name.clone()
+        } else {
+            format!("{}/{}", directory.trim_end_matches('/'), location.name)
+        });
+    }
+    let cmp0163new = interp.policy_status_at(index, "CMP0163") == crate::policy::PolicyStatus::New;
+    let cmp0118new =
+        cmp0163new || interp.policy_status_at(index, "CMP0118") == crate::policy::PolicyStatus::New;
+    let cmp0115 = interp.policy_status_at(index, "CMP0115");
+    let guess = cmp0115 != crate::policy::PolicyStatus::New;
+    let directories: &[&str] = if location.ambiguous_directory {
+        &[mf.source_dir.as_str(), mf.binary_dir.as_str()]
+    } else {
+        &[""]
+    };
+    for dir in directories {
+        let full = collapse_full_path(&lpath, dir);
+        if (cmp0118new && interp.ext.generated_sources.contains(&full))
+            || std::path::Path::new(&full).is_file()
+        {
+            return Some(full);
         }
-        if interp.policy_status("CMP0115") != crate::policy::PolicyStatus::New {
+        if guess {
             for ext in SOURCE_EXTENSIONS {
-                let candidate = format!("{path}.{ext}");
-                if exists(&candidate) {
+                let candidate = format!("{full}.{ext}");
+                if (cmp0118new && interp.ext.generated_sources.contains(&candidate))
+                    || std::path::Path::new(&candidate).is_file()
+                {
                     return Some(candidate);
                 }
             }

@@ -52,6 +52,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // command actions attach to sources/targets before anything is computed.
     crate::commands::custom_actions::run_generator_actions(interp, &mut expand_output_genex);
     drop_transient_list_files(interp);
+    // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
+    // become generated sources before target source resolution runs.
+    evaluation_files::create_outputs(interp);
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
@@ -215,7 +218,9 @@ fn expand_output_genex(
     backtrace: &[crate::messages::Frame],
 ) -> Result<Vec<String>, String> {
     let ctx = ctx::GenCtx::new(interp);
-    let value = ctx.genex_command(output, dir, None, true, backtrace, None);
+    // cmLocalGenerator::ExpandCustomCommandOutputPaths evaluates the whole
+    // output as one generator expression (no OUTPUT_CONFIG stripping).
+    let value = ctx.genex_output(output, dir, backtrace);
     if let Some((_, message)) = ctx.errors.borrow().first() {
         return Err(message.clone());
     }

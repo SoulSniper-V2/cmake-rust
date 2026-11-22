@@ -244,7 +244,7 @@ pub struct SourceFile {
     pub custom_command: Option<CustomCommand>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SourceFileLocation {
     pub directory: String,
     pub name: String,

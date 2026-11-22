@@ -141,6 +141,7 @@ fn subdirectory(interp: &mut Interp, parent: usize, name: &str, exclude: bool) -
         exclude_from_all: exclude,
         deferred: Vec::new(),
         defer_counter: 0,
+        backtrace: Vec::new(),
     });
     if exclude {
         interp.makefiles[index]

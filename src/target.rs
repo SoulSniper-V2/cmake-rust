@@ -1234,7 +1234,7 @@ pub fn full_path(path: &str) -> bool {
 }
 
 impl SourceFileLocation {
-    fn new(interp: &Interp, dir: usize, path: &str) -> Self {
+    pub(crate) fn new(interp: &Interp, dir: usize, path: &str) -> Self {
         let (parent, name) = path.rsplit_once('/').map_or(("", path), |(parent, name)| {
             (if parent.is_empty() { "/" } else { parent }, name)
         });
@@ -1283,7 +1283,7 @@ impl SourceFileLocation {
         }
     }
 
-    fn matches(&self, other: &Self, source: &str, binary: &str) -> bool {
+    pub(crate) fn matches(&self, other: &Self, source: &str, binary: &str) -> bool {
         let names_match = if self.name == other.name {
             true
         } else if self.ambiguous_extension != other.ambiguous_extension {
@@ -1326,7 +1326,7 @@ pub fn get_or_create_source<'a>(
 /// The lookup key of a source name: `cmSourceFileLocation::Matches` only
 /// pairs names that are equal or differ by a known source extension, so the
 /// name without a known extension groups every possible match.
-fn source_key(name: &str) -> &str {
+pub(crate) fn source_key(name: &str) -> &str {
     match name.rsplit_once('.') {
         Some((stem, ext)) if SOURCE_EXTENSIONS.contains(&ext) => stem,
         _ => name,
@@ -1361,7 +1361,14 @@ fn matching_source(interp: &Interp, dir: usize, location: &SourceFileLocation) -
 pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bool) -> usize {
     let mut location = SourceFileLocation::new(interp, dir_index, path);
     if known {
+        // cmSourceFileLocationKind::Known: DirectoryUseSource +
+        // AmbiguousExtension = false.
         location.ambiguous_extension = false;
+        if location.ambiguous_directory {
+            location.directory =
+                collapse_full_path(&location.directory, &interp.makefiles[dir_index].source_dir);
+            location.ambiguous_directory = false;
+        }
     }
     if let Some(index) = matching_source(interp, dir_index, &location) {
         let source = &mut interp.ext.sources.get_mut(&dir_index).unwrap()[index];
@@ -1399,6 +1406,11 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
 pub fn find_known_source(interp: &Interp, dir: usize, path: &str) -> Option<usize> {
     let mut location = SourceFileLocation::new(interp, dir, path);
     location.ambiguous_extension = false;
+    if location.ambiguous_directory {
+        location.directory =
+            collapse_full_path(&location.directory, &interp.makefiles[dir].source_dir);
+        location.ambiguous_directory = false;
+    }
     matching_source(interp, dir, &location)
 }
 
@@ -1413,28 +1425,80 @@ pub fn find_source<'a>(interp: &'a Interp, dir: usize, path: &str) -> Option<&'a
     Some(&interp.ext.sources[&dir][index])
 }
 
-/// A source file's stored property (`cmSourceFile::GetProperty` for plain
-/// properties), looked up with `cmSourceFileLocation` matching in directory
-/// `dir_index`.  `None` when the source is unknown or the property is unset.
-#[allow(dead_code, reason = "used by the source property commands")]
+/// A source file's property (`cmSourceFile::GetPropertyForUser`), looked up
+/// with `cmSourceFileLocation` matching in directory `dir_index`.  `None`
+/// when the source is unknown or the property is unset.  `GENERATED` is
+/// computed from the generated flag and the local property like
+/// `properties::get`.
+#[cfg_attr(not(test), allow(dead_code))] // used by the target command fixtures
 pub fn source_prop<'a>(
     interp: &'a Interp,
     dir_index: usize,
     path: &str,
     name: &str,
 ) -> Option<&'a str> {
-    find_source(interp, dir_index, path)?.props.get(name)
+    let source = find_source(interp, dir_index, path)?;
+    if name == "GENERATED" {
+        return Some(generated_for_user(
+            interp,
+            dir_index,
+            source.generated,
+            source.props.get("GENERATED"),
+        ));
+    }
+    source.props.get(name)
 }
 
+/// `cmSourceFile::MarkAsGenerated`: set the generated flag and register the
+/// resolved full path (DirectoryUseBinary for ambiguous locations) in the
+/// global generated-source set.  The local GENERATED property is not touched.
+pub fn mark_source_generated(interp: &mut Interp, dir: usize, index: usize) {
+    let binary_dir = interp.makefiles[dir].binary_dir.clone();
+    let source = &mut interp.ext.sources.get_mut(&dir).expect("source directory")[index];
+    source.generated = true;
+    if source.location.ambiguous_directory {
+        source.location.directory = collapse_full_path(&source.location.directory, &binary_dir);
+        source.location.ambiguous_directory = false;
+    }
+    let full = source.location.path();
+    interp.ext.generated_sources.insert(full);
+}
+
+/// `cmMakefile::GetOrCreateGeneratedSource` + `MarkAsGenerated` for custom
+/// command outputs/byproducts and other known-location generated files.
 pub fn mark_generated(interp: &mut Interp, dir: usize, path: &str) {
     if has_genex(path) {
         return;
     }
-    let path = collapse_full_path(path, &interp.makefiles[dir].binary_dir);
-    interp.ext.generated_sources.insert(path.clone());
-    let source = get_or_create_source(interp, dir, &path);
-    source.generated = true;
-    source.props.set("GENERATED", "1".to_owned());
+    let index = source_index(interp, dir, path, true);
+    mark_source_generated(interp, dir, index);
+}
+
+/// `cmSourceFile::MarkAsGenerated` for a source created with the ambiguous
+/// location kind (`set_property(SOURCE ... GENERATED)` under CMP0118/CMP0163
+/// NEW): ambiguous directories resolve against the binary directory.
+pub fn mark_generated_ambiguous(interp: &mut Interp, dir: usize, path: &str) {
+    let index = source_index(interp, dir, path, false);
+    mark_source_generated(interp, dir, index);
+}
+
+/// `cmSourceFile::GetPropertyForUser("GENERATED")`: returns "1"/"0" from the
+/// generated flag and, unless CMP0118/CMP0163 (policies of the source's own
+/// directory) restrict the check to the global scope, the locally stored
+/// GENERATED property.
+pub fn generated_for_user(
+    interp: &Interp,
+    dir: usize,
+    flag: bool,
+    local: Option<&str>,
+) -> &'static str {
+    let cmp0163new = interp.policy_status_at(dir, "CMP0163") == PolicyStatus::New;
+    let cmp0118new = cmp0163new || interp.policy_status_at(dir, "CMP0118") == PolicyStatus::New;
+    if flag || (!cmp0118new && local.is_some_and(is_on)) {
+        "1"
+    } else {
+        "0"
+    }
 }
 
 #[allow(dead_code, reason = "source generation API")]

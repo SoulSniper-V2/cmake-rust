@@ -927,38 +927,83 @@ const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
     "f95", "f03", "hip", "ispc",
 ];
 
-/// `cmSourceFile::ResolveFullPath` for a source listed by `target`.
-/// `backtrace` is the source entry's recorded backtrace
+/// `cmSourceFile::ResolveFullPath` -> `cmSourceFile::FindFullPath` for a
+/// source listed by `target`, consulting the configured source-file store
+/// (`ext.sources`): locations pinned by earlier property lookups resolve
+/// against their recorded directory, generated sources resolve against the
+/// binary directory without a disk check, and the CMP0118/CMP0163 global
+/// generated registry is consulted per directory.  `backtrace` is the
+/// source entry's recorded backtrace
 /// (`EvaluatedTargetPropertyEntry::Backtrace` in `processSources`).
 fn resolve_source(
     ctx: &GenCtx,
     target: &Target,
     source: &str,
-    property: &impl Fn(&str, &str) -> Option<String>,
     backtrace: &[Frame],
+    property: &impl Fn(&str, &str) -> Option<String>,
 ) -> Option<(String, bool)> {
     let makefile = target.makefile;
-    let directory = &ctx.interp.makefiles[makefile];
-    let source_path = collapse_full_path(source, &directory.source_dir);
-    let binary_path = collapse_full_path(source, &directory.binary_dir);
-    let generated = |path: &str| is_on_opt(property(path, "GENERATED").as_deref());
-    if generated(source) || generated(&binary_path) {
-        return Some((binary_path, true));
+    let mf = &ctx.interp.makefiles[makefile];
+    let sf = crate::commands::target::find_source(ctx.interp, makefile, source);
+    let query_location = crate::state::SourceFileLocation::new(ctx.interp, makefile, source);
+    let mut location = sf.map_or_else(|| query_location.clone(), |sf| sf.location.clone());
+    if sf.is_some() {
+        // cmSourceFileLocation::Matches ends with Update(loc): a stored
+        // ambiguous directory/extension is pinned to the looked-up name's
+        // known values.  Generation cannot mutate the store, so apply the
+        // same pin to the effective location.
+        if location.ambiguous_directory && !query_location.ambiguous_directory {
+            location.directory = query_location.directory.clone();
+            location.ambiguous_directory = false;
+        }
+        if location.ambiguous_extension && !query_location.ambiguous_extension {
+            location.name = query_location.name.clone();
+            location.ambiguous_extension = false;
+        }
     }
-    if generated(&source_path) {
-        return Some((source_path, true));
+    let lpath = location.path();
+
+    // GetIsGenerated(CheckScope::GlobalAndLocal): the generated flag or the
+    // locally stored GENERATED property (a value stored before CMP0118 /
+    // CMP0163 became NEW still counts).
+    let is_generated = sf.is_some_and(|sf| sf.generated)
+        || is_on_opt(sf.and_then(|sf| sf.props.get("GENERATED")))
+        || is_on_opt(property(source, "GENERATED").as_deref());
+    if is_generated {
+        // DirectoryUseBinary for ambiguous directories.
+        let mut loc = location.clone();
+        if loc.ambiguous_directory {
+            loc.directory = collapse_full_path(&loc.directory, &mf.binary_dir);
+            loc.ambiguous_directory = false;
+        }
+        return Some((loc.path(), true));
     }
 
-    let policy = directory_policy(ctx, makefile, 115);
-    for path in [source_path, binary_path] {
-        if Path::new(&path).exists() {
-            return Some((path, false));
+    let cmp0115 = directory_policy(ctx, makefile, 115);
+    let cmp0163 = directory_policy(ctx, makefile, 163);
+    let cmp0163new = cmp0163 != PolicyStatus::Old && cmp0163 != PolicyStatus::Warn;
+    let cmp0118 = directory_policy(ctx, makefile, 118);
+    let check_registry =
+        cmp0163new || (cmp0118 != PolicyStatus::Old && cmp0118 != PolicyStatus::Warn);
+    let generated_files = &ctx.interp.ext.generated_sources;
+
+    let directories: &[&str] = if location.ambiguous_directory {
+        &[mf.source_dir.as_str(), mf.binary_dir.as_str()]
+    } else {
+        &[""]
+    };
+    for dir in directories {
+        let full = collapse_full_path(&lpath, dir);
+        let generated = check_registry && generated_files.contains(&full);
+        if generated || Path::new(&full).exists() {
+            return Some((full, generated));
         }
-        if policy != PolicyStatus::New {
+        if cmp0115 != PolicyStatus::New {
             for extension in LEGACY_SOURCE_EXTENSIONS {
-                let candidate = format!("{path}.{extension}");
-                if generated(&candidate) || Path::new(&candidate).exists() {
-                    if policy == PolicyStatus::Warn {
+                let candidate = format!("{full}.{extension}");
+                let generated = check_registry && generated_files.contains(&candidate);
+                if generated || Path::new(&candidate).exists() {
+                    if cmp0115 == PolicyStatus::Warn {
                         warning(
                             ctx,
                             MessageType::AuthorWarning,
@@ -966,15 +1011,14 @@ fn resolve_source(
                             backtrace,
                         );
                     }
-                    let is_generated = generated(&candidate);
-                    return Some((candidate, is_generated));
+                    return Some((candidate, generated));
                 }
             }
         }
     }
 
-    let mut error = format!("Cannot find source file:\n  {source}");
-    if policy != PolicyStatus::New {
+    let mut error = format!("Cannot find source file:\n  {lpath}");
+    if cmp0115 != PolicyStatus::New {
         error.push_str(&format!(
             "\nTried extensions .{}",
             LEGACY_SOURCE_EXTENSIONS.join(" .")
@@ -1452,9 +1496,12 @@ pub(crate) fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool, Vec
                     .iter()
                     .find(|prior| is_subdirectory(&dir, prior) || is_subdirectory(prior, &dir))
                 {
-                    ctx.error(Vec::new(), format!(
-                        "Base directories in file set cannot be subdirectories of each other:\n  {prior}\n  {dir}"
-                    ));
+                    ctx.error(
+                        Vec::new(),
+                        format!(
+                            "Base directories in file set cannot be subdirectories of each other:\n  {prior}\n  {dir}"
+                        ),
+                    );
                     break;
                 }
                 directories.push(dir);
@@ -1640,7 +1687,7 @@ fn collect_sources(
                         backtrace,
                     } => {
                         let Some((path, generated)) =
-                            resolve_source(ctx, target, &source, property, &backtrace)
+                            resolve_source(ctx, target, &source, &backtrace, property)
                         else {
                             continue 'groups;
                         };
@@ -1766,6 +1813,25 @@ pub fn can_compile_sources(target: &Target) -> bool {
 /// pre-generation target computations), so all "Cannot find source file"
 /// diagnostics precede the "No SOURCES" diagnostics.
 pub fn check_targets_for_missing_sources(ctx: &GenCtx) -> bool {
+    // cmLocalGenerator::TraceDependencies resolves the sources of every
+    // target in the build system (including utility targets) before
+    // CheckTargetsForMissingSources runs, so "Cannot find source file"
+    // diagnostics are emitted for all of them even though only compilable
+    // targets get the "No SOURCES" check.  sources() records the diagnostics;
+    // evaluation files are still written afterwards (cmGlobalGenerator::
+    // Generate runs ProcessEvaluationFiles even when the fatal flag is set).
+    for makefile in 0..ctx.interp.makefiles.len() {
+        for key in &ctx.interp.makefiles[makefile].targets {
+            let Some(target) = ctx.interp.ext.targets.get(key) else {
+                continue;
+            };
+            if target.kind == TargetKind::GlobalTarget || !super::ninja::is_in_build_system(target)
+            {
+                continue;
+            }
+            sources(ctx, target, &ctx.config);
+        }
+    }
     let mut missing = Vec::new();
     for makefile in 0..ctx.interp.makefiles.len() {
         for key in &ctx.interp.makefiles[makefile].targets {
@@ -2112,6 +2178,7 @@ mod corpus_tests {
                     exclude_from_all: false,
                     deferred: Vec::new(),
                     defer_counter: 0,
+                    backtrace: Vec::new(),
                 });
                 let index = interp.makefiles.len() - 1;
                 interp.makefiles[parent].children.push(index);
@@ -2611,6 +2678,7 @@ pub(super) mod tests {
             exclude_from_all: false,
             deferred: Vec::new(),
             defer_counter: 0,
+            backtrace: Vec::new(),
         });
         interp.dir_final_vars.push(
             [

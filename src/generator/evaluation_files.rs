@@ -6,6 +6,66 @@ use std::os::unix::fs::PermissionsExt;
 use super::ctx::GenCtx;
 use crate::util;
 
+/// `cmGlobalGenerator::CreateFileGenerateOutputs` ->
+/// `cmLocalGenerator::CreateEvaluationFileOutputs` ->
+/// `cmGeneratorExpressionEvaluationFile::CreateOutputFile`: every
+/// file(GENERATE) output is registered as a generated source (known location,
+/// `MarkAsGenerated`, `__CMAKE_GENERATED_BY_CMAKE` property) in the directory
+/// that declared it, for each enabled language and the build configuration.
+/// This runs during generation compute, before target source resolution and
+/// before the evaluation files themselves are written, so generated outputs
+/// resolve without touching the filesystem.  The CONDITION is not consulted
+/// here; it only gates the file contents in `generate`.
+pub fn create_outputs(interp: &mut crate::interp::Interp) {
+    // GetOutputFileName evaluates the output generator expression, which needs
+    // a generation context; collect the names first, then mark the sources.
+    let mut names = Vec::new();
+    {
+        let ctx = GenCtx::new(interp);
+        let languages: Vec<String> = interp.langs.enabled.clone();
+        for file in &interp.ext.evaluation_files {
+            let makefile = &interp.makefiles[file.dir];
+            let target = if file.target.is_empty() {
+                None
+            } else {
+                ctx.target_at(file.dir, &file.target)
+                    .map(|target| ctx.target_key(target))
+            };
+            for language in &languages {
+                let mut output = ctx.genex_full(
+                    &file.output,
+                    file.dir,
+                    target.as_deref(),
+                    Some(language),
+                    false,
+                );
+                output = if util::is_full_path(&output) {
+                    util::collapse_full_path(&output, "")
+                } else if file.cmp0070_new {
+                    util::collapse_full_path(&output, &makefile.binary_dir)
+                } else {
+                    util::collapse_full_path(&output, "")
+                };
+                names.push((file.dir, output));
+            }
+        }
+    }
+    for (dir, name) in names {
+        if crate::commands::target::has_genex(&name) {
+            continue;
+        }
+        // GetOrCreateGeneratedSource + MarkAsGenerated.
+        let index = crate::commands::target::source_index(interp, dir, &name, true);
+        crate::commands::target::mark_source_generated(interp, dir, index);
+        // sf->SetProperty("__CMAKE_GENERATED_BY_CMAKE", "1")
+        if let Some(sources) = interp.ext.sources.get_mut(&dir) {
+            sources[index]
+                .props
+                .set("__CMAKE_GENERATED_BY_CMAKE", "1".to_owned());
+        }
+    }
+}
+
 /// Generates every recorded evaluation file; returns the files written.
 pub fn generate(ctx: &GenCtx) -> Vec<String> {
     let interp = ctx.interp;
