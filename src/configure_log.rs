@@ -29,9 +29,6 @@ pub struct ConfigureLog {
     indent: usize,
     opened: bool,
     sink: Option<Sink>,
-    /// Messages pushed by in-progress checks (`check_*` modules fill this;
-    /// `cmake::CheckInProgressMessages`).
-    pub check_messages: Vec<String>,
 }
 
 impl ConfigureLog {
@@ -48,7 +45,6 @@ impl ConfigureLog {
             indent: 0,
             opened: false,
             sink: None,
-            check_messages: Vec::new(),
         }
     }
 
@@ -153,7 +149,7 @@ impl ConfigureLog {
         self.indent += 1;
         self.write_value_str("kind", kind);
         self.write_backtrace(interp);
-        self.write_checks();
+        self.write_checks(&interp.ext.message_checks);
     }
 
     /// `cmConfigureLog::EndEvent`.
@@ -177,13 +173,13 @@ impl ConfigureLog {
     }
 
     /// `cmConfigureLog::WriteChecks`.
-    fn write_checks(&mut self) {
-        if self.check_messages.is_empty() {
+    fn write_checks(&mut self, checks: &[String]) {
+        if checks.is_empty() {
             return;
         }
         self.begin_object("checks");
-        for index in (0..self.check_messages.len()).rev() {
-            let encoded = encode_string(&self.check_messages[index]);
+        for check in checks.iter().rev() {
+            let encoded = encode_string(check);
             self.begin_line();
             self.out("- ");
             self.out(&encoded);

@@ -475,6 +475,7 @@ impl Package {
         };
 
         interp.push_scope();
+        interp.push_policy(false, crate::policy::PolicyMap::default());
         for suffix in ["", "_UNSUITABLE", "_COMPATIBLE", "_EXACT"] {
             interp.unset_def(&format!("PACKAGE_VERSION{suffix}"));
         }
@@ -496,6 +497,7 @@ impl Package {
                 || interp.is_on("PACKAGE_VERSION_EXACT")
                 || (!self.version.exact && interp.is_on("PACKAGE_VERSION_COMPATIBLE")));
         let version = interp.get_safe("PACKAGE_VERSION");
+        interp.pop_policy();
         interp.pop_scope();
         self.considered.push((
             config.to_owned(),

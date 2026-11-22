@@ -34,10 +34,6 @@ pub struct LinkLine {
     #[allow(dead_code, reason = "The Ninja writer will append version symlinks")]
     pub shared_symlinks: Vec<String>,
     /// ELF rpath substitution for an installed target, before shell escaping.
-    #[allow(
-        dead_code,
-        reason = "The install writer consumes this after integration"
-    )]
     pub rpath_change: Option<(String, String)>,
     /// Linker flag and optional checker for LINK_WHAT_YOU_USE.
     #[allow(
@@ -67,6 +63,51 @@ pub struct LinkUsageCheck {
 pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> LinkLine {
     let query = Query::new(ctx, config, language);
     information::compute(&query, target)
+}
+
+/// GetLinkImplementationClosure(config, UseTo::Compile).
+pub(super) fn compile_implementation_closure<'i>(
+    ctx: &GenCtx<'i>,
+    head: &Target,
+    config: &str,
+) -> Vec<&'i Target> {
+    if !target::can_compile_sources(head) || !head.props.contains("LINK_LIBRARIES") {
+        return Vec::new();
+    }
+    fn visit<'i>(
+        query: &Query<'_, 'i>,
+        head: &Target,
+        items: Vec<Item<'i>>,
+        seen: &mut HashSet<*const Target>,
+        closure: &mut Vec<&'i Target>,
+    ) {
+        for target in items.into_iter().filter_map(|item| item.target) {
+            if seen.insert(std::ptr::from_ref(target)) {
+                closure.push(target);
+                visit(
+                    query,
+                    head,
+                    interface(query, target, head).libraries,
+                    seen,
+                    closure,
+                );
+            }
+        }
+    }
+    let query = Query {
+        compile_usage: true,
+        ..Query::new(ctx, config, "")
+    };
+    let mut closure = Vec::new();
+    let mut seen = HashSet::from([std::ptr::from_ref(head)]);
+    visit(
+        &query,
+        head,
+        implementation(&query, head),
+        &mut seen,
+        &mut closure,
+    );
+    closure
 }
 
 /// Direct target-level dependencies after linearizing static-library cycles.
@@ -233,13 +274,10 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn eval(&self, raw: &str, owner: &Target, head: &Target, property: &str) -> String {
-        self.eval_bt(raw, owner, head, property, &[])
+        self.eval_entry(raw, owner, head, property, &[])
     }
 
-    /// `eval` carrying the property entry's list-file `backtrace` into the
-    /// evaluation context, as `cmCompiledGeneratorExpression` carries the
-    /// backtrace of the call that produced the property value.
-    fn eval_bt(
+    fn eval_entry(
         &self,
         raw: &str,
         owner: &Target,
@@ -247,33 +285,23 @@ impl<'a, 'i> Query<'a, 'i> {
         property: &str,
         backtrace: &[crate::messages::Frame],
     ) -> String {
-        if !raw.contains("$<") {
-            return raw.to_owned();
-        }
-        let language = (!self.language.is_empty()).then_some(self.language);
-        // For a transitive interface-property evaluation the DAG checker's
-        // Top stays the consuming property on `head`
-        // (cmGeneratorExpressionDAGChecker::Top), so genex context checks
-        // like EvaluatingLinkExpression see the entry property.
-        let root_property = if std::ptr::eq(owner, head) {
-            property
+        if raw.contains("$<") {
+            let language = (!self.language.is_empty()).then_some(self.language);
+            if self.compile_usage || !backtrace.is_empty() {
+                return self.ctx.genex_with_dag_usage(
+                    (raw, backtrace),
+                    owner,
+                    head,
+                    property,
+                    language,
+                    self.compile_usage,
+                );
+            }
+            self.generator
+                .eval(self.ctx, raw, owner, head, property, language)
         } else {
-            property.strip_prefix("INTERFACE_").unwrap_or(property)
-        };
-        if self.compile_usage || !backtrace.is_empty() || root_property != property {
-            return self.ctx.genex_with_dag_bt(
-                raw,
-                owner,
-                head,
-                property,
-                root_property,
-                language,
-                self.compile_usage,
-                backtrace,
-            );
+            raw.to_owned()
         }
-        self.generator
-            .eval(self.ctx, raw, owner, head, property, language)
     }
 
     fn resolve(&self, directory: usize, name: &str) -> Option<&'i Target> {
@@ -360,10 +388,23 @@ impl<'a, 'i> Query<'a, 'i> {
 
     fn ninja_path(&self, path: &str) -> String {
         let path = Path::new(path);
-        match path.strip_prefix(self.top_binary()) {
+        let relative = match path.strip_prefix(self.top_binary()) {
             Ok(relative) if relative.as_os_str().is_empty() => ".".into(),
             Ok(relative) => relative.to_string_lossy().into_owned(),
             Err(_) => path.to_string_lossy().into_owned(),
+        };
+        // cmGlobalNinjaGenerator::NinjaOutputPath (via ConvertToNinjaPath).
+        let mut prefix = self
+            .ctx
+            .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
+            .unwrap_or_default();
+        if !prefix.is_empty() && !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        if !prefix.is_empty() && !crate::util::is_full_path(&relative) {
+            format!("{prefix}{relative}")
+        } else {
+            relative
         }
     }
 }
@@ -558,7 +599,7 @@ fn provenanced_items<'i>(
     let mut directory = owner.makefile;
     let self_check = (property == "LINK_LIBRARIES" && std::ptr::eq(owner, head)).then_some(head);
     for (value, backtrace) in entries {
-        let evaluated = query.eval_bt(&value, owner, head, property, &backtrace);
+        let evaluated = query.eval_entry(&value, owner, head, property, &backtrace);
         items.extend(plain_items_bt(
             query,
             owner,

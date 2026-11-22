@@ -250,14 +250,12 @@ fn configure_log(interp: &mut Interp, message: &str) {
         return;
     }
     let log_dir = format!("{}/CMakeFiles", interp.home_binary);
-    let checks = interp.ext.message_checks.clone();
     let mut slot = interp.ext.configure_log.borrow_mut();
     let log =
         slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
     if !log.is_any_log_version_enabled(&[1]) {
         return;
     }
-    log.check_messages = checks;
     log.begin_event("message-v1", interp);
     log.write_literal_text_block("message", message);
     log.end_event();

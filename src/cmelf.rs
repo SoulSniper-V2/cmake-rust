@@ -504,6 +504,14 @@ impl Elf {
         i.get_dynamic_section_string(tag)
     }
 
+    /// `cmELF::GetMachine` (0 when the file is not a valid ELF).
+    pub fn machine(&self) -> u16 {
+        self.internal
+            .as_ref()
+            .filter(|i| i.file_type != FileType::Invalid)
+            .map_or(0, |i| i.machine)
+    }
+
     pub fn is_mips(&self) -> bool {
         self.internal
             .as_ref()

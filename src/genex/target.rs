@@ -372,9 +372,13 @@ impl Evaluator<'_, '_> {
                             name
                         };
                         if canonical == target {
-                            return Err(
-                                self.error("", format!("Target \"{target}\" links to itself."))
-                            );
+                            // ComputeLinkImplementationLibraries issues the
+                            // diagnostic at the target's own backtrace.
+                            let mut error =
+                                self.error("", format!("Target \"{target}\" links to itself."));
+                            error.backtrace =
+                                self.host.target_backtrace(target).or(error.backtrace);
+                            return Err(error);
                         }
                     } else if !direct && name == target {
                         continue;
@@ -436,7 +440,12 @@ impl Evaluator<'_, '_> {
                     ));
                 }
                 if property == "ALIASED_TARGET" {
-                    return Ok(self.host.resolve_alias(name).unwrap_or_default());
+                    return Ok(self
+                        .host
+                        .resolve_alias(name)
+                        .map_or_else(String::new, |key| {
+                            self.host.target_property_raw(&key, "NAME").unwrap_or(key)
+                        }));
                 }
                 if property == "ALIAS_GLOBAL" {
                     return Ok(if self.host.resolve_alias(name).is_none() {

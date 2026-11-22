@@ -728,7 +728,6 @@ fn parse_with(interp: &mut Interp, argv: &[String], spec: &Spec) -> Option<Argum
             error.push_str(&format!("Error after keyword \"{keyword}\":\n{text}"));
         }
         interp.issue(MessageType::FatalError, &error);
-        interp.set_fatal();
         return None;
     }
     if !unparsed.is_empty() {
@@ -867,7 +866,7 @@ fn copy_file_always(source: &str, destination: &str) -> Result<(), (String, &'st
     if source_path.is_dir() {
         return match std::fs::create_dir_all(destination) {
             Ok(()) => Ok(()),
-            Err(e) => Err((e.to_string(), "output")),
+            Err(e) => Err((crate::cmcmd::os_error(&e), "output")),
         };
     }
     let dest_path = std::path::Path::new(destination);
@@ -891,11 +890,11 @@ fn copy_file_always(source: &str, destination: &str) -> Result<(), (String, &'st
     if !dest_dir.is_empty()
         && let Err(e) = std::fs::create_dir_all(&dest_dir)
     {
-        return Err((e.to_string(), "output"));
+        return Err((crate::cmcmd::os_error(&e), "output"));
     }
     match std::fs::copy(source, &real_destination) {
         Ok(_) => Ok(()),
-        Err(e) => Err((e.to_string(), "input")),
+        Err(e) => Err((crate::cmcmd::os_error(&e), "input")),
     }
 }
 
@@ -1971,17 +1970,17 @@ fn try_compile_code(
     }
 
     if args.copy_file_to.as_deref() == Some("") {
-        fatal(
-            interp,
-            "COPY_FILE must be followed by a file path".to_owned(),
+        interp.issue(
+            MessageType::FatalError,
+            "COPY_FILE must be followed by a file path",
         );
         return None;
     }
 
     if args.copy_file_error.as_deref() == Some("") {
-        fatal(
-            interp,
-            "COPY_FILE_ERROR must be followed by a variable name".to_owned(),
+        interp.issue(
+            MessageType::FatalError,
+            "COPY_FILE_ERROR must be followed by a variable name",
         );
         return None;
     }
@@ -2481,7 +2480,11 @@ fn write_try_compile_event(interp: &mut Interp, result: &TryCompileResult) {
 
 fn try_compile_command(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() < 3 {
-        return err("The try_compile() command requires at least 3 arguments.");
+        interp.issue(
+            MessageType::FatalError,
+            "The try_compile() command requires at least 3 arguments.",
+        );
+        return Err(crate::interp::CmdErr::Reported);
     }
 
     let mut target_type = TargetKind::Executable;
@@ -2494,9 +2497,10 @@ fn try_compile_command(interp: &mut Interp, args: &[String]) -> CmdResult {
         } else if tt == "STATIC_LIBRARY" {
             target_type = TargetKind::StaticLibrary;
         } else {
-            return err(format!(
+            interp.issue(MessageType::FatalError, &format!(
                 "Invalid value '{tt}' for CMAKE_TRY_COMPILE_TARGET_TYPE.  Only 'EXECUTABLE' and 'STATIC_LIBRARY' are allowed."
             ));
+            return Err(crate::interp::CmdErr::Reported);
         }
     }
 
@@ -3909,15 +3913,11 @@ mod tests {
     #[test]
     fn min_args_errors() {
         let mut interp = test_interp();
-        match try_compile_command(&mut interp, &["R".to_owned(), "x".to_owned()]) {
-            Err(crate::interp::CmdErr::Error(text)) => {
-                assert_eq!(
-                    text,
-                    "The try_compile() command requires at least 3 arguments."
-                )
-            }
-            other => panic!("expected error, got {other:?}"),
-        }
+        assert!(matches!(
+            try_compile_command(&mut interp, &["R".to_owned(), "x".to_owned()]),
+            Err(crate::interp::CmdErr::Reported)
+        ));
+        assert!(interp.error);
         match try_run_command(
             &mut interp,
             &["R".to_owned(), "C".to_owned(), "x".to_owned()],
@@ -3933,16 +3933,14 @@ mod tests {
     fn invalid_target_type() {
         let mut interp = test_interp();
         interp.set_def("CMAKE_TRY_COMPILE_TARGET_TYPE", "SHARED_LIBRARY");
-        match try_compile_command(
-            &mut interp,
-            &["R".to_owned(), "SOURCES".to_owned(), "a.c".to_owned()],
-        ) {
-            Err(crate::interp::CmdErr::Error(text)) => assert_eq!(
-                text,
-                "Invalid value 'SHARED_LIBRARY' for CMAKE_TRY_COMPILE_TARGET_TYPE.  Only 'EXECUTABLE' and 'STATIC_LIBRARY' are allowed."
+        assert!(matches!(
+            try_compile_command(
+                &mut interp,
+                &["R".to_owned(), "SOURCES".to_owned(), "a.c".to_owned()],
             ),
-            other => panic!("expected error, got {other:?}"),
-        }
+            Err(crate::interp::CmdErr::Reported)
+        ));
+        assert!(interp.error);
     }
 
     #[test]

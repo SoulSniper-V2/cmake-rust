@@ -14,7 +14,7 @@ use md5::{Digest, Md5};
 use super::ctx::GenCtx;
 use crate::messages::{self, Frame, MessageType};
 use crate::policy::{self, PolicyStatus};
-use crate::state::{Target, TargetKind};
+use crate::state::{FileSet, Target, TargetKind};
 use crate::util::{
     collapse_full_path, expand_list, filename_name, filename_path, is_full_path, is_on_opt,
     is_subdirectory,
@@ -50,6 +50,9 @@ pub enum SourceKind {
     Extra,
     CustomCommandOutput,
     ModuleDefinition,
+    /// `SourceKindManifest`: user-specified manifest files that become
+    /// dependencies of the link step.
+    Manifest,
     Resource,
 }
 
@@ -63,8 +66,7 @@ pub struct SourceInfo {
     /// Object file name relative to the target's object directory, e.g.
     /// `src/foo.c.o` (empty for non-object sources).
     pub object_name: String,
-    /// Whether this source is GENERATED (checked by the resolution tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether this source is GENERATED.
     pub generated: bool,
     /// For an object file of a linked OBJECT library
     /// (`cmSourceFile::GetObjectLibrary`), that library's name.
@@ -108,6 +110,7 @@ fn memo_key(query: &str, target: &Target, config: &str) -> String {
 
 fn cached_string(
     ctx: &GenCtx,
+    target: &Target,
     key: String,
     recursion_error: impl FnOnce() -> String,
     compute: impl FnOnce() -> String,
@@ -115,7 +118,15 @@ fn cached_string(
     let cached = ctx.memo.borrow().get(&key).cloned();
     if let Some(value) = cached {
         if value.is_empty() {
-            ctx.error(Vec::new(), recursion_error());
+            let message = recursion_error();
+            if !ctx
+                .errors
+                .borrow()
+                .iter()
+                .any(|error| error.text() == message)
+            {
+                ctx.error(target.backtrace.clone(), message);
+            }
         }
         return value;
     }
@@ -131,6 +142,7 @@ pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifa
     let key = memo_key(&format!("output-name-{artifact:?}"), target, config);
     cached_string(
         ctx,
+        target,
         key,
         || format!("Target '{}' OUTPUT_NAME depends on itself.", target.name),
         || {
@@ -156,7 +168,7 @@ pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifa
     )
 }
 
-fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
+pub(super) fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
     if config.is_empty() {
         return "";
     }
@@ -167,6 +179,11 @@ fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
         .filter(|value| !value.is_empty())
         .or_else(|| target.props.get(&format!("{config}_POSTFIX")))
         .unwrap_or_default()
+}
+
+pub(super) fn dll_platform(ctx: &GenCtx, target: &Target) -> bool {
+    !ctx.var_safe(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
+        .is_empty()
 }
 
 fn affix(ctx: &GenCtx, target: &Target, property: &str, variable: &str, language: &str) -> String {
@@ -184,30 +201,64 @@ fn affix(ctx: &GenCtx, target: &Target, property: &str, variable: &str, language
     ctx.var_safe(target.makefile, variable)
 }
 
+pub(super) fn file_affixes(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    artifact: ArtifactType,
+) -> (String, String) {
+    let language = if target.imported {
+        String::new()
+    } else {
+        compute_linker_language(ctx, target, config)
+    };
+    if artifact == ArtifactType::Import {
+        return (
+            affix(
+                ctx,
+                target,
+                "IMPORT_PREFIX",
+                "CMAKE_IMPORT_LIBRARY_PREFIX",
+                &language,
+            ),
+            affix(
+                ctx,
+                target,
+                "IMPORT_SUFFIX",
+                "CMAKE_IMPORT_LIBRARY_SUFFIX",
+                &language,
+            ),
+        );
+    }
+    let (prefix_var, suffix_var) = match target.kind {
+        TargetKind::Executable => ("", "CMAKE_EXECUTABLE_SUFFIX"),
+        TargetKind::StaticLibrary => ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX"),
+        TargetKind::SharedLibrary => ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX"),
+        TargetKind::ModuleLibrary => ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX"),
+        _ => return (String::new(), String::new()),
+    };
+    (
+        affix(ctx, target, "PREFIX", prefix_var, &language),
+        affix(ctx, target, "SUFFIX", suffix_var, &language),
+    )
+}
+
 pub fn full_name_components(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
     artifact: ArtifactType,
 ) -> NameComponents {
-    let (prefix_var, suffix_var) = match target.kind {
-        TargetKind::Executable => ("", "CMAKE_EXECUTABLE_SUFFIX"),
-        TargetKind::StaticLibrary => ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX"),
-        TargetKind::SharedLibrary => ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX"),
-        TargetKind::ModuleLibrary => ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX"),
-        _ => {
-            return NameComponents {
-                base: target.name.clone(),
-                ..NameComponents::default()
-            };
-        }
-    };
-    // NeedImportLibraryName is false for native Linux targets. Imported
-    // artifacts use the paths from GetMappedConfig instead.
-    if artifact == ArtifactType::Import {
+    if artifact == ArtifactType::Import && !has_import_library(ctx, target, config) {
         return NameComponents::default();
     }
-    let language = compute_linker_language(ctx, target, config);
+    if artifact_kind(target.kind, artifact).is_empty() || target.kind == TargetKind::ObjectLibrary {
+        return NameComponents {
+            base: target.name.clone(),
+            ..NameComponents::default()
+        };
+    }
+    let (prefix, suffix) = file_affixes(ctx, target, config, artifact);
     let mut base = output_name(ctx, target, config, artifact);
     base.push_str(postfix(target, config));
     if target.kind == TargetKind::SharedLibrary
@@ -221,16 +272,13 @@ pub fn full_name_components(
         base.push_str(version);
     }
     NameComponents {
-        prefix: affix(ctx, target, "PREFIX", prefix_var, &language),
+        prefix,
         base,
-        suffix: affix(ctx, target, "SUFFIX", suffix_var, &language),
+        suffix,
     }
 }
 
-/// `cmGeneratorTarget::GetLibraryNames` / `GetExecutableNames`.
-pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
-    let parts = full_name_components(ctx, target, config, ArtifactType::Runtime);
-    let output = parts.filename();
+pub(super) fn pdb_base_name(ctx: &GenCtx, target: &Target, config: &str) -> String {
     let pdb_prop = (!config.is_empty())
         .then(|| {
             target
@@ -240,7 +288,7 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
         .flatten()
         .or_else(|| target.props.get("PDB_NAME"))
         .filter(|value| !value.is_empty());
-    let pdb_base = pdb_prop.map_or_else(
+    pdb_prop.map_or_else(
         || {
             format!(
                 "{}{}",
@@ -249,7 +297,14 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
             )
         },
         |value| ctx.genex(value, None, None),
-    );
+    )
+}
+
+/// `cmGeneratorTarget::GetLibraryNames` / `GetExecutableNames`.
+pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
+    let parts = full_name_components(ctx, target, config, ArtifactType::Runtime);
+    let output = parts.filename();
+    let pdb_base = pdb_base_name(ctx, target, config);
     let (real, shared_object) = if target.kind == TargetKind::Executable {
         let real = target
             .props
@@ -294,6 +349,8 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
             Some(soversion) => format!("{import_output}.{soversion}"),
             None => import_output,
         }
+    } else if target.kind == TargetKind::Executable && has_import_library(ctx, target, config) {
+        full_name_components(ctx, target, config, ArtifactType::Import).filename()
     } else {
         String::new()
     };
@@ -359,6 +416,7 @@ fn output_directory(
     let key = memo_key(&format!("output-dir-{artifact:?}"), target, &config_upper);
     cached_string(
         ctx,
+        target,
         key,
         || {
             format!(
@@ -523,6 +581,60 @@ pub fn has_soname(ctx: &GenCtx, target: &Target, config: &str) -> bool {
 #[allow(dead_code, reason = "target query for generator consumers")]
 pub fn is_framework_on_apple(_ctx: &GenCtx, _target: &Target, _config: &str) -> bool {
     false
+}
+
+/// `cmTarget::IsDLLPlatform`.
+pub fn is_dll_platform(ctx: &GenCtx, target: &Target) -> bool {
+    !ctx.var(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
+        .unwrap_or_default()
+        .is_empty()
+}
+
+/// `cmTarget::IsExecutableWithExports`.
+pub fn executable_with_exports(target: &Target) -> bool {
+    target.kind == TargetKind::Executable && is_on_opt(target.props.get("ENABLE_EXPORTS"))
+}
+
+/// `cmGeneratorTarget::IsCSharpOnly`: the only language compiled by the
+/// target (plus an explicit LINKER_LANGUAGE) is CSharp.
+fn is_csharp_only(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    let mut languages: BTreeSet<String> = sources(ctx, target, config)
+        .iter()
+        .filter(|source| !source.language.is_empty())
+        .map(|source| source.language.clone())
+        .collect();
+    if let Some(language) = target.props.get("LINKER_LANGUAGE") {
+        let language = ctx.genex(language, Some(target), None);
+        if !language.is_empty() {
+            languages.insert(language);
+        }
+    }
+    languages.len() == 1 && languages.contains("CSharp")
+}
+
+/// `cmGeneratorTarget::HasImportLibrary` (without the Xcode
+/// GENERATE_TEXT_BASED_STUBS attribute override).
+pub fn has_import_library(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    let dll = is_dll_platform(ctx, target)
+        && (target.kind == TargetKind::SharedLibrary || executable_with_exports(target))
+        && !is_csharp_only(ctx, target, config);
+    let aix = {
+        let system = ctx
+            .var(target.makefile, "CMAKE_SYSTEM_NAME")
+            .unwrap_or_default();
+        (system == "AIX" || system == "OS400") && executable_with_exports(target)
+    };
+    // cmMakefile::PlatformSupportsAppleTextStubs.
+    let apple_stubs = ctx
+        .var(target.makefile, "APPLE")
+        .is_some_and(|value| crate::util::is_on(&value))
+        // cmMakefile::IsSet: defined, non-empty and not NOTFOUND.
+        && ctx.var(target.makefile, "CMAKE_TAPI").is_some_and(|value| {
+            !value.is_empty() && !value.ends_with("-NOTFOUND") && value != "NOTFOUND"
+        })
+        && target.kind == TargetKind::SharedLibrary
+        && is_on_opt(target.props.get("ENABLE_EXPORTS"));
+    dll || aix || apple_stubs
 }
 
 #[derive(Debug)]
@@ -1050,7 +1162,7 @@ fn source_extension(path: &str) -> &str {
         .map_or("", |(_, extension)| extension)
 }
 
-fn source_language(
+pub(super) fn source_language(
     ctx: &GenCtx,
     path: &str,
     property: &impl Fn(&str, &str) -> Option<String>,
@@ -1099,6 +1211,7 @@ fn classify_source(
         // resources retain their classification even if the compiler ignores them.
         match extension.to_ascii_lowercase().as_str() {
             "def" => SourceKind::ModuleDefinition,
+            "manifest" if !enabled("VS_DEPLOYMENT_CONTENT") => SourceKind::Manifest,
             "idl" | "resx" | "appxmanifest" | "manifest" | "pfx" | "xaml" => SourceKind::Resource,
             _ if matches!(
                 extension,
@@ -1362,18 +1475,32 @@ fn object_file_name(
 /// Default link discovery until the generator's compile/link usage closures
 /// are available. The public *_with_link_closure queries accept those closures.
 pub(super) fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a Target> {
-    let mut seen = HashSet::from([(target.makefile, target.name.as_str())]);
-    let mut pending = evaluated_links(ctx, target, target, "LINK_LIBRARIES")
+    link_closure_entries(ctx, target, config)
         .into_iter()
-        .filter_map(|name| target_in_directory(ctx, target.makefile, &name))
-        .rev()
-        .collect::<Vec<_>>();
+        .map(|(target, _)| target)
+        .collect()
+}
+
+fn link_closure_entries<'a>(
+    ctx: &GenCtx<'a>,
+    target: &Target,
+    config: &str,
+) -> Vec<(&'a Target, Vec<Frame>)> {
+    let mut seen = HashSet::from([(target.makefile, target.name.as_str())]);
+    let mut pending: Vec<_> = evaluated_entries(ctx, target, target, "LINK_LIBRARIES")
+        .into_iter()
+        .flat_map(|(names, backtrace)| {
+            names.into_iter().filter_map(move |name| {
+                target_in_directory(ctx, target.makefile, &name).map(|dep| (dep, backtrace.clone()))
+            })
+        })
+        .collect();
+    pending.reverse();
     let mut closure = Vec::new();
-    while let Some(dep) = pending.pop() {
+    while let Some((dep, backtrace)) = pending.pop() {
         if !seen.insert((dep.makefile, &dep.name)) {
             continue;
         }
-        closure.push(dep);
         let (value, property) = if dep.imported {
             (
                 import_info(dep, config).map_or("", |info| info.link_interface),
@@ -1391,15 +1518,22 @@ pub(super) fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) 
                 "INTERFACE_LINK_LIBRARIES",
             )
         };
-        pending.extend(
+        let items = if dep.provenance.contains_key(property) {
+            evaluated_entries(ctx, dep, target, property)
+                .into_iter()
+                .flat_map(|(items, _)| items)
+                .collect()
+        } else {
             expand_list(
                 &ctx.genex_with_dag(value, dep, target, property, None),
                 false,
             )
-            .into_iter()
-            .rev()
-            .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
-        );
+        };
+        pending.extend(items.into_iter().rev().filter_map(|name| {
+            target_in_directory(ctx, dep.makefile, &name)
+                .map(|provider| (provider, backtrace.clone()))
+        }));
+        closure.push((dep, backtrace));
     }
     closure
 }
@@ -1438,7 +1572,14 @@ pub(crate) fn evaluated_entries(
             .map(|(value, backtrace)| {
                 (
                     expand_list(
-                        &ctx.genex_with_dag(value, provider, head, property, None),
+                        &ctx.genex_with_dag_usage(
+                            (value, backtrace),
+                            provider,
+                            head,
+                            property,
+                            None,
+                            false,
+                        ),
                         false,
                     ),
                     backtrace.clone(),
@@ -1471,74 +1612,87 @@ pub(crate) fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
 /// call-site backtrace of its `FILES` entry.
 pub(crate) fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool, Vec<Frame>)> {
     let mut files = Vec::new();
-    let source_dir = &ctx.interp.makefiles[target.makefile].source_dir;
-    // INTEGRATION: project the model's private/public cmFileSet entries onto
-    // these target properties, or supply them here directly.
-    for (names, property, bases, default, header) in [
-        ("HEADER_SETS", "HEADER_SET", "HEADER_DIRS", "HEADERS", true),
-        (
-            "CXX_MODULE_SETS",
-            "CXX_MODULE_SET",
-            "CXX_MODULE_DIRS",
-            "CXX_MODULES",
-            false,
-        ),
-    ] {
+    for (names, header) in [("HEADER_SETS", true), ("CXX_MODULE_SETS", false)] {
         for name in expand_list(target.props.get(names).unwrap_or_default(), false) {
-            let suffix = if name == default {
-                String::new()
-            } else {
-                format!("_{name}")
-            };
-            let text = target
-                .props
-                .get(&format!("{property}{suffix}"))
-                .unwrap_or_default();
-            let base_dirs = target
-                .props
-                .get(&format!("{bases}{suffix}"))
-                .unwrap_or(source_dir);
-            let mut directories = Vec::<String>::new();
-            for dir in expand_list(&ctx.genex(base_dirs, Some(target), None), false) {
-                let dir = collapse_full_path(&dir, source_dir);
-                if let Some(prior) = directories
-                    .iter()
-                    .find(|prior| is_subdirectory(&dir, prior) || is_subdirectory(prior, &dir))
-                {
-                    ctx.error(
-                        Vec::new(),
-                        format!(
-                            "Base directories in file set cannot be subdirectories of each other:\n  {prior}\n  {dir}"
-                        ),
-                    );
-                    break;
-                }
-                directories.push(dir);
+            if let Some(set) = target.file_sets.get(&name) {
+                files.extend(
+                    evaluate_file_set(ctx, target, set)
+                        .into_iter()
+                        .map(|(file, _, backtrace)| (file, header, backtrace)),
+                );
             }
-            // cmFileSet::FileEntries: each append is a (value, backtrace)
-            // pair; the joined target property has the same contents.
-            let entries: Vec<(String, Vec<Frame>)> = target
-                .file_sets
-                .get(&name)
-                .map(|set| set.files.clone())
-                .filter(|entries| !entries.is_empty())
-                .unwrap_or_else(|| vec![(text.to_owned(), Vec::new())]);
-            for (entry, entry_bt) in entries {
-                for file in expand_list(&ctx.genex(&entry, Some(target), None), false) {
-                    let file = collapse_full_path(&file, source_dir);
-                    if directories.iter().any(|dir| is_subdirectory(&file, dir)) {
-                        files.push((file, header, entry_bt.clone()));
-                    } else {
-                        let mut error = format!(
-                            "File:\n  {file}\nmust be in one of the file set's base directories:"
-                        );
-                        for dir in &directories {
-                            error.push_str("\n  ");
-                            error.push_str(dir);
-                        }
-                        ctx.error(Vec::new(), error);
-                    }
+        }
+    }
+    files
+}
+
+/// `cmFileSet::EvaluateDirectoryEntries` and `EvaluateFileEntry`: preserve
+/// original path spellings for diagnostics and use collapsed paths for lookup.
+pub(super) fn evaluate_file_set(
+    ctx: &GenCtx,
+    target: &Target,
+    set: &FileSet,
+) -> Vec<(String, String, Vec<Frame>)> {
+    let source = &ctx.interp.makefiles[target.makefile].source_dir;
+    let key = ctx.target_key(target);
+    let resolve = |path: String| {
+        if is_full_path(&path) {
+            path
+        } else {
+            format!("{source}/{path}")
+        }
+    };
+    let evaluate = |value: &str, backtrace: &[Frame]| -> Vec<_> {
+        expand_list(value, false)
+            .into_iter()
+            .flat_map(|entry| {
+                expand_list(
+                    &ctx.genex_full(&entry, target.makefile, Some(&key), None, false, backtrace),
+                    false,
+                )
+            })
+            .map(resolve)
+            .collect()
+    };
+    let mut directories: Vec<(String, String)> = Vec::new();
+    for (entry, backtrace) in &set.base_dirs {
+        for dir in evaluate(entry, backtrace) {
+            let collapsed = collapse_full_path(&dir, source);
+            if let Some((prior, _)) = directories.iter().find(|(prior, prior_collapsed)| {
+                (is_subdirectory(&collapsed, prior_collapsed)
+                    || is_subdirectory(prior_collapsed, &collapsed))
+                    && std::fs::canonicalize(&dir)
+                        .ok()
+                        .zip(std::fs::canonicalize(prior).ok())
+                        .is_none_or(|(a, b)| a != b)
+            }) {
+                ctx.error(
+                    backtrace.clone(),
+                    format!("Base directories in file set cannot be subdirectories of each other:\n  {prior}\n  {dir}"),
+                );
+                return Vec::new();
+            }
+            directories.push((dir, collapsed));
+        }
+    }
+    let mut files = Vec::new();
+    for (entry, backtrace) in &set.files {
+        for file in evaluate(entry, backtrace) {
+            let collapsed = collapse_full_path(&file, source);
+            if let Some((_, base)) = directories
+                .iter()
+                .find(|(_, base)| is_subdirectory(&collapsed, base))
+            {
+                let relative = crate::util::relative_if_under(base, &collapsed);
+                files.push((collapsed, relative, backtrace.clone()));
+            } else {
+                let mut error =
+                    format!("File:\n  {file}\nmust be in one of the file set's base directories:");
+                for (dir, _) in &directories {
+                    error.push_str("\n  ");
+                    error.push_str(dir);
                 }
+                ctx.error(backtrace.clone(), error);
             }
         }
     }
@@ -1546,11 +1700,11 @@ pub(crate) fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool, Vec
 }
 
 /// Get sources in CMake order using the compile usage-requirement closure.
-pub fn sources_with_link_closure(
+fn sources_with_link_closure(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
-    compile_closure: &[&Target],
+    compile_closure: &[(&Target, Vec<Frame>)],
 ) -> Vec<SourceInfo> {
     collect_sources(ctx, target, config, compile_closure, &|path, name| {
         source_prop(ctx, target.makefile, path, name)
@@ -1580,7 +1734,7 @@ fn collect_sources(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
-    compile_closure: &[&Target],
+    compile_closure: &[(&Target, Vec<Frame>)],
     property: &impl Fn(&str, &str) -> Option<String>,
 ) -> Vec<SourceInfo> {
     // Each group is one processSources call, with one entry per recorded
@@ -1606,10 +1760,10 @@ fn collect_sources(
     groups.push(
         compile_closure
             .iter()
-            .flat_map(|provider| {
+            .flat_map(|(provider, backtrace)| {
                 evaluated_entries(ctx, provider, target, "INTERFACE_SOURCES")
                     .into_iter()
-                    .map(|(sources, backtrace)| {
+                    .map(|(sources, _)| {
                         sources
                             .into_iter()
                             .map(|path| Listed::Path {
@@ -1678,6 +1832,12 @@ fn collect_sources(
     let mut found = Vec::new();
     let mut seen = HashSet::new();
     let mut bad_objects = Vec::new();
+    let debug_sources = expand_list(
+        &ctx.var_safe(target.makefile, "CMAKE_DEBUG_TARGET_PROPERTIES"),
+        false,
+    )
+    .iter()
+    .any(|prop| prop == "SOURCES");
     'groups: for group in groups {
         for entry in group {
             // Resolve the whole entry first; an unresolvable source drops the
@@ -1717,9 +1877,17 @@ fn collect_sources(
                 };
                 resolved.push((path, generated, listed, object_library, backtrace));
             }
+            let mut used_sources = String::new();
+            let mut log_backtrace = Vec::new();
             for (path, generated, listed, object_library, backtrace) in resolved {
                 if !seen.insert(path.clone()) {
                     continue;
+                }
+                if debug_sources {
+                    if used_sources.is_empty() {
+                        log_backtrace.clone_from(&backtrace);
+                    }
+                    used_sources.push_str(&format!(" * {path}\n"));
                 }
                 if object_library.is_some() {
                     found.push(SourceInfo {
@@ -1758,10 +1926,17 @@ fn collect_sources(
                     backtrace,
                 });
             }
+            if !used_sources.is_empty() {
+                ctx.message(
+                    MessageType::Log,
+                    log_backtrace,
+                    format!("Used sources for target {}:\n{used_sources}", target.name),
+                );
+            }
         }
     }
     if !bad_objects.is_empty() {
-        ctx.error(Vec::new(), format!(
+        ctx.error(target.backtrace.clone(), format!(
             "OBJECT library \"{}\" contains:\n  {}\nbut may contain only sources that compile, header files, and other files that would not affect linking of a normal library.",
             target.name, bad_objects.join("\n  ")
         ));
@@ -1807,7 +1982,7 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
         ctx,
         target,
         config,
-        &link_closure(ctx, target, config),
+        &link_closure_entries(ctx, target, config),
     ));
     if !first {
         ctx.errors.borrow_mut().truncate(diagnostics);
@@ -2766,7 +2941,6 @@ pub(super) mod tests {
                 &[
                     ("SOURCES", "local.c;../common.c;gen/generated.c"),
                     ("HEADER_SETS", "HEADERS"),
-                    ("HEADER_SET", "asset.data"),
                     ("OUTPUT_NAME_RELWITHDEBINFO", "ignored"),
                     ("ARCHIVE_OUTPUT_NAME", "core"),
                     ("RELWITHDEBINFO_POSTFIX", "_rw"),
@@ -2826,6 +3000,15 @@ pub(super) mod tests {
                 });
             }
             if name == "statik" {
+                target.file_sets.insert(
+                    "HEADERS".to_owned(),
+                    FileSet {
+                        kind: "HEADERS".to_owned(),
+                        scope: crate::state::Scope::Private,
+                        base_dirs: vec![(format!("{root_str}/src/nested"), Vec::new())],
+                        files: vec![("asset.data".to_owned(), Vec::new())],
+                    },
+                );
                 // The production accessor will obtain this property from SourceFile.
                 let source_info =
                     collect_sources(&ctx, &target, &ctx.config, &[], &|path, property| {
@@ -3037,7 +3220,7 @@ pub(super) mod tests {
             &ctx,
             &consumer,
             &ctx.config,
-            &[&interface, &dep],
+            &[(&interface, Vec::new()), (&dep, Vec::new())],
             &properties,
         );
         let kinds: Vec<_> = result.iter().map(|source| source.kind).collect();

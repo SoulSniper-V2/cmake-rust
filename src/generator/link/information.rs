@@ -24,6 +24,15 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         return LinkLine::default();
     }
     let ordered = dependencies::compute(query, head);
+    super::super::compatible::check_declarations(
+        query.ctx,
+        head,
+        query.config,
+        ordered.entries.iter().filter_map(|entry| entry.item.target),
+    );
+    if query.ctx.has_error() {
+        return LinkLine::default();
+    }
     let users = usage_property(query, head, "LINK_DIRECTORIES");
     let mut info = Information::new(query, head, users);
     info.emit_entries(&ordered.entries);
@@ -158,6 +167,39 @@ pub(super) fn objects(query: &Query<'_, '_>, head: &Target) -> Vec<String> {
 }
 
 fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<String> {
+    fn entries(
+        query: &Query<'_, '_>,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+    ) -> Vec<String> {
+        let Some(entries) = owner.provenance.get(property) else {
+            return expand_list(&query.property(owner, head, property), false);
+        };
+        // EvaluateInterfaceProperty/AddInterfaceEntries: each interface
+        // property entry is checked under the consuming property's checker,
+        // so the DAG Top is (head, "LINK_<X>") while the entry's own checker
+        // is (owner, "INTERFACE_LINK_<X>").
+        let root_property = property.strip_prefix("INTERFACE_").unwrap_or(property);
+        entries
+            .iter()
+            .flat_map(|(value, backtrace)| {
+                expand_list(
+                    &query.ctx.genex_with_dag_bt(
+                        value,
+                        owner,
+                        head,
+                        property,
+                        root_property,
+                        (Some(query.language), false),
+                        backtrace,
+                    ),
+                    false,
+                )
+            })
+            .collect()
+    }
+
     fn collect<'i>(
         query: &Query<'_, 'i>,
         head: &Target,
@@ -170,21 +212,7 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             if !seen.insert(std::ptr::from_ref(target) as usize) {
                 continue;
             }
-            // EvaluateInterfaceProperty: each recorded property entry is
-            // evaluated with its own list-file backtrace.
-            let mut raw = Vec::new();
-            match target.provenance.get(property) {
-                Some(entries) if !entries.is_empty() => {
-                    for (value, backtrace) in entries.clone() {
-                        raw.extend(expand_list(
-                            &query.eval_bt(&value, target, head, property, &backtrace),
-                            false,
-                        ));
-                    }
-                }
-                _ => raw.extend(expand_list(&query.property(target, head, property), false)),
-            }
-            for value in raw {
+            for value in entries(query, target, head, property) {
                 if property == "INTERFACE_LINK_DIRECTORIES" && !Path::new(&value).is_absolute() {
                     query.error(format!("Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"", target.name));
                 }
@@ -200,20 +228,7 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             );
         }
     }
-    // EvaluateTargetPropertyEntries: the target's own property entries are
-    // evaluated with their own list-file backtraces as well.
-    let mut values = Vec::new();
-    match head.provenance.get(property) {
-        Some(entries) if !entries.is_empty() => {
-            for (value, backtrace) in entries.clone() {
-                values.extend(expand_list(
-                    &query.eval_bt(&value, head, head, property, &backtrace),
-                    false,
-                ));
-            }
-        }
-        _ => values.extend(expand_list(&query.property(head, head, property), false)),
-    }
+    let mut values = entries(query, head, head, property);
     if property == "LINK_DIRECTORIES" && query.policy(head, "CMP0081") == PolicyStatus::New {
         for value in values
             .iter()
@@ -600,8 +615,15 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         }
     }
 
+    fn is_imported_stub(&self, target: &Target) -> bool {
+        target.imported
+            && target.kind == TargetKind::SharedLibrary
+            && target::import_info(target, self.query.config).is_none_or(|i| i.location.is_empty())
+    }
+
     fn add_runtime(&mut self, full: &str, target: Option<&Target>) {
         let soname = match target {
+            Some(target) if self.is_imported_stub(target) => return,
             Some(target) if target.kind == TargetKind::SharedLibrary => self
                 .query
                 .generator
@@ -639,12 +661,21 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         {
             return;
         }
-        if is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_FILES")) {
-            self.add_item(entry, None);
+        let link_files = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_FILES"));
+        let add_to_link_dirs = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_DIRS"));
+        if !link_files && !add_to_link_dirs && self.rpath_link_flag.is_empty() {
             return;
         }
-        let add_to_link_dirs = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_DIRS"));
-        if !add_to_link_dirs && self.rpath_link_flag.is_empty() {
+        // A stub may not have a file named for its SONAME. Give it directly
+        // to linkers that recursively check undefined shared-library symbols.
+        if link_files
+            || (target.is_some_and(|t| self.is_imported_stub(t))
+                && matches!(
+                    self.langvar("COMPILER_LINKER_ID").as_str(),
+                    "GNU" | "Solaris"
+                ))
+        {
+            self.add_item(entry, None);
             return;
         }
         let full = target.map_or_else(
@@ -1109,14 +1140,15 @@ fn relative_path(from: &str, to: &str) -> String {
         .zip(&to)
         .take_while(|(from, to)| from == to)
         .count();
-    std::iter::repeat_n("..", from.len() - common)
-        .chain(
-            to[common..]
-                .iter()
-                .map(|part| part.as_os_str().to_str().unwrap_or_default()),
-        )
+    // KWSys RelativePath emits "../" for every ascent, including the last
+    // one when the destination is an ancestor of the output directory.
+    let up = "../".repeat(from.len() - common);
+    let down = to[common..]
+        .iter()
+        .map(|part| part.as_os_str().to_str().unwrap_or_default())
         .collect::<Vec<_>>()
-        .join("/")
+        .join("/");
+    up + &down
 }
 
 fn normalize_slashes(value: &str) -> String {

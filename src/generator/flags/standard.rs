@@ -1,4 +1,5 @@
 use super::{Flags, append_options};
+use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
 use crate::util::{expand_list, is_on_opt, strtol};
 
@@ -90,7 +91,16 @@ fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
     if standards.is_empty() {
         return None;
     }
-    let new = inputs.policy(128) == PolicyStatus::New;
+    let policy = inputs
+        .ctx
+        .interp
+        .policy_status_at(inputs.target.makefile, "CMP0128");
+    let new = policy == PolicyStatus::New;
+    let warn = policy == PolicyStatus::Warn
+        && inputs
+            .ctx
+            .interp
+            .policy_optional_warning(inputs.var("CMAKE_POLICY_WARNING_CMP0128").as_deref());
     let default_ext = is_on_opt(inputs.lang_var("EXTENSIONS_DEFAULT").as_deref());
     let extensions =
         paired_prop(inputs, "EXTENSIONS").map_or(!new || default_ext, crate::util::is_on);
@@ -98,6 +108,23 @@ fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
     let option = |standard| inputs.var(&format!("CMAKE_{lang}{standard}_{kind}_COMPILE_OPTION"));
 
     let Some(standard) = requested_standard(inputs, &default) else {
+        if warn && extensions != default_ext {
+            let state = if !extensions {
+                Some("disabled")
+            } else if inputs.lang_var("EXTENSION_COMPILE_OPTION").is_none() {
+                Some("enabled")
+            } else {
+                None
+            };
+            if let Some(state) = state {
+                warn_cmp0128(
+                    inputs,
+                    &format!(
+                        "For compatibility with older versions of CMake, compiler extensions won't be {state}."
+                    ),
+                );
+            }
+        }
         return if new && extensions != default_ext {
             option(default.as_str())
         } else if !new && extensions {
@@ -124,8 +151,16 @@ fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
         return result;
     }
 
-    if new && standard == default && extensions == default_ext {
-        return None;
+    if standard == default && extensions == default_ext {
+        if new {
+            return None;
+        }
+        if warn {
+            warn_cmp0128(
+                inputs,
+                "For compatibility with older versions of CMake, unnecessary flags for language standard or compiler extensions may be added.",
+            );
+        }
     }
     let standard = if lang == "CUDA" && standard == "98" {
         "03"
@@ -133,9 +168,10 @@ fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
         &standard
     };
     let Some(requested) = level(standards, standard) else {
-        inputs.error(format!(
-            "{lang}_STANDARD is set to invalid value '{standard}'"
-        ));
+        inputs.ctx.error(
+            inputs.target.backtrace.clone(),
+            format!("{lang}_STANDARD is set to invalid value '{standard}'"),
+        );
         return None;
     };
     let Some(default_level) = level(standards, &default) else {
@@ -152,4 +188,26 @@ fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
     (default_level + 1..=requested)
         .rev()
         .find_map(|idx| option(standards[idx]))
+}
+
+fn warn_cmp0128(inputs: &Flags<'_, '_>, text: &str) {
+    let memo = format!(
+        "CMP0128:{}:{}",
+        inputs.ctx.target_key(inputs.target),
+        inputs.lang
+    );
+    if inputs
+        .ctx
+        .memo
+        .borrow_mut()
+        .insert(memo, String::new())
+        .is_none()
+    {
+        let warning = crate::policy::policy_warning(crate::policy::index_of("CMP0128").unwrap());
+        inputs.ctx.message(
+            MessageType::AuthorWarning,
+            super::super::target::directory_backtrace(inputs.ctx, inputs.target.makefile),
+            format!("{warning}\n{text}"),
+        );
+    }
 }

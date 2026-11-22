@@ -21,6 +21,7 @@
 //! - `export.rs`   export()/install(EXPORT) files.
 
 pub mod automatic;
+mod compatible;
 pub mod ctx;
 pub mod custom;
 pub mod evaluation_files;
@@ -36,6 +37,7 @@ pub mod pch;
 pub mod target;
 pub mod tests;
 pub mod trace;
+mod verify_header_sets;
 
 #[cfg(test)]
 mod oracle_tests;
@@ -46,6 +48,22 @@ use crate::interp::Interp;
 /// `cmake::Generate`: compute and write the build system. Returns 0 on
 /// success.
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
+    for name in [
+        "CMAKE_DEFAULT_BUILD_TYPE",
+        "CMAKE_CROSS_CONFIGS",
+        "CMAKE_DEFAULT_CONFIGS",
+    ] {
+        if interp.get_def(name).is_some() {
+            interp.issue_at(
+                crate::messages::MessageType::FatalError,
+                &format!(
+                    "Generator\n  Ninja\ndoes not support variable\n  {name}\nbut it has been specified."
+                ),
+                &[],
+            );
+            return -1;
+        }
+    }
     let start = std::time::Instant::now();
     finalize_target_configuration(interp);
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
@@ -58,6 +76,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
     // become generated sources before target source resolution runs.
     evaluation_files::create_outputs(interp);
+    if !verify_header_sets::add_targets(interp) {
+        return -1;
+    }
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
@@ -90,7 +111,7 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
             .map(|mf| {
                 (
                     mf.binary_dir.clone(),
-                    format!("{}/CMakeLists.txt", mf.source_dir),
+                    interp.project_list_file(&mf.source_dir),
                 )
             })
             .collect();

@@ -351,7 +351,7 @@ impl<'a> GenCtx<'a> {
         property: &str,
         language: Option<&str>,
     ) -> String {
-        self.genex_with_dag_usage(text, owner, head, property, language, false)
+        self.genex_with_dag_usage((text, &[]), owner, head, property, language, false)
     }
 
     /// `genex_with_dag` for `UseTo::Compile` link evaluation: the DAG
@@ -359,12 +359,31 @@ impl<'a> GenCtx<'a> {
     /// is dropped from link interfaces (cmGeneratorTarget::ExpandLinkItems).
     pub fn genex_with_dag_usage(
         &self,
-        text: &str,
+        (text, backtrace): (&str, &[Frame]),
         owner: &Target,
         head: &Target,
         property: &str,
         language: Option<&str>,
         compile_usage: bool,
+    ) -> String {
+        self.genex_with_dag_at(
+            text,
+            owner,
+            head,
+            property,
+            (language, compile_usage),
+            backtrace,
+        )
+    }
+
+    pub fn genex_with_dag_at(
+        &self,
+        text: &str,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+        (language, compile_usage): (Option<&str>, bool),
+        backtrace: &[Frame],
     ) -> String {
         self.genex_with_dag_bt(
             text,
@@ -372,19 +391,16 @@ impl<'a> GenCtx<'a> {
             head,
             property,
             property,
-            language,
-            compile_usage,
-            &[],
+            (language, compile_usage),
+            backtrace,
         )
     }
 
-    /// `genex_with_dag_usage` with an explicit DAG root and the list-file
-    /// `backtrace` of the property entry being evaluated — as
-    /// `cmGeneratorExpression::Evaluate` receives them from
-    /// `EvaluateInterfaceProperty`/`AddInterfaceEntries`: for a transitive
-    /// interface eval the checker's Top stays the entry property on `head`
-    /// (`dagChecker->EvaluatingLinkExpression()` tests `Top->Property`), and
-    /// the entry's own backtrace anchors any diagnostic it raises.
+    /// `genex_with_dag_at` with an explicit DAG `root_property` on `head`:
+    /// `EvaluateInterfaceProperty`/`AddInterfaceEntries` parent the owner's
+    /// property checker under the consuming property's checker, so the DAG
+    /// Top stays `(head, consuming_property)` and checks like
+    /// `EvaluatingLinkExpression`/`EvaluatingLinkLibraries` see it.
     #[allow(clippy::too_many_arguments)] // mirrors the upstream signature
     pub fn genex_with_dag_bt(
         &self,
@@ -393,8 +409,7 @@ impl<'a> GenCtx<'a> {
         head: &Target,
         property: &str,
         root_property: &str,
-        language: Option<&str>,
-        compile_usage: bool,
+        (language, compile_usage): (Option<&str>, bool),
         backtrace: &[Frame],
     ) -> String {
         if !text.contains("$<") {
@@ -414,7 +429,7 @@ impl<'a> GenCtx<'a> {
             && !root_property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
             && crate::genex::GenexHost::local_policy_status(&host_policy, "CMP0189")
                 == crate::policy::PolicyStatus::New;
-        let interface = property != "LINK_LIBRARIES";
+        let interface = root_property != "LINK_LIBRARIES";
         let root = crate::genex::DagChecker {
             computing_link_libraries: link,
             transitive,
@@ -428,14 +443,17 @@ impl<'a> GenCtx<'a> {
                     ) == crate::policy::PolicyStatus::New),
             ..crate::genex::DagChecker::new(&head_key, root_property)
         };
-        let frame;
+        // EvaluateInterfaceProperty: the evaluated entry's checker sits under
+        // the consuming checker, so DAG-Top checks see `root_property` on
+        // `head`. When owner and property coincide with the root a single
+        // checker suffices.
+        let frame = crate::genex::DagChecker {
+            parent: Some(&root),
+            ..crate::genex::DagChecker::new(&owner_key, property)
+        };
         let dag = if owner_key == head_key && property == root_property {
             &root
         } else {
-            frame = crate::genex::DagChecker {
-                parent: Some(&root),
-                ..crate::genex::DagChecker::new(&owner_key, property)
-            };
             &frame
         };
         let compiled = crate::genex::parse(text);
@@ -451,6 +469,19 @@ impl<'a> GenCtx<'a> {
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
         let result = crate::genex::evaluate(&compiled, &mut ectx, &mut host);
+        if property == "LINK_LIBRARIES" && std::ptr::eq(owner, head) {
+            self.memo.borrow_mut().extend(
+                ectx.seen_target_properties
+                    .iter()
+                    .filter(|prop| !head.props.contains(prop))
+                    .map(|prop| {
+                        (
+                            super::compatible::implied_key(self, head, prop),
+                            String::new(),
+                        )
+                    }),
+            );
+        }
         self.report_warnings(&ectx);
         match result {
             Ok(value) => value,
@@ -572,6 +603,9 @@ impl<'a> GenCtx<'a> {
     /// Runs the whole generate step; returns the diagnostics it raised.
     /// The caller reports them and decides failure from their severity.
     pub fn check_and_generate(&self) -> Vec<Diagnostic> {
+        if !super::flags::validate_compile_features(self) {
+            return self.errors.take();
+        }
         // cmGlobalGenerator::Compute: source resolution diagnostics surface
         // during the pre-generation target computations, and
         // CheckTargetsForMissingSources stops generation before any build

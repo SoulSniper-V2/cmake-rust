@@ -304,11 +304,19 @@ fn extra_path(path: &str) {
 }
 
 fn positional(options: &mut ConfigureOptions, arg: &str, cwd: &str, script_mode: bool) -> bool {
-    let full = util::collapse_full_path(arg, cwd);
+    // cmake::SetDirectoriesFromFile: an existing path is resolved with
+    // ToNormalizedPathOnDisk (a symlink before ".." is followed); a missing
+    // one is collapsed lexically.
+    let given = Path::new(arg);
+    let full = if given.exists() {
+        normalized_path(arg, cwd)
+    } else {
+        util::collapse_full_path(arg, cwd)
+    };
     let path = Path::new(&full);
     let is_dir = path.is_dir();
     let exists = path.exists();
-    let is_source = is_dir && path.join("CMakeLists.txt").is_file();
+    let is_source = is_dir && Path::new(&options.project_list_file(&full)).is_file();
     let leaf = util::filename_name(&full).to_ascii_lowercase();
     let parent = util::filename_path(&full);
     let cache_path = if is_dir && path.join("CMakeCache.txt").is_file() {
@@ -585,10 +593,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 "-B" => have_b_arg = true,
                 _ => {}
             }
-            if matches!(
-                name,
-                "--project-file" | "--debugger-pipe" | "--debugger-dap-log"
-            ) {
+            if matches!(name, "--debugger-pipe" | "--debugger-dap-log") {
                 unsupported = Some(name);
             }
         } else if matches_value(arg, "--list-presets", false) {
@@ -871,6 +876,12 @@ fn set_option<'a>(
         // cmSystemTools::ToNormalizedPathOnDisk
         "-S" | "-H" => set_source(options, normalized_path(value, cwd), script_mode),
         "-B" => options.binary_dir = normalized_path(value, cwd),
+        "--project-file" => {
+            if options.project_file.is_some() {
+                return Err("Multiple --project-file options not allowed".to_owned());
+            }
+            options.project_file = Some(value.to_owned());
+        }
         "-G" => {
             if !known_generator(value) {
                 return Err(format!("Could not create named generator {value}"));
