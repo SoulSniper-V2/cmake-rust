@@ -13,6 +13,15 @@ use crate::util::{escape_for_cmake, expand_list, is_full_path, is_on_opt};
 
 pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
     let mut files = Vec::new();
+    if ctx.interp.ext.install.enabled
+        && is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref())
+    {
+        ctx.message(
+            crate::messages::MessageType::Warning,
+            target::directory_backtrace(ctx, 0),
+            "CMAKE_SKIP_INSTALL_RULES was enabled even though installation rules have been specified",
+        );
+    }
     for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
         if is_on_opt(ctx.var(index, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {
             continue;
@@ -431,10 +440,18 @@ fn render_rule(
             );
         }
         InstallAction::Script { text, is_code, .. } => {
-            // INTEGRATION: CMP0087 enables evaluation of install script arguments.
-            let text = if text.contains("$<")
-                && directory_policy(ctx, index, "CMP0087") == PolicyStatus::New
-            {
+            let policy = directory_policy(ctx, index, "CMP0087");
+            let has_genex = text
+                .split_once("$<")
+                .is_some_and(|(_, tail)| tail.contains('>'));
+            if has_genex && policy == PolicyStatus::Warn {
+                ctx.message(
+                    crate::messages::MessageType::AuthorWarning,
+                    target::directory_backtrace(ctx, index),
+                    crate::policy::policy_warning(index_of("CMP0087").unwrap()),
+                );
+            }
+            let text = if has_genex && policy == PolicyStatus::New {
                 ctx.genex(
                     &text.replace("$<INSTALL_PREFIX>", "${CMAKE_INSTALL_PREFIX}"),
                     None,
@@ -455,7 +472,7 @@ fn render_rule(
             imported,
         } => {
             if let Some(tgt) = ctx.target_at(index, name) {
-                render_target(ctx, out, opts, tgt, *namelink, *imported, indent);
+                render_target(ctx, out, rule, tgt, *namelink, *imported, indent);
             }
         }
         InstallAction::Bmi(name) => {
@@ -516,7 +533,7 @@ fn render_rule(
                         | TargetKind::ModuleLibrary
                 )
             }) {
-                render_target(ctx, out, opts, tgt, Namelink::None, false, indent);
+                render_target(ctx, out, rule, tgt, Namelink::None, false, indent);
             }
         }
         InstallAction::RuntimeDependencies { .. } => unreachable!(),
@@ -687,12 +704,13 @@ pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
 fn render_target(
     ctx: &GenCtx,
     out: &mut String,
-    opts: &InstallOptions,
+    rule: &InstallRule,
     tgt: &Target,
     namelink: Namelink,
     imported: bool,
     indent: &str,
 ) {
+    let opts = &rule.options;
     let kind = match tgt.kind {
         TargetKind::Executable => CopyKind::Executable,
         TargetKind::StaticLibrary => CopyKind::Static,
@@ -772,12 +790,23 @@ fn render_target(
         .collect();
     let dynamic = tgt.kind != TargetKind::StaticLibrary && namelink != Namelink::Only;
     let rpaths = if dynamic {
-        install_rpaths(ctx, tgt)
+        let language = target::linker_language(ctx, tgt, &ctx.config);
+        link::link_line(ctx, tgt, &ctx.config, &language).rpath_change
     } else {
         None
     };
+    let cmp0095 = index_of("CMP0095").unwrap();
+    let policy = tgt.policies.get(cmp0095).unwrap_or(PolicyStatus::Warn);
+    let format_install_rpath = |value: &str| {
+        if policy == PolicyStatus::New {
+            escape_for_cmake(value)
+        } else {
+            format!("\"{value}\"")
+        }
+    };
     let tweak_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(&dest));
     if let Some((_, new)) = &rpaths {
+        let new = format_install_rpath(new);
         tweak(
             out,
             indent,
@@ -795,6 +824,20 @@ fn render_target(
         String::new()
     };
     let rpaths = rpaths.filter(|(old, new)| old != new);
+    if let Some((_, new)) = &rpaths
+        && policy == PolicyStatus::Warn
+        && new.contains("${")
+    {
+        ctx.message(
+            crate::messages::MessageType::AuthorWarning,
+            rule.backtrace.clone(),
+            format!(
+                "{}\nRPATH entries for target '{}' will not be escaped in the intermediary cmake_install.cmake script.",
+                crate::policy::policy_warning(cmp0095),
+                tgt.name
+            ),
+        );
+    }
     if !strip.is_empty() || rpaths.is_some() {
         tweak(
             out,
@@ -803,6 +846,8 @@ fn render_target(
             &install_names,
             |out, indent, file| {
                 if let Some((old, new)) = &rpaths {
+                    let old = escape_for_cmake(old);
+                    let new = format_install_rpath(new);
                     write!(out, "{indent}file(RPATH_CHANGE\n{indent}     FILE \"{file}\"\n{indent}     OLD_RPATH {old}\n{indent}     NEW_RPATH {new}").unwrap();
                     if is_on_opt(tgt.props.get("INSTALL_REMOVE_ENVIRONMENT_RPATH")) {
                         write!(out, "\n{indent}     INSTALL_REMOVE_ENVIRONMENT_RPATH").unwrap();
@@ -848,29 +893,6 @@ fn tweak(
     }
 }
 
-fn install_rpaths(ctx: &GenCtx, tgt: &Target) -> Option<(String, String)> {
-    let on = |key| is_on_opt(ctx.var(tgt.makefile, key).as_deref());
-    if on("CMAKE_SKIP_RPATH")
-        || on("CMAKE_NO_BUILTIN_CHRPATH")
-        || is_on_opt(tgt.props.get("BUILD_WITH_INSTALL_RPATH"))
-        || ctx.var_safe(tgt.makefile, "CMAKE_EXECUTABLE_FORMAT") != "ELF"
-    {
-        return None;
-    }
-    let language = target::linker_language(ctx, tgt, &ctx.config);
-    if language.is_empty() {
-        return None;
-    }
-    let (old, new) = link::link_line(ctx, tgt, &ctx.config, &language).rpath_change?;
-    let old = escape_for_cmake(&old);
-    let new = if target::target_policy(ctx, tgt, 95) == PolicyStatus::New {
-        escape_for_cmake(&new)
-    } else {
-        format!("\"{new}\"")
-    };
-    Some((old, new))
-}
-
 pub(super) fn file_set_properties(
     tgt: &Target,
     set: &str,
@@ -906,6 +928,16 @@ fn render_file_set(
     set: &str,
     indent: &str,
 ) {
+    if !["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"]
+        .iter()
+        .any(|property| {
+            expand_list(tgt.props.get(property).unwrap_or_default(), false)
+                .iter()
+                .any(|name| name == set)
+        })
+    {
+        return;
+    }
     let Some((files, bases, _)) = file_set_properties(tgt, set) else {
         return;
     };

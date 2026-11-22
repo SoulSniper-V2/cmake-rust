@@ -68,6 +68,8 @@ fn toolchain_vars(interp: &mut Interp, makefile: usize) {
             ("CMAKE_STRIP", "/usr/bin/strip"),
             ("CMAKE_EXECUTABLE_FORMAT", "ELF"),
             ("CMAKE_EXECUTABLE_SUFFIX", ""),
+            ("CMAKE_EXECUTABLE_RUNTIME_C_FLAG", "-Wl,-rpath,"),
+            ("CMAKE_EXECUTABLE_RUNTIME_C_FLAG_SEP", ":"),
             ("CMAKE_STATIC_LIBRARY_PREFIX", "lib"),
             ("CMAKE_STATIC_LIBRARY_SUFFIX", ".a"),
             ("CMAKE_SHARED_LIBRARY_PREFIX", "lib"),
@@ -877,15 +879,14 @@ fn oracle_fixtures() {
         (
             "target-rpath",
             Box::new(|i| {
-                run(i, "cmake_policy(SET CMP0095 NEW)");
-                target(
+                run(
                     i,
-                    "app",
-                    TargetKind::Executable,
-                    0,
-                    &[("SOURCES", "main.c"), ("INSTALL_RPATH", "/opt/lib;$ORIGIN")],
+                    "cmake_policy(SET CMP0095 NEW)
+file(WRITE main.c \"\")
+add_executable(app main.c)
+set_property(TARGET app PROPERTY INSTALL_RPATH \"/opt/lib;$ORIGIN\")
+install(TARGETS app)",
                 );
-                run(i, "install(TARGETS app)");
                 toolchain_vars(i, 0);
             }),
         ),

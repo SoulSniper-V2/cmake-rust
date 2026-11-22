@@ -72,7 +72,7 @@ pub struct Target {
     /// `cmGeneratorTarget::UnityBatchedSourceFiles`.
     pub unity_batched: BTreeSet<String>,
     /// `cmTarget::GetFindPackageStack` (enclosing find_package calls).
-    pub find_package_stack: Vec<String>,
+    pub find_package_stack: Vec<(String, u32)>,
 }
 
 impl Target {
@@ -330,9 +330,6 @@ pub struct Ext {
     pub defer_current_id: Option<String>,
     pub dependency_provider: Option<(String, Vec<String>)>,
     pub find_package: HashMap<usize, crate::commands::find::package::PackageState>,
-    /// `cmake::FindPackageStack`: package names of active find_package
-    /// calls for `cmTarget::GetFindPackageStack` snapshots.
-    pub find_package_stack: Vec<String>,
     /// `cmState::PackageStateMap` for CPS packages: root `*.cps` file ->
     /// names of the CPS files (base plus appendices) already imported.
     pub cps_imported: HashMap<String, BTreeSet<String>>,

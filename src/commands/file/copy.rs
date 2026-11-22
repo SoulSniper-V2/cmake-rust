@@ -828,24 +828,28 @@ fn default_directory_mode(interp: &Interp) -> Result<Option<u32>, CmdErr> {
 
 fn mkdir_mode(path: &str, mode: Option<u32>) -> io::Result<()> {
     let path = unix_slashes(path);
-    let Some(mode) = mode else {
-        return mkdir(&path);
-    };
-    let mut missing = Vec::new();
-    let mut parent = Path::new(&path);
-    while !parent.as_os_str().is_empty() && !parent.exists() {
-        missing.push(parent);
-        let Some(next) = parent.parent() else {
-            break;
+    if let Ok(meta) = fs::metadata(&path) {
+        return if meta.is_dir() {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(libc::EEXIST))
         };
-        parent = next;
     }
-    for dir in missing.into_iter().rev() {
-        match fs::create_dir(dir) {
-            Ok(()) => fs::set_permissions(dir, fs::Permissions::from_mode(mode))?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && dir.is_dir() => {}
-            Err(error) => return Err(error),
+    // KWSys creates each literal prefix, including directories before `..`.
+    let create = |dir: &str| match fs::create_dir(dir) {
+        Ok(()) => match mode {
+            Some(mode) => fs::set_permissions(dir, fs::Permissions::from_mode(mode)),
+            None => Ok(()),
+        },
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && Path::new(dir).is_dir() => {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    };
+    for (slash, _) in path.match_indices('/') {
+        if slash != 0 {
+            let _ = create(&path[..slash]);
         }
     }
-    mkdir(&path)
+    create(&path)
 }

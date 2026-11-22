@@ -20,10 +20,48 @@ pub use compile::{compile_vars, object_dependencies};
 pub use rule::{RuleStep, expand_rule_for_step};
 
 use super::ctx::GenCtx;
+use crate::messages::MessageType;
 use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};
 use crate::policy::PolicyStatus;
 use crate::state::Target;
 use crate::util::expand_list;
+
+/// `cmGeneratorTarget::ComputeCompileFeatures`: resolve the entries before
+/// emitting build rules, including targets that have no object rules.
+pub(super) fn validate_compile_features(ctx: &GenCtx) -> bool {
+    for key in ctx.interp.makefiles.iter().flat_map(|mf| &mf.targets) {
+        let target = &ctx.interp.ext.targets[key];
+        let items = usage_item_fragments(ctx, target, &ctx.config, "", "COMPILE_FEATURES");
+        let debug = expand_list(
+            &ctx.var_safe(target.makefile, "CMAKE_DEBUG_TARGET_PROPERTIES"),
+            false,
+        )
+        .iter()
+        .any(|prop| prop == "COMPILE_FEATURES");
+        if debug {
+            for group in items.chunk_by(|a, b| a.1 == b.1) {
+                let mut text = format!("Used compile features for target {}:\n", target.name);
+                for (feature, _) in group {
+                    text.push_str(&format!(" * {feature}\n"));
+                }
+                ctx.message(MessageType::Log, group[0].1.clone(), text);
+            }
+        }
+        for (feature, _) in items {
+            if crate::commands::targets::compile_feature_language(&feature).is_none() {
+                ctx.error(
+                    super::target::directory_backtrace(ctx, target.makefile),
+                    format!(
+                        "Specified unknown feature \"{feature}\" for target \"{}\".",
+                        target.name
+                    ),
+                );
+                return false;
+            }
+        }
+    }
+    !ctx.has_error()
+}
 
 struct Flags<'a, 'i> {
     ctx: &'a GenCtx<'i>,
