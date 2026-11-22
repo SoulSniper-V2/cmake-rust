@@ -763,6 +763,12 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             cmcmd::error("Error executing cmake::LoadCache(). Aborting.\n");
             return Ok(1);
         }
+        if view_only {
+            // Configuring reloads (and reports) the cache itself.
+            for error in std::mem::take(&mut cache.load_errors) {
+                cmcmd::error(error);
+            }
+        }
     }
     if regenerate {
         if let Some(source) = cache.value("CMAKE_HOME_DIRECTORY") {
@@ -1460,7 +1466,11 @@ fn build(args: &[String], cwd: &str) -> i32 {
     };
     let mut cache = Cache::default();
     match cache.load(cache_dir) {
-        Ok(true) => {}
+        Ok(true) => {
+            for error in std::mem::take(&mut cache.load_errors) {
+                cmcmd::error(error);
+            }
+        }
         Err(error) => {
             cmcmd::error(error);
             return 1;

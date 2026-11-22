@@ -402,6 +402,9 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
             system_error(Some(interp), &message);
         }
     }
+    for message in std::mem::take(&mut interp.cache.load_errors) {
+        system_error(Some(interp), &message);
+    }
     add_cmake_paths(interp);
     if !apply_cache_args(interp, options) {
         system_error(Some(interp), "Run 'cmake --help' for all supported options.");

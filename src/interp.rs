@@ -437,10 +437,11 @@ impl Interp {
             return;
         }
         // cmMakefile::IsProjectFile
+        // (The C++ tests the literal "/CMakeFiles", not the binary dir's.)
         let is_project_file = |file: &str| {
             util::is_subdirectory(file, &self.home_source)
                 || (util::is_subdirectory(file, &self.home_binary)
-                    && !util::is_subdirectory(file, &format!("{}/CMakeFiles", self.home_binary)))
+                    && !util::is_subdirectory(file, "/CMakeFiles"))
         };
         if self.check_system_vars || source_file.is_some_and(is_project_file) {
             self.issue(MessageType::AuthorWarning, &format!("uninitialized variable '{variable}'"));
@@ -2371,7 +2372,7 @@ impl Interp {
                                 } else {
                                     let value = self.read_definition(&lookup);
                                     if value.is_none() {
-                                        let file = if no_escapes { None } else { location.map(|(file, _)| file) };
+                                        let file = location.map(|(file, _)| file);
                                         self.maybe_warn_uninitialized(&lookup, file);
                                     }
                                     value
@@ -2486,7 +2487,7 @@ impl Interp {
                         } else {
                             let value = self.read_definition(&name);
                             if value.is_none() {
-                                let file = if no_escapes { None } else { location.map(|(file, _)| file) };
+                                let file = location.map(|(file, _)| file);
                                 self.maybe_warn_uninitialized(&name, file);
                             }
                             value.unwrap_or_default()

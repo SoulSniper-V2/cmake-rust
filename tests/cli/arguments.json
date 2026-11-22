@@ -540,5 +540,35 @@
   "files": {
    "CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\n"
   }
+ },
+ {
+  "name": "cache-parse-errors-continue",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nmessage(STATUS \"V=${VALID} F=${FINAL} X=${X}\")\n",
+   "b/CMakeCache.txt": "// This is valid\nVALID:BOOL=TRUE\n\n// bad\n\n// One final entry\nFINAL:BOOL=TRUE\nGARBAGE LINE\nX:STRING=1\n"
+  }
+ },
+ {
+  "name": "warn-uninitialized-configure",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--warn-uninitialized"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\nstring(CONFIGURE \"\\${U1} @U2@\" o)\nfile(WRITE ${CMAKE_CURRENT_BINARY_DIR}/f.in \"@U3@ ${U4}\")\nconfigure_file(${CMAKE_CURRENT_BINARY_DIR}/f.in f.out)\nconfigure_file(${CMAKE_CURRENT_BINARY_DIR}/f.in f2.out @ONLY)\n"
+  }
  }
 ]

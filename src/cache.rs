@@ -77,6 +77,9 @@ pub struct Cache {
     /// Keys added since the last `clear_touched` (each `cmake::AddCacheEntry`
     /// stops watching the key for unused-variable warnings).
     pub touched: std::collections::BTreeSet<String>,
+    /// Parse errors of the last `load`, which `cmCacheManager::LoadCache`
+    /// reports with `cmSystemTools::Error` while it keeps loading.
+    pub load_errors: Vec<String>,
 }
 
 /// Parses one `KEY:TYPE=VALUE` line (or `KEY=VALUE`), as
@@ -197,6 +200,7 @@ impl Cache {
         };
         let text = String::from_utf8_lossy(&bytes);
         self.entries.clear();
+        self.load_errors.clear();
         let lines: Vec<&str> = text.split('\n').collect();
         let mut index = 0usize;
         while index < lines.len() {
@@ -221,10 +225,9 @@ impl Cache {
                 line = lines[index];
                 index += 1;
             }
-            if line.is_empty() {
-                continue;
+            if let Err(error) = self.load_entry(line, help, index, &path) {
+                self.load_errors.push(error);
             }
-            self.load_entry(line, help, index, &path)?;
         }
         Ok(true)
     }
