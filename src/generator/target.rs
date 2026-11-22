@@ -1438,7 +1438,14 @@ pub(crate) fn evaluated_entries(
             .map(|(value, backtrace)| {
                 (
                     expand_list(
-                        &ctx.genex_with_dag(value, provider, head, property, None),
+                        &ctx.genex_with_dag_usage(
+                            (value, backtrace),
+                            provider,
+                            head,
+                            property,
+                            None,
+                            false,
+                        ),
                         false,
                     ),
                     backtrace.clone(),

@@ -158,6 +158,33 @@ pub(super) fn objects(query: &Query<'_, '_>, head: &Target) -> Vec<String> {
 }
 
 fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<String> {
+    fn entries(
+        query: &Query<'_, '_>,
+        owner: &Target,
+        head: &Target,
+        property: &str,
+    ) -> Vec<String> {
+        let Some(entries) = owner.provenance.get(property) else {
+            return expand_list(&query.property(owner, head, property), false);
+        };
+        entries
+            .iter()
+            .flat_map(|(value, backtrace)| {
+                expand_list(
+                    &query.ctx.genex_with_dag_usage(
+                        (value, backtrace),
+                        owner,
+                        head,
+                        property,
+                        Some(query.language),
+                        false,
+                    ),
+                    false,
+                )
+            })
+            .collect()
+    }
+
     fn collect<'i>(
         query: &Query<'_, 'i>,
         head: &Target,
@@ -170,7 +197,7 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             if !seen.insert(std::ptr::from_ref(target) as usize) {
                 continue;
             }
-            for value in expand_list(&query.property(target, head, property), false) {
+            for value in entries(query, target, head, property) {
                 if property == "INTERFACE_LINK_DIRECTORIES" && !Path::new(&value).is_absolute() {
                     query.error(format!("Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"", target.name));
                 }
@@ -186,7 +213,7 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             );
         }
     }
-    let mut values = expand_list(&query.property(head, head, property), false);
+    let mut values = entries(query, head, head, property);
     if property == "LINK_DIRECTORIES" && query.policy(head, "CMP0081") == PolicyStatus::New {
         for value in values
             .iter()

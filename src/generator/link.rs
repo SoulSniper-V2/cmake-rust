@@ -215,9 +215,14 @@ impl<'a, 'i> Query<'a, 'i> {
         if raw.contains("$<") {
             let language = (!self.language.is_empty()).then_some(self.language);
             if self.compile_usage {
-                return self
-                    .ctx
-                    .genex_with_dag_usage(raw, owner, head, property, language, true);
+                return self.ctx.genex_with_dag_usage(
+                    (raw, &[]),
+                    owner,
+                    head,
+                    property,
+                    language,
+                    true,
+                );
             }
             self.generator
                 .eval(self.ctx, raw, owner, head, property, language)

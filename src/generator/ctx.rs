@@ -351,7 +351,7 @@ impl<'a> GenCtx<'a> {
         property: &str,
         language: Option<&str>,
     ) -> String {
-        self.genex_with_dag_usage(text, owner, head, property, language, false)
+        self.genex_with_dag_usage((text, &[]), owner, head, property, language, false)
     }
 
     /// `genex_with_dag` for `UseTo::Compile` link evaluation: the DAG
@@ -359,7 +359,7 @@ impl<'a> GenCtx<'a> {
     /// is dropped from link interfaces (cmGeneratorTarget::ExpandLinkItems).
     pub fn genex_with_dag_usage(
         &self,
-        text: &str,
+        (text, backtrace): (&str, &[Frame]),
         owner: &Target,
         head: &Target,
         property: &str,
@@ -405,6 +405,7 @@ impl<'a> GenCtx<'a> {
             language,
             evaluate_for_buildsystem: true,
             dag: Some(&root),
+            backtrace: (!backtrace.is_empty()).then(|| self.intern_backtrace(backtrace.to_vec())),
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
