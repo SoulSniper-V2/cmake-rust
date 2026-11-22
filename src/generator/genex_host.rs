@@ -138,6 +138,11 @@ impl GenexHost for CtxHost<'_, '_> {
             .collect()
     }
 
+    fn creation_backtrace(&self, name: &str) -> Option<crate::genex::Backtrace> {
+        self.find(name)
+            .map(|target| self.ctx.intern_backtrace(target.backtrace.clone()))
+    }
+
     /// `cmTarget::GetSystemIncludeDirectories`.
     fn system_include_directories(&self, name: &str) -> Vec<String> {
         self.find(name)

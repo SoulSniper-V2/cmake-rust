@@ -372,9 +372,15 @@ impl Evaluator<'_, '_> {
                             name
                         };
                         if canonical == target {
-                            return Err(
-                                self.error("", format!("Target \"{target}\" links to itself."))
-                            );
+                            // `cmGeneratorTarget::ComputeLinkImplementationLibraries`:
+                            // FATAL_ERROR at the head target's backtrace.
+                            return Err(GenexError {
+                                backtrace: self
+                                    .host
+                                    .creation_backtrace(target)
+                                    .or(self.ctx.backtrace),
+                                ..self.error("", format!("Target \"{target}\" links to itself."))
+                            });
                         }
                     } else if !direct && name == target {
                         continue;

@@ -817,8 +817,7 @@ fn mark_as_advanced(interp: &mut Interp, args: &[String]) -> CmdResult {
         // warning (not the generic policy warning text).
         if policy == PolicyStatus::Warn
             && !in_cache
-            && interp
-                .policy_optional_warning(interp.get_def("CMAKE_POLICY_WARNING_CMP0102"))
+            && interp.policy_optional_warning(interp.get_def("CMAKE_POLICY_WARNING_CMP0102"))
         {
             interp.issue(
                 MessageType::AuthorWarning,

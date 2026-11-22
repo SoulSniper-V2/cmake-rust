@@ -218,6 +218,11 @@ pub trait GenexHost {
             .as_deref()
             .is_some_and(util::is_on)
     }
+    /// The backtrace recorded when the target was created
+    /// (`cmTarget::GetBacktrace`).
+    fn creation_backtrace(&self, _target: &str) -> Option<Backtrace> {
+        None
+    }
     /// cmTarget::GetSystemIncludeDirectories: the raw entries recorded by
     /// target_include_directories(SYSTEM) for the target itself.
     fn system_include_directories(&self, target: &str) -> Vec<String> {
