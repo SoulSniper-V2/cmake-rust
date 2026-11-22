@@ -6,8 +6,9 @@ use crate::messages::Frame;
 #[derive(Debug, Default)]
 pub struct InstallState {
     pub enabled: bool,
-    pub rules: HashMap<usize, Vec<InstallRule>>,
-    pub export_sets: HashMap<String, ExportSet>,
+    pub rules: BTreeMap<usize, Vec<InstallRule>>,
+    /// `cmExportSetMap` (a std::map: iteration in name order).
+    pub export_sets: BTreeMap<String, ExportSet>,
     pub build_exports: BTreeMap<String, BuildExport>,
     pub runtime_sets: HashMap<String, Vec<String>>,
 }
