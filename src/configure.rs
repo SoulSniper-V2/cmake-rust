@@ -68,6 +68,10 @@ pub struct ConfigureOptions {
     pub in_try_compile: bool,
     /// `--graphviz=<file>` (or the preset's "graphviz" field).
     pub graphviz: Option<String>,
+    /// `--sarif-output=<file>`, validated in the CLI.
+    pub sarif_output: Option<String>,
+    /// Full invocation, recorded when an instrumentation query is active.
+    pub command_args: Vec<String>,
     /// A path argument named an existing build tree whose cache was read
     /// (`cmState::IsCacheLoaded` during argument processing).
     pub cache_loaded: bool,
@@ -418,6 +422,12 @@ pub fn configure(options: &ConfigureOptions) -> i32 {
     };
     let mut interp = new_project_interp(options, &root);
     let code = run_configure(&mut interp, options);
+    if let Some(path) = &options.sarif_output {
+        interp.sarif_log.write(path, false);
+    } else if util::is_on_opt(interp.cache.value("CMAKE_EXPORT_SARIF")) {
+        let path = format!("{}/.cmake/sarif/cmake.sarif", options.binary_dir);
+        interp.sarif_log.write(&path, true);
+    }
     if code != 0 {
         return 1;
     }
@@ -557,13 +567,31 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         .value("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
         .is_some_and(util::is_off);
     let mut file_api = None;
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(&binary);
+    if !options.in_try_compile {
+        instrumentation.clear_generated();
+        instrumentation.load();
+        if instrumentation.errors {
+            return 1;
+        }
+    }
+    let clock = crate::instrumentation::Timer::start(!options.in_try_compile);
     let code = actual_configure(interp, options, &mut file_api);
+    if !options.in_try_compile {
+        instrumentation.load();
+        instrumentation.write_snippet("configure", &options.command_args, clock, 0);
+        if instrumentation.enabled {
+            instrumentation.setup_launchers(interp);
+        }
+    }
     drop(configure_profile);
     if code != 0 {
         return code;
     }
     let generate_profile = project_profile_entry(options, "generate");
+    let clock = instrumentation.timer();
     let code = crate::generator::generate(interp, options);
+    instrumentation.write_snippet("generate", &options.command_args, clock, code);
     if let Some(api) = &mut file_api {
         let index_for = if code != 0 {
             crate::fileapi::IndexFor::FailedGenerate
@@ -580,6 +608,7 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         return code;
     }
     if !options.in_try_compile {
+        instrumentation.collect("postGenerate");
         crate::commands::core::status_line(
             interp,
             &format!("Build files have been written to: {}", options.binary_dir),

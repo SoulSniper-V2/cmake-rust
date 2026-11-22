@@ -1340,6 +1340,39 @@ impl<'a> NinjaGenerator<'a> {
                 .push(format!("{}/CTestTestfile.cmake", makefile.binary_dir));
         }
         rebuild.outputs = self.order_rebuild_outputs(rebuild.outputs);
+        if self.ctx.interp.instrument_build_hooks {
+            let ctest = self
+                .ctx
+                .interp
+                .cache
+                .value("CMAKE_CTEST_COMMAND")
+                .unwrap_or("ctest");
+            self.add_rule(&Rule {
+                name: "START_INSTRUMENT".into(),
+                command: format!(
+                    "exec {} --start-instrumentation {}",
+                    self.shell(ctest),
+                    self.shell(&self.home_binary)
+                ),
+                description: "Collecting build metrics".into(),
+                comment: "Rule to initialize instrumentation daemon.".into(),
+                restat: "1".into(),
+                ..Rule::default()
+            });
+            let mut phony = Build::new("phony");
+            phony.comment = "Phony target to keep START_INSTRUMENTATION out of date.".into();
+            phony
+                .outputs
+                .push(self.output_path("CMakeFiles/instrument"));
+            write_build(out, &phony, 0);
+            let mut instrument = Build::new("START_INSTRUMENT");
+            instrument.comment = "Start instrumentation daemon.".into();
+            let output = self.output_path("start_instrument");
+            instrument.outputs.push(output.clone());
+            instrument.explicit_deps = phony.outputs;
+            write_build(out, &instrument, 0);
+            rebuild.explicit_deps.push(output);
+        }
         let mut deps: Vec<String> = Vec::new();
         for makefile in &self.ctx.interp.makefiles {
             for file in &makefile.list_files {
@@ -2250,6 +2283,14 @@ impl<'a> NinjaGenerator<'a> {
                 ("LINK_FLAGS", "$LINK_FLAGS".into()),
                 ("MANIFESTS", "$MANIFESTS".into()),
                 ("CONFIG", "$CONFIG".into()),
+                (
+                    "TARGET_LABELS",
+                    target
+                        .props
+                        .get("LABELS")
+                        .map(|labels| labels.replace(';', ","))
+                        .unwrap_or_default(),
+                ),
                 ("TARGET_VERSION_MAJOR", target_version(target).0),
                 ("TARGET_VERSION_MINOR", target_version(target).1),
             ];
@@ -2940,6 +2981,8 @@ impl<'a> NinjaGenerator<'a> {
         // cmRulePlaceholderExpander with Output and Role.
         let mut launcher = launcher
             .replace("<OUTPUT>", &output)
+            .replace("<TARGET_NAME>", "TARGET_NAME")
+            .replace("<CMAKE_CURRENT_BINARY_DIR>", &self.shell(binary_dir))
             .replace("<ROLE>", "custom");
         if !launcher.is_empty() {
             launcher.push(' ');

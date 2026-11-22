@@ -151,31 +151,34 @@ fn dispatch(
                     "sub-command GET_EXPERIMENTAL_FEATURE_ENABLED expects exactly two arguments",
                 );
             };
-            let Some((_, uuid, option, description)) = EXPERIMENTAL_FEATURES
-                .iter()
-                .find(|(name, ..)| *name == feature)
-            else {
+            let Some(enabled) = experimental_enabled(interp, feature) else {
                 return err(format!(
                     "Experimental feature name \"{feature}\" does not exist."
                 ));
             };
-            let enabled = interp.read_definition(option).is_some_and(|value| {
-                let enabled = value == *uuid;
-                if interp.ext.experimental_warnings.insert((feature.clone(), value.clone())) {
-                    let warning = if enabled {
-                        (*description).to_owned()
-                    } else {
-                        format!("{option} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
-                    };
-                    interp.issue(MessageType::AuthorWarning, &warning);
-                }
-                enabled
-            });
             interp.set_def(variable, if enabled { "TRUE" } else { "FALSE" });
             Ok(Ctl::Normal)
         }
         _ => err("called with unknown meta-operation"),
     }
+}
+
+pub(crate) fn experimental_enabled(interp: &mut Interp, feature: &str) -> Option<bool> {
+    let (_, uuid, option, description) = EXPERIMENTAL_FEATURES
+        .iter()
+        .find(|(name, ..)| *name == feature)?;
+    Some(interp.read_definition(option).is_some_and(|value| {
+        let enabled = value == *uuid;
+        if interp.ext.experimental_warnings.insert((feature.to_owned(), value.clone())) {
+            let warning = if enabled {
+                (*description).to_owned()
+            } else {
+                format!("{option} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
+            };
+            interp.issue(MessageType::AuthorWarning, &warning);
+        }
+        enabled
+    }))
 }
 
 const EXPERIMENTAL_FEATURES: &[(&str, &str, &str, &str)] = &[

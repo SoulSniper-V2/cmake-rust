@@ -14,7 +14,7 @@ fn is_space(c: u8) -> bool {
 }
 
 /// `kwsysSystem__ParseUnixCommand`.
-fn parse_unix_command_line(command: &str) -> Vec<String> {
+pub(crate) fn parse_unix_command_line(command: &str) -> Vec<String> {
     let bytes = command.as_bytes();
     let mut args = Vec::new();
     let mut arg = String::new();

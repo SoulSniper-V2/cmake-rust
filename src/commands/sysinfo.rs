@@ -459,6 +459,38 @@ pub struct HostInformation {
     physical: usize,
 }
 
+pub(crate) fn instrumentation_static_info() -> serde_json::Value {
+    let info = HostInformation::read();
+    let os = |name| info.os.get(name).map_or("", String::as_str);
+    let cpu = |name| info.cpu.get(name).map_or("", String::as_str);
+    let memory = |name| info.memory.get(name).copied().unwrap_or(0) / 1024;
+    let vendor = cpu("vendor_id");
+    serde_json::json!({
+        "familyId": cpu("cpu family"),
+        "hostname": os("HOSTNAME"),
+        "is64Bits": usize::BITS == 64,
+        "modelId": cpu("model"),
+        "numberOfLogicalCPU": info.logical,
+        "numberOfPhysicalCPU": info.physical,
+        "OSName": os("OS_NAME"),
+        "OSPlatform": os("OS_PLATFORM"),
+        "OSRelease": os("OS_RELEASE"),
+        "OSVersion": os("OS_VERSION"),
+        "processorAPICID": cpu("apicid").parse::<i32>().unwrap_or(-1),
+        "processorCacheSize": cpu("cache size").split_whitespace().next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(-1),
+        "processorClockFrequency": cpu("cpu MHz").parse::<f64>().unwrap_or(0.0),
+        "processorName": cpu("model name"),
+        "totalPhysicalMemory": memory("MemTotal"),
+        "totalVirtualMemory": memory("SwapTotal"),
+        "vendorString": vendor,
+        "vendorID": match vendor {
+            "GenuineIntel" => "Intel Corporation",
+            "AuthenticAMD" => "Advanced Micro Devices",
+            _ => vendor,
+        },
+    })
+}
+
 impl HostInformation {
     fn read() -> Self {
         let mut info = Self::default();

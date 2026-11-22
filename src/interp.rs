@@ -255,6 +255,8 @@ pub struct Interp {
     /// When set, diagnostics and `message()` stderr lines are appended here
     /// instead of written to the process stderr (used by in-process tests).
     pub stderr_capture: Option<String>,
+    pub sarif_log: crate::sarif::ResultsLog,
+    pub instrument_build_hooks: bool,
     /// Set by builtins that end the current file/function (include_guard).
     pub request_return: bool,
     /// Configuring a try_compile project.
@@ -327,6 +329,8 @@ impl Interp {
             recursion_depth: 0,
             stdout_log: None,
             stderr_capture: None,
+            sarif_log: crate::sarif::ResultsLog::default(),
+            instrument_build_hooks: false,
             request_return: false,
             in_try_compile: false,
             debug_trycompile: false,
@@ -1013,6 +1017,7 @@ impl Interp {
             }
             other => other,
         };
+        self.sarif_log.message(kind, text, backtrace);
         let mut rendered = messages::render(kind, text, backtrace, self.top_source());
         // A deferred execution placeholder denotes a location, even though it
         // has no numeric line. Other contexts without a line use "in".
@@ -1030,6 +1035,7 @@ impl Interp {
 
     /// Displays a diagnostic whose category was already selected by the caller.
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
+        self.sarif_log.message(kind, text, &self.backtrace);
         let mut rendered = messages::render(kind, text, &self.backtrace, self.top_source());
         if messages::is_error(kind) {
             self.error = true;
