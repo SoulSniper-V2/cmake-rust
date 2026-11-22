@@ -2,7 +2,7 @@ use super::{Flags, append_options};
 use crate::policy::PolicyStatus;
 use crate::util::{expand_list, is_on_opt, strtol};
 
-fn levels(language: &str) -> &'static [&'static str] {
+pub(crate) fn levels(language: &str) -> &'static [&'static str] {
     match language {
         "C" | "OBJC" => &["90", "99", "11", "17", "23"],
         "CXX" | "OBJCXX" | "HIP" => &["98", "11", "14", "17", "20", "23", "26"],
@@ -11,7 +11,7 @@ fn levels(language: &str) -> &'static [&'static str] {
     }
 }
 
-fn level(standards: &[&str], value: &str) -> Option<usize> {
+pub(crate) fn level(standards: &[&str], value: &str) -> Option<usize> {
     let value = value.trim_start();
     // std::stoi accepts a decimal prefix.
     if !value

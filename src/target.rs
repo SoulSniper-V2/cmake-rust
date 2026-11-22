@@ -1367,6 +1367,7 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
     sources.push(SourceFile {
         makefile: dir_index,
         props: Default::default(),
+        provenance: Default::default(),
         location,
         generated: false,
         custom_command: None,

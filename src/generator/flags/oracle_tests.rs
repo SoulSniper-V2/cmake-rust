@@ -145,6 +145,7 @@ fn ninja_flag_assembly_matches_kitware() {
             object_name: format!("{}.o", fixture.source_file),
             generated: false,
             object_library: None,
+            backtrace: Vec::new(),
         };
         let source_props = properties(fixture.source_props.clone());
         let compile = if fixture.source_props.is_empty() {
@@ -315,6 +316,7 @@ fn standards_inherit_from_paired_language() {
             object_name: "example.o".to_owned(),
             generated: false,
             object_library: None,
+            backtrace: Vec::new(),
         };
         let ctx = GenCtx::new(&interp);
         let target = interp.ext.targets.get(&key).expect("registered target");

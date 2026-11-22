@@ -353,12 +353,12 @@ pub(super) fn write_copy(out: &mut String, indent: &str, opts: &InstallOptions, 
     writeln!(out, "{arguments})").unwrap();
 }
 
-pub(super) fn object_subdir(tgt: &Target, config: &str) -> String {
+pub(crate) fn object_subdir(tgt: &Target, config: &str) -> String {
     if config.is_empty() { format!("objects/{}", tgt.name) }
     else { format!("objects-{config}/{}", tgt.name) }
 }
 
-pub(super) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
+pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
     target::sources(ctx, tgt, &ctx.config).iter()
         .filter(|source| matches!(source.kind, target::SourceKind::ObjectSource))
         .map(|source| source.object_name.clone()).collect()

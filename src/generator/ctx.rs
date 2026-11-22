@@ -29,6 +29,13 @@ pub struct GenCtx<'a> {
     /// Usage requirements per (target, property, config, language), as
     /// cmGeneratorTarget caches its evaluated property entries.
     pub usage: RefCell<HashMap<String, std::rc::Rc<Vec<crate::genex::UsageItem>>>>,
+    /// `cmComputeTargetDepends` final edges with backtraces (File API
+    /// codemodel target dependencies), computed once per configuration.
+    /// Keyed by depender target pointer; dependees are stored by name.
+    /// Pointer-free so `GenCtx` stays covariant over `'a`.
+    pub dep_graph: RefCell<
+        Option<std::rc::Rc<HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>>>,
+    >,
 }
 
 impl<'a> GenCtx<'a> {
@@ -43,6 +50,7 @@ impl<'a> GenCtx<'a> {
             target_objects: RefCell::new(HashMap::new()),
             sources: RefCell::new(HashMap::new()),
             usage: RefCell::new(HashMap::new()),
+            dep_graph: RefCell::new(None),
         }
     }
 

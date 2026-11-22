@@ -615,10 +615,12 @@ fn target_entries(name: &str) -> bool {
 
 pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&str>) {
     if let Object::Target(target) = object
-        && target_entries(name)
+        && (target_entries(name) || name.ends_with("_STANDARD"))
         && let Some(key) = crate::state::find_target_key(interp, target)
         && let Some(target) = interp.ext.targets.get_mut(&key)
     {
+        // `<LANG>_STANDARD` values also live in cmTarget's
+        // LanguageStandardProperties with the write's backtrace.
         if let Some(value) = value {
             target.provenance.insert(
                 name.to_owned(),
@@ -626,6 +628,27 @@ pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&s
             );
         } else {
             target.provenance.remove(name);
+        }
+    }
+    // cmSourceFile::SetProperty keeps INCLUDE_DIRECTORIES/COMPILE_OPTIONS/
+    // COMPILE_DEFINITIONS as backtraced entry lists.
+    if let Object::Source(index, path) = object
+        && matches!(
+            name,
+            "INCLUDE_DIRECTORIES" | "COMPILE_OPTIONS" | "COMPILE_DEFINITIONS"
+        )
+    {
+        let bt = interp.backtrace.clone();
+        let source = crate::commands::target::get_or_create_source(interp, index, path);
+        match value {
+            Some(value) => {
+                source
+                    .provenance
+                    .insert(name.to_owned(), vec![(value.to_owned(), bt)]);
+            }
+            None => {
+                source.provenance.remove(name);
+            }
         }
     }
     if let Object::Cache(key) = object {
@@ -676,6 +699,22 @@ pub fn append(interp: &mut Interp, object: Object<'_>, name: &str, value: &str, 
                 .map_or_else(|| value.to_owned(), |old| format!("{old};{value}"));
             props.set(name, combined);
         }
+    } else if let Object::Source(index, path) = object
+        && matches!(
+            name,
+            "INCLUDE_DIRECTORIES" | "COMPILE_OPTIONS" | "COMPILE_DEFINITIONS"
+        )
+        && !value.is_empty()
+    {
+        // cmSourceFile::AppendProperty appends (value, backtrace) entries.
+        let bt = interp.backtrace.clone();
+        let source = crate::commands::target::get_or_create_source(interp, index, path);
+        source
+            .provenance
+            .entry(name.to_owned())
+            .or_default()
+            .push((value.to_owned(), bt));
+        source.props.append(name, value, as_string);
     } else if matches!(object, Object::Cache(_)) {
         if name == "TYPE" {
             set(

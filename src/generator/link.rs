@@ -3,7 +3,9 @@
 mod dependencies;
 mod directories;
 mod information;
-mod target_graph;
+pub(crate) mod target_graph;
+
+pub(crate) use target_graph::in_build_system;
 
 #[cfg(test)]
 mod tests;
@@ -43,6 +45,13 @@ pub struct LinkLine {
         reason = "The Ninja writer consumes the linker flag and checker"
     )]
     pub link_what_you_use: Option<LinkUsageCheck>,
+    /// Codemodel "libraries" fragments: each emitted string paired with the
+    /// link item's backtrace (empty for generated fragments such as rpath).
+    #[allow(dead_code, reason = "consumed by the file API codemodel")]
+    pub lib_fragments: Vec<(String, Vec<crate::messages::Frame>)>,
+    /// Codemodel ordered link directories, before flag decoration.
+    #[allow(dead_code, reason = "consumed by the file API codemodel")]
+    pub link_dirs: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,10 +74,22 @@ pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<S
     target_graph::dependencies(ctx, target, config)
 }
 
+/// `cmGlobalGenerator::GetTargetDirectDepends`: final dependency edges with
+/// their edge backtraces, in target creation order (File API codemodel).
+pub fn codemodel_target_dependencies<'i>(
+    ctx: &GenCtx<'i>,
+    target: &'i Target,
+    config: &str,
+) -> Vec<(&'i Target, std::rc::Rc<Vec<crate::messages::Frame>>)> {
+    target_graph::dep_edges(ctx, target, config)
+}
+
 /// A `cmLinkItem` for dependency-graph consumers: a target or a string.
 pub struct GraphLinkItem<'i> {
     pub name: String,
     pub target: Option<&'i Target>,
+    /// Backtrace of the `target_link_libraries` call site (`Item::Backtrace`).
+    pub backtrace: Vec<crate::messages::Frame>,
 }
 
 /// `GetLinkImplementationLibraries(config, UseTo::Link)` and
@@ -91,6 +112,7 @@ pub fn graph_link_libraries<'i>(
             .map(|item| GraphLinkItem {
                 name: item.text,
                 target: item.target,
+                backtrace: item.backtrace.clone(),
             })
             .collect()
     };
@@ -284,6 +306,9 @@ struct Item<'a> {
     text: String,
     target: Option<&'a Target>,
     feature: String,
+    /// `cmLinkItem::Backtrace` (the LINK_LIBRARIES-style entry's backtrace);
+    /// consumed by the file API codemodel.
+    backtrace: Vec<crate::messages::Frame>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -299,6 +324,7 @@ impl<'a> Item<'a> {
             text,
             target,
             feature: feature.to_owned(),
+            backtrace: Vec::new(),
         }
     }
 
@@ -327,11 +353,23 @@ struct Interface<'a> {
 
 fn plain_items<'i>(query: &Query<'_, 'i>, owner: &Target, value: &str) -> Vec<Item<'i>> {
     let mut directory = owner.makefile;
+    plain_items_bt(query, owner, value, &[], &mut directory)
+}
+
+/// `plain_items` tagging each produced item with `backtrace`; `directory`
+/// persists across calls so `::@` markers in earlier entries keep applying.
+fn plain_items_bt<'i>(
+    query: &Query<'_, 'i>,
+    owner: &Target,
+    value: &str,
+    backtrace: &[crate::messages::Frame],
+    directory: &mut usize,
+) -> Vec<Item<'i>> {
     let mut feature = DEFAULT.to_owned();
     let mut items = Vec::new();
     for entry in expand_list(value, false) {
         if entry == "::@" {
-            directory = owner.makefile;
+            *directory = owner.makefile;
             continue;
         }
         if let Some(id) = entry
@@ -340,7 +378,7 @@ fn plain_items<'i>(query: &Query<'_, 'i>, owner: &Target, value: &str) -> Vec<It
             && let Ok(index) = usize::from_str_radix(id, 16)
             && query.ctx.interp.makefiles.get(index).is_some()
         {
-            directory = index;
+            *directory = index;
             continue;
         }
         if let Some(name) = entry
@@ -360,10 +398,12 @@ fn plain_items<'i>(query: &Query<'_, 'i>, owner: &Target, value: &str) -> Vec<It
             query.error(format!("Target \"{}\" links to item \"{}\" which has leading or trailing whitespace.  This is now an error according to policy CMP0004.", owner.name, entry));
         }
         if !name.is_empty() {
-            let target = query.resolve(directory, name).filter(|target| {
+            let target = query.resolve(*directory, name).filter(|target| {
                 target.kind != TargetKind::Executable || on(target, "ENABLE_EXPORTS")
             });
-            items.push(Item::new(name, target, &feature));
+            let mut item = Item::new(name, target, &feature);
+            item.backtrace = backtrace.to_vec();
+            items.push(item);
         }
     }
     items
@@ -400,6 +440,34 @@ fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], int
     }
 }
 
+/// Provenance-tracked link items of `property` on `owner`: one evaluated
+/// item list per recorded property entry, each tagged with the entry's
+/// backtrace (`EvaluateTargetPropertyEntries` semantics).
+fn provenanced_items<'i>(
+    query: &Query<'_, 'i>,
+    owner: &Target,
+    head: &Target,
+    property: &str,
+) -> Vec<Item<'i>> {
+    let entries: Vec<(String, Vec<crate::messages::Frame>)> = match owner
+        .provenance
+        .get(property)
+    {
+        Some(entries) if !entries.is_empty() => entries.clone(),
+        _ => match owner.props.get(property) {
+            Some(value) => vec![(value.to_owned(), Vec::new())],
+            None => Vec::new(),
+        },
+    };
+    let mut items = Vec::new();
+    let mut directory = owner.makefile;
+    for (value, backtrace) in entries {
+        let evaluated = query.eval(&value, owner, head, property);
+        items.extend(plain_items_bt(query, owner, &evaluated, &backtrace, &mut directory));
+    }
+    items
+}
+
 fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interface<'i> {
     let (value, property) = match owner.props.get("INTERFACE_LINK_LIBRARIES") {
         Some(value) => (Some(value), "INTERFACE_LINK_LIBRARIES"),
@@ -410,7 +478,11 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
             "IMPORTED_LINK_INTERFACE_LIBRARIES",
         ),
     };
-    let mut libraries = plain_items(query, owner, &query.eval(value.unwrap_or_default(), owner, head, property));
+    let mut libraries = if property == "INTERFACE_LINK_LIBRARIES" {
+        provenanced_items(query, owner, head, property)
+    } else {
+        plain_items(query, owner, &query.eval(value.unwrap_or_default(), owner, head, property))
+    };
     libraries.retain(|item| {
         item.target
             .is_none_or(|target| !std::ptr::eq(target, owner))
@@ -418,22 +490,23 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
     validate_items(query, owner, &libraries, true);
     Interface {
         libraries,
-        include: plain_items(
+        include: provenanced_items(
             query,
             owner,
-            &query.property(owner, head, "INTERFACE_LINK_LIBRARIES_DIRECT"),
+            head,
+            "INTERFACE_LINK_LIBRARIES_DIRECT",
         ),
-        exclude: plain_items(
+        exclude: provenanced_items(
             query,
             owner,
-            &query.property(owner, head, "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE"),
+            head,
+            "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE",
         ),
     }
 }
 
 fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
-    let value = query.property(head, head, "LINK_LIBRARIES");
-    let mut original = plain_items(query, head, &value);
+    let mut original = provenanced_items(query, head, head, "LINK_LIBRARIES");
     original.retain(|item| {
         if item.target.is_some_and(|target| std::ptr::eq(target, head)) || item.text == head.name {
             query.error(format!("Target \"{}\" links to itself.", head.name));

@@ -2,8 +2,8 @@ use std::path::Path;
 
 use super::rule::{RuleStep, expand_rule_for_step};
 use super::{
-    Flags, append, append_options, cmake_space, shell_with_make_vars, target_options,
-    unix_command_line,
+    BtFrag, Flags, append, append_options, cmake_space, shell, shell_with_make_vars,
+    target_options, unix_command_line,
 };
 use crate::generator::ctx::GenCtx;
 use crate::policy::PolicyStatus;
@@ -375,4 +375,201 @@ fn append_depfile_flag(inputs: &Flags<'_, '_>, flags: &mut String) {
             append(flags, &flag);
         }
     }
+}
+
+/// `cmLocalGenerator::GetTargetFlags` for the file API codemodel:
+/// `(linkLanguageFlags, linkFlags)` — the "flags"-role fragments, where only
+/// LINK_OPTIONS/STATIC_LIBRARY_OPTIONS entries carry backtraces.
+pub(crate) fn codemodel_link_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> (String, Vec<(String, Vec<crate::messages::Frame>)>) {
+    let inputs = Flags { ctx, target, config, lang: language };
+    let mut language_flags = String::new();
+    let mut out: Vec<BtFrag> = Vec::new();
+    let upper = config.to_ascii_uppercase();
+    if !matches!(
+        target.kind,
+        TargetKind::Executable
+            | TargetKind::SharedLibrary
+            | TargetKind::ModuleLibrary
+            | TargetKind::StaticLibrary
+    ) {
+        return (language_flags, out);
+    }
+    // AppendTargetCreationLinkFlags.
+    let create = creation_flags(&inputs);
+    if !create.trim_matches(cmake_space).is_empty() {
+        out.push((create.trim_end().to_owned(), Vec::new()));
+    }
+    match target.kind {
+        TargetKind::StaticLibrary => {
+            let mut flags = String::new();
+            append(&mut flags, &inputs.config_flags("CMAKE_STATIC_LINKER_FLAGS"));
+            if !flags.is_empty() {
+                out.push((flags, Vec::new()));
+            }
+            let mut prop_flags = String::new();
+            for name in
+                ["STATIC_LIBRARY_FLAGS".to_owned(), format!("STATIC_LIBRARY_FLAGS_{upper}")]
+            {
+                if (name == "STATIC_LIBRARY_FLAGS" || !config.is_empty())
+                    && let Some(raw) = inputs.prop(&name)
+                {
+                    append(&mut prop_flags, raw);
+                }
+            }
+            if !prop_flags.is_empty() {
+                out.push((prop_flags, Vec::new()));
+            }
+            for item in inputs.usage_items("STATIC_LIBRARY_OPTIONS") {
+                for option in
+                    resolve_wrapper(&inputs, vec![item.value.clone()], "ARCHIVER")
+                {
+                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                }
+            }
+        }
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary => {
+            let variable = if target.kind == TargetKind::ModuleLibrary {
+                "CMAKE_MODULE_LINKER_FLAGS"
+            } else {
+                "CMAKE_SHARED_LINKER_FLAGS"
+            };
+            let mut lib_flags = String::new();
+            append_link_variable(&inputs, &mut lib_flags, &inputs.config_flags(variable));
+            if !lib_flags.trim_matches(cmake_space).is_empty() {
+                out.push((lib_flags.trim_end().to_owned(), Vec::new()));
+            }
+            let mut shared = String::new();
+            if let Some(value) = inputs.prop("LINK_FLAGS") {
+                shared.push_str(value);
+                shared.push(' ');
+            }
+            if !config.is_empty()
+                && let Some(value) = inputs.prop(&format!("LINK_FLAGS_{upper}"))
+            {
+                shared.push_str(value);
+                shared.push(' ');
+            }
+            if !shared.is_empty() {
+                out.push((encode_literal(&shared), Vec::new()));
+            }
+            for item in inputs.usage_items("LINK_OPTIONS") {
+                for option in
+                    resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER")
+                {
+                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                }
+            }
+        }
+        TargetKind::Executable => {
+            language_flags = inputs.language_flags(true).trim_matches(cmake_space).to_owned();
+            let mut exe_flags = String::new();
+            append_link_variable(
+                &inputs,
+                &mut exe_flags,
+                &inputs.config_flags("CMAKE_EXE_LINKER_FLAGS"),
+            );
+            if !exe_flags.trim_matches(cmake_space).is_empty() {
+                out.push((exe_flags.trim_end().to_owned(), Vec::new()));
+            }
+            let mut create_exe = String::new();
+            let exe = if is_on_opt(inputs.prop("WIN32_EXECUTABLE")) { "WIN32" } else { "CONSOLE" };
+            append_link_variable(
+                &inputs,
+                &mut create_exe,
+                &inputs
+                    .lang_var(&format!("CREATE_{exe}_EXE"))
+                    .unwrap_or_default(),
+            );
+            if !create_exe.trim_matches(cmake_space).is_empty() {
+                out.push((create_exe.trim_end().to_owned(), Vec::new()));
+            }
+            let mut raw = String::new();
+            if is_on_opt(inputs.prop("ENABLE_EXPORTS")) {
+                raw.push_str(
+                    &inputs
+                        .var(&format!("CMAKE_EXE_EXPORTS_{language}_FLAG"))
+                        .unwrap_or_default(),
+                );
+                raw.push(' ');
+            }
+            if is_on_opt(inputs.var("BUILD_SHARED_LIBS").as_deref()) {
+                raw.push_str(
+                    &inputs
+                        .var(&format!("CMAKE_SHARED_BUILD_{language}_FLAGS"))
+                        .unwrap_or_default(),
+                );
+                raw.push(' ');
+            }
+            if is_on_opt(inputs.prop("ENABLE_EXPORTS"))
+                && let Some(export) =
+                    inputs.var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
+                && !export.is_empty()
+            {
+                raw.push_str(&export);
+                raw.push(' ');
+            }
+            if let Some(value) = inputs.prop("LINK_FLAGS") {
+                raw.push_str(value);
+                raw.push(' ');
+            }
+            if !config.is_empty()
+                && let Some(value) = inputs.prop(&format!("LINK_FLAGS_{upper}"))
+            {
+                raw.push_str(value);
+                raw.push(' ');
+            }
+            if !raw.is_empty() {
+                out.push((encode_literal(&raw), Vec::new()));
+            }
+            for item in inputs.usage_items("LINK_OPTIONS") {
+                for option in
+                    resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER")
+                {
+                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                }
+            }
+        }
+        _ => {}
+    }
+    // extraLinkFlags (linker type, PIE, WARNING_AS_ERROR, IPO).
+    let mut extra = String::new();
+    if target.kind != TargetKind::StaticLibrary {
+        if inputs
+            .lang_var("LINK_MODE")
+            .as_deref()
+            .is_none_or(|mode| mode == "DRIVER")
+            && let Some(options) = selected_linker(&inputs)
+        {
+            for flag in resolve_wrapper(&inputs, expand_list(&options, false), "LINKER") {
+                append(&mut extra, &flag);
+            }
+        }
+        if target.kind == TargetKind::Executable
+            && inputs.policy(83) == PolicyStatus::New
+            && let Some(pic) = inputs.pic()
+        {
+            let mode = if pic { "PIE" } else { "NO_PIE" };
+            if !is_off_opt(
+                inputs.lang_var(&format!("LINK_{mode}_SUPPORTED")).as_deref(),
+            ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
+            {
+                append_options(&mut extra, expand_list(&options, false));
+            }
+        }
+        warning_as_error(&inputs, &mut extra);
+    }
+    if inputs.ipo_enabled()
+        && let Some(options) = inputs.lang_var("LINK_OPTIONS_IPO")
+    {
+        append_options(&mut extra, expand_list(&options, false));
+    }
+    if !extra.trim_matches(cmake_space).is_empty() {
+        out.push((encode_literal(&extra), Vec::new()));
+    }
+    (language_flags, out)
 }

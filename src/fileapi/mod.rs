@@ -8,6 +8,8 @@ use crate::commands::string::json::{Json, write_json_stream};
 use crate::interp::Interp;
 use crate::presets::json as jsoncpp;
 
+mod codemodel;
+
 // ---------------------------------------------------------------------
 // Json::Value construction helpers
 
@@ -461,12 +463,6 @@ impl FileApi {
         if self.reply_index_for != IndexFor::Success && object.kind != ObjectKind::ConfigureLog {
             return build_reply_error("no buildsystem generated");
         }
-        if object.kind == ObjectKind::CodeModel {
-            // The codemodel object (cmFileAPICodemodel.cxx) is not ported;
-            // report that through the protocol's error channel instead of
-            // writing an incomplete model.
-            return build_reply_error("the codemodel object kind is not implemented by cmake-rust");
-        }
         self.add_reply_index_object(interp, object)
     }
 
@@ -486,7 +482,7 @@ impl FileApi {
 
     fn build_object(&mut self, interp: &Interp, object: Object) -> Json {
         let (mut value, version) = match object.kind {
-            ObjectKind::CodeModel => (jobj(), build_version(2, CODEMODEL_V2_MINOR)),
+            ObjectKind::CodeModel => (codemodel::build(self, interp), build_version(2, CODEMODEL_V2_MINOR)),
             ObjectKind::ConfigureLog => (dump_configure_log(interp), build_version(1, CONFIGURE_LOG_V1_MINOR)),
             ObjectKind::Cache => (dump_cache(interp), build_version(2, CACHE_V2_MINOR)),
             ObjectKind::CMakeFiles => (dump_cmake_files(interp), build_version(1, CMAKE_FILES_V1_MINOR)),
