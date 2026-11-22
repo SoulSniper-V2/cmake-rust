@@ -1,10 +1,11 @@
 //! file(STRINGS), including cmHexFileConverter input records.
 
-use std::fs;
-use std::path::Path;
+use std::collections::VecDeque;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader, Cursor, Read};
 
 use crate::cmregex::{Match, Regex};
-use crate::interp::{CmdResult, Interp, err};
+use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::{PolicyStatus, policy_warning};
 use crate::state::{clear_matches, store_matches};
@@ -103,24 +104,32 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
     }
 
-    let mut data = match fs::read(&path) {
-        Ok(data) => data,
-        Err(_) if Path::new(&path).is_dir() => Vec::new(),
-        Err(_) => return err(format!("STRINGS file \"{path}\" cannot be read.")),
-    };
-    if !options.raw {
-        if let Some(converted) = hex_records(&data) {
-            let binary = format!(
-                "{}/CMakeFiles/FileCommandStringsBinaryFile",
-                interp.current_binary_dir()
-            );
-            if fs::write(binary, &converted).is_ok() {
-                data = converted;
-            }
+    let file = File::open(&path)
+        .map_err(|_| CmdErr::Error(format!("STRINGS file \"{path}\" cannot be read.")))?;
+    let mut reader = BufReader::new(file);
+    let binary = format!(
+        "{}/CMakeFiles/FileCommandStringsBinaryFile",
+        interp.current_binary_dir()
+    );
+    let reader: Box<dyn BufRead> = if !options.raw && first_hex_record(&mut reader) {
+        let mut data = Vec::new();
+        let read = reader.read_to_end(&mut data);
+        let converted = read.ok().and_then(|_| hex_records(&data));
+        if let Some(converted) = converted.filter(|converted| fs::write(&binary, converted).is_ok())
+        {
+            Box::new(Cursor::new(converted))
+        } else {
+            Box::new(Cursor::new(data))
         }
-    }
-
-    let (mut position, encoding) = bom(&data);
+    } else {
+        Box::new(reader)
+    };
+    let mut input = Input {
+        reader,
+        putback: VecDeque::new(),
+        position: 0,
+    };
+    let encoding = input.read_bom();
     let encoding = if options.encoding.is_empty() {
         encoding
     } else {
@@ -134,37 +143,26 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
     };
     let mut current = Vec::new();
     let mut full = false;
-    while position < data.len() && position < limit && collector.more() {
-        let (code, width) = codepoint(&data[position..], encoding);
-        position += width;
+    while input.position < limit && collector.more() {
+        let Some(code) = input.codepoint(encoding) else {
+            break;
+        };
         if code == u32::from(b'\r') {
             continue;
         }
         let ascii = (32..=126).contains(&code)
             || code == u32::from(b'\t')
             || code == u32::from(b'\n') && options.newline;
-        let newline = code == u32::from(b'\n') && !options.newline;
         if ascii {
             current.push(code as u8);
-        } else if encoding == "UTF-8" && (0xc0..0xf8).contains(&code) {
-            let bytes = match code {
-                0xc0..=0xdf => 2,
-                0xe0..=0xef => 3,
-                _ => 4,
-            };
-            let start = position - 1;
-            if let Some(next) = data
-                .get(position..start + bytes)
-                .filter(|next| next.iter().all(|byte| byte & 0xc0 == 0x80))
-            {
-                current.push(code as u8);
-                current.extend_from_slice(next);
-                position = start + bytes;
-            } else {
-                full = !collector.push(interp, &mut current, false);
-            }
         } else {
-            full = !collector.push(interp, &mut current, newline);
+            match input.utf8_tail(code, encoding) {
+                Ok((bytes, length)) => current.extend_from_slice(&bytes[..length]),
+                Err(delimiter) => {
+                    let newline = delimiter == Some(b'\n') && !options.newline;
+                    full = !collector.push(interp, &mut current, newline);
+                }
+            }
         }
         if options.max > 0 && current.len() == options.max {
             full = !collector.push(interp, &mut current, false);
@@ -234,23 +232,99 @@ fn parse_int(value: &str) -> Option<i32> {
         .map(|value| value as i32)
 }
 
-fn codepoint(data: &[u8], encoding: &str) -> (u32, usize) {
-    let width = match encoding {
-        "UTF-16LE" | "UTF-16BE" => 2,
-        "UTF-32LE" | "UTF-32BE" => 4,
-        _ => 1,
+struct Input {
+    reader: Box<dyn BufRead>,
+    putback: VecDeque<u8>,
+    position: usize,
+}
+
+impl Input {
+    fn get(&mut self) -> Option<u8> {
+        let byte = if let Some(byte) = self.putback.pop_front() {
+            byte
+        } else {
+            let byte = *self.reader.fill_buf().ok()?.first()?;
+            self.reader.consume(1);
+            byte
+        };
+        self.position += 1;
+        Some(byte)
     }
-    .min(data.len());
-    let mut value = 0;
-    for &byte in &data[..width] {
-        value = (value << 8) | u32::from(byte);
+
+    fn unread(&mut self, bytes: &[u8]) {
+        for &byte in bytes.iter().rev() {
+            self.putback.push_front(byte);
+        }
+        self.position -= bytes.len();
     }
-    value = match encoding {
-        "UTF-16LE" => (value as u16).swap_bytes() as u32,
-        "UTF-32LE" => value.swap_bytes(),
-        _ => value,
-    };
-    (value, width)
+
+    fn read_bom(&mut self) -> &'static str {
+        let mut data = [0; 4];
+        let mut size = 0;
+        for next in &mut data {
+            let Some(byte) = self.get() else {
+                break;
+            };
+            *next = byte;
+            size += 1;
+        }
+        let (skip, encoding) = bom(&data[..size]);
+        self.unread(&data[skip..size]);
+        encoding
+    }
+
+    fn codepoint(&mut self, encoding: &str) -> Option<u32> {
+        let width = match encoding {
+            "UTF-16LE" | "UTF-16BE" => 2,
+            "UTF-32LE" | "UTF-32BE" => 4,
+            _ => 1,
+        };
+        let mut value = u32::from(self.get()?);
+        for _ in 1..width {
+            let Some(byte) = self.get() else {
+                break;
+            };
+            value = (value << 8) | u32::from(byte);
+        }
+        Some(match encoding {
+            "UTF-16LE" => (value as u16).swap_bytes() as u32,
+            "UTF-32LE" => value.swap_bytes(),
+            _ => value,
+        })
+    }
+
+    fn utf8_tail(&mut self, code: u32, encoding: &str) -> Result<([u8; 4], usize), Option<u8>> {
+        let width = match (encoding, code) {
+            ("UTF-8", 0xc0..=0xdf) => 2,
+            ("UTF-8", 0xe0..=0xef) => 3,
+            ("UTF-8", 0xf0..=0xf7) => 4,
+            _ => return Err(u8::try_from(code).ok()),
+        };
+        let mut sequence = [code as u8, 0, 0, 0];
+        for i in 1..width {
+            let next = self.get();
+            if let Some(byte) = next.filter(|byte| byte & 0xc0 == 0x80) {
+                sequence[i] = byte;
+            } else {
+                if let Some(byte) = next {
+                    sequence[i] = byte;
+                    self.unread(&sequence[1..=i]);
+                }
+                return Err(next);
+            }
+        }
+        Ok((sequence, width))
+    }
+}
+
+fn first_hex_record(input: &mut impl BufRead) -> bool {
+    input.fill_buf().ok().is_some_and(|bytes| {
+        let first = bytes
+            .split(|byte| *byte == b'\n')
+            .next()
+            .unwrap_or_default();
+        hex_records(first).is_some()
+    })
 }
 
 fn hex_records(data: &[u8]) -> Option<Vec<u8>> {

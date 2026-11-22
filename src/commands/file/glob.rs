@@ -49,7 +49,7 @@ pub(super) fn pattern_regex(pattern: &str) -> String {
                         if ch == '!' && index == 0 {
                             out.push('^');
                         } else {
-                            if matches!(ch, '\\' | '[' | ']') {
+                            if ch == '\\' {
                                 out.push('\\');
                             }
                             out.push(ch);

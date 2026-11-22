@@ -863,9 +863,11 @@ impl Interp {
             }
             let parsed = Rc::new(ParsedFile::new(parsed.path.clone(), commands));
             self.mf_mut().list_files.push(path.to_owned());
+            self.ext.file_locks.files.push(Default::default());
             self.run_file_body(&parsed);
             self.run_deferred(path);
             crate::commands::directory::finish_directory(self);
+            self.ext.file_locks.files.pop();
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
@@ -1006,9 +1008,11 @@ impl Interp {
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
             self.mf_mut().list_files.push(path.to_owned());
+            self.ext.file_locks.files.push(Default::default());
             self.run_file_body(&parsed);
             self.run_deferred(path);
             crate::commands::directory::finish_directory(self);
+            self.ext.file_locks.files.pop();
         }
         // Directory-level end-of-file checks.
         let depth = self.mf().policies.len();
@@ -1034,7 +1038,9 @@ impl Interp {
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
             self.mf_mut().list_files.push(path.to_owned());
+            self.ext.file_locks.files.push(Default::default());
             self.run_file_body(&parsed);
+            self.ext.file_locks.files.pop();
         }
         self.pop_list_file_vars(saved);
         self.backtrace.pop();
@@ -1062,11 +1068,9 @@ impl Interp {
     }
 
     fn run_file_body(&mut self, parsed: &Rc<ParsedFile>) {
-        self.ext.file_locks.files.push(Default::default());
         self.loop_depth.push(0);
         let ctl = self.run_range(parsed, 0, parsed.commands.len(), None);
         self.loop_depth.pop();
-        self.ext.file_locks.files.pop();
         if let Ctl::Return(Some(vars)) = ctl {
             self.propagate(&vars);
         }
