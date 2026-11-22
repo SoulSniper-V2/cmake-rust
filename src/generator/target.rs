@@ -1633,6 +1633,19 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
     if let Some(cached) = ctx.sources.borrow().get(&key) {
         return cached.clone();
     }
+    // GetKindedSources: an uninitialized entry means the SOURCES depend on
+    // themselves (e.g. $<TARGET_OBJECTS:self>).
+    let pending = format!("{key}:pending");
+    if ctx.memo.borrow_mut().insert(pending.clone(), String::new()).is_some() {
+        ctx.error(
+            target.backtrace.clone(),
+            format!(
+                "The SOURCES of \"{}\" use a generator expression that depends on the SOURCES themselves.",
+                target.name
+            ),
+        );
+        return std::rc::Rc::new(Vec::new());
+    }
     let computed = std::rc::Rc::new(sources_with_link_closure(
         ctx,
         target,
