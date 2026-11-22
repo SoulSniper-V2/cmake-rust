@@ -4,7 +4,7 @@
 
 use crate::genex::{ArtifactComponent, ArtifactKind, GenexHost, PropertyEntry};
 use crate::policy::{self, PolicyStatus};
-use crate::state::Target;
+use crate::state::{Target, TargetKind};
 
 use super::ctx::GenCtx;
 use super::target::{self as gt, ArtifactType, SourceKind};
@@ -27,51 +27,63 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         self.ctx.target_at(self.dir, name)
     }
 
-    fn artifact_dir_name(
-        &self,
-        target: &Target,
-        kind: ArtifactKind,
-        config: &str,
-    ) -> Result<(String, String), String> {
+    fn artifact_path(&self, target: &Target, kind: ArtifactKind, config: &str) -> String {
         let ctx = self.ctx;
-        let names = gt::names(ctx, target, config);
-        let runtime = gt::directory(ctx, target, config, ArtifactType::Runtime);
-        Ok(match kind {
-            ArtifactKind::File | ArtifactKind::LinkerFile | ArtifactKind::LinkerLibraryFile => {
-                let artifact = if kind == ArtifactKind::File {
-                    ArtifactType::Runtime
-                } else {
-                    ArtifactType::Import
-                };
-                let path = gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File);
-                (
-                    crate::util::filename_path(&path),
-                    crate::util::filename_name(&path),
-                )
-            }
-            ArtifactKind::ImportFile | ArtifactKind::LinkerImportFile => {
-                if names.import_library.is_empty() {
-                    (String::new(), String::new())
-                } else {
-                    (
-                        gt::directory(ctx, target, config, ArtifactType::Import),
-                        names.import_library.clone(),
-                    )
-                }
-            }
+        let Some(artifact) = self.artifact_type(target, kind) else {
+            return String::new();
+        };
+        match kind {
             ArtifactKind::SonameFile | ArtifactKind::SonameImportFile => {
-                if target.imported {
-                    let info = gt::import_info(target, config);
-                    let location = gt::full_path(ctx, target, config, ArtifactType::Runtime, false);
-                    let soname = info.map(|info| info.soname.to_owned()).unwrap_or_default();
-                    (crate::util::filename_path(&location), soname)
+                let dir = gt::directory(ctx, target, config, artifact);
+                let soname = if target.imported {
+                    gt::import_info(target, config)
+                        .map(|info| {
+                            if info.no_soname {
+                                crate::util::filename_name(info.location)
+                            } else {
+                                info.soname.trim_start_matches("@rpath/").to_owned()
+                            }
+                        })
+                        .unwrap_or_default()
                 } else {
-                    (runtime, names.shared_object.clone())
-                }
+                    let names = gt::names(ctx, target, config);
+                    if artifact == ArtifactType::Import {
+                        names.import_library
+                    } else {
+                        names.shared_object
+                    }
+                };
+                format!("{dir}/{soname}")
             }
-            ArtifactKind::PdbFile => (runtime, names.pdb.clone()),
-            ArtifactKind::BundleDir | ArtifactKind::BundleContentDir => (runtime, String::new()),
-        })
+            ArtifactKind::PdbFile => {
+                let dir = gt::directory(ctx, target, config, artifact);
+                format!("{dir}/{}", gt::names(ctx, target, config).pdb)
+            }
+            ArtifactKind::BundleDir | ArtifactKind::BundleContentDir => {
+                gt::directory(ctx, target, config, artifact)
+            }
+            _ => gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File),
+        }
+    }
+
+    fn artifact_type(&self, target: &Target, kind: ArtifactKind) -> Option<ArtifactType> {
+        match kind {
+            ArtifactKind::ImportFile
+            | ArtifactKind::LinkerImportFile
+            | ArtifactKind::SonameImportFile => {
+                gt::has_import_library(self.ctx, target).then_some(ArtifactType::Import)
+            }
+            ArtifactKind::LinkerFile if gt::has_import_library(self.ctx, target) => {
+                Some(ArtifactType::Import)
+            }
+            ArtifactKind::LinkerLibraryFile
+                if gt::dll_platform(self.ctx, target)
+                    && target.kind != TargetKind::StaticLibrary =>
+            {
+                None
+            }
+            _ => Some(ArtifactType::Runtime),
+        }
     }
 }
 
@@ -175,11 +187,7 @@ impl GenexHost for CtxHost<'_, '_> {
         let target = self
             .find(name)
             .ok_or_else(|| format!("No target \"{name}\""))?;
-        let (dir, file) = self.artifact_dir_name(target, kind, config)?;
-        if file.is_empty() {
-            return Ok(dir);
-        }
-        Ok(format!("{dir}/{file}"))
+        Ok(self.artifact_path(target, kind, config))
     }
 
     fn target_artifact_component(
@@ -192,21 +200,33 @@ impl GenexHost for CtxHost<'_, '_> {
         let target = self
             .find(name)
             .ok_or_else(|| format!("No target \"{name}\""))?;
-        let (dir, file) = self.artifact_dir_name(target, kind, config)?;
+        let Some(artifact) = self.artifact_type(target, kind) else {
+            return Ok(String::new());
+        };
         Ok(match component {
-            ArtifactComponent::Path => format!("{dir}/{file}"),
-            ArtifactComponent::Name => file,
-            ArtifactComponent::Directory => dir,
-            ArtifactComponent::BaseName => {
-                gt::output_name(self.ctx, target, config, ArtifactType::Runtime)
+            ArtifactComponent::Path => self.artifact_path(target, kind, config),
+            ArtifactComponent::Name => {
+                crate::util::filename_name(&self.artifact_path(target, kind, config))
             }
-            ArtifactComponent::Prefix => {
-                gt::full_name_components(self.ctx, target, config, ArtifactType::Runtime).prefix
+            ArtifactComponent::Directory => {
+                crate::util::filename_path(&self.artifact_path(target, kind, config))
             }
-            ArtifactComponent::Suffix => {
-                gt::full_name_components(self.ctx, target, config, ArtifactType::Runtime).suffix
+            ArtifactComponent::BaseName if kind == ArtifactKind::PdbFile => {
+                gt::pdb_base_name(self.ctx, target, config)
             }
+            ArtifactComponent::BaseName => format!(
+                "{}{}",
+                gt::output_name(self.ctx, target, config, artifact),
+                gt::postfix(target, config),
+            ),
+            ArtifactComponent::Prefix => gt::file_affixes(self.ctx, target, config, artifact).0,
+            ArtifactComponent::Suffix => gt::file_affixes(self.ctx, target, config, artifact).1,
         })
+    }
+
+    fn dll_platform(&self, name: &str) -> bool {
+        self.find(name)
+            .is_some_and(|target| gt::dll_platform(self.ctx, target))
     }
 
     fn target_objects(&self, name: &str, config: &str) -> Result<Vec<String>, String> {

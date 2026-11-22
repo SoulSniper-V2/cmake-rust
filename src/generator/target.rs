@@ -108,6 +108,7 @@ fn memo_key(query: &str, target: &Target, config: &str) -> String {
 
 fn cached_string(
     ctx: &GenCtx,
+    target: &Target,
     key: String,
     recursion_error: impl FnOnce() -> String,
     compute: impl FnOnce() -> String,
@@ -115,7 +116,15 @@ fn cached_string(
     let cached = ctx.memo.borrow().get(&key).cloned();
     if let Some(value) = cached {
         if value.is_empty() {
-            ctx.error(Vec::new(), recursion_error());
+            let message = recursion_error();
+            if !ctx
+                .errors
+                .borrow()
+                .iter()
+                .any(|error| error.text() == message)
+            {
+                ctx.error(target.backtrace.clone(), message);
+            }
         }
         return value;
     }
@@ -131,6 +140,7 @@ pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifa
     let key = memo_key(&format!("output-name-{artifact:?}"), target, config);
     cached_string(
         ctx,
+        target,
         key,
         || format!("Target '{}' OUTPUT_NAME depends on itself.", target.name),
         || {
@@ -156,7 +166,7 @@ pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifa
     )
 }
 
-fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
+pub(super) fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
     if config.is_empty() {
         return "";
     }
@@ -167,6 +177,25 @@ fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
         .filter(|value| !value.is_empty())
         .or_else(|| target.props.get(&format!("{config}_POSTFIX")))
         .unwrap_or_default()
+}
+
+pub(super) fn dll_platform(ctx: &GenCtx, target: &Target) -> bool {
+    !ctx.var_safe(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
+        .is_empty()
+}
+
+pub(super) fn has_import_library(ctx: &GenCtx, target: &Target) -> bool {
+    let executable_exports =
+        target.kind == TargetKind::Executable && is_on_opt(target.props.get("ENABLE_EXPORTS"));
+    let shared = target.kind == TargetKind::SharedLibrary;
+    (dll_platform(ctx, target) && (shared || executable_exports))
+        || (ctx.var_safe(target.makefile, "CMAKE_SYSTEM_NAME") == "AIX" && executable_exports)
+        || (shared
+            && is_on_opt(target.props.get("ENABLE_EXPORTS"))
+            && is_on_opt(ctx.var(target.makefile, "APPLE").as_deref())
+            && ctx.var(target.makefile, "CMAKE_TAPI").is_some_and(|value| {
+                !value.is_empty() && !value.ends_with("-NOTFOUND") && value != "NOTFOUND"
+            }))
 }
 
 fn affix(ctx: &GenCtx, target: &Target, property: &str, variable: &str, language: &str) -> String {
@@ -184,30 +213,64 @@ fn affix(ctx: &GenCtx, target: &Target, property: &str, variable: &str, language
     ctx.var_safe(target.makefile, variable)
 }
 
+pub(super) fn file_affixes(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    artifact: ArtifactType,
+) -> (String, String) {
+    let language = if target.imported {
+        String::new()
+    } else {
+        compute_linker_language(ctx, target, config)
+    };
+    if artifact == ArtifactType::Import {
+        return (
+            affix(
+                ctx,
+                target,
+                "IMPORT_PREFIX",
+                "CMAKE_IMPORT_LIBRARY_PREFIX",
+                &language,
+            ),
+            affix(
+                ctx,
+                target,
+                "IMPORT_SUFFIX",
+                "CMAKE_IMPORT_LIBRARY_SUFFIX",
+                &language,
+            ),
+        );
+    }
+    let (prefix_var, suffix_var) = match target.kind {
+        TargetKind::Executable => ("", "CMAKE_EXECUTABLE_SUFFIX"),
+        TargetKind::StaticLibrary => ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX"),
+        TargetKind::SharedLibrary => ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX"),
+        TargetKind::ModuleLibrary => ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX"),
+        _ => return (String::new(), String::new()),
+    };
+    (
+        affix(ctx, target, "PREFIX", prefix_var, &language),
+        affix(ctx, target, "SUFFIX", suffix_var, &language),
+    )
+}
+
 pub fn full_name_components(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
     artifact: ArtifactType,
 ) -> NameComponents {
-    let (prefix_var, suffix_var) = match target.kind {
-        TargetKind::Executable => ("", "CMAKE_EXECUTABLE_SUFFIX"),
-        TargetKind::StaticLibrary => ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX"),
-        TargetKind::SharedLibrary => ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX"),
-        TargetKind::ModuleLibrary => ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX"),
-        _ => {
-            return NameComponents {
-                base: target.name.clone(),
-                ..NameComponents::default()
-            };
-        }
-    };
-    // NeedImportLibraryName is false for native Linux targets. Imported
-    // artifacts use the paths from GetMappedConfig instead.
-    if artifact == ArtifactType::Import {
+    if artifact == ArtifactType::Import && !has_import_library(ctx, target) {
         return NameComponents::default();
     }
-    let language = compute_linker_language(ctx, target, config);
+    if artifact_kind(target.kind, artifact).is_empty() || target.kind == TargetKind::ObjectLibrary {
+        return NameComponents {
+            base: target.name.clone(),
+            ..NameComponents::default()
+        };
+    }
+    let (prefix, suffix) = file_affixes(ctx, target, config, artifact);
     let mut base = output_name(ctx, target, config, artifact);
     base.push_str(postfix(target, config));
     if target.kind == TargetKind::SharedLibrary
@@ -221,16 +284,13 @@ pub fn full_name_components(
         base.push_str(version);
     }
     NameComponents {
-        prefix: affix(ctx, target, "PREFIX", prefix_var, &language),
+        prefix,
         base,
-        suffix: affix(ctx, target, "SUFFIX", suffix_var, &language),
+        suffix,
     }
 }
 
-/// `cmGeneratorTarget::GetLibraryNames` / `GetExecutableNames`.
-pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
-    let parts = full_name_components(ctx, target, config, ArtifactType::Runtime);
-    let output = parts.filename();
+pub(super) fn pdb_base_name(ctx: &GenCtx, target: &Target, config: &str) -> String {
     let pdb_prop = (!config.is_empty())
         .then(|| {
             target
@@ -240,7 +300,7 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
         .flatten()
         .or_else(|| target.props.get("PDB_NAME"))
         .filter(|value| !value.is_empty());
-    let pdb_base = pdb_prop.map_or_else(
+    pdb_prop.map_or_else(
         || {
             format!(
                 "{}{}",
@@ -249,7 +309,14 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
             )
         },
         |value| ctx.genex(value, None, None),
-    );
+    )
+}
+
+/// `cmGeneratorTarget::GetLibraryNames` / `GetExecutableNames`.
+pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
+    let parts = full_name_components(ctx, target, config, ArtifactType::Runtime);
+    let output = parts.filename();
+    let pdb_base = pdb_base_name(ctx, target, config);
     let (real, shared_object) = if target.kind == TargetKind::Executable {
         let real = target
             .props
@@ -294,6 +361,8 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
             Some(soversion) => format!("{import_output}.{soversion}"),
             None => import_output,
         }
+    } else if target.kind == TargetKind::Executable && has_import_library(ctx, target) {
+        full_name_components(ctx, target, config, ArtifactType::Import).filename()
     } else {
         String::new()
     };
@@ -359,6 +428,7 @@ fn output_directory(
     let key = memo_key(&format!("output-dir-{artifact:?}"), target, &config_upper);
     cached_string(
         ctx,
+        target,
         key,
         || {
             format!(

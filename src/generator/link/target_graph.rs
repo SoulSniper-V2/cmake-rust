@@ -351,7 +351,15 @@ fn cycle_error(
     } else {
         "At least one of these targets is not a STATIC_LIBRARY.  Cyclic dependencies are allowed only among static libraries."
     });
-    query.error(message);
+    if !query
+        .ctx
+        .errors
+        .borrow()
+        .iter()
+        .any(|error| error.text() == message)
+    {
+        query.ctx.system_error(message);
+    }
 }
 
 struct LinearComponent<'a> {
