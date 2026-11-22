@@ -263,6 +263,9 @@ pub struct Interp {
     pub debug_trycompile: bool,
     /// `--debug-output` and the `--debug-find*` options.
     pub debug: DebugOptions,
+    /// `--compile-no-warning-as-error` / `--link-no-warning-as-error`.
+    pub ignore_compile_warning_as_error: bool,
+    pub ignore_link_warning_as_error: bool,
     /// Root CMakeLists.txt lacked cmake_minimum_required (CMP0000).
     pub root_check_cmp0000: bool,
     /// Language-enablement state (cmGlobalGenerator language maps).
@@ -331,6 +334,8 @@ impl Interp {
             in_try_compile: false,
             debug_trycompile: false,
             debug: DebugOptions::default(),
+            ignore_compile_warning_as_error: false,
+            ignore_link_warning_as_error: false,
             root_check_cmp0000: false,
             langs: crate::languages::LangState::default(),
             recursion_depth_base: 0,

@@ -664,12 +664,18 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     );
                     options.check_system_vars = true;
                 }
-                "--compile-no-warning-as-error" => println!(
-                    "Ignoring COMPILE_WARNING_AS_ERROR target property and CMAKE_COMPILE_WARNING_AS_ERROR variable."
-                ),
-                "--link-no-warning-as-error" => println!(
-                    "Ignoring LINK_WARNING_AS_ERROR target property and CMAKE_LINK_WARNING_AS_ERROR variable."
-                ),
+                "--compile-no-warning-as-error" => {
+                    println!(
+                        "Ignoring COMPILE_WARNING_AS_ERROR target property and CMAKE_COMPILE_WARNING_AS_ERROR variable."
+                    );
+                    options.ignore_compile_warning_as_error = true;
+                }
+                "--link-no-warning-as-error" => {
+                    println!(
+                        "Ignoring LINK_WARNING_AS_ERROR target property and CMAKE_LINK_WARNING_AS_ERROR variable."
+                    );
+                    options.ignore_link_warning_as_error = true;
+                }
                 "-O" | "--warn-unused-vars" => {}
                 "--system-information" | "--find-package" | "--debugger" => unsupported = Some(arg),
                 "--explain" => {

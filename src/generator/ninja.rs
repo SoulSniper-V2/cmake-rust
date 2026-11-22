@@ -1290,8 +1290,18 @@ impl<'a> NinjaGenerator<'a> {
         let rule = Rule {
             name: "RERUN_CMAKE".into(),
             command: format!(
-                "{} --regenerate-during-build -S{} -B{}",
+                "{} --regenerate-during-build{}{} -S{} -B{}",
                 self.cmake_cmd,
+                if self.ctx.interp.ignore_compile_warning_as_error {
+                    " --compile-no-warning-as-error"
+                } else {
+                    ""
+                },
+                if self.ctx.interp.ignore_link_warning_as_error {
+                    " --link-no-warning-as-error"
+                } else {
+                    ""
+                },
                 self.shell(&self.home_source),
                 self.shell(&self.home_binary)
             ),

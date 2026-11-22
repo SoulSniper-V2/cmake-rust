@@ -53,6 +53,9 @@ pub struct ConfigureOptions {
     pub debug_trycompile: bool,
     /// `--debug-output`, `--debug-find`, `--debug-find-pkg`, `--debug-find-var`.
     pub debug: crate::interp::DebugOptions,
+    /// `cmake::SetIgnoreCompileWarningAsError` / `SetIgnoreLinkWarningAsError`.
+    pub ignore_compile_warning_as_error: bool,
+    pub ignore_link_warning_as_error: bool,
     pub trace: bool,
     /// `--trace-expand` (cmake::TraceExpand).
     pub trace_expand: bool,
@@ -399,6 +402,8 @@ pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
     interp.debug_trycompile = options.debug_trycompile;
     if !options.in_try_compile {
         interp.debug = options.debug.clone();
+        interp.ignore_compile_warning_as_error = options.ignore_compile_warning_as_error;
+        interp.ignore_link_warning_as_error = options.ignore_link_warning_as_error;
     }
     add_default_definitions(&mut interp);
     if let Some(level) = &options.log_level {

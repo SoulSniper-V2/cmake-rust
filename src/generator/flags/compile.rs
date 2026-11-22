@@ -182,7 +182,10 @@ fn append_compile_options_tail(flags: &mut String, inputs: &Flags<'_, '_>) {
         append(flags, raw);
         append_options(flags, options);
     }
-    if is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR")) {
+    // cmLocalGenerator::AddCompileOptions honours --compile-no-warning-as-error.
+    if !inputs.ctx.interp.ignore_compile_warning_as_error
+        && is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR"))
+    {
         inputs.append_feature(flags, "WARNING_AS_ERROR");
     }
 }
@@ -604,7 +607,10 @@ pub(crate) fn flag_fragments(
             out.push((shell(&item.value), ctx.backtrace(item.backtrace)));
         }
     }
-    if is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR")) {
+    // cmLocalGenerator::AddCompileOptions honours --compile-no-warning-as-error.
+    if !inputs.ctx.interp.ignore_compile_warning_as_error
+        && is_on_opt(inputs.prop("COMPILE_WARNING_AS_ERROR"))
+    {
         let mut w = String::new();
         inputs.append_feature(&mut w, "WARNING_AS_ERROR");
         if !w.is_empty() {

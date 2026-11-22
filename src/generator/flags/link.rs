@@ -227,6 +227,10 @@ pub(super) fn selected_linker(inputs: &Flags<'_, '_>) -> Option<String> {
 }
 
 fn warning_as_error(inputs: &Flags<'_, '_>, flags: &mut String) {
+    // cmLocalGenerator::AppendWarningAsErrorLinkerFlags.
+    if inputs.ctx.interp.ignore_link_warning_as_error {
+        return;
+    }
     let property = inputs.prop("LINK_WARNING_AS_ERROR");
     if is_off_opt(property) {
         return;
