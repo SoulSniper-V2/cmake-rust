@@ -1,0 +1,91 @@
+[
+  {"name": "presets-list-all", "argv": ["--list-presets=all"], "files": {
+    "CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(p NONE)\n",
+    "CMakePresets.json": "{\"version\": 6, \"configurePresets\": [{\"name\": \"zz\", \"displayName\": \"Last\", \"generator\": \"Ninja\", \"binaryDir\": \"${sourceDir}/b\"}, {\"name\": \"hidden\", \"hidden\": true}, {\"name\": \"a\", \"inherits\": \"zz\"}, {\"name\": \"bad-gen\", \"generator\": \"Nope\"}], \"buildPresets\": [{\"name\": \"b\", \"configurePreset\": \"zz\", \"displayName\": \"Build\"}], \"testPresets\": [{\"name\": \"t\", \"configurePreset\": \"a\"}], \"packagePresets\": [{\"name\": \"p\", \"configurePreset\": \"a\"}], \"workflowPresets\": [{\"name\": \"w\", \"steps\": [{\"type\": \"configure\", \"name\": \"zz\"}, {\"type\": \"build\", \"name\": \"b\"}]}]}\n"
+  }},
+  {"name": "presets-list-configure-filters-generators", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"good\", \"generator\": \"Ninja\"}, {\"name\": \"bad-gen\", \"generator\": \"Nope\"}, {\"name\": \"cond-false\", \"condition\": {\"type\": \"equals\", \"lhs\": \"a\", \"rhs\": \"b\"}}, {\"name\": \"cond-true\", \"condition\": {\"type\": \"notEquals\", \"lhs\": \"${sourceDirName}\", \"rhs\": \"x\"}}]}\n"
+  }},
+  {"name": "presets-list-invalid-type", "argv": ["--list-presets=bogus"]},
+  {"name": "presets-no-file", "argv": ["--preset=x"]},
+  {"name": "presets-syntax-error", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\n  \"version\": 3,\n  \"configurePresets\": [\n    {\"name\": \"a\",}\n  ]\n}\n"
+  }},
+  {"name": "presets-comment", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "// comment\n{\"version\": 3}\n"
+  }},
+  {"name": "presets-duplicate-key", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"version\": 4}\n"
+  }},
+  {"name": "presets-empty", "argv": ["--list-presets"], "files": {"CMakePresets.json": ""}},
+  {"name": "presets-not-object-root", "argv": ["--list-presets"], "files": {"CMakePresets.json": "[1]\n"}},
+  {"name": "presets-bad-version", "argv": ["--list-presets"], "files": {"CMakePresets.json": "{\"version\": 99}\n"}},
+  {"name": "presets-version-real", "argv": ["--list-presets"], "files": {"CMakePresets.json": "{\"version\": 11.0}\n"}},
+  {"name": "presets-no-version", "argv": ["--list-presets"], "files": {"CMakePresets.json": "{\"configurePresets\": []}\n"}},
+  {"name": "presets-extra-fields", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"bogus\": 1, \"configurePresets\": [{\"name\": \"a\", \"zap\": true, \"cacheVariables\": {\"X\": {\"value\": \"1\", \"oops\": 2}}}]}\n"
+  }},
+  {"name": "presets-expected-types", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"hidden\": \"yes\", \"displayName\": 7, \"warnings\": {\"dev\": 1}}]}\n"
+  }},
+  {"name": "presets-cyclic", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"inherits\": \"b\"}, {\"name\": \"b\", \"inherits\": [\"c\"]}, {\"name\": \"c\", \"inherits\": \"a\"}]}\n"
+  }},
+  {"name": "presets-missing-parent", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"inherits\": \"nope\"}]}\n"
+  }},
+  {"name": "presets-v1-missing-fields", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 1, \"configurePresets\": [{\"name\": \"a\", \"generator\": \"Ninja\"}]}\n"
+  }},
+  {"name": "presets-bad-macro", "argv": ["--preset=a"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"binaryDir\": \"${unknownMacro}\"}]}\n"
+  }},
+  {"name": "presets-vendor-macro-ignored", "argv": ["--preset=a"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"binaryDir\": \"$vendor{x}\"}]}\n"
+  }},
+  {"name": "presets-env-cycle", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"environment\": {\"A\": \"$env{B}\", \"B\": \"$env{A}\"}}]}\n"
+  }},
+  {"name": "presets-hidden", "argv": ["--preset", "h"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"h\", \"hidden\": true}, {\"name\": \"v\", \"displayName\": \"Visible\"}]}\n"
+  }},
+  {"name": "presets-disabled", "argv": ["--preset", "d"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"d\", \"condition\": false}]}\n"
+  }},
+  {"name": "presets-no-such", "argv": ["--preset", "zzz"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"v\", \"displayName\": \"Visible\"}]}\n"
+  }},
+  {"name": "presets-bad-condition", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"a\", \"condition\": {\"type\": \"inList\", \"string\": \"x\"}}, {\"name\": \"b\", \"condition\": {\"type\": \"what\"}}]}\n"
+  }},
+  {"name": "presets-include-cycle", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 4, \"include\": [\"sub/a.json\"]}\n",
+    "sub/a.json": "{\"version\": 4, \"include\": [\"../CMakePresets.json\"]}\n"
+  }},
+  {"name": "presets-include-unreachable", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 4, \"include\": [\"a.json\", \"b.json\"]}\n",
+    "a.json": "{\"version\": 4, \"configurePresets\": [{\"name\": \"a\", \"inherits\": \"b\"}]}\n",
+    "b.json": "{\"version\": 4, \"configurePresets\": [{\"name\": \"b\"}]}\n"
+  }},
+  {"name": "presets-cmake-minimum", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"cmakeMinimumRequired\": {\"major\": 4, \"minor\": 2}}\n"
+  }},
+  {"name": "presets-build-list", "argv": ["--build", "--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"c\"}], \"buildPresets\": [{\"name\": \"b2\", \"configurePreset\": \"c\", \"displayName\": \"Two\"}, {\"name\": \"b1\", \"configurePreset\": \"c\"}]}\n"
+  }},
+  {"name": "presets-build-no-such", "argv": ["--build", "--preset", "x"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"c\"}], \"buildPresets\": [{\"name\": \"b\", \"configurePreset\": \"c\"}]}\n"
+  }},
+  {"name": "presets-build-invalid-configure", "argv": ["--build", "--preset", "b"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"c\"}], \"buildPresets\": [{\"name\": \"b\", \"configurePreset\": \"missing\"}]}\n"
+  }},
+  {"name": "presets-workflow-usage", "argv": ["--workflow"]},
+  {"name": "presets-workflow-unknown", "argv": ["--workflow", "--preset", "w", "--bogus"]},
+  {"name": "presets-workflow-bad-steps", "argv": ["--workflow", "--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 6, \"configurePresets\": [{\"name\": \"c\"}, {\"name\": \"d\"}], \"buildPresets\": [{\"name\": \"b\", \"configurePreset\": \"d\"}], \"workflowPresets\": [{\"name\": \"w\", \"steps\": [{\"type\": \"configure\", \"name\": \"c\"}, {\"type\": \"build\", \"name\": \"b\"}]}]}\n"
+  }},
+  {"name": "presets-user-file-includes-project", "argv": ["--list-presets"], "files": {
+    "CMakePresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"p\"}]}\n",
+    "CMakeUserPresets.json": "{\"version\": 3, \"configurePresets\": [{\"name\": \"u\", \"inherits\": \"p\", \"displayName\": \"User\"}]}\n"
+  }}
+]

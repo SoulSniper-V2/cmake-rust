@@ -34,6 +34,7 @@ pub fn main() -> i32 {
         Some("-E") => cmcmd::dispatch(&argv[0], &args[1..]),
         Some("--build") => build(&args[1..], &cwd),
         Some("--install") => install(&argv[0], &args[1..], &cwd),
+        Some("--workflow") => crate::presets::cli::workflow(&args[1..], &cwd),
         Some("--print-config-dir") => {
             if let Ok(dir) = std::env::var("CMAKE_CONFIG_DIR") {
                 println!("{dir}");
@@ -183,7 +184,7 @@ fn warn_orphan_generator_settings() {
     }
 }
 
-fn known_generator(name: &str) -> bool {
+pub(crate) fn known_generator(name: &str) -> bool {
     GENERATORS.lines().any(|line| {
         line.get(2..)
             .and_then(|tail| tail.split_once(" = "))
@@ -191,7 +192,7 @@ fn known_generator(name: &str) -> bool {
     })
 }
 
-fn is_flag(arg: &str) -> bool {
+pub(crate) fn is_flag(arg: &str) -> bool {
     arg.starts_with('-') && !arg.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
 }
 
@@ -327,6 +328,7 @@ fn positional(options: &mut ConfigureOptions, arg: &str, cwd: &str, script_mode:
         let mut cache = Cache::default();
         match cache.load(Path::new(dir)) {
             Ok(true) => {
+                options.cache_loaded = true;
                 if let Some(source) = cache.value("CMAKE_HOME_DIRECTORY") {
                     options.source_dir = source.to_owned();
                     options.binary_dir = dir.to_owned();
@@ -508,6 +510,9 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     let mut trace_file_failed = false;
     let mut trace_json = false;
     let mut trace_output = None;
+    let mut preset_name = String::new();
+    let mut list_presets = None;
+    let mut have_b_arg = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -563,6 +568,8 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 return Ok(cli_failure());
             }
             match name {
+                "--preset" => preset_name = value.clone(),
+                "-B" => have_b_arg = true,
                 "--trace-format" => trace_json = value.eq_ignore_ascii_case("json-v1"),
                 "--trace-redirect" => trace_output = Some(cache::convert_to_unix_slashes(&value)),
                 _ => {}
@@ -570,12 +577,17 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             if matches!(
                 name,
                 "--graphviz"
-                    | "--preset"
                     | "--project-file"
                     | "--debugger-pipe"
                     | "--debugger-dap-log"
             ) {
                 unsupported = Some(name);
+            }
+        } else if matches_value(arg, "--list-presets", false) {
+            let value = read_value(args, &mut index, "--list-presets", Values::Optional, "")?;
+            match crate::presets::cli::ListPresets::parse(&value) {
+                Some(list) => list_presets = Some(list),
+                None => return Ok(cli_failure()),
             }
         } else if matches!(arg, "-L" | "-LA" | "-LH" | "-LAH")
             || ["-LRAH", "-LRA", "-LRH", "-LR"]
@@ -635,7 +647,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     "Ignoring LINK_WARNING_AS_ERROR target property and CMAKE_LINK_WARNING_AS_ERROR variable."
                 ),
                 "-O" | "--warn-unused-vars" => {}
-                "--system-information" | "--find-package" | "--list-presets" | "--debugger" => {
+                "--system-information" | "--find-package" | "--debugger" => {
                     unsupported = Some(arg)
                 }
                 "--explain" => {
@@ -679,7 +691,12 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         cmcmd::error("--fresh allowed only when configuring a project");
         return Ok(1);
     }
-    if !script_mode && !regenerate && options.source_dir.is_empty() && options.binary_dir.is_empty()
+    if !script_mode
+        && !regenerate
+        && options.source_dir.is_empty()
+        && options.binary_dir.is_empty()
+        && preset_name.is_empty()
+        && list_presets.is_none()
     {
         warning(IMPLICIT_DIRECTORIES);
     }
@@ -699,6 +716,24 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     }
     if options.binary_dir.is_empty() {
         options.binary_dir = cwd.to_owned();
+    }
+    let mut preset_state = None;
+    if !script_mode {
+        let home = if options.source_dir.is_empty() {
+            cwd.to_owned()
+        } else {
+            options.source_dir.clone()
+        };
+        match crate::presets::cli::apply_configure_preset(
+            &home,
+            list_presets,
+            &preset_name,
+            have_b_arg,
+            &mut options,
+        ) {
+            Ok(state) => preset_state = state,
+            Err(code) => return Ok(code),
+        }
     }
     let mut cache = Cache::default();
     if !script_mode && (!options.fresh || regenerate) {
@@ -739,6 +774,22 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         cmcmd::error(error);
         return Ok(cli_failure());
     }
+    if let Some(state) = &preset_state
+        && matches!(options.log_level.as_deref(), Some("verbose" | "debug" | "trace"))
+    {
+        // Entries the command line set or removed are no longer
+        // "unprocessed" preset variables.
+        let overridden = |name: &str| {
+            cache_args.iter().any(|arg| match arg.name {
+                "-D" => cache::parse_entry(&arg.value).is_some_and(|(var, _, _)| var == name),
+                "-U" => glob_to_regex_match(&arg.value, name),
+                "--install-prefix" => name == "CMAKE_INSTALL_PREFIX",
+                "--toolchain" => name == "CMAKE_TOOLCHAIN_FILE",
+                _ => false,
+            })
+        };
+        state.print(&overridden);
+    }
     let result = if view_only {
         apply_cache_view_args(&mut cache, &cache_args, &options, cwd)
     } else if !options.preload_scripts.is_empty()
@@ -762,7 +813,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     Ok(result)
 }
 
-fn print_generators() {
+pub(crate) fn print_generators() {
     eprint!("{}", generator_documentation(GENERATORS));
 }
 
@@ -849,12 +900,23 @@ fn set_option<'a>(
 }
 
 fn cache_definition(value: &str) -> Result<CacheDefinition, String> {
-    let Some((name, mut value, kind)) = cache::parse_entry(value) else {
+    let Some((name, value, kind)) = cache::parse_entry(value) else {
         return Err(format!(
             "Parse error in command line argument: {value}\n Should be: VAR:type=value\n"
         ));
     };
-    if matches!(kind, CacheType::Path | CacheType::Filepath) {
+    Ok(cache_definition_from_parts(
+        &name,
+        &value,
+        (kind != CacheType::Uninitialized).then_some(kind),
+    ))
+}
+
+/// A command-line style cache definition (`cmake::ProcessCacheArg` input),
+/// with PATH/FILEPATH values normalized as `-D` does.
+pub(crate) fn cache_definition_from_parts(name: &str, value: &str, kind: Option<CacheType>) -> CacheDefinition {
+    let mut value = value.to_owned();
+    if matches!(kind, Some(CacheType::Path | CacheType::Filepath)) {
         value = util::expand_list(&value, false)
             .iter()
             .map(|path| {
@@ -867,11 +929,11 @@ fn cache_definition(value: &str) -> Result<CacheDefinition, String> {
             .collect::<Vec<_>>()
             .join(";");
     }
-    Ok(CacheDefinition {
-        name,
+    CacheDefinition {
+        name: name.to_owned(),
         value,
-        kind: (kind != CacheType::Uninitialized).then_some(kind),
-    })
+        kind,
+    }
 }
 
 fn warning_option(options: &mut ConfigureOptions, value: &str) -> Result<(), String> {
@@ -1195,6 +1257,8 @@ fn run_script_mode(
 
 #[derive(Default)]
 struct BuildOptions {
+    preset_name: String,
+    list_presets: bool,
     dir: String,
     targets: Vec<String>,
     config: String,
@@ -1244,7 +1308,10 @@ fn parse_build(args: &[String], cwd: &str) -> Result<BuildOptions, ()> {
             }
             "-v" | "--verbose" => options.verbose = true,
             "--clean-first" => options.clean_first = true,
-            "--list-presets" => options.preset = true,
+            "--list-presets" => {
+                options.preset = true;
+                options.list_presets = true;
+            }
             "--use-stderr" => {}
             _ => {
                 let names = [
@@ -1275,7 +1342,10 @@ fn parse_build(args: &[String], cwd: &str) -> Result<BuildOptions, ()> {
                     match name {
                         "-j" | "--parallel" => options.jobs = Some(parse_jobs(&value, name)?),
                         "--config" => options.config = value,
-                        "--preset" => options.preset = !value.is_empty(),
+                        "--preset" => {
+                            options.preset |= !value.is_empty();
+                            options.preset_name = value;
+                        }
                         "-t" | "--target" if !value.is_empty() => {
                             options.targets.extend(util::expand_list(&value, false))
                         }
@@ -1314,13 +1384,28 @@ fn parse_build(args: &[String], cwd: &str) -> Result<BuildOptions, ()> {
 }
 
 fn build(args: &[String], cwd: &str) -> i32 {
-    let Ok(options) = parse_build(args, cwd) else {
+    let Ok(mut options) = parse_build(args, cwd) else {
         eprint!("{}", include_str!("cmcmd/build-usage.txt"));
         return 1;
     };
     if options.preset {
-        cmcmd::error("Build presets are not supported");
-        return 1;
+        let settings = crate::presets::cli::BuildSettings {
+            dir: &mut options.dir,
+            jobs: &mut options.jobs,
+            targets: &mut options.targets,
+            config: &mut options.config,
+            clean_first: &mut options.clean_first,
+            verbose: &mut options.verbose,
+            native: &mut options.native,
+        };
+        if let Err(code) = crate::presets::cli::apply_build_preset(
+            cwd,
+            &options.preset_name,
+            options.list_presets,
+            settings,
+        ) {
+            return code;
+        }
     }
     let dir = Path::new(&options.dir);
     if !dir.is_dir() {
@@ -1584,4 +1669,9 @@ fn directory_permissions(value: &str) -> Option<String> {
         }
     }
     Some(permissions.join(";"))
+}
+
+/// Whether a `-U` glob matches a cache variable name.
+fn glob_to_regex_match(pattern: &str, name: &str) -> bool {
+    configure::glob_to_regex(pattern).find(name).is_some()
 }

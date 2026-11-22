@@ -48,6 +48,9 @@ pub struct ConfigureOptions {
     pub explain: Option<(String, String)>,
     /// Configure for a try_compile project (no progress output).
     pub in_try_compile: bool,
+    /// A path argument named an existing build tree whose cache was read
+    /// (`cmState::IsCacheLoaded` during argument processing).
+    pub cache_loaded: bool,
 }
 
 /// `cmSystemTools::Error`.
@@ -197,7 +200,7 @@ fn util_cwd() -> String {
 }
 
 /// `cmsys::Glob::PatternToRegex` (no recursion, anchored).
-fn glob_to_regex(pattern: &str) -> crate::cmregex::Regex {
+pub(crate) fn glob_to_regex(pattern: &str) -> crate::cmregex::Regex {
     let mut regex = String::from("^");
     for ch in pattern.chars() {
         match ch {
@@ -268,25 +271,70 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         let path = util::collapse_full_path(script, &util_cwd());
         interp.read_list_file(&path);
     }
-    // Diagnostic settings from -W flags and cache.
-    if let Some(dev) = options.warn_dev {
-        interp.suppress_dev_warnings = !dev;
+    // cmake::Configure: apply `DiagLevels` (from -W flags and presets) to
+    // the cache, then sync the messenger with the cache.
+    // DiagLevel: 0 = DIAG_IGNORE, 1 = DIAG_WARN, 2 = DIAG_ERROR.
+    let level = |warn: Option<bool>, error: Option<bool>| -> Option<u8> {
+        if error == Some(true) {
+            Some(2)
+        } else if warn == Some(true) {
+            Some(1)
+        } else if warn == Some(false) {
+            Some(0)
+        } else {
+            None
+        }
+    };
+    let set_internal = |interp: &mut Interp, name: &str, value: bool, help: &str| {
+        let value = if value { "TRUE" } else { "FALSE" };
+        interp.cache.add(name, Some(value), Some(help), CacheType::Internal);
+    };
+    const WARN_DEPRECATED_HELP: &str = "Whether to issue warnings for deprecated functionality.";
+    const ERROR_DEPRECATED_HELP: &str = "Whether to issue deprecation errors for macros and functions.";
+    let set_deprecated = |interp: &mut Interp, level: u8| {
+        // SetSuppressDeprecatedWarnings + SetDeprecatedWarningsAsErrors
+        set_internal(interp, "CMAKE_WARN_DEPRECATED", level != 0, WARN_DEPRECATED_HELP);
+        set_internal(interp, "CMAKE_ERROR_DEPRECATED", level == 2, ERROR_DEPRECATED_HELP);
+    };
+    if let Some(deprecated) = level(options.warn_deprecated, options.warn_deprecated_error) {
+        set_deprecated(interp, deprecated);
     }
-    if options.warn_dev_error == Some(true) {
-        interp.dev_warnings_as_errors = true;
+    if let Some(dev) = level(options.warn_dev, options.warn_dev_error) {
+        let set_deprecated_variables = interp.cache.value("CMAKE_WARN_DEPRECATED").is_none()
+            && interp.cache.value("CMAKE_ERROR_DEPRECATED").is_none();
+        // SetSuppressDevWarnings + SetDevWarningsAsErrors
+        set_internal(
+            interp,
+            "CMAKE_SUPPRESS_DEVELOPER_WARNINGS",
+            dev == 0,
+            "Suppress Warnings that are meant for the author of the CMakeLists.txt files.",
+        );
+        set_internal(
+            interp,
+            "CMAKE_SUPPRESS_DEVELOPER_ERRORS",
+            dev != 2,
+            "Suppress errors that are meant for the author of the CMakeLists.txt files.",
+        );
+        if set_deprecated_variables {
+            set_deprecated(interp, dev);
+        }
     }
-    if let Some(value) = interp.cache.value("CMAKE_WARN_DEPRECATED") {
-        interp.warn_deprecated = !util::is_off(value);
-    }
-    if let Some(deprecated) = options.warn_deprecated {
-        interp.warn_deprecated = deprecated;
-    }
-    if options.warn_deprecated_error == Some(true) || interp.cache.value("CMAKE_ERROR_DEPRECATED").is_some_and(util::is_on) {
-        interp.deprecated_as_errors = true;
-    }
-    if interp.cache.value("CMAKE_SUPPRESS_DEVELOPER_WARNINGS").is_some_and(util::is_on) {
-        interp.suppress_dev_warnings = true;
-    }
+    interp.warn_deprecated = !interp
+        .cache
+        .value("CMAKE_WARN_DEPRECATED")
+        .is_some_and(util::is_off);
+    interp.deprecated_as_errors = interp
+        .cache
+        .value("CMAKE_ERROR_DEPRECATED")
+        .is_some_and(util::is_on);
+    interp.suppress_dev_warnings = interp
+        .cache
+        .value("CMAKE_SUPPRESS_DEVELOPER_WARNINGS")
+        .is_some_and(util::is_on);
+    interp.dev_warnings_as_errors = interp
+        .cache
+        .value("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
+        .is_some_and(util::is_off);
     let code = actual_configure(interp, options);
     if code != 0 {
         return code;

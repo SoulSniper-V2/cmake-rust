@@ -92,7 +92,7 @@ fn object_get_mut<'a>(map: &'a mut BTreeMap<Vec<u8>, Json>, key: &[u8]) -> Optio
 // ---------------------------------------------------------------------
 // valueToString(double) -> "%.17g" with the ".0" fixup.
 
-fn double_to_string(value: f64) -> String {
+pub(crate) fn double_to_string(value: f64) -> String {
     if !value.is_finite() {
         // useSpecialFloats == false
         return if value.is_nan() {

@@ -31,6 +31,15 @@ scratch=$(mktemp -d -- "${prefix}.stage.XXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 mkdir -p -- "$scratch/bin" "$scratch/share/cmake-4.1"
 install -m 755 -- "$binary" "$scratch/bin/cmake"
+# Install layout: the independent pinned Kitware ctest/cpack sit next to
+# cmake, where cmSystemTools::GetCTestCommand/GetCPackCommand look for them
+# (cmake --workflow runs them).
+reference_bin=$(realpath "${KITWARE_REFERENCE_BIN:-/tmp/cmake-rust-validation.hSLgEZHR/kitware-reference/bin}")
+for tool in ctest cpack; do
+    if [[ -x "$reference_bin/$tool" ]]; then
+        ln -s -- "$reference_bin/$tool" "$scratch/bin/$tool"
+    fi
+done
 ln -s -- "$source_dir/Modules" "$scratch/share/cmake-4.1/Modules"
 ln -s -- "$source_dir/Templates" "$scratch/share/cmake-4.1/Templates"
 mv -nT -- "$scratch" "$prefix"
