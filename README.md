@@ -43,16 +43,16 @@ candidate. The pinned Kitware `ctest` is the independent test runner.
   - The configure log, `CMakeCache.txt`, `rules.ninja` and `build.ninja` (41 MB, 21,997 statements) are byte-identical to the oracle's. Tool paths are normalized, and the regeneration-dependency list sorts differently because the prefix paths differ.
   - `ninja check-clang` on the candidate's build: 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed.
   - Times: configure about 5 s, generate about 6 s (oracle 1.8 s).
-- **Kitware CMake 4.1.0**: the configure log, `CMakeCache.txt` and `rules.ninja` are identical to the oracle's, and `build.ninja` differs only in the regeneration-dependency order. One nested try-compile tree still differs: `Tests/CMakeFiles/CheckFortran` records a different `CMakeFortranCompiler.cmake`, because Fortran preprocessing and dyndep scanning in the Ninja generator are not ported yet. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 684/684 passed. The oracle-configured build gets the same result.
+- **Kitware CMake 4.1.0**: the configure log, `CMakeCache.txt` and `rules.ninja` are identical to the oracle's, and `build.ninja` differs only in the regeneration-dependency order. One nested try-compile tree still differs: `Tests/CMakeFiles/CheckFortran` records a different `CMakeFortranCompiler.cmake`, because Fortran preprocessing and dyndep scanning in the Ninja generator are not ported yet. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 683/683 passed (re-measured at `7b0e89f` against a reference rebuilt with `BUILD_CursesDialog=OFF`; the oracle-configured tree registers the same 683 tests).
 - **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
 
-- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 4,504 of 5,592 eligible cases pass (80.54%) at `57dd2aa`.
+- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 5,117 of 5,638 eligible cases pass (90.76%) at `16912d2` (4,504 of 5,592 at `57dd2aa`).
 
 `file(DOWNLOAD)` and `file(UPLOAD)` run on the host's `libcurl.so.4`, which is loaded at the first transfer. Status and error text come from the `curl_easy_strerror` table of the curl 8.14.1 that CMake vendors, generated from the pinned sources. `LOG` output comes from the host libcurl, so its wording can differ.
 
 Harnesses:
 - `scripts/difftest.py`: script mode, 1247 cases.
-- `scripts/clitest.py`: command line, 363 cases.
+- `scripts/clitest.py`: command line, 400 cases.
 - `scripts/projdiff.py`: project mode, generated files byte-compared, 45 projects.
 - `scripts/ninjadiff.py`: structural `build.ninja` comparison.
 - `scripts/llvm-configure.sh` and `scripts/kitware-configure.sh`: oracle/candidate configure runners.
