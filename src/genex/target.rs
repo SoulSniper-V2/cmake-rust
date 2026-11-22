@@ -898,17 +898,23 @@ impl Evaluator<'_, '_> {
             for value in &mut entry.values {
                 if from_imported && !self.host.path_exists(value) {
                     return Err(self.usage_error(format!(
-                        "Imported target \"{}\" includes non-existent path\n  \"{value}\"\nin its INTERFACE_INCLUDE_DIRECTORIES. Possible reasons include:\n* The path was deleted, renamed, or moved to another location.\n* An install or uninstall procedure did not complete successfully.\n* The installation package was faulty and references files it does not provide.\n",
-                        entry.link_item.as_deref().unwrap_or_default()
+                        "Imported target \"{}\" includes non-existent path\n  \"{value}\"\nin its INTERFACE_INCLUDE_DIRECTORIES.  Possible reasons include:\n* The path was deleted, renamed, or moved to another location.\n* An install or uninstall procedure did not complete successfully.\n* The installation package was faulty and references files it does not provide.\n",
+                        entry
+                            .link_item
+                            .as_deref()
+                            .map(|item| self.host.display_name(item))
+                            .unwrap_or_default()
                     )));
                 }
                 if !path::file_is_full_path(value) {
                     return Err(self.usage_error(match &entry.link_item {
                         Some(item) => format!(
-                            "Target \"{item}\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n  \"{value}\""
+                            "Target \"{}\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n  \"{value}\"",
+                            self.host.display_name(item)
                         ),
                         None => format!(
-                            "Found relative path while evaluating include directories of \"{target}\":\n  \"{value}\"\n"
+                            "Found relative path while evaluating include directories of \"{}\":\n  \"{value}\"\n",
+                            self.host.display_name(target)
                         ),
                     }));
                 }
@@ -942,12 +948,14 @@ impl Evaluator<'_, '_> {
                     match &entry.link_item {
                         Some(item) => {
                             return Err(self.usage_error(format!(
-                                "Target \"{item}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\""
+                                "Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"",
+                                self.host.display_name(item)
                             )));
                         }
                         None => {
                             let message = format!(
-                                "Found relative path while evaluating link directories of \"{target}\":\n  \"{value}\"\n"
+                                "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
+                                self.host.display_name(target)
                             );
                             match self.host.policy_status(target, "CMP0081") {
                                 PolicyStatus::New => return Err(self.usage_error(message)),

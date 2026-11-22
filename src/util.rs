@@ -65,10 +65,18 @@ pub fn strtol(value: &str, base: i32) -> (i64, bool) {
     };
     let mut end: *mut libc::c_char = std::ptr::null_mut();
     // SAFETY: valid string.
-    let parsed = unsafe { libc::strtol(c.as_ptr(), &mut end, base) };
+    let parsed = unsafe {
+        *libc::__errno_location() = 0;
+        libc::strtol(c.as_ptr(), &mut end, base)
+    };
+    // `cmStrToLong` treats ERANGE as failure.
+    let erange = unsafe { *libc::__errno_location() } == libc::ERANGE;
     // SAFETY: end points into c.
     let rest = unsafe { *end };
-    (parsed as i64, rest == 0 && !std::ptr::eq(end, c.as_ptr()))
+    (
+        parsed as i64,
+        rest == 0 && !std::ptr::eq(end, c.as_ptr()) && !erange,
+    )
 }
 
 /// `cmList` expansion of a single value (`cmExpandList`). Splits on `;`

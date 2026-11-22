@@ -326,6 +326,11 @@ pub struct Ext {
     /// extension) for cmSourceFileLocation lookups.
     pub source_name_index: HashMap<(usize, String), Vec<usize>>,
     pub scoped_aliases: HashMap<(usize, String), String>,
+    /// Creation backtraces for alias targets, `(directory, alias name)`;
+    /// upstream keeps a `cmTarget` per alias in the directory's target
+    /// list, which `cmGlobalGenerator::FindTarget` (and hence the
+    /// reserved-name checks) can see.
+    pub alias_backtraces: Vec<(usize, String, Vec<crate::messages::Frame>)>,
     pub target_property_initializers: BTreeMap<String, String>,
     pub defer_current_id: Option<String>,
     pub dependency_provider: Option<(String, Vec<String>)>,
@@ -357,6 +362,9 @@ pub struct Ext {
     /// `cmSourceFile::FindFullPathFailed`: full path resolution failures
     /// are reported only once per source across the whole generation.
     pub reported_missing_sources: std::cell::RefCell<BTreeSet<String>>,
+    /// `cmSourceFile::FullPath` caching: the CMP0115 extension warning is
+    /// emitted only on the first successful resolution of a source.
+    pub reported_source_warnings: std::cell::RefCell<BTreeSet<String>>,
     /// `cmGeneratorTarget::KindedSourcesMap`: (target,config) kinded-source
     /// computations that already ran. Diagnostics they raise are reported
     /// only on the first evaluation of the generation.

@@ -165,6 +165,12 @@ impl GenexHost for CtxHost<'_, '_> {
         self.ctx.interp.ext.aliases.contains_key(name)
     }
 
+    fn display_name(&self, target: &str) -> String {
+        self.find(target)
+            .map(|target| target.name.clone())
+            .unwrap_or_else(|| target.to_owned())
+    }
+
     fn resolve_target(&self, name: &str, current: Option<&str>) -> Option<String> {
         if self.ctx.interp.ext.targets.contains_key(name) {
             return Some(name.to_owned());

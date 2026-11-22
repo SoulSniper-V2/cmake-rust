@@ -790,6 +790,7 @@ fn actual_configure(
     *file_api = Some(api);
     let start = Instant::now();
     configure_root(interp, &source_list);
+    check_reserved_global_targets(interp);
     if let Some(api) = file_api {
         api.add_project_queries(interp);
     }
@@ -835,6 +836,63 @@ fn same_file(lhs: &str, rhs: &str) -> bool {
     match (std::fs::canonicalize(lhs), std::fs::canonicalize(rhs)) {
         (Ok(a), Ok(b)) => a == b,
         _ => lhs == rhs,
+    }
+}
+
+/// `cmGlobalGenerator::CheckReservedTargetName` as run by
+/// `AddGlobalTarget_{Package,PackageSource,Test}` during
+/// `cmGlobalGenerator::Configure`: a target already using a reserved name
+/// aborts the run with the error reported at the target's backtrace.
+fn check_reserved_global_targets(interp: &mut Interp) {
+    fn reserved(interp: &mut Interp, names: &[&str], reason: &str) {
+        for name in names {
+            if let Some(key) = crate::state::find_global_target_key(interp, name) {
+                let backtrace = interp.ext.targets[&key].backtrace.clone();
+                interp.issue_at(
+                    MessageType::FatalError,
+                    &format!("The target name \"{name}\" is reserved {reason}."),
+                    &backtrace,
+                );
+                return;
+            }
+            // `cmGlobalGenerator::FindTarget` also finds ALIAS names.
+            if let Some((_, _, backtrace)) = interp
+                .ext
+                .alias_backtraces
+                .iter()
+                .find(|(_, alias, _)| alias == name)
+            {
+                let backtrace = backtrace.clone();
+                interp.issue_at(
+                    MessageType::FatalError,
+                    &format!("The target name \"{name}\" is reserved {reason}."),
+                    &backtrace,
+                );
+                return;
+            }
+        }
+    }
+    let root_binary = interp.makefiles[0].binary_dir.clone();
+    if std::path::Path::new(&format!("{root_binary}/CPackConfig.cmake")).exists() {
+        reserved(
+            interp,
+            &["package", "PACKAGE"],
+            "when CPack packaging is enabled",
+        );
+    }
+    if std::path::Path::new(&format!("{root_binary}/CPackSourceConfig.cmake")).exists() {
+        reserved(
+            interp,
+            &["package_source"],
+            "when CPack source packaging is enabled",
+        );
+    }
+    if interp.is_on("CMAKE_TESTING_ENABLED") {
+        reserved(
+            interp,
+            &["test", "RUN_TESTS"],
+            "when CTest testing is enabled",
+        );
     }
 }
 

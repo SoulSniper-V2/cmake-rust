@@ -65,11 +65,12 @@ fn valid_version(version: &str) -> bool {
 /// and only invokes the global generator for non-empty language sets.
 fn enable_languages(interp: &mut Interp, languages: &[String], optional: bool) {
     if interp.ext.defer_current_id.is_some() {
+        // `cmMakefile::EnableLanguage`: IssueMessage(FATAL_ERROR) marks the
+        // run failed but does not abort the deferred-call queue.
         interp.issue(
             MessageType::FatalError,
             "Languages may not be enabled during deferred execution.",
         );
-        interp.set_fatal();
         return;
     }
     if languages.is_empty() {

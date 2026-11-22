@@ -44,6 +44,12 @@ pub enum Usage {
 pub trait GenexHost {
     /// cmMakefile::FindTargetToUse / cmLocalGenerator::FindGeneratorTargetToUse.
     fn target_exists(&self, name: &str) -> bool;
+    /// The name a diagnostic should print for `target`, which may be an
+    /// internal key for directory-scoped targets (`cmLinkItem::AsStr`
+    /// prints the user's target name).
+    fn display_name(&self, target: &str) -> String {
+        target.to_owned()
+    }
     /// cmGeneratorTarget::GetType, encoded as the CMake TYPE property.
     fn target_type(&self, name: &str) -> Option<&str>;
     /// cmGeneratorTarget::GetProperty, before generator expression evaluation.

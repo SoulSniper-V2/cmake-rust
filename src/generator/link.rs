@@ -15,6 +15,7 @@ use std::path::Path;
 
 use super::ctx::GenCtx;
 use super::target::{self, ArtifactType, SourceInfo};
+use crate::messages::Frame;
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
 use crate::util::{expand_list, is_on, is_on_opt};
@@ -327,6 +328,12 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn error(&self, message: impl Into<String>) {
+        self.error_at(Vec::new(), message);
+    }
+
+    /// The diagnostic deduplication of `error` with an explicit
+    /// `cmListFileBacktrace` (target-creation or property-entry origin).
+    fn error_at(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
         let message = message.into();
         if !self
             .ctx
@@ -335,7 +342,7 @@ impl<'a, 'i> Query<'a, 'i> {
             .iter()
             .any(|existing| existing.text() == message)
         {
-            self.ctx.error(Vec::new(), message);
+            self.ctx.error(backtrace, message);
         }
     }
 
@@ -467,7 +474,7 @@ fn plain_items_bt<'i>(
 
         let name = entry.trim();
         if name != entry {
-            query.error(format!("Target \"{}\" links to item \"{}\" which has leading or trailing whitespace.  This is now an error according to policy CMP0004.", owner.name, entry));
+            query.error_at(owner.backtrace.clone(), format!("Target \"{}\" links to item \"{}\" which has leading or trailing whitespace.  This is now an error according to policy CMP0004.", owner.name, entry));
         }
         if !name.is_empty() {
             let target = query.resolve(*directory, name).filter(|target| {
@@ -481,7 +488,13 @@ fn plain_items_bt<'i>(
     items
 }
 
-fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], interface: bool) {
+fn validate_items(
+    query: &Query<'_, '_>,
+    owner: &Target,
+    head: &Target,
+    items: &[Item<'_>],
+    interface: bool,
+) {
     const REASONS: &str = "Possible reasons include:\n  * There is a typo in the target name.\n  * A find_package call is missing for an IMPORTED target.\n  * An ALIAS target is missing.\n";
     let only_targets = on(owner, "LINK_LIBRARIES_ONLY_TARGETS");
     for item in items.iter().filter(|item| item.target.is_none()) {
@@ -489,15 +502,21 @@ fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], int
         if name.starts_with("<LINK_GROUP:") || name.starts_with("</LINK_GROUP:") {
             continue;
         }
+        let backtrace = if item.backtrace.is_empty() {
+            head.backtrace.clone()
+        } else {
+            item.backtrace.clone()
+        };
         if name.contains("::") {
             let role = if interface {
                 format!("The link interface of target \"{}\" contains", owner.name)
             } else {
                 format!("Target \"{}\" links to", owner.name)
             };
-            query.error(format!(
-                "{role}:\n  {name}\nbut the target was not found.  {REASONS}"
-            ));
+            query.error_at(
+                backtrace,
+                format!("{role}:\n  {name}\nbut the target was not found.  {REASONS}"),
+            );
             return;
         }
         if only_targets && !name.starts_with(['-', '$', '`']) && !name.contains(['/', '\\']) {
@@ -506,7 +525,7 @@ fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], int
             } else {
                 "it links to"
             };
-            query.error(format!("Target \"{}\" has LINK_LIBRARIES_ONLY_TARGETS enabled, but {role}:\n  {name}\nwhich is not a target.  {REASONS}", owner.name));
+            query.error_at(backtrace, format!("Target \"{}\" has LINK_LIBRARIES_ONLY_TARGETS enabled, but {role}:\n  {name}\nwhich is not a target.  {REASONS}", owner.name));
             return;
         }
     }
@@ -566,7 +585,7 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
         item.target
             .is_none_or(|target| !std::ptr::eq(target, owner))
     });
-    validate_items(query, owner, &libraries, true);
+    validate_items(query, owner, head, &libraries, true);
     Interface {
         libraries,
         include: provenanced_items(query, owner, head, "INTERFACE_LINK_LIBRARIES_DIRECT"),
@@ -583,7 +602,12 @@ fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
     let mut original = provenanced_items(query, head, head, "LINK_LIBRARIES");
     original.retain(|item| {
         if item.target.is_some_and(|target| std::ptr::eq(target, head)) || item.text == head.name {
-            query.error(format!("Target \"{}\" links to itself.", head.name));
+            // cmGeneratorTarget::ComputeLinkImplementationLibraries:
+            // FATAL_ERROR at the target's creation backtrace.
+            query.error_at(
+                head.backtrace.clone(),
+                format!("Target \"{}\" links to itself.", head.name),
+            );
             false
         } else {
             true
@@ -604,7 +628,7 @@ fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
     direct
         .items
         .retain(|item| !direct.excluded.contains(&item.identity()));
-    validate_items(query, head, &direct.items, false);
+    validate_items(query, head, head, &direct.items, false);
     direct.items
 }
 

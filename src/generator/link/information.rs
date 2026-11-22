@@ -17,7 +17,8 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         return LinkLine::default();
     }
     if query.language.is_empty() {
-        query.error(format!(
+        // `cmSystemTools::Error`: bare single-line diagnostic.
+        query.ctx.system_error(format!(
             "CMake can not determine linker language for target: {}",
             head.name
         ));
@@ -223,15 +224,33 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
         }
     }
     let mut values = entries(query, head, head, property);
-    if property == "LINK_DIRECTORIES" && query.policy(head, "CMP0081") == PolicyStatus::New {
-        for value in values
-            .iter()
-            .filter(|value| !Path::new(value).is_absolute())
-        {
-            query.error(format!(
-                "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
-                head.name
-            ));
+    if property == "LINK_DIRECTORIES" {
+        // `cmGeneratorTarget::EvaluateLinkDirectories`: CMP0081 gates the
+        // relative-path diagnostic; the target's directory backtrace is
+        // attached in all modes.
+        let status = query.policy(head, "CMP0081");
+        if status != PolicyStatus::Old {
+            let backtrace = query.ctx.dir_backtrace(head.makefile);
+            for value in values
+                .iter()
+                .filter(|value| !Path::new(value).is_absolute())
+            {
+                let message = format!(
+                    "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
+                    head.name
+                );
+                match status {
+                    PolicyStatus::New => query.error_at(backtrace.clone(), message),
+                    PolicyStatus::Warn => query.ctx.warning(
+                        backtrace.clone(),
+                        format!(
+                            "{}\n{message}",
+                            crate::commands::target::policy_warning("CMP0081")
+                        ),
+                    ),
+                    PolicyStatus::Old => {}
+                }
+            }
         }
     }
     // INTEGRATION: For CMP0099 OLD, traverse in compile mode to exclude
@@ -467,16 +486,7 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
                 self.query
                     .generator
                     .artifact(self.query.ctx, target, self.query.config, true);
-            if full.is_empty() || full.ends_with("-NOTFOUND") {
-                self.query.error(format!(
-                    "IMPORTED_LOCATION not set for imported target \"{}\"{}.",
-                    target.name,
-                    if self.query.config.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" configuration \"{}\"", self.query.config)
-                    }
-                ));
+            if full.is_empty() {
                 return;
             }
             if target.kind != TargetKind::SharedLibrary || !on(self.head, "LINK_DEPENDS_NO_SHARED")

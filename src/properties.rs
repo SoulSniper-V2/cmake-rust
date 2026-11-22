@@ -656,6 +656,31 @@ pub fn set(interp: &mut Interp, object: Object<'_>, name: &str, value: Option<&s
             }
         }
     }
+    // `cmStateDirectory::SetProperty` keeps INCLUDE_DIRECTORIES and friends
+    // as backtraced entry lists.
+    if let Object::Directory(index) = object
+        && crate::commands::target::DIRECTORY_USAGE_PROPERTIES.contains(&name)
+    {
+        match value {
+            Some(value) => {
+                let bt = interp.backtrace.clone();
+                interp.makefiles[index].props.set(name, value.to_owned());
+                interp
+                    .ext
+                    .directory_provenance
+                    .entry(index)
+                    .or_default()
+                    .insert(name.to_owned(), vec![(value.to_owned(), bt)]);
+            }
+            None => {
+                interp.makefiles[index].props.remove(name);
+                if let Some(props) = interp.ext.directory_provenance.get_mut(&index) {
+                    props.remove(name);
+                }
+            }
+        }
+        return;
+    }
     if let Object::Cache(key) = object {
         if let Some(entry) = interp.cache.entries.get_mut(key) {
             match (name, value) {
@@ -720,6 +745,26 @@ pub fn append(interp: &mut Interp, object: Object<'_>, name: &str, value: &str, 
             .or_default()
             .push((value.to_owned(), bt));
         source.props.append(name, value, as_string);
+    } else if let Object::Directory(index) = object
+        && crate::commands::target::DIRECTORY_USAGE_PROPERTIES.contains(&name)
+        && !value.is_empty()
+    {
+        // `cmStateDirectory::AppendProperty` appends a backtraced entry.
+        let bt = interp.backtrace.clone();
+        let mut entries = crate::commands::target::directory_entries(interp, index, name);
+        entries.push((value.to_owned(), bt));
+        let combined = entries
+            .iter()
+            .map(|(value, _)| value.as_str())
+            .collect::<Vec<_>>()
+            .join(";");
+        interp.makefiles[index].props.set(name, combined);
+        interp
+            .ext
+            .directory_provenance
+            .entry(index)
+            .or_default()
+            .insert(name.to_owned(), entries);
     } else if matches!(object, Object::Cache(_)) {
         if name == "TYPE" {
             set(

@@ -564,24 +564,53 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
         return false;
     }
     if property == "IMPORTED_GLOBAL" {
-        let error = if matches!(change, Change::Append(_, _)) {
-            format!(
-                "IMPORTED_GLOBAL property can't be appended, only set on imported targets (\"{name}\")\n"
-            )
-        } else if !matches!(change, Change::Set(Some(value)) if is_on(value)) {
-            format!("IMPORTED_GLOBAL property can't be set to FALSE on targets (\"{name}\")\n")
-        } else {
-            let current = interp.mf_index();
-            let target = interp.ext.targets.get_mut(&key).expect("resolved target");
-            target.imported_global = true;
-            if target.makefile == current {
-                return false;
+        // `cmTarget::SetProperty` issues through the target's owning
+        // makefile; `cmTarget::CheckProperty`'s `CheckIMPORTED_GLOBAL` uses
+        // the calling context's backtrace and runs even after a failed set.
+        let owner = interp.ext.targets[&key].makefile;
+        let owner_backtrace = interp.directory_backtrace(owner);
+        if matches!(change, Change::Append(_, _)) {
+            interp.issue_at(
+                MessageType::FatalError,
+                &format!(
+                    "IMPORTED_GLOBAL property can't be appended, only set on imported targets (\"{name}\")\n"
+                ),
+                &owner_backtrace,
+            );
+            return false;
+        }
+        if !matches!(change, Change::Set(Some(value)) if is_on(value)) {
+            interp.issue_at(
+                MessageType::FatalError,
+                &format!(
+                    "IMPORTED_GLOBAL property can't be set to FALSE on targets (\"{name}\")\n"
+                ),
+                &owner_backtrace,
+            );
+            if owner != interp.mf_index() {
+                interp.issue(
+                    MessageType::FatalError,
+                    &format!(
+                        "Attempt to promote imported target \"{name}\" to global scope (by setting IMPORTED_GLOBAL) which is not built in this directory."
+                    ),
+                );
             }
-            format!(
-                "Attempt to promote imported target \"{name}\" to global scope (by setting IMPORTED_GLOBAL) which is not built in this directory.\n"
-            )
-        };
-        interp.issue(MessageType::FatalError, &error);
+            return false;
+        }
+        interp
+            .ext
+            .targets
+            .get_mut(&key)
+            .expect("resolved target")
+            .imported_global = true;
+        if owner != interp.mf_index() {
+            interp.issue(
+                MessageType::FatalError,
+                &format!(
+                    "Attempt to promote imported target \"{name}\" to global scope (by setting IMPORTED_GLOBAL) which is not built in this directory."
+                ),
+            );
+        }
         return false;
     }
     true

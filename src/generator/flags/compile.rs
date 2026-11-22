@@ -117,7 +117,9 @@ fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
         if matches!(preset, "default" | "hidden" | "protected" | "internal") {
             append(&mut flags, &format!("{prefix}{preset}"));
         } else {
-            inputs.error(format!(
+            // `cmLocalGenerator::AppendFeatureOptions`: cmSystemTools::Error
+            // emits a bare single-line diagnostic.
+            inputs.ctx.system_error(format!(
                 "Target {} uses unsupported value \"{preset}\" for {visibility}. The supported values are: default, hidden, protected, and internal.",
                 inputs.target.name
             ));

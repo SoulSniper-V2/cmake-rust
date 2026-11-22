@@ -342,6 +342,24 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
                 return;
             }
             need_test.insert(lang.clone(), true);
+            // `cmGlobalGenerator::EnableLanguage`: CMP0132 OLD/WARN exports
+            // the compiler env var for user scripts.
+            if matches!(
+                interp.policy_status("CMP0132"),
+                crate::policy::PolicyStatus::Old | crate::policy::PolicyStatus::Warn
+            ) && interp.get_def("CMAKE_GENERATOR_NO_COMPILER_ENV").is_none()
+            {
+                let env_var = format!("CMAKE_{lang}_COMPILER_ENV_VAR");
+                let compiler = format!("CMAKE_{lang}_COMPILER");
+                if let (Some(var), Some(value)) = (
+                    interp.get_def(&env_var).map(str::to_owned),
+                    interp.get_def(&compiler).map(str::to_owned),
+                ) {
+                    unsafe {
+                        std::env::set_var(var, value);
+                    }
+                }
+            }
             let path = format!("{root_bin}/CMake{lang}Compiler.cmake");
             if !read(interp, &path) {
                 crate::configure::system_error(
