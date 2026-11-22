@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
-use super::{ctx::GenCtx, export, package_info, target};
+use super::{ctx::GenCtx, export, link, package_info, target};
 use crate::commands::install::{legacy_source, unix_slashes};
 use crate::fsutil::write_if_different;
 use crate::install_model::*;
@@ -472,7 +472,7 @@ fn render_rule(
             imported,
         } => {
             if let Some(tgt) = ctx.target_at(index, name) {
-                render_target(ctx, out, opts, tgt, *namelink, *imported, indent);
+                render_target(ctx, out, rule, tgt, *namelink, *imported, indent);
             }
         }
         InstallAction::Bmi(name) => {
@@ -533,7 +533,7 @@ fn render_rule(
                         | TargetKind::ModuleLibrary
                 )
             }) {
-                render_target(ctx, out, opts, tgt, Namelink::None, false, indent);
+                render_target(ctx, out, rule, tgt, Namelink::None, false, indent);
             }
         }
         InstallAction::RuntimeDependencies { .. } => unreachable!(),
@@ -704,12 +704,13 @@ pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
 fn render_target(
     ctx: &GenCtx,
     out: &mut String,
-    opts: &InstallOptions,
+    rule: &InstallRule,
     tgt: &Target,
     namelink: Namelink,
     imported: bool,
     indent: &str,
 ) {
+    let opts = &rule.options;
     let kind = match tgt.kind {
         TargetKind::Executable => CopyKind::Executable,
         TargetKind::StaticLibrary => CopyKind::Static,
@@ -789,12 +790,23 @@ fn render_target(
         .collect();
     let dynamic = tgt.kind != TargetKind::StaticLibrary && namelink != Namelink::Only;
     let rpaths = if dynamic {
-        install_rpaths(ctx, tgt)
+        let language = target::linker_language(ctx, tgt, &ctx.config);
+        link::link_line(ctx, tgt, &ctx.config, &language).rpath_change
     } else {
         None
     };
+    let cmp0095 = index_of("CMP0095").unwrap();
+    let policy = tgt.policies.get(cmp0095).unwrap_or(PolicyStatus::Warn);
+    let format_install_rpath = |value: &str| {
+        if policy == PolicyStatus::New {
+            escape_for_cmake(value)
+        } else {
+            format!("\"{value}\"")
+        }
+    };
     let tweak_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(&dest));
     if let Some((_, new)) = &rpaths {
+        let new = format_install_rpath(new);
         tweak(
             out,
             indent,
@@ -812,6 +824,20 @@ fn render_target(
         String::new()
     };
     let rpaths = rpaths.filter(|(old, new)| old != new);
+    if let Some((_, new)) = &rpaths
+        && policy == PolicyStatus::Warn
+        && new.contains("${")
+    {
+        ctx.message(
+            crate::messages::MessageType::AuthorWarning,
+            rule.backtrace.clone(),
+            format!(
+                "{}\nRPATH entries for target '{}' will not be escaped in the intermediary cmake_install.cmake script.",
+                crate::policy::policy_warning(cmp0095),
+                tgt.name
+            ),
+        );
+    }
     if !strip.is_empty() || rpaths.is_some() {
         tweak(
             out,
@@ -820,6 +846,8 @@ fn render_target(
             &install_names,
             |out, indent, file| {
                 if let Some((old, new)) = &rpaths {
+                    let old = escape_for_cmake(old);
+                    let new = format_install_rpath(new);
                     write!(out, "{indent}file(RPATH_CHANGE\n{indent}     FILE \"{file}\"\n{indent}     OLD_RPATH {old}\n{indent}     NEW_RPATH {new}").unwrap();
                     if is_on_opt(tgt.props.get("INSTALL_REMOVE_ENVIRONMENT_RPATH")) {
                         write!(out, "\n{indent}     INSTALL_REMOVE_ENVIRONMENT_RPATH").unwrap();
@@ -863,95 +891,6 @@ fn tweak(
     if loop_files {
         writeln!(out, "{indent}endforeach()").unwrap();
     }
-}
-
-fn install_rpaths(ctx: &GenCtx, tgt: &Target) -> Option<(String, String)> {
-    let on = |key| is_on_opt(ctx.var(tgt.makefile, key).as_deref());
-    if on("CMAKE_SKIP_RPATH")
-        || on("CMAKE_NO_BUILTIN_CHRPATH")
-        || is_on_opt(tgt.props.get("BUILD_WITH_INSTALL_RPATH"))
-        || ctx.var_safe(tgt.makefile, "CMAKE_EXECUTABLE_FORMAT") != "ELF"
-    {
-        return None;
-    }
-    let language = target::linker_language(ctx, tgt, &ctx.config);
-    let separator = ctx.var_safe(
-        tgt.makefile,
-        &format!("CMAKE_SHARED_LIBRARY_RUNTIME_{language}_FLAG_SEP"),
-    );
-    if separator.is_empty() {
-        return None;
-    }
-    // INTEGRATION: use cmComputeLinkInformation's shared runtime search
-    // paths once generator::link exposes them.
-    let rpath = |key| {
-        expand_list(
-            &ctx.genex(tgt.props.get(key).unwrap_or(""), Some(tgt), None),
-            false,
-        )
-    };
-    let mut old = if is_on_opt(tgt.props.get("SKIP_BUILD_RPATH")) {
-        Vec::new()
-    } else {
-        rpath("BUILD_RPATH")
-    };
-    if !is_on_opt(tgt.props.get("SKIP_BUILD_RPATH")) {
-        for item in expand_list(tgt.props.get("LINK_LIBRARIES").unwrap_or(""), false) {
-            let dep = ctx
-                .target(&item)
-                .filter(|t| t.kind == TargetKind::SharedLibrary);
-            if let Some(dep) = dep {
-                old.push(target::directory(
-                    ctx,
-                    dep,
-                    &ctx.config,
-                    target::ArtifactType::Runtime,
-                ));
-            } else if is_full_path(&item) && item.contains(".so") {
-                old.push(crate::util::filename_path(&item));
-            }
-        }
-    }
-    let mut new = if on("CMAKE_SKIP_INSTALL_RPATH") {
-        Vec::new()
-    } else {
-        rpath("INSTALL_RPATH")
-    };
-    if !on("CMAKE_SKIP_INSTALL_RPATH") && is_on_opt(tgt.props.get("INSTALL_RPATH_USE_LINK_PATH")) {
-        new.extend(
-            old.iter()
-                .filter(|dir| {
-                    let path = Path::new(dir);
-                    !path.starts_with(&ctx.interp.home_source)
-                        && !path.starts_with(&ctx.interp.home_binary)
-                })
-                .cloned(),
-        );
-    }
-    let join = |paths: Vec<String>| {
-        let mut unique = Vec::new();
-        for path in paths {
-            if !unique.contains(&path) {
-                unique.push(path);
-            }
-        }
-        unique.join(&separator)
-    };
-    let new = join(new);
-    let mut old = join(old);
-    if !old.is_empty() {
-        old.push_str(&separator);
-    }
-    while old.len() < new.len() {
-        old.push_str(&separator);
-    }
-    let old = escape_for_cmake(&old);
-    let new = if directory_policy(ctx, tgt.makefile, "CMP0095") == PolicyStatus::New {
-        escape_for_cmake(&new)
-    } else {
-        format!("\"{new}\"")
-    };
-    Some((old, new))
 }
 
 pub(super) fn file_set_properties(
