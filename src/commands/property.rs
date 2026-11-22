@@ -541,7 +541,11 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
     let pch_append = property == "PRECOMPILE_HEADERS"
         && matches!(change, Change::Append(..))
         && target.props.contains("PRECOMPILE_HEADERS_REUSE_FROM");
-    if reuse_set || pch_append {
+    if reuse_set
+        || pch_append
+        || property.starts_with("IMPORTED_LIBNAME")
+        || crate::commands::target::file_set_property(property).is_some()
+    {
         let (value, how) = match change {
             Change::Set(value) => (value, crate::commands::target::PropertyWrite::Set),
             Change::Append(value, true) => (

@@ -46,7 +46,7 @@ candidate. The pinned Kitware `ctest` is the independent test runner.
 - **Kitware CMake 4.1.0**: the configure log, `CMakeCache.txt` and `rules.ninja` are identical to the oracle's, and `build.ninja` differs only in the regeneration-dependency order. One nested try-compile tree still differs: `Tests/CMakeFiles/CheckFortran` records a different `CMakeFortranCompiler.cmake`, because Fortran preprocessing and dyndep scanning in the Ninja generator are not ported yet. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 683/683 passed (re-measured at `7b0e89f` against a reference rebuilt with `BUILD_CursesDialog=OFF`; the oracle-configured tree registers the same 683 tests).
 - **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
 
-- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 5,117 of 5,638 eligible cases pass (90.76%) at `16912d2` (4,504 of 5,592 at `57dd2aa`).
+- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 5,189 of 5,638 eligible cases pass (92.03%) at `62e3e4f` (4,504 of 5,592 at `57dd2aa`).
 
 `file(DOWNLOAD)` and `file(UPLOAD)` run on the host's `libcurl.so.4`, which is loaded at the first transfer. Status and error text come from the `curl_easy_strerror` table of the curl 8.14.1 that CMake vendors, generated from the pinned sources. `LOG` output comes from the host libcurl, so its wording can differ.
 

@@ -29,7 +29,7 @@ impl<'c, 'a> CtxHost<'c, 'a> {
 
     fn artifact_path(&self, target: &Target, kind: ArtifactKind, config: &str) -> String {
         let ctx = self.ctx;
-        let Some(artifact) = self.artifact_type(target, kind) else {
+        let Some(artifact) = self.artifact_type(target, kind, config) else {
             return String::new();
         };
         match kind {
@@ -66,14 +66,19 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         }
     }
 
-    fn artifact_type(&self, target: &Target, kind: ArtifactKind) -> Option<ArtifactType> {
+    fn artifact_type(
+        &self,
+        target: &Target,
+        kind: ArtifactKind,
+        config: &str,
+    ) -> Option<ArtifactType> {
         match kind {
             ArtifactKind::ImportFile
             | ArtifactKind::LinkerImportFile
             | ArtifactKind::SonameImportFile => {
-                gt::has_import_library(self.ctx, target).then_some(ArtifactType::Import)
+                gt::has_import_library(self.ctx, target, config).then_some(ArtifactType::Import)
             }
-            ArtifactKind::LinkerFile if gt::has_import_library(self.ctx, target) => {
+            ArtifactKind::LinkerFile if gt::has_import_library(self.ctx, target, config) => {
                 Some(ArtifactType::Import)
             }
             ArtifactKind::LinkerLibraryFile
@@ -207,7 +212,7 @@ impl GenexHost for CtxHost<'_, '_> {
         let target = self
             .find(name)
             .ok_or_else(|| format!("No target \"{name}\""))?;
-        let Some(artifact) = self.artifact_type(target, kind) else {
+        let Some(artifact) = self.artifact_type(target, kind, config) else {
             return Ok(String::new());
         };
         Ok(match component {

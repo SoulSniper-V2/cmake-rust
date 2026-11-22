@@ -31,11 +31,10 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
     let mut singles = vec!["NAMESPACE", "FILE", "CXX_MODULES_DIRECTORY"];
     let mut lists = Vec::new();
     let mut flags = Vec::new();
-    let experimental = package_dependencies_enabled(interp);
     match mode {
         "EXPORT" => {
             singles.push(mode);
-            if experimental {
+            if package_dependencies_enabled(interp) {
                 flags.push("EXPORT_PACKAGE_DEPENDENCIES");
             }
             if export_package_info_enabled(interp) {
@@ -44,7 +43,10 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
                 flags.extend(crate::package_info::FLAG_KEYS);
             }
         }
-        "SETUP" => return setup(interp, args, experimental),
+        "SETUP" => {
+            let experimental = package_dependencies_enabled(interp);
+            return setup(interp, args, experimental);
+        }
         _ => {
             singles.push("ANDROID_MK");
             lists.push("TARGETS");

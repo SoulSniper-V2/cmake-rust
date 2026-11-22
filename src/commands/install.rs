@@ -1142,9 +1142,27 @@ fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-pub(super) fn package_dependencies_enabled(interp: &Interp) -> bool {
-    interp.get_def("CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_DEPENDENCIES")
-        == Some("1942b4fa-b2c5-4546-9385-83f254070067")
+pub(super) fn package_dependencies_enabled(interp: &mut Interp) -> bool {
+    let Some(value) = interp.read_definition("CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_DEPENDENCIES")
+    else {
+        return false;
+    };
+    let enabled = value == "1942b4fa-b2c5-4546-9385-83f254070067";
+    if interp
+        .ext
+        .experimental_warnings
+        .insert(("ExportPackageDependencies".to_owned(), value.clone()))
+    {
+        let message = if enabled {
+            "CMake's EXPORT_PACKAGE_DEPENDENCIES support is experimental. It is meant only for experimentation and feedback to CMake developers.".to_owned()
+        } else {
+            format!(
+                "CMAKE_EXPERIMENTAL_EXPORT_PACKAGE_DEPENDENCIES is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature."
+            )
+        };
+        interp.issue(MessageType::AuthorWarning, &message);
+    }
+    enabled
 }
 
 fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
