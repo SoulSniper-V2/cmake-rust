@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 use md5::{Digest, Md5};
 
@@ -673,11 +674,11 @@ fn directory_policy(ctx: &GenCtx, makefile: usize, index: usize) -> PolicyStatus
         .unwrap_or(PolicyStatus::Warn)
 }
 
-fn warning(ctx: &GenCtx, kind: MessageType, text: &str) {
+fn warning(ctx: &GenCtx, kind: MessageType, text: &str, backtrace: &[Frame]) {
     // INTEGRATION: use generation's typed diagnostic queue once available.
     if kind == MessageType::AuthorWarning {
         if ctx.interp.dev_warnings_as_errors {
-            ctx.error(Vec::new(), text);
+            ctx.error(backtrace.to_vec(), text);
             return;
         }
         if ctx.interp.suppress_dev_warnings {
@@ -686,7 +687,7 @@ fn warning(ctx: &GenCtx, kind: MessageType, text: &str) {
     }
     eprintln!(
         "{}",
-        messages::render(kind, text, &[], Some(&ctx.interp.home_source))
+        messages::render(kind, text, backtrace, Some(&ctx.interp.home_source))
     );
 }
 
@@ -778,6 +779,7 @@ fn imported_full_path(
                     ctx,
                     MessageType::AuthorWarning,
                     &format!("{}\n{message}", policy::policy_warning(111)),
+                    &[],
                 ),
                 PolicyStatus::Old => {}
             }
@@ -862,11 +864,14 @@ const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
 ];
 
 /// `cmSourceFile::ResolveFullPath` for a source listed by `target`.
+/// `backtrace` is the source entry's recorded backtrace
+/// (`EvaluatedTargetPropertyEntry::Backtrace` in `processSources`).
 fn resolve_source(
     ctx: &GenCtx,
     target: &Target,
     source: &str,
     property: &impl Fn(&str, &str) -> Option<String>,
+    backtrace: &[Frame],
 ) -> Option<(String, bool)> {
     let makefile = target.makefile;
     let directory = &ctx.interp.makefiles[makefile];
@@ -894,6 +899,7 @@ fn resolve_source(
                             ctx,
                             MessageType::AuthorWarning,
                             &format!("{}\nFile:\n  {candidate}", policy::policy_warning(115)),
+                            backtrace,
                         );
                     }
                     let is_generated = generated(&candidate);
@@ -915,9 +921,7 @@ fn resolve_source(
     }
     let key = format!("target:missing-source:{makefile}:{source}");
     if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
-        // INTEGRATION: attach the source entry's backtrace when the target
-        // model exposes it alongside SOURCES/INTERFACE_SOURCES.
-        ctx.error(Vec::new(), error);
+        ctx.error(backtrace.to_vec(), error);
     }
     None
 }
@@ -1086,6 +1090,7 @@ fn object_path_max(ctx: &GenCtx, directory: usize) -> usize {
             ctx,
             MessageType::AuthorWarning,
             &format!("CMAKE_OBJECT_PATH_MAX is set to {why}  The value will be ignored."),
+            &[],
         );
     }
     1000
@@ -1226,6 +1231,7 @@ fn object_file_name(
                     "The object file directory\n  {directory}\nhas {} characters.  The maximum full path to an object file is {max} characters (see CMAKE_OBJECT_PATH_MAX).  Object file\n  {name}\ncannot be safely placed under this directory.  The build may not work correctly.",
                     directory.len()
                 ),
+                &[],
             );
         }
     }
@@ -1278,6 +1284,50 @@ fn evaluated_links(ctx: &GenCtx, provider: &Target, head: &Target, property: &st
         &ctx.genex_with_dag(provider.props.get(property).unwrap_or_default(), provider, head, property, None),
         false,
     )
+}
+
+/// `EvaluateTargetPropertyEntries`: one evaluated entry per recorded
+/// provenance entry, each carrying the appending command's backtrace.
+/// Falls back to a single entry without a backtrace when the property was
+/// written without provenance tracking.
+fn evaluated_entries(
+    ctx: &GenCtx,
+    provider: &Target,
+    head: &Target,
+    property: &str,
+) -> Vec<(Vec<String>, Vec<Frame>)> {
+    match provider.provenance.get(property) {
+        Some(entries) if !entries.is_empty() => entries
+            .iter()
+            .map(|(value, backtrace)| {
+                (
+                    expand_list(
+                        &ctx.genex_with_dag(value, provider, head, property, None),
+                        false,
+                    ),
+                    backtrace.clone(),
+                )
+            })
+            .collect(),
+        _ => vec![(evaluated_links(ctx, provider, head, property), Vec::new())],
+    }
+}
+
+/// `cmLocalGenerator::DirectoryBacktrace`: the makefile's persistent
+/// file-scope frame, used for diagnostics issued through the local generator.
+fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
+    let makefile = &ctx.interp.makefiles[makefile];
+    let file = makefile
+        .list_files
+        .first()
+        .cloned()
+        .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
+    vec![Frame {
+        file: Rc::from(file.as_str()),
+        line: 0,
+        name: None,
+        deferred: false,
+    }]
 }
 
 fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool)> {
@@ -1361,6 +1411,9 @@ enum Listed {
     Path {
         path: String,
         provider: Option<String>,
+        /// `EvaluatedTargetPropertyEntry::Backtrace`: the backtrace of the
+        /// command that appended the containing source entry.
+        backtrace: Vec<Frame>,
     },
     /// `$<TARGET_OBJECTS:lib>` of a directly linked OBJECT library.
     Object { path: String, library: String },
@@ -1374,27 +1427,42 @@ fn collect_sources(
     compile_closure: &[&Target],
     property: &impl Fn(&str, &str) -> Option<String>,
 ) -> Vec<SourceInfo> {
-    let path_entry = |path: String, provider: Option<&Target>| Listed::Path {
-        path,
-        provider: provider.map(|provider| provider.name.clone()),
-    };
-    // Each group is one processSources call, with one entry per provider.
+    // Each group is one processSources call, with one entry per recorded
+    // property entry (EvaluatedTargetPropertyEntry), carrying the appending
+    // command's backtrace.
     let mut groups: Vec<Vec<Vec<Listed>>> = Vec::new();
-    groups.push(vec![
-        evaluated_links(ctx, target, target, "SOURCES")
+    groups.push(
+        evaluated_entries(ctx, target, target, "SOURCES")
             .into_iter()
-            .map(|source| path_entry(source, None))
+            .map(|(sources, backtrace)| {
+                sources
+                    .into_iter()
+                    .map(|path| Listed::Path {
+                        path,
+                        provider: None,
+                        backtrace: backtrace.clone(),
+                    })
+                    .collect()
+            })
             .collect(),
-    ]);
+    );
     // AddInterfaceEntries(INTERFACE_SOURCES) over the compile closure.
     groups.push(
         compile_closure
             .iter()
-            .map(|provider| {
-                evaluated_links(ctx, provider, target, "INTERFACE_SOURCES")
+            .flat_map(|provider| {
+                evaluated_entries(ctx, provider, target, "INTERFACE_SOURCES")
                     .into_iter()
-                    .map(|source| path_entry(source, Some(provider)))
-                    .collect()
+                    .map(|(sources, backtrace)| {
+                        sources
+                            .into_iter()
+                            .map(|path| Listed::Path {
+                                path,
+                                provider: Some(provider.name.clone()),
+                                backtrace: backtrace.clone(),
+                            })
+                            .collect::<Vec<Listed>>()
+                    })
             })
             .collect(),
     );
@@ -1437,7 +1505,11 @@ fn collect_sources(
             // addFileSetEntry marks HEADERS members HEADER_FILE_ONLY.
             header_set.insert(file.clone());
         }
-        set_files.push(path_entry(file, None));
+        set_files.push(Listed::Path {
+            path: file,
+            provider: None,
+            backtrace: Vec::new(),
+        });
     }
     groups.push(vec![set_files]);
 
@@ -1456,9 +1528,10 @@ fn collect_sources(
                     Listed::Path {
                         path: source,
                         provider,
+                        backtrace,
                     } => {
                         let Some((path, generated)) =
-                            resolve_source(ctx, target, &source, property)
+                            resolve_source(ctx, target, &source, property, &backtrace)
                         else {
                             continue 'groups;
                         };
@@ -1466,7 +1539,7 @@ fn collect_sources(
                             && !is_full_path(&source)
                         {
                             ctx.error(
-                            Vec::new(),
+                            directory_backtrace(ctx, target.makefile),
                             format!(
                                 "Target \"{provider}\" contains relative path in its INTERFACE_SOURCES:\n  \"{source}\""
                             ),
@@ -1575,21 +1648,34 @@ pub fn can_compile_sources(target: &Target) -> bool {
 }
 
 /// `cmGlobalGenerator::CheckTargetsForMissingSources`. Returns true when an
-/// error was reported (generation must stop).
-#[allow(dead_code, reason = "preflight query for the generator driver")]
+/// error was reported (generation must stop). Source resolution happens
+/// first (it runs during `ComputeTargetCompileFeatures` and the other
+/// pre-generation target computations), so all "Cannot find source file"
+/// diagnostics precede the "No SOURCES" diagnostics.
 pub fn check_targets_for_missing_sources(ctx: &GenCtx) -> bool {
+    let mut missing = Vec::new();
+    for makefile in 0..ctx.interp.makefiles.len() {
+        for key in &ctx.interp.makefiles[makefile].targets {
+            let Some(target) = ctx.interp.ext.targets.get(key) else {
+                continue;
+            };
+            if !can_compile_sources(target)
+                || is_on_opt(target.props.get("ghs_integrity_app"))
+            {
+                continue;
+            }
+            if sources(ctx, target, &ctx.config).is_empty() {
+                missing.push(target);
+            }
+        }
+    }
     let mut failed = false;
-    for target in ctx.targets_in_order() {
-        if !can_compile_sources(target) || is_on_opt(target.props.get("ghs_integrity_app")) {
-            continue;
-        }
-        if sources(ctx, target, &ctx.config).is_empty() {
-            ctx.error(
-                Vec::new(),
-                format!("No SOURCES given to target: {}", target.name),
-            );
-            failed = true;
-        }
+    for target in missing {
+        ctx.error(
+            target.backtrace.clone(),
+            format!("No SOURCES given to target: {}", target.name),
+        );
+        failed = true;
     }
     failed
 }

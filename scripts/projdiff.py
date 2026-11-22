@@ -46,6 +46,10 @@ def normalize(text, work, binary):
     # CMP0116 internal depfile names hash the absolute depfile path, which
     # differs between the two work directories.
     text = re.sub(r"CMakeFiles/d/[0-9a-f]{64}\.d", "CMakeFiles/d/<SHA256>.d", text)
+    # try_compile scratch directories and generated test targets carry random
+    # names (mkdtemp / cmSystemTools::RandomNumber).
+    text = re.sub(r"TryCompile-[0-9A-Za-z]+", "TryCompile-<RAND>", text)
+    text = re.sub(r"cmTC_[0-9a-f]+", "cmTC_<RAND>", text)
     return text
 
 

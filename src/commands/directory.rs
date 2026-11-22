@@ -116,17 +116,17 @@ fn configure_subdirectory(
     exclude: bool,
     system: bool,
 ) -> CmdResult {
+    // cmMakefile::AddSubDirectory registers the child makefile before the
+    // CMakeLists.txt existence check, so failed directories still count
+    // toward CMAKE_NUMBER_OF_MAKEFILES.
+    let index = interp.create_subdirectory(source, binary, exclude);
     if !Path::new(source).join("CMakeLists.txt").is_file() {
         return report(
             interp,
             &format!("The source directory\n  {source}\ndoes not contain a CMakeLists.txt file."),
         );
     }
-    if system {
-        interp.run_subdirectory_with_system(source, binary, exclude, true);
-    } else {
-        interp.run_subdirectory(source, binary, exclude);
-    }
+    interp.configure_subdirectory(index, system);
     Ok(())
 }
 
@@ -236,7 +236,9 @@ pub fn finish_directory(interp: &mut Interp) {
         return;
     };
     for dir in dirs {
-        let saved = std::mem::replace(&mut interp.backtrace, dir.backtrace);
+        // cmMakefile::Configure runs deferred subdirectories after the
+        // parent's list file; diagnostics use the parent's file-scope
+        // backtrace, which is the interpreter's current backtrace here.
         if Path::new(&dir.source).join("CMakeLists.txt").is_file() {
             interp.configure_subdirectory(dir.index, false);
         } else {
@@ -248,7 +250,6 @@ pub fn finish_directory(interp: &mut Interp) {
                 ),
             );
         }
-        interp.backtrace = saved;
     }
 }
 
