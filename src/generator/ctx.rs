@@ -73,6 +73,7 @@ impl<'a> GenCtx<'a> {
     /// root scope after configure; per-directory final scopes are recorded
     /// by the configure step in `dir_vars` when available.
     pub fn var(&self, makefile: usize, name: &str) -> Option<String> {
+        self.interp.mark_cli_used(name);
         if let Some(vars) = self.interp.dir_final_vars.get(makefile)
             && let Some(Some(value)) = vars.get(name)
         {

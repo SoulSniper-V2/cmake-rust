@@ -74,6 +74,9 @@ const PERSISTENT: [&str; 3] = ["ADVANCED", "MODIFIED", "STRINGS"];
 #[derive(Clone, Debug, Default)]
 pub struct Cache {
     pub entries: BTreeMap<String, CacheEntry>,
+    /// Keys added since the last `clear_touched` (each `cmake::AddCacheEntry`
+    /// stops watching the key for unused-variable warnings).
+    pub touched: std::collections::BTreeSet<String>,
 }
 
 /// Parses one `KEY:TYPE=VALUE` line (or `KEY=VALUE`), as
@@ -151,6 +154,7 @@ impl Cache {
 
     /// `cmCacheManager::AddCacheEntry`.
     pub fn add(&mut self, key: &str, value: Option<&str>, help: Option<&str>, kind: CacheType) {
+        self.touched.insert(key.to_owned());
         let entry = self.entries.entry(key.to_owned()).or_insert_with(|| CacheEntry {
             value: String::new(),
             kind,

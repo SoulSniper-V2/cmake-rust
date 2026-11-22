@@ -226,10 +226,17 @@ pub fn apply_configure_preset(
         expanded.warn_deprecated,
         expanded.error_deprecated,
     );
-    // --warn-uninitialized, --debug-output and --debug-find have no
-    // implementation to enable.
+    if expanded.warn_uninitialized == Some(true) {
+        options.warn_uninitialized = true;
+    }
+    if expanded.warn_unused_cli == Some(false) {
+        options.no_warn_unused_cli = true;
+    }
+    if expanded.warn_system_vars == Some(true) {
+        options.check_system_vars = true;
+    }
+    // --debug-output and --debug-find have no implementation to enable.
     for (field, enabled) in [
-        ("warnings.uninitialized", expanded.warn_uninitialized == Some(true)),
         ("debug.output", expanded.debug_output == Some(true)),
         ("debug.find", expanded.debug_find == Some(true)),
     ] {

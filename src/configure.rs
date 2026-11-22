@@ -40,6 +40,10 @@ pub struct ConfigureOptions {
     pub warn_deprecated: Option<bool>,
     pub warn_deprecated_error: Option<bool>,
     pub warn_uninitialized: bool,
+    /// `--check-system-vars`.
+    pub check_system_vars: bool,
+    /// `--no-warn-unused-cli` (or a preset's "unusedCli": false).
+    pub no_warn_unused_cli: bool,
     pub debug_trycompile: bool,
     pub trace: bool,
     /// `--trace-expand` (cmake::TraceExpand).
@@ -158,12 +162,23 @@ fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
         }
     }
     for definition in &options.definitions {
+        // cmake::ProcessCacheArg
+        let cached = interp
+            .cache
+            .get(&definition.name)
+            .filter(|entry| entry.initialized)
+            .map(|entry| entry.value.clone());
         interp.cache.add(
             &definition.name,
             Some(&definition.value),
             Some("No help, variable specified on the command line."),
             definition.kind.unwrap_or(CacheType::Uninitialized),
         );
+        let mut vars = interp.cli_vars.borrow_mut();
+        vars.remove(&definition.name);
+        if interp.warn_unused_cli && cached.as_deref() != interp.cache.value(&definition.name) {
+            vars.insert(definition.name.clone(), false);
+        }
     }
     for pattern in &options.undefine {
         let regex = glob_to_regex(pattern);
@@ -182,25 +197,78 @@ fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
             interp.cache.remove(&name);
         }
     }
+    // cmake::ProcessCacheArg's unused-variable watch for a value it set.
+    let watch = |interp: &mut Interp, name: &str, cached: Option<String>| {
+        let mut vars = interp.cli_vars.borrow_mut();
+        vars.remove(name);
+        if interp.warn_unused_cli && cached.as_deref() != interp.cache.value(name) {
+            vars.insert(name.to_owned(), false);
+        }
+    };
+    let cached_value = |interp: &Interp, name: &str| {
+        interp
+            .cache
+            .get(name)
+            .filter(|entry| entry.initialized)
+            .map(|entry| entry.value.clone())
+    };
     if let Some(toolchain) = &options.toolchain_file {
         let path = util::collapse_full_path(toolchain, &util_cwd());
+        let cached = cached_value(interp, "CMAKE_TOOLCHAIN_FILE");
         interp.cache.add(
             "CMAKE_TOOLCHAIN_FILE",
             Some(&path),
             Some("The CMake toolchain file"),
             CacheType::Filepath,
         );
+        watch(interp, "CMAKE_TOOLCHAIN_FILE", cached);
     }
     if let Some(prefix) = &options.install_prefix {
         let path = util::collapse_full_path(prefix, &util_cwd());
+        let cached = cached_value(interp, "CMAKE_INSTALL_PREFIX");
         interp.cache.add(
             "CMAKE_INSTALL_PREFIX",
             Some(&path),
             Some("Install path prefix, prepended onto install directories."),
             CacheType::Path,
         );
+        watch(interp, "CMAKE_INSTALL_PREFIX", cached);
     }
+    // Later cache additions (cmake::AddCacheEntry) stop watching a key.
+    interp.cache.touched.clear();
     true
+}
+
+/// `cmake::RunCheckForUnusedVariables`.
+pub fn check_for_unused_variables(interp: &mut Interp) {
+    if !interp.warn_unused_cli {
+        return;
+    }
+    // cmake::LoadCache/SaveCache unwatch the cache format entries; normal
+    // mode marks the SARIF variable as used.
+    const UNWATCHED: [&str; 5] = [
+        "CMAKE_CACHE_MAJOR_VERSION",
+        "CMAKE_CACHE_MINOR_VERSION",
+        "CMAKE_CACHE_PATCH_VERSION",
+        "CMAKE_CACHEFILE_DIR",
+        "CMAKE_EXPORT_SARIF",
+    ];
+    let unused: Vec<String> = interp
+        .cli_vars
+        .borrow()
+        .iter()
+        .filter(|(name, used)| {
+            !**used && !interp.cache.touched.contains(*name) && !UNWATCHED.contains(&name.as_str())
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    if !unused.is_empty() {
+        let mut message = "Manually-specified variables were not used by the project:".to_owned();
+        for name in unused {
+            message += &format!("\n  {name}");
+        }
+        interp.issue_at(MessageType::Warning, &message, &[]);
+    }
 }
 
 fn util_cwd() -> String {
@@ -231,6 +299,9 @@ pub(crate) fn glob_to_regex(pattern: &str) -> crate::cmregex::Regex {
 /// Builds an interpreter for configuring `options`.
 /// The cmake instance's trace settings (`SetTrace*`, `SetTraceFile`).
 pub fn install_trace(interp: &mut Interp, options: &ConfigureOptions) {
+    interp.warn_uninitialized = options.warn_uninitialized;
+    interp.warn_unused_cli = !options.no_warn_unused_cli && !options.in_try_compile;
+    interp.check_system_vars = options.check_system_vars;
     if !options.trace {
         return;
     }

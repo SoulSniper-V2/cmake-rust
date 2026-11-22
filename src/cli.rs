@@ -633,11 +633,15 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 "--debug-output" => println!("Running with debug output on."),
                 "--debug-find" => println!("Running with debug output on for the `find` commands."),
                 "--no-warn-unused-cli" => {
-                    println!("Not searching for unused variables given on the command line.")
+                    println!("Not searching for unused variables given on the command line.");
+                    options.no_warn_unused_cli = true;
                 }
-                "--check-system-vars" => println!(
-                    "Also check system files when warning about unused and uninitialized variables."
-                ),
+                "--check-system-vars" => {
+                    println!(
+                        "Also check system files when warning about unused and uninitialized variables."
+                    );
+                    options.check_system_vars = true;
+                }
                 "--compile-no-warning-as-error" => println!(
                     "Ignoring COMPILE_WARNING_AS_ERROR target property and CMAKE_COMPILE_WARNING_AS_ERROR variable."
                 ),

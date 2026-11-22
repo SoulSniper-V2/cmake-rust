@@ -73,6 +73,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         let ctx = ctx::GenCtx::new(interp);
         graphviz::generate_graphviz(&ctx, file);
     }
+    if !options.in_try_compile {
+        crate::configure::check_for_unused_variables(interp);
+    }
     // cmake::Generate: "Generating done" precedes the error-flag check.
     if interp.error {
         return -1;

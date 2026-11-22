@@ -4,7 +4,7 @@
 //! `cmFunctionCommand`, `cmMacroCommand`, `cmIfCommand`, `cmForEachCommand`,
 //! `cmWhileCommand`, `cmBlockCommand` and `cmReturnCommand` semantics.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::cache::{Cache, CacheType};
@@ -253,6 +253,15 @@ pub struct Interp {
     /// try_compile project inherits the outer project's root because the
     /// `cmake` instance is shared (`cmMessenger::TopSource`).
     pub top_source_root: Option<String>,
+    /// `--warn-uninitialized` (cmake::WarnUninitialized).
+    pub warn_uninitialized: bool,
+    /// `--check-system-vars` (cmake::CheckSystemVars).
+    pub check_system_vars: bool,
+    /// `cmake::WarnUnusedCli` (on unless --no-warn-unused-cli).
+    pub warn_unused_cli: bool,
+    /// `cmake::UsedCliVariables`: command-line cache variables watched for
+    /// reads (`cmWarnUnusedCliWarning`).
+    pub cli_vars: std::cell::RefCell<BTreeMap<String, bool>>,
     /// Tracing settings shared with try_compile instances
     /// (`cmake::SetTraceRedirect`).
     pub trace: Option<Rc<TraceConfig>>,
@@ -301,6 +310,10 @@ impl Interp {
             recursion_depth_base: 0,
             dir_final_vars: Vec::new(),
             top_source_root: None,
+            warn_uninitialized: false,
+            check_system_vars: false,
+            warn_unused_cli: false,
+            cli_vars: std::cell::RefCell::new(BTreeMap::new()),
             trace: None,
             trace_frame_base: vec![0],
         };
@@ -331,6 +344,7 @@ impl Interp {
     /// Looks up a normal binding or a cache value without running callbacks.
     /// Use read_definition for language reads that dispatch variable watches.
     pub fn get_def(&self, name: &str) -> Option<&str> {
+        self.mark_cli_used(name);
         for scope in self.scopes.iter().rev() {
             if let Some(entry) = scope.vars.get(name) {
                 return match entry {
@@ -390,6 +404,37 @@ impl Interp {
         let top = self.scopes.last_mut().expect("scope");
         top.vars.insert(name.to_owned(), None);
         crate::commands::sysinfo::notify_variable(self, name, "REMOVED_ACCESS", "");
+    }
+
+    /// The variable watch `cmWarnUnusedCliWarning` (`cmake::MarkCliAsUsed`).
+    pub fn mark_cli_used(&self, name: &str) {
+        let watched = {
+            let vars = self.cli_vars.borrow();
+            !vars.is_empty() && vars.get(name) == Some(&false)
+        };
+        if watched {
+            self.cli_vars.borrow_mut().insert(name.to_owned(), true);
+        }
+    }
+
+    /// `cmMakefile::MaybeWarnUninitialized`.
+    fn maybe_warn_uninitialized(&mut self, variable: &str, source_file: Option<&str>) {
+        if !self.warn_uninitialized {
+            return;
+        }
+        // cmMakefile::VariableInitialized: any binding, including unset().
+        if self.scopes.iter().any(|scope| scope.vars.contains_key(variable)) {
+            return;
+        }
+        // cmMakefile::IsProjectFile
+        let is_project_file = |file: &str| {
+            util::is_subdirectory(file, &self.home_source)
+                || (util::is_subdirectory(file, &self.home_binary)
+                    && !util::is_subdirectory(file, &format!("{}/CMakeFiles", self.home_binary)))
+        };
+        if self.check_system_vars || source_file.is_some_and(is_project_file) {
+            self.issue(MessageType::AuthorWarning, &format!("uninitialized variable '{variable}'"));
+        }
     }
 
     /// Reads an expanded variable and invokes registered watch callbacks.
@@ -2022,7 +2067,12 @@ impl Interp {
                                         _ => Some(line.to_string()),
                                     }
                                 } else {
-                                    self.read_definition(&lookup)
+                                    let value = self.read_definition(&lookup);
+                                    if value.is_none() {
+                                        let file = if no_escapes { None } else { location.map(|(file, _)| file) };
+                                        self.maybe_warn_uninitialized(&lookup, file);
+                                    }
+                                    value
                                 }
                             }
                             b'E' => std::env::var_os(&lookup)
@@ -2132,7 +2182,12 @@ impl Interp {
                         let value = if location.is_some() && name == "CMAKE_CURRENT_LIST_LINE" {
                             line.to_string()
                         } else {
-                            self.read_definition(&name).unwrap_or_default()
+                            let value = self.read_definition(&name);
+                            if value.is_none() {
+                                let file = if no_escapes { None } else { location.map(|(file, _)| file) };
+                                self.maybe_warn_uninitialized(&name, file);
+                            }
+                            value.unwrap_or_default()
                         };
                         let value = if escape_quotes {
                             value.replace('"', "\\\"")
