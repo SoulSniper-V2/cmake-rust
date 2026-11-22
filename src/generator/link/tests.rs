@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::*;
+use crate::install_model::{InstallAction, InstallRule, Namelink};
 use crate::interp::{Interp, Makefile, Mode};
 use crate::props::Props;
 
@@ -36,6 +37,8 @@ struct Edge {
     libraries: String,
     #[serde(rename = "LINK_PATH")]
     link_path: String,
+    #[serde(rename = "LINK_FLAGS", default)]
+    link_flags: String,
     explicit: Vec<String>,
     implicit: Vec<String>,
     order_only: Vec<String>,
@@ -151,7 +154,26 @@ fn model(fixture: &Fixture) -> Interp {
         };
         let mut props = Props::default();
         for (key, value) in &record.properties {
-            props.set(key, value.replace("@ROOT@", ROOT));
+            if key == "HAVE_INSTALL_RULE" {
+                interp
+                    .ext
+                    .install
+                    .rules
+                    .entry(directory)
+                    .or_default()
+                    .push(InstallRule {
+                        options: Default::default(),
+                        action: InstallAction::Target {
+                            name: name.clone(),
+                            namelink: Namelink::None,
+                            imported: false,
+                        },
+                        preceding_children: 0,
+                        backtrace: Vec::new(),
+                    });
+            } else {
+                props.set(key, value.replace("@ROOT@", ROOT));
+            }
         }
         if let Some(language) = &record.source_language {
             props.set("FIXTURE_SOURCE_LANGUAGE", language.clone());
@@ -169,7 +191,8 @@ fn model(fixture: &Fixture) -> Interp {
             ..Target::new("", TargetKind::Executable, 0)
         };
         let mut target = target;
-        target.have_install_rule = target.props.get("HAVE_INSTALL_RULE").is_some_and(crate::util::is_on);
+        // install(TARGETS) marks the target (cmTarget::SetHaveInstallRule).
+        target.have_install_rule = record.properties.iter().any(|(key, _)| key == "HAVE_INSTALL_RULE");
         crate::state::register_target(&mut interp, target);
     }
     let active = |policy, old| {
@@ -275,6 +298,22 @@ fn cmake_4_1_ninja_edges() {
         for (name, expected) in fixture.edges {
             let target = ctx.target(&name).unwrap();
             let line = information::compute(&query, target);
+            if on(target, "LINK_WHAT_YOU_USE") {
+                let check = line
+                    .link_what_you_use
+                    .as_ref()
+                    .expect("oracle enabled LINK_WHAT_YOU_USE");
+                assert!(
+                    expected
+                        .link_flags
+                        .split_whitespace()
+                        .any(|flag| flag == check.flag)
+                );
+                assert_eq!(check.checker.as_deref(), Some("ldd;-u;-r"));
+            }
+            if on(target, "BUILD_WITH_INSTALL_RPATH") {
+                assert!(line.rpath_change.is_none());
+            }
             let mut order_only = graph
                 .iter()
                 .find(|(head, _)| head.name == name)

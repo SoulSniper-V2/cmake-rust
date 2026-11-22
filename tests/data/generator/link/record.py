@@ -266,6 +266,9 @@ p.code.insert(3, "set_source_files_properties(empty.c PROPERTIES LANGUAGE CXX)")
 p.targets["a"]["source_language"] = "CXX"
 p.props("app", LINKER_LANGUAGE="C").link("app", "PRIVATE", "a")
 
+p = Project("link_what_you_use").target("a", "SHARED").target("app")
+p.props("app", LINK_WHAT_YOU_USE="ON").link("app", "PRIVATE", "a")
+
 p = Project("error_shared_cycle").target("a", "SHARED").target("b", "SHARED")
 p.link("a", "PRIVATE", "b").link("b", "PRIVATE", "a")
 p.failure = "At least one of these targets is not a STATIC_LIBRARY."
@@ -304,7 +307,7 @@ def record(project):
 get_cmake_property(all VARIABLES)
 file(WRITE "${CMAKE_BINARY_DIR}/variables.txt" "")
 foreach(key IN LISTS all)
-  if(key MATCHES "^CMAKE_")
+  if(key MATCHES "^CMAKE_|_LIB_DEPENDS$|_LINK_TYPE$")
     file(APPEND "${CMAKE_BINARY_DIR}/variables.txt" "${key}=${${key}}\n")
   endif()
 endforeach()
@@ -325,8 +328,8 @@ endforeach()
         for file in (build / "CMakeFiles" / "4.1.0").glob("*.cmake"):
             compiler.update(re.findall(r'^set\((CMAKE_[A-Z_a-z0-9]+) "(.*)"\)$', file.read_text(), re.M))
         cache = dict(re.findall(r"^(CMAKE_[^:=]+):[^=]+=(.*)$", (build / "CMakeCache.txt").read_text(), re.M))
-        variables = dict(re.findall(r"^(CMAKE_[^=]+)=(.*)$", (build / "variables.txt").read_text(), re.M))
-        variables = {key: value for key, value in (cache | compiler | variables).items() if KEY.match(key)}
+        variables = dict(re.findall(r"^([^=]+)=(.*)$", (build / "variables.txt").read_text(), re.M))
+        variables = {key: value for key, value in (cache | compiler | variables).items() if KEY.match(key) or key.endswith(("_LIB_DEPENDS", "_LINK_TYPE"))}
 
         edges = {}
         link = re.compile(r"^build (.*?): (?:(?:C|CXX)_(?:EXECUTABLE|STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY)_LINKER__)([^ ]+)(.*)$")
@@ -346,9 +349,10 @@ endforeach()
                         key = "implicit" if token == "|" else "order_only"
                     else:
                         current[key].append(token)
-            elif current and line.startswith(("  LINK_LIBRARIES = ", "  LINK_PATH = ")):
+            elif current and line.startswith(("  LINK_LIBRARIES = ", "  LINK_PATH = ", "  LINK_FLAGS = ")):
                 key, value = line.strip().split(" = ", 1)
-                current[key] = value
+                if key != "LINK_FLAGS" or project.targets[name]["properties"].get("LINK_WHAT_YOU_USE") == "ON":
+                    current[key] = value
             elif not line.startswith("  "):
                 current = None
         def normalize(value):
@@ -363,6 +367,7 @@ endforeach()
 
 assert len(FIXTURES) >= 60 and len({p.name for p in FIXTURES}) == len(FIXTURES)
 with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-    list(pool.map(record, FIXTURES))
-print(f"Recorded {sum(not project.failure for project in FIXTURES)} built projects and "
-      f"{sum(bool(project.failure) for project in FIXTURES)} diagnostic cases")
+    selected = [project for project in FIXTURES if len(sys.argv) == 2 or project.name in sys.argv[2:]]
+    list(pool.map(record, selected))
+print(f"Recorded {sum(not project.failure for project in selected)} built projects and "
+      f"{sum(bool(project.failure) for project in selected)} diagnostic cases")

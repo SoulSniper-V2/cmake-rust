@@ -63,7 +63,7 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
     let link_dirs = info.link_dirs.ordered(&info.implicit_dirs, &artifacts);
     let runtime_dirs = info.runtime_dirs.ordered(&info.implicit_dirs, &artifacts);
     let dependent_dirs = info.dependent_dirs.ordered(&info.implicit_dirs, &artifacts);
-    let runtime = info.rpath(&ordered, &runtime_dirs, &filename_path(&output_file));
+    let (runtime, rpath_change) = info.rpath(&ordered, &runtime_dirs, &filename_path(&output_file));
     let mut libraries = Vec::new();
     if !runtime.is_empty() {
         libraries.push(runtime);
@@ -103,6 +103,7 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
 
     info.depends
         .extend(usage_property(query, head, "LINK_DEPENDS"));
+    let link_what_you_use = info.link_what_you_use();
     let shared_symlinks = info
         .shared_symlinks
         .into_iter()
@@ -118,6 +119,8 @@ pub(super) fn compute(query: &Query<'_, '_>, head: &Target) -> LinkLine {
         link_path,
         depends: info.depends,
         shared_symlinks,
+        rpath_change,
+        link_what_you_use,
     }
 }
 
@@ -643,21 +646,42 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         }
     }
 
-    fn rpath(&self, ordered: &Ordered<'_>, dirs: &[String], output: &str) -> String {
+    fn link_what_you_use(&self) -> Option<LinkUsageCheck> {
+        if !on(self.head, "LINK_WHAT_YOU_USE") {
+            return None;
+        }
+        let flag = self.langvar("LINK_WHAT_YOU_USE_FLAG");
+        if flag.is_empty() {
+            return None;
+        }
+        Some(LinkUsageCheck {
+            flag: linker_wrapper(self.query, self.head, &flag),
+            checker: self
+                .query
+                .ctx
+                .var(self.head.makefile, "CMAKE_LINK_WHAT_YOU_USE_CHECK"),
+        })
+    }
+
+    fn rpath(
+        &self,
+        ordered: &Ordered<'_>,
+        dirs: &[String],
+        output: &str,
+    ) -> (String, Option<(String, String)>) {
         let enabled = !is_on(&self.var("CMAKE_SKIP_RPATH")) && !self.runtime_flag.is_empty();
-        // INTEGRATION: The install generator must expose whether install(TARGETS)
-        // registers an artifact for this target, for ELF chrpath padding.
         let for_install = on(self.head, "BUILD_WITH_INSTALL_RPATH");
         let list = self.runtime_paths(ordered, dirs, output, enabled, for_install);
         if self.runtime_sep.is_empty() {
-            return list
+            let flags = list
                 .iter()
                 .map(|dir| format!("{}{}", self.runtime_flag, shell(dir)))
                 .collect::<Vec<_>>()
                 .join(" ");
+            return (flags, None);
         }
         let mut list = list.join(&self.runtime_sep);
-        if enabled
+        let change = if enabled
             && !for_install
             && self.head.have_install_rule
             && !is_on(&self.var("CMAKE_NO_BUILTIN_CHRPATH"))
@@ -672,13 +696,18 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
             while list.len() < install.len() {
                 list.push_str(&self.runtime_sep);
             }
-        }
-        if list.is_empty() {
+            Some((list.clone(), install))
+        } else {
+            None
+        };
+        let flags = if list.is_empty() {
             String::new()
         } else {
             format!("{}{}", self.runtime_flag, shell(&list))
-        }
+        };
+        (flags, change)
     }
+
 
     fn runtime_paths(
         &self,
