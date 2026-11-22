@@ -561,8 +561,15 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         }
     }
 
+    fn is_imported_stub(&self, target: &Target) -> bool {
+        target.imported
+            && target.kind == TargetKind::SharedLibrary
+            && target::import_info(target, self.query.config).is_none_or(|i| i.location.is_empty())
+    }
+
     fn add_runtime(&mut self, full: &str, target: Option<&Target>) {
         let soname = match target {
+            Some(target) if self.is_imported_stub(target) => return,
             Some(target) if target.kind == TargetKind::SharedLibrary => self
                 .query
                 .generator
@@ -600,12 +607,21 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         {
             return;
         }
-        if is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_FILES")) {
-            self.add_item(entry, None);
+        let link_files = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_FILES"));
+        let add_to_link_dirs = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_DIRS"));
+        if !link_files && !add_to_link_dirs && self.rpath_link_flag.is_empty() {
             return;
         }
-        let add_to_link_dirs = is_on(&self.var("CMAKE_LINK_DEPENDENT_LIBRARY_DIRS"));
-        if !add_to_link_dirs && self.rpath_link_flag.is_empty() {
+        // A stub may not have a file named for its SONAME. Give it directly
+        // to linkers that recursively check undefined shared-library symbols.
+        if link_files
+            || (target.is_some_and(|t| self.is_imported_stub(t))
+                && matches!(
+                    self.langvar("COMPILER_LINKER_ID").as_str(),
+                    "GNU" | "Solaris"
+                ))
+        {
+            self.add_item(entry, None);
             return;
         }
         let full = target.map_or_else(
@@ -1070,14 +1086,15 @@ fn relative_path(from: &str, to: &str) -> String {
         .zip(&to)
         .take_while(|(from, to)| from == to)
         .count();
-    std::iter::repeat_n("..", from.len() - common)
-        .chain(
-            to[common..]
-                .iter()
-                .map(|part| part.as_os_str().to_str().unwrap_or_default()),
-        )
+    // KWSys RelativePath emits "../" for every ascent, including the last
+    // one when the destination is an ancestor of the output directory.
+    let up = "../".repeat(from.len() - common);
+    let down = to[common..]
+        .iter()
+        .map(|part| part.as_os_str().to_str().unwrap_or_default())
         .collect::<Vec<_>>()
-        .join("/")
+        .join("/");
+    up + &down
 }
 
 fn normalize_slashes(value: &str) -> String {

@@ -69,12 +69,19 @@ impl Directories {
     }
 
     pub fn ordered(&self, implicit: &HashSet<String>, artifacts: &HashSet<String>) -> Vec<String> {
+        // Compare real paths so symlink aliases of implicit directories stay implicit.
+        let real = |dir: &str| -> String {
+            fs::canonicalize(dir)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| dir.to_owned())
+        };
+        let implicit_real: HashSet<String> = implicit.iter().map(|dir| real(dir)).collect();
         let dirs = unique(
             self.users
                 .iter()
                 .chain(self.constraints.iter().map(|c| &c.directory))
                 .chain(&self.languages)
-                .filter(|dir| !implicit.contains(*dir))
+                .filter(|dir| !implicit_real.contains(&real(dir)))
                 .cloned(),
         );
         let mut edges = vec![BTreeSet::new(); dirs.len()];

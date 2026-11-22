@@ -34,10 +34,6 @@ pub struct LinkLine {
     #[allow(dead_code, reason = "The Ninja writer will append version symlinks")]
     pub shared_symlinks: Vec<String>,
     /// ELF rpath substitution for an installed target, before shell escaping.
-    #[allow(
-        dead_code,
-        reason = "The install writer consumes this after integration"
-    )]
     pub rpath_change: Option<(String, String)>,
     /// Linker flag and optional checker for LINK_WHAT_YOU_USE.
     #[allow(

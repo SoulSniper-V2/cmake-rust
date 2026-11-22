@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
-use super::{ctx::GenCtx, export, package_info, target};
+use super::{ctx::GenCtx, export, link, package_info, target};
 use crate::commands::install::{legacy_source, unix_slashes};
 use crate::fsutil::write_if_different;
 use crate::install_model::*;
@@ -858,78 +858,12 @@ fn install_rpaths(ctx: &GenCtx, tgt: &Target) -> Option<(String, String)> {
         return None;
     }
     let language = target::linker_language(ctx, tgt, &ctx.config);
-    let separator = ctx.var_safe(
-        tgt.makefile,
-        &format!("CMAKE_SHARED_LIBRARY_RUNTIME_{language}_FLAG_SEP"),
-    );
-    if separator.is_empty() {
+    if language.is_empty() {
         return None;
     }
-    // INTEGRATION: use cmComputeLinkInformation's shared runtime search
-    // paths once generator::link exposes them.
-    let rpath = |key| {
-        expand_list(
-            &ctx.genex(tgt.props.get(key).unwrap_or(""), Some(tgt), None),
-            false,
-        )
-    };
-    let mut old = if is_on_opt(tgt.props.get("SKIP_BUILD_RPATH")) {
-        Vec::new()
-    } else {
-        rpath("BUILD_RPATH")
-    };
-    if !is_on_opt(tgt.props.get("SKIP_BUILD_RPATH")) {
-        for item in expand_list(tgt.props.get("LINK_LIBRARIES").unwrap_or(""), false) {
-            let dep = ctx
-                .target(&item)
-                .filter(|t| t.kind == TargetKind::SharedLibrary);
-            if let Some(dep) = dep {
-                old.push(target::directory(
-                    ctx,
-                    dep,
-                    &ctx.config,
-                    target::ArtifactType::Runtime,
-                ));
-            } else if is_full_path(&item) && item.contains(".so") {
-                old.push(crate::util::filename_path(&item));
-            }
-        }
-    }
-    let mut new = if on("CMAKE_SKIP_INSTALL_RPATH") {
-        Vec::new()
-    } else {
-        rpath("INSTALL_RPATH")
-    };
-    if !on("CMAKE_SKIP_INSTALL_RPATH") && is_on_opt(tgt.props.get("INSTALL_RPATH_USE_LINK_PATH")) {
-        new.extend(
-            old.iter()
-                .filter(|dir| {
-                    let path = Path::new(dir);
-                    !path.starts_with(&ctx.interp.home_source)
-                        && !path.starts_with(&ctx.interp.home_binary)
-                })
-                .cloned(),
-        );
-    }
-    let join = |paths: Vec<String>| {
-        let mut unique = Vec::new();
-        for path in paths {
-            if !unique.contains(&path) {
-                unique.push(path);
-            }
-        }
-        unique.join(&separator)
-    };
-    let new = join(new);
-    let mut old = join(old);
-    if !old.is_empty() {
-        old.push_str(&separator);
-    }
-    while old.len() < new.len() {
-        old.push_str(&separator);
-    }
+    let (old, new) = link::link_line(ctx, tgt, &ctx.config, &language).rpath_change?;
     let old = escape_for_cmake(&old);
-    let new = if directory_policy(ctx, tgt.makefile, "CMP0095") == PolicyStatus::New {
+    let new = if target::target_policy(ctx, tgt, 95) == PolicyStatus::New {
         escape_for_cmake(&new)
     } else {
         format!("\"{new}\"")
