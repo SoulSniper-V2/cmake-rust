@@ -22,7 +22,12 @@ struct Captured {
 /// `cmSystemTools::RunSingleCommand(cmd, &out, &err, &ret, nullptr,
 /// OUTPUT_NONE)`; `merged` captures both streams into `stdout`.
 fn run_single_command(command: &[String], merged: bool) -> Captured {
-    let mut captured = Captured { ok: false, ret: 0, stdout: String::new(), stderr: String::new() };
+    let mut captured = Captured {
+        ok: false,
+        ret: 0,
+        stdout: String::new(),
+        stderr: String::new(),
+    };
     let Some((program, args)) = command.split_first() else {
         return captured;
     };
@@ -57,7 +62,11 @@ fn run_single_command(command: &[String], merged: bool) -> Captured {
         let mut reader = reader;
         let _ = std::io::Read::read_to_end(&mut reader, &mut data);
         match child.wait() {
-            Ok(status) => std::process::Output { status, stdout: data, stderr: Vec::new() },
+            Ok(status) => std::process::Output {
+                status,
+                stdout: data,
+                stderr: Vec::new(),
+            },
             Err(error) => {
                 captured.stdout = spawn_error_text(&error);
                 return captured;
@@ -101,11 +110,20 @@ fn handle_iwyu(run: &str, _source: &str, orig: &[String]) -> i32 {
     // Capture its stderr and hide its stdout.
     let result = run_single_command(&cmd, false);
     if !result.ok {
-        eprintln!("Error running '{}': {}", cmd.first().map_or("", String::as_str), result.stderr);
+        eprintln!(
+            "Error running '{}': {}",
+            cmd.first().map_or("", String::as_str),
+            result.stderr
+        );
         return 1;
     }
-    if result.stderr.contains("should remove these lines:") || result.stderr.contains("should add these lines:") {
-        eprintln!("Warning: include-what-you-use reported diagnostics:\n{}", result.stderr);
+    if result.stderr.contains("should remove these lines:")
+        || result.stderr.contains("should add these lines:")
+    {
+        eprintln!(
+            "Warning: include-what-you-use reported diagnostics:\n{}",
+            result.stderr
+        );
     }
     // Older versions of iwyu always returned a non-zero exit code, so
     // ignore it unless the user has enabled errors.
@@ -187,7 +205,14 @@ fn handle_cppcheck(run: &str, source: &str, orig: &[String]) -> i32 {
         return 1;
     }
     eprint!("{}", result.stdout);
-    let diagnostics = ["(error)", "(warning)", "(style)", "(performance)", "(portability)", "(information)"];
+    let diagnostics = [
+        "(error)",
+        "(warning)",
+        "(style)",
+        "(performance)",
+        "(portability)",
+        "(information)",
+    ];
     if diagnostics.iter().any(|kind| result.stderr.contains(kind)) {
         if result.ret == 0 {
             eprintln!("Warning: cppcheck reported diagnostics:");
@@ -291,7 +316,9 @@ pub fn run_co_compile(args: &[String]) -> i32 {
         }
     }
     if jobs.is_empty() {
-        eprintln!("__run_co_compile missing command to run. Looking for one or more of the following:");
+        eprintln!(
+            "__run_co_compile missing command to run. Looking for one or more of the following:"
+        );
         for (option, _, _) in CO_COMPILERS {
             eprintln!("{option}");
         }
@@ -343,7 +370,12 @@ fn match_option(arg: &str, alternatives: &[&str]) -> Option<bool> {
 /// `cmcmd::RunPreprocessor`.
 fn run_preprocessor(command: &[String], intermediate: &str) -> i32 {
     // uv_fs_open(O_CREAT | O_RDWR, 0644): no truncation.
-    let output = OpenOptions::new().read(true).write(true).create(true).mode(0o644).open(intermediate);
+    let output = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o644)
+        .open(intermediate);
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]).stderr(Stdio::piped());
     match output {
@@ -419,7 +451,11 @@ pub fn run_llvm_rc(args: &[String]) -> i32 {
         } else {
             accept_next = false;
         }
-        let value = if arg.contains("SOURCE_DIR") { arg.replace("SOURCE_DIR", &source_dir) } else { arg.clone() };
+        let value = if arg.contains("SOURCE_DIR") {
+            arg.replace("SOURCE_DIR", &source_dir)
+        } else {
+            arg.clone()
+        };
         if to_rc {
             resource_compile.push(value);
         } else {
@@ -444,7 +480,9 @@ pub fn run_llvm_rc(args: &[String]) -> i32 {
         return result;
     }
     let mut cmd = Command::new(&resource_compile[0]);
-    cmd.args(&resource_compile[1..]).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(&resource_compile[1..])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let outcome = match cmd.spawn() {
         Err(_) => {
             eprint!("Failed to start resource compiler.");
@@ -476,9 +514,18 @@ mod tests {
 
     #[test]
     fn llvm_rc_option_patterns() {
-        assert_eq!(match_option("/FO", &["D", "U", "I", "FO", "fo", "Fo"]), Some(false));
-        assert_eq!(match_option("-DX=1", &["D", "U", "I", "FO", "fo", "Fo"]), Some(true));
-        assert_eq!(match_option("-bad", &["D", "U", "I", "FO", "fo", "Fo"]), None);
+        assert_eq!(
+            match_option("/FO", &["D", "U", "I", "FO", "fo", "Fo"]),
+            Some(false)
+        );
+        assert_eq!(
+            match_option("-DX=1", &["D", "U", "I", "FO", "fo", "Fo"]),
+            Some(true)
+        );
+        assert_eq!(
+            match_option("-bad", &["D", "U", "I", "FO", "fo", "Fo"]),
+            None
+        );
         assert_eq!(match_option("/LN", &["C", "LN", "L"]), Some(false));
         assert_eq!(match_option("/L0x409", &["C", "LN", "L"]), Some(true));
     }

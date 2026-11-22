@@ -207,7 +207,10 @@ fn separate_arguments_command(interp: &mut Interp, args: &[String]) -> CmdResult
     if args.len() == 1 {
         // Original space-replacement version of command.
         if let Some(def) = interp.get_def(&var) {
-            let value: String = def.chars().map(|c| if c == ' ' { ';' } else { c }).collect();
+            let value: String = def
+                .chars()
+                .map(|c| if c == ' ' { ';' } else { c })
+                .collect();
             interp.set_def(var, value);
         }
         return Ok(());
@@ -236,10 +239,11 @@ fn separate_arguments_command(interp: &mut Interp, args: &[String]) -> CmdResult
             "missing required option: 'UNIX_COMMAND' or 'WINDOWS_COMMAND' or 'NATIVE_COMMAND'",
         );
     }
-    if (unix_command && (windows_command || native_command))
-        || (windows_command && native_command)
+    if (unix_command && (windows_command || native_command)) || (windows_command && native_command)
     {
-        return err("'UNIX_COMMAND', 'WINDOWS_COMMAND' and 'NATIVE_COMMAND' are mutually exclusive");
+        return err(
+            "'UNIX_COMMAND', 'WINDOWS_COMMAND' and 'NATIVE_COMMAND' are mutually exclusive",
+        );
     }
     if separate_args && !program {
         return err("`SEPARATE_ARGS` option requires `PROGRAM' option");

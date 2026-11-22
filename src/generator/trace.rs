@@ -116,8 +116,16 @@ impl<'c, 'a> Tracer<'c, 'a> {
             }
         }
         // Queue pre-build, pre-link, and post-build rule dependencies.
-        for stage in [CustomCommandKind::PreBuild, CustomCommandKind::PreLink, CustomCommandKind::PostBuild] {
-            for command in target.custom_commands.iter().filter(|command| command.kind == stage) {
+        for stage in [
+            CustomCommandKind::PreBuild,
+            CustomCommandKind::PreLink,
+            CustomCommandKind::PostBuild,
+        ] {
+            for command in target
+                .custom_commands
+                .iter()
+                .filter(|command| command.kind == stage)
+            {
                 tracer.check_custom_command(command);
             }
         }
@@ -133,7 +141,13 @@ impl<'c, 'a> Tracer<'c, 'a> {
             if let Some(depends) = source.and_then(|source| source.props.get("OBJECT_DEPENDS")) {
                 let names: Vec<String> = expand_list(depends, false)
                     .into_iter()
-                    .map(|dep| if is_full_path(&dep) { collapse_full_path(&dep, "") } else { dep })
+                    .map(|dep| {
+                        if is_full_path(&dep) {
+                            collapse_full_path(&dep, "")
+                        } else {
+                            dep
+                        }
+                    })
                     .collect();
                 for name in names {
                     self.follow_name(&name);
@@ -164,7 +178,10 @@ impl<'c, 'a> Tracer<'c, 'a> {
                 let mut sources = sources_with_output(self.ctx.interp, self.dir, name);
                 if sources.target.is_none() && sources.source.is_none() && !is_full_path(name) {
                     let binary = &self.ctx.interp.makefiles[self.dir].binary_dir;
-                    let full = collapse_full_path(&format!("{binary}/{name}"), &self.ctx.interp.home_binary);
+                    let full = collapse_full_path(
+                        &format!("{binary}/{name}"),
+                        &self.ctx.interp.home_binary,
+                    );
                     sources = sources_with_output(self.ctx.interp, self.dir, &full);
                 }
                 self.name_map.insert(name.to_owned(), sources.clone());
@@ -202,10 +219,19 @@ impl<'c, 'a> Tracer<'c, 'a> {
         if is_full_path(dep) {
             if matches!(
                 found.kind,
-                TargetKind::Executable | TargetKind::StaticLibrary | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+                TargetKind::Executable
+                    | TargetKind::StaticLibrary
+                    | TargetKind::SharedLibrary
+                    | TargetKind::ModuleLibrary
             ) {
                 // GetLocationForBuild.
-                let location = gt::full_path(self.ctx, found, &self.ctx.config, gt::ArtifactType::Runtime, false);
+                let location = gt::full_path(
+                    self.ctx,
+                    found,
+                    &self.ctx.config,
+                    gt::ArtifactType::Runtime,
+                    false,
+                );
                 let target_dir = collapse_full_path(&filename_path(&location), "");
                 let dep_dir = collapse_full_path(&filename_path(dep), "");
                 if dep_dir == target_dir {
@@ -279,7 +305,12 @@ fn sources_with_output(interp: &Interp, dir: usize, name: &str) -> SourcesWithOu
         }
         return result;
     }
-    let Some(entry) = interp.ext.output_to_source.get(&dir).and_then(|map| map.get(name)) else {
+    let Some(entry) = interp
+        .ext
+        .output_to_source
+        .get(&dir)
+        .and_then(|map| map.get(name))
+    else {
         return SourcesWithOutput::default();
     };
     SourcesWithOutput {
@@ -301,7 +332,11 @@ fn linear_target_with_output(interp: &Interp, dir: usize, name: &str) -> Option<
         let Some(target) = interp.ext.targets.get(key) else {
             continue;
         };
-        if target.custom_commands.iter().any(|command| any_output_matches(name, &command.byproducts)) {
+        if target
+            .custom_commands
+            .iter()
+            .any(|command| any_output_matches(name, &command.byproducts))
+        {
             return Some(target.name.clone());
         }
     }

@@ -102,7 +102,10 @@ fn ninja_flag_assembly_matches_kitware() {
         let mut directory_props = fixture.directory_props.clone();
         // The capture records cmMakefile::GetDefineFlags under this key.
         if let Some(flags) = directory_props.remove("DEFINE_FLAGS") {
-            interp.ext.directory_define_flags.insert(0, format!(" {flags}"));
+            interp
+                .ext
+                .directory_define_flags
+                .insert(0, format!(" {flags}"));
         }
         interp.mf_mut().props = properties(directory_props);
         for index in [69, 83, 119, 128, 181] {
@@ -308,7 +311,8 @@ fn standards_inherit_from_paired_language() {
         props.set(&format!("{paired}_STANDARD"), inherited.to_owned());
         props.set(&format!("{paired}_EXTENSIONS"), "OFF".to_owned());
         props.set(&format!("{paired}_STANDARD_REQUIRED"), "ON".to_owned());
-        let key = crate::state::register_target(&mut interp, target("x", TargetKind::Executable, props));
+        let key =
+            crate::state::register_target(&mut interp, target("x", TargetKind::Executable, props));
         let source = SourceInfo {
             path: "/source/example".to_owned(),
             language: lang.to_owned(),

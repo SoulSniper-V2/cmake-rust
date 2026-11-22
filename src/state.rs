@@ -415,7 +415,13 @@ pub fn find_global_target_key(interp: &Interp, name: &str) -> Option<String> {
         .scoped_keys_by_name
         .get(name)?
         .iter()
-        .find(|key| interp.ext.targets.get(*key).is_some_and(|target| target.imported_global))
+        .find(|key| {
+            interp
+                .ext
+                .targets
+                .get(*key)
+                .is_some_and(|target| target.imported_global)
+        })
         .cloned()
 }
 

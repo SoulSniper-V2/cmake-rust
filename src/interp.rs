@@ -47,7 +47,8 @@ impl From<&str> for CmdErr {
 
 pub type CmdResult = Result<(), CmdErr>;
 pub type Builtin = fn(&mut Interp, &[String]) -> CmdResult;
-pub type RawBuiltin = fn(&mut Interp, &Rc<ParsedFile>, &Command, Option<&MacroSubst>) -> (bool, Ctl);
+pub type RawBuiltin =
+    fn(&mut Interp, &Rc<ParsedFile>, &Command, Option<&MacroSubst>) -> (bool, Ctl);
 
 /// Shorthand for returning a `SetError` failure.
 pub fn err<T>(message: impl Into<String>) -> Result<T, CmdErr> {
@@ -488,7 +489,11 @@ impl Interp {
             return;
         }
         // cmMakefile::VariableInitialized: any binding, including unset().
-        if self.scopes.iter().any(|scope| scope.vars.contains_key(variable)) {
+        if self
+            .scopes
+            .iter()
+            .any(|scope| scope.vars.contains_key(variable))
+        {
             return;
         }
         // cmMakefile::IsProjectFile
@@ -499,7 +504,10 @@ impl Interp {
                     && !util::is_subdirectory(file, "/CMakeFiles"))
         };
         if self.check_system_vars || source_file.is_some_and(is_project_file) {
-            self.issue(MessageType::AuthorWarning, &format!("uninitialized variable '{variable}'"));
+            self.issue(
+                MessageType::AuthorWarning,
+                &format!("uninitialized variable '{variable}'"),
+            );
         }
     }
 
@@ -510,8 +518,17 @@ impl Interp {
         if !self.ext.variable_watches.contains_key(name) {
             return value;
         }
-        let access = if value.is_some() { "READ_ACCESS" } else { "UNKNOWN_READ_ACCESS" };
-        crate::commands::sysinfo::notify_variable(self, name, access, value.as_deref().unwrap_or_default());
+        let access = if value.is_some() {
+            "READ_ACCESS"
+        } else {
+            "UNKNOWN_READ_ACCESS"
+        };
+        crate::commands::sysinfo::notify_variable(
+            self,
+            name,
+            access,
+            value.as_deref().unwrap_or_default(),
+        );
         self.get_def(name).map(str::to_owned)
     }
 
@@ -529,9 +546,7 @@ impl Interp {
     pub fn raise_scope(&mut self, name: &str, value: Option<&str>) {
         let depth = self.scopes.len();
         if depth < 2 {
-            let message = format!(
-                "Cannot set \"{name}\": current scope has no parent."
-            );
+            let message = format!("Cannot set \"{name}\": current scope has no parent.");
             self.issue(MessageType::AuthorWarning, &message);
             return;
         }
@@ -544,7 +559,12 @@ impl Interp {
         parent
             .vars
             .insert(name.to_owned(), value.map(str::to_owned));
-        crate::commands::sysinfo::notify_variable(self, name, "MODIFIED_ACCESS", value.unwrap_or_default());
+        crate::commands::sysinfo::notify_variable(
+            self,
+            name,
+            "MODIFIED_ACCESS",
+            value.unwrap_or_default(),
+        );
     }
 
     /// Flattened view of all visible normal-variable bindings.
@@ -616,7 +636,14 @@ impl Interp {
     }
 
     /// `cmMakefile::AddCacheDefinition`.
-    pub fn add_cache_def(&mut self, name: &str, value: Option<&str>, help: Option<&str>, kind: CacheType, force: bool) {
+    pub fn add_cache_def(
+        &mut self,
+        name: &str,
+        value: Option<&str>,
+        help: Option<&str>,
+        kind: CacheType,
+        force: bool,
+    ) {
         let mut value = value.map(str::to_owned);
         let mut kind = kind;
         if let Some(existing) = self.cache.get(name)
@@ -702,7 +729,13 @@ impl Interp {
         self.run_subdirectory_with_system(source, binary, exclude_from_all, false)
     }
 
-    pub fn run_subdirectory_with_system(&mut self, source: &str, binary: &str, exclude_from_all: bool, system: bool) -> bool {
+    pub fn run_subdirectory_with_system(
+        &mut self,
+        source: &str,
+        binary: &str,
+        exclude_from_all: bool,
+        system: bool,
+    ) -> bool {
         let index = self.create_subdirectory(source, binary, exclude_from_all);
         self.configure_subdirectory(index, system)
     }
@@ -710,7 +743,12 @@ impl Interp {
     /// `cmMakefile::AddSubDirectory`: the child cmMakefile (and its place in
     /// the parent's children and the global makefile order) is created when
     /// the directory is added, even when its configure is deferred.
-    pub fn create_subdirectory(&mut self, source: &str, binary: &str, exclude_from_all: bool) -> usize {
+    pub fn create_subdirectory(
+        &mut self,
+        source: &str,
+        binary: &str,
+        exclude_from_all: bool,
+    ) -> usize {
         let parent = self.mf_index();
         let index = self.makefiles.len();
         let mut props = Props::default();
@@ -797,8 +835,13 @@ impl Interp {
     }
 
     fn save_directory_definitions(&mut self, index: usize) {
-        let definitions = self.normal_definition_names().into_iter()
-            .filter_map(|name| self.get_normal_def(&name).map(|value| (name, value.to_owned())))
+        let definitions = self
+            .normal_definition_names()
+            .into_iter()
+            .filter_map(|name| {
+                self.get_normal_def(&name)
+                    .map(|value| (name, value.to_owned()))
+            })
             .collect();
         self.ext.directory_definitions.insert(index, definitions);
     }
@@ -844,7 +887,8 @@ impl Interp {
         }
         // Policies set by cmCoreTryCompile::TryCompileCode are exempt from the
         // deprecation warning inside try_compile projects.
-        let try_compile_exempt = self.in_try_compile && matches!(index, 83 | 91 | 104 | 123 | 126 | 128 | 136 | 141);
+        let try_compile_exempt =
+            self.in_try_compile && matches!(index, 83 | 91 | 104 | 123 | 126 | 128 | 136 | 141);
         if status == PolicyStatus::Old
             && index <= 142
             && !try_compile_exempt
@@ -869,7 +913,10 @@ impl Interp {
 
     pub fn pop_policy(&mut self) -> bool {
         if self.mf().policies.len() <= 1 {
-            self.issue(MessageType::FatalError, "cmake_policy POP without matching PUSH");
+            self.issue(
+                MessageType::FatalError,
+                "cmake_policy POP without matching PUSH",
+            );
             return false;
         }
         self.mf_mut().policies.pop();
@@ -966,7 +1013,9 @@ impl Interp {
     /// `cmMakefile::Configure` (CMP0000 detection and implicit project()).
     pub fn run_root_list_file(&mut self, path: &str) {
         // The directory snapshot ends the call stack (GetCallStackParent).
-        self.ext.execution_file_bases.push(self.ext.execution_files.len());
+        self.ext
+            .execution_file_bases
+            .push(self.ext.execution_files.len());
         self.backtrace.push(Frame {
             file: Rc::from(path),
             line: 0,
@@ -983,11 +1032,22 @@ impl Interp {
             let has_version = commands.iter().any(|c| c.lname == "cmake_minimum_required");
             if !has_version {
                 const ALLOWED: [&str; 11] = [
-                    "project", "set", "if", "endif", "else", "elseif", "add_executable",
-                    "add_library", "target_link_libraries", "option", "message",
+                    "project",
+                    "set",
+                    "if",
+                    "endif",
+                    "else",
+                    "elseif",
+                    "add_executable",
+                    "add_library",
+                    "target_link_libraries",
+                    "option",
+                    "message",
                 ];
                 let problem = commands.len() >= 30
-                    || commands.iter().any(|c| !ALLOWED.contains(&c.lname.as_str()));
+                    || commands
+                        .iter()
+                        .any(|c| !ALLOWED.contains(&c.lname.as_str()));
                 if problem {
                     self.root_check_cmp0000 = true;
                     crate::commands::core::apply_policy_version_ex(self, "3.5", "", false);
@@ -1023,7 +1083,10 @@ impl Interp {
         }
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
-            self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+            self.issue(
+                MessageType::FatalError,
+                "cmake_policy PUSH without matching POP",
+            );
             self.mf_mut().policies.truncate(1);
         }
         self.pop_list_file_vars(saved);
@@ -1064,7 +1127,9 @@ impl Interp {
         // fatal-error flag.
         let bytes = match bytes.as_slice() {
             [0xEF, 0xBB, 0xBF, rest @ ..] => rest,
-            [0xFE, 0xFF, ..] | [0x00, 0x00, 0xFE, 0xFF, ..] | [0xFF, 0xFE, 0x00, 0x00, ..]
+            [0xFE, 0xFF, ..]
+            | [0x00, 0x00, 0xFE, 0xFF, ..]
+            | [0xFF, 0xFE, 0x00, 0x00, ..]
             | [0xFF, 0xFE, ..] => {
                 self.issue(
                     MessageType::FatalError,
@@ -1166,7 +1231,10 @@ impl Interp {
     fn end_policy_scope(&mut self, depth: usize) {
         let current = self.mf().policies.len();
         if current > depth + 1 && !self.fatal {
-            self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+            self.issue(
+                MessageType::FatalError,
+                "cmake_policy PUSH without matching POP",
+            );
         }
         self.mf_mut().policies.truncate(depth);
     }
@@ -1174,7 +1242,9 @@ impl Interp {
     /// Reads the directory's CMakeLists.txt (top-level or subdirectory).
     pub fn read_list_file_directory(&mut self, path: &str) -> bool {
         // The directory snapshot ends the call stack (GetCallStackParent).
-        self.ext.execution_file_bases.push(self.ext.execution_files.len());
+        self.ext
+            .execution_file_bases
+            .push(self.ext.execution_files.len());
         self.backtrace.push(Frame {
             file: Rc::from(path),
             line: 0,
@@ -1199,7 +1269,10 @@ impl Interp {
         // Directory-level end-of-file checks.
         let depth = self.mf().policies.len();
         if depth > 1 && !self.fatal {
-            self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+            self.issue(
+                MessageType::FatalError,
+                "cmake_policy PUSH without matching POP",
+            );
             self.mf_mut().policies.truncate(1);
         }
         self.pop_list_file_vars(saved);
@@ -1283,7 +1356,10 @@ impl Interp {
             });
             self.ext.execution_files.push(deferred.file.to_string());
             let depth = self.mf().policies.len();
-            let parsed = Rc::new(ParsedFile::new(deferred.file.clone(), vec![deferred.command]));
+            let parsed = Rc::new(ParsedFile::new(
+                deferred.file.clone(),
+                vec![deferred.command],
+            ));
             self.ext.defer_current_id = Some(deferred.id);
             self.loop_depth.push(0);
             self.run_range(&parsed, 0, 1, None);
@@ -1292,7 +1368,10 @@ impl Interp {
             self.ext.execution_files.pop();
             if self.mf().policies.len() > depth {
                 if !self.fatal {
-                    self.issue(MessageType::FatalError, "cmake_policy PUSH without matching POP");
+                    self.issue(
+                        MessageType::FatalError,
+                        "cmake_policy PUSH without matching POP",
+                    );
                 }
                 self.mf_mut().policies.truncate(depth);
             }
@@ -1415,7 +1494,8 @@ impl Interp {
         let base = self.trace_frame_base.last().copied().unwrap_or(0);
         let msg = if trace.json {
             use crate::commands::string::json::Json;
-            let mut val: std::collections::BTreeMap<Vec<u8>, Json> = std::collections::BTreeMap::new();
+            let mut val: std::collections::BTreeMap<Vec<u8>, Json> =
+                std::collections::BTreeMap::new();
             val.insert(b"file".to_vec(), Json::Str(full_path.as_bytes().to_vec()));
             val.insert(b"line".to_vec(), Json::Int(command.line as i64));
             if command.line != command.line_end {
@@ -1427,14 +1507,21 @@ impl Interp {
             val.insert(b"cmd".to_vec(), Json::Str(command.name.as_bytes().to_vec()));
             val.insert(
                 b"args".to_vec(),
-                Json::Array(args.iter().map(|a| Json::Str(a.as_bytes().to_vec())).collect()),
+                Json::Array(
+                    args.iter()
+                        .map(|a| Json::Str(a.as_bytes().to_vec()))
+                        .collect(),
+                ),
             );
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs_f64();
             val.insert(b"time".to_vec(), Json::Real(now));
-            val.insert(b"frame".to_vec(), Json::UInt(depth.saturating_sub(base) as u64));
+            val.insert(
+                b"frame".to_vec(),
+                Json::UInt(depth.saturating_sub(base) as u64),
+            );
             val.insert(
                 b"global_frame".to_vec(),
                 Json::UInt((depth + self.recursion_depth_base) as u64),
@@ -1503,7 +1590,12 @@ impl Interp {
     }
 
     /// Executes a single non-flow command. Returns (succeeded, control).
-    pub fn execute(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    pub fn execute(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         self.backtrace.push(self.frame_for(file, command));
         let profile = self.profile_command(file, command, subst);
         let result = self.execute_inner(file, command, subst);
@@ -1535,7 +1627,10 @@ impl Interp {
                         _ => arg.value.clone(),
                     })
                     .collect();
-                object.insert(b"functionArgs".to_vec(), Json::Str(values.join(" ").into_bytes()));
+                object.insert(
+                    b"functionArgs".to_vec(),
+                    Json::Str(values.join(" ").into_bytes()),
+                );
             }
             object.insert(
                 b"location".to_vec(),
@@ -1561,7 +1656,12 @@ impl Interp {
         DEFAULT
     }
 
-    fn execute_inner(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn execute_inner(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         self.recursion_depth += 1;
         let depth = self.recursion_depth + self.recursion_depth_base;
         let limit = self.recursion_depth_limit();
@@ -1579,7 +1679,12 @@ impl Interp {
         result
     }
 
-    fn dispatch(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn dispatch(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         let Some(def) = self.commands.get(&command.lname).cloned() else {
             if !self.fatal {
                 let message = format!("Unknown CMake command \"{}\".", command.name);
@@ -1599,7 +1704,10 @@ impl Interp {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
             CommandDef::Raw(function) => function(self, file, command, subst),
             CommandDef::Unexpected(message) => {
-                self.issue(MessageType::FatalError, &format!("{} {message}", command.name));
+                self.issue(
+                    MessageType::FatalError,
+                    &format!("{} {message}", command.name),
+                );
                 self.command_failed();
                 (false, Ctl::Normal)
             }
@@ -1647,7 +1755,12 @@ impl Interp {
     }
 
     /// Invokes a user function or macro with already-expanded arguments.
-    pub fn invoke_callable(&mut self, callable: &Rc<Callable>, args: &[String], _call_name: &str) -> (bool, Ctl) {
+    pub fn invoke_callable(
+        &mut self,
+        callable: &Rc<Callable>,
+        args: &[String],
+        _call_name: &str,
+    ) -> (bool, Ctl) {
         if args.len() < callable.params.len() {
             let message = if callable.is_macro {
                 format!(
@@ -1664,7 +1777,9 @@ impl Interp {
             self.command_failed();
             return (false, Ctl::Normal);
         }
-        self.ext.execution_files.push(callable.file.path.to_string());
+        self.ext
+            .execution_files
+            .push(callable.file.path.to_string());
         let argn = util::join_list(&args[callable.params.len()..]);
         let argv = util::join_list(args);
         if callable.is_macro {
@@ -1676,7 +1791,9 @@ impl Interp {
             subst.pairs.push(("${ARGN}".into(), argn));
             subst.pairs.push(("${ARGV}".into(), argv));
             for (index, value) in args.iter().enumerate() {
-                subst.argv.push((format!("${{ARGV{index}}}"), value.clone()));
+                subst
+                    .argv
+                    .push((format!("${{ARGV{index}}}"), value.clone()));
             }
             self.push_policy(true, callable.policies.clone());
             let depth = self.mf().policies.len();
@@ -1701,12 +1818,18 @@ impl Interp {
             self.set_def("ARGV", argv);
             self.set_def("ARGN", argn);
             self.set_def("CMAKE_CURRENT_FUNCTION", callable.name.clone());
-            self.set_def("CMAKE_CURRENT_FUNCTION_LIST_FILE", callable.file.path.to_string());
+            self.set_def(
+                "CMAKE_CURRENT_FUNCTION_LIST_FILE",
+                callable.file.path.to_string(),
+            );
             self.set_def(
                 "CMAKE_CURRENT_FUNCTION_LIST_DIR",
                 util::filename_path(&callable.file.path),
             );
-            self.set_def("CMAKE_CURRENT_FUNCTION_LIST_LINE", callable.line.to_string());
+            self.set_def(
+                "CMAKE_CURRENT_FUNCTION_LIST_LINE",
+                callable.line.to_string(),
+            );
             self.loop_depth.push(0);
             self.ext.file_locks.functions.push(Default::default());
             let result = self.run_body(callable, None);
@@ -1730,9 +1853,16 @@ impl Interp {
     /// any command invocation (cmMakefile::ExecuteCommand). Their own
     /// ExecuteCommand only opens the function blocker, so the profiling
     /// entry closes at once; the body is replayed outside its scope.
-    fn announce_flow_command(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) {
-        if !matches!(command.lname.as_str(), "if" | "foreach" | "while" | "function" | "macro" | "block")
-            || !self.is_flow(&command.lname)
+    fn announce_flow_command(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) {
+        if !matches!(
+            command.lname.as_str(),
+            "if" | "foreach" | "while" | "function" | "macro" | "block"
+        ) || !self.is_flow(&command.lname)
         {
             return;
         }
@@ -1810,7 +1940,12 @@ impl Interp {
 
     /// Returns false when no function blocker was created (bad arguments),
     /// in which case the body and end command run as ordinary commands.
-    fn define_callable(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> bool {
+    fn define_callable(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        index: usize,
+        subst: Option<&MacroSubst>,
+    ) -> bool {
         let command = &file.commands[index];
         let end = file.jumps[index][0];
         self.backtrace.push(self.frame_for(file, command));
@@ -1844,7 +1979,11 @@ impl Interp {
                     })
                     .collect();
                 let count = commands.len();
-                (Rc::new(ParsedFile::new(file.path.clone(), commands)), 0, count)
+                (
+                    Rc::new(ParsedFile::new(file.path.clone(), commands)),
+                    0,
+                    count,
+                )
             }
             None => (file.clone(), index + 1, end),
         };
@@ -1866,8 +2005,7 @@ impl Interp {
         let end_command = &file.commands[end];
         let matched = match self.expand_arguments(&file.path, &end_command.args, subst) {
             Some(end_args) => {
-                let end_args: Vec<String> =
-                    end_args.into_iter().map(|(value, _)| value).collect();
+                let end_args: Vec<String> = end_args.into_iter().map(|(value, _)| value).collect();
                 end_args.is_empty() || end_args[0] == values[0]
             }
             None => true,
@@ -1886,9 +2024,8 @@ impl Interp {
     pub fn add_user_command(&mut self, name: &str, callable: Rc<Callable>) {
         let lname = name.to_ascii_lowercase();
         if matches!(self.commands.get(&lname), Some(CommandDef::Flow)) {
-            let message = format!(
-                "Built-in flow control command \"{lname}\" cannot be overridden."
-            );
+            let message =
+                format!("Built-in flow control command \"{lname}\" cannot be overridden.");
             self.issue(MessageType::FatalError, &message);
             self.set_fatal();
             return;
@@ -1904,7 +2041,12 @@ impl Interp {
         self.commands.insert(lname, CommandDef::User(callable));
     }
 
-    fn run_flow_command(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn run_flow_command(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         match command.lname.as_str() {
             "break" | "continue" => {
                 let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
@@ -1956,7 +2098,8 @@ impl Interp {
                 }
                 (true, Ctl::Return(Some(values[1..].to_vec())))
             }
-            "else" | "elseif" | "endif" | "endforeach" | "endwhile" | "endfunction" | "endmacro" | "endblock" => {
+            "else" | "elseif" | "endif" | "endforeach" | "endwhile" | "endfunction"
+            | "endmacro" | "endblock" => {
                 // `cmState::AddUnexpectedCommand`: `endif` is silently
                 // accepted for ancient `cmake_minimum_required` versions;
                 // otherwise this is a command failure (fatal only in script
@@ -1970,14 +2113,30 @@ impl Interp {
                     }
                 }
                 let error = match command.lname.as_str() {
-                    "else" => "An ELSE command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command.",
-                    "elseif" => "An ELSEIF command was found outside of a proper IF ENDIF structure.",
-                    "endforeach" => "An ENDFOREACH command was found outside of a proper FOREACH ENDFOREACH structure. Or its arguments did not match the opening FOREACH command.",
-                    "endfunction" => "An ENDFUNCTION command was found outside of a proper FUNCTION ENDFUNCTION structure. Or its arguments did not match the opening FUNCTION command.",
-                    "endif" => "An ENDIF command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command.",
-                    "endmacro" => "An ENDMACRO command was found outside of a proper MACRO ENDMACRO structure. Or its arguments did not match the opening MACRO command.",
-                    "endwhile" => "An ENDWHILE command was found outside of a proper WHILE ENDWHILE structure. Or its arguments did not match the opening WHILE command.",
-                    "endblock" => "An ENDBLOCK command was found outside of a proper BLOCK ENDBLOCK structure.",
+                    "else" => {
+                        "An ELSE command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command."
+                    }
+                    "elseif" => {
+                        "An ELSEIF command was found outside of a proper IF ENDIF structure."
+                    }
+                    "endforeach" => {
+                        "An ENDFOREACH command was found outside of a proper FOREACH ENDFOREACH structure. Or its arguments did not match the opening FOREACH command."
+                    }
+                    "endfunction" => {
+                        "An ENDFUNCTION command was found outside of a proper FUNCTION ENDFUNCTION structure. Or its arguments did not match the opening FUNCTION command."
+                    }
+                    "endif" => {
+                        "An ENDIF command was found outside of a proper IF ENDIF structure. Or its arguments did not match the opening IF command."
+                    }
+                    "endmacro" => {
+                        "An ENDMACRO command was found outside of a proper MACRO ENDMACRO structure. Or its arguments did not match the opening MACRO command."
+                    }
+                    "endwhile" => {
+                        "An ENDWHILE command was found outside of a proper WHILE ENDWHILE structure. Or its arguments did not match the opening WHILE command."
+                    }
+                    "endblock" => {
+                        "An ENDBLOCK command was found outside of a proper BLOCK ENDBLOCK structure."
+                    }
                     _ => unreachable!(),
                 };
                 let text = format!("{} {}", command.name, error);
@@ -2002,7 +2161,8 @@ impl Interp {
         // empty or identical to the `if` arguments.
         let end_index = *jumps.last().expect("endif");
         let end_command = &file.commands[end_index];
-        let matched = end_command.args.is_empty() || raw_args_equal(&end_command.args, &command.args);
+        let matched =
+            end_command.args.is_empty() || raw_args_equal(&end_command.args, &command.args);
         self.warn_end_args(file, command, end_index, matched, true);
         // Evaluate the `if` condition.
         self.backtrace.push(self.frame_for(file, command));
@@ -2084,7 +2244,13 @@ impl Interp {
         Ctl::Normal
     }
 
-    fn evaluate_if_condition(&mut self, file: &Rc<ParsedFile>, command: &Command, subst: Option<&MacroSubst>, name: &str) -> bool {
+    fn evaluate_if_condition(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+        name: &str,
+    ) -> bool {
         let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
             return false;
         };
@@ -2141,7 +2307,12 @@ impl Interp {
     /// Returns `(block_opened, ctl)`: `block_opened` is false when the
     /// command failed before creating its function blocker, in which case
     /// the body and end command run as ordinary commands.
-    fn run_foreach(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn run_foreach(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        index: usize,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
@@ -2160,8 +2331,7 @@ impl Interp {
         let end_command = &file.commands[end];
         let matched = match self.expand_arguments(&file.path, &end_command.args, subst) {
             Some(end_args) => {
-                let end_args: Vec<String> =
-                    end_args.into_iter().map(|(value, _)| value).collect();
+                let end_args: Vec<String> = end_args.into_iter().map(|(value, _)| value).collect();
                 end_args.is_empty() || end_args[0] == values[0]
             }
             None => true,
@@ -2211,7 +2381,11 @@ impl Interp {
         }
         *self.loop_depth.last_mut().expect("loop depth") -= 1;
         // The blocker restores only after an iteration ran.
-        let saved = if plan.iterations.is_empty() { Vec::new() } else { saved };
+        let saved = if plan.iterations.is_empty() {
+            Vec::new()
+        } else {
+            saved
+        };
         for (name, value) in saved {
             match value {
                 Some(value) => self.set_def(name, value),
@@ -2222,7 +2396,12 @@ impl Interp {
     }
 
     /// Returns `(block_opened, ctl)` like `run_foreach`.
-    fn run_while(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn run_while(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        index: usize,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         // `cmWhileCommand`: no arguments means no blocker was created; the
@@ -2240,8 +2419,8 @@ impl Interp {
         // `cmWhileFunctionBlocker::ArgumentsMatch`: raw argument equality or
         // no endwhile arguments.
         let end_command = &file.commands[end];
-        let matched = end_command.args.is_empty()
-            || raw_args_equal(&end_command.args, &command.args);
+        let matched =
+            end_command.args.is_empty() || raw_args_equal(&end_command.args, &command.args);
         self.warn_end_args(file, command, end, matched, true);
         let max_iterations: usize = 1_000_000_000;
         let mut count = 0usize;
@@ -2293,7 +2472,9 @@ impl Interp {
                     PolicyStatus::Warn => {
                         let mut text = format!(
                             "{}\nwhile() given incorrect arguments:\n ",
-                            policy::policy_warning(policy::index_of("CMP0130").expect("registered policy"))
+                            policy::policy_warning(
+                                policy::index_of("CMP0130").expect("registered policy")
+                            )
                         );
                         for (value, _) in &last_args {
                             text.push(' ');
@@ -2328,7 +2509,12 @@ impl Interp {
     }
 
     /// Returns `(block_opened, ctl)` like `run_foreach`.
-    fn run_block(&mut self, file: &Rc<ParsedFile>, index: usize, subst: Option<&MacroSubst>) -> (bool, Ctl) {
+    fn run_block(
+        &mut self,
+        file: &Rc<ParsedFile>,
+        index: usize,
+        subst: Option<&MacroSubst>,
+    ) -> (bool, Ctl) {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
@@ -2381,7 +2567,13 @@ impl Interp {
     /// Expands `${}`, `$ENV{}`, `$CACHE{}` references and escape sequences.
     /// `location` provides the file/line for CMAKE_CURRENT_LIST_LINE and
     /// error messages. Errors are reported (fatal) and the input is returned.
-    pub fn expand_variables(&mut self, source: &str, location: Option<(&str, usize)>, at_only: bool, replace_at: bool) -> String {
+    pub fn expand_variables(
+        &mut self,
+        source: &str,
+        location: Option<(&str, usize)>,
+        at_only: bool,
+        replace_at: bool,
+    ) -> String {
         match self.expand_impl(source, location, false, at_only, replace_at, false) {
             Ok(result) => result,
             Err((kind, message)) => {
@@ -2396,8 +2588,16 @@ impl Interp {
 
     /// `configure_file`/`string(CONFIGURE)` style expansion: `no_escapes`
     /// and optional `@ONLY`.
-    pub fn expand_configure(&mut self, source: &str, at_only: bool, escape_quotes: bool) -> Result<String, String> {
-        let frame = self.backtrace.last().map(|frame| (frame.file.clone(), frame.line));
+    pub fn expand_configure(
+        &mut self,
+        source: &str,
+        at_only: bool,
+        escape_quotes: bool,
+    ) -> Result<String, String> {
+        let frame = self
+            .backtrace
+            .last()
+            .map(|frame| (frame.file.clone(), frame.line));
         let location = frame.as_ref().map(|(file, line)| (file.as_ref(), *line));
         let source = source.split_once('\0').map_or(source, |(text, _)| text);
         self.expand_impl(source, location, escape_quotes, at_only, true, true)
@@ -2434,7 +2634,12 @@ impl Interp {
                         let value: Option<String> = match domain {
                             b'N' => {
                                 if location.is_some() && lookup == "CMAKE_CURRENT_LIST_LINE" {
-                                    let deferred = self.backtrace.iter().rev().nth(1).is_some_and(|frame| frame.deferred);
+                                    let deferred = self
+                                        .backtrace
+                                        .iter()
+                                        .rev()
+                                        .nth(1)
+                                        .is_some_and(|frame| frame.deferred);
                                     match &self.ext.defer_current_id {
                                         Some(id) if deferred => Some(format!("DEFERRED:{id}")),
                                         _ => Some(line.to_string()),
@@ -2548,7 +2753,8 @@ impl Interp {
                     if let Some(close) = rest.iter().position(|byte| *byte == b'@')
                         && close > 0
                         && rest[..close].iter().all(|byte| {
-                            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'.' | b'+' | b'-')
+                            byte.is_ascii_alphanumeric()
+                                || matches!(byte, b'/' | b'_' | b'.' | b'+' | b'-')
                         })
                     {
                         let name = String::from_utf8_lossy(&rest[..close]).into_owned();
@@ -2578,11 +2784,13 @@ impl Interp {
                 _ => handled_default = true,
             }
             if handled_default && !open.is_empty() {
-                let ok = ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'/' | b'.' | b'+' | b'-');
+                let ok =
+                    ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'/' | b'.' | b'+' | b'-');
                 if !ok {
                     let ch_text = source[index..].chars().next().unwrap_or('?');
                     result.extend_from_slice(&bytes[last..index]);
-                    let partial = String::from_utf8_lossy(&result[open.last().unwrap().1..]).into_owned();
+                    let partial =
+                        String::from_utf8_lossy(&result[open.last().unwrap().1..]).into_owned();
                     error = Some(format!(
                         "Invalid character ('{ch_text}') in a variable name: '{partial}'"
                     ));
@@ -2617,16 +2825,19 @@ enum BodyResult {
 impl Interp {
     /// Registers a command that controls when its arguments are expanded.
     pub fn register_raw(&mut self, name: &str, function: RawBuiltin) {
-        self.commands.insert(name.to_owned(), CommandDef::Raw(function));
+        self.commands
+            .insert(name.to_owned(), CommandDef::Raw(function));
     }
 
     /// Registers a builtin command.
     pub fn register(&mut self, name: &str, function: Builtin) {
-        self.commands.insert(name.to_owned(), CommandDef::Builtin(function));
+        self.commands
+            .insert(name.to_owned(), CommandDef::Builtin(function));
     }
 
     pub fn register_unexpected(&mut self, name: &str, message: &'static str) {
-        self.commands.insert(name.to_owned(), CommandDef::Unexpected(message));
+        self.commands
+            .insert(name.to_owned(), CommandDef::Unexpected(message));
     }
 
     pub fn register_flow(&mut self, name: &str) {
@@ -2818,8 +3029,7 @@ impl Interp {
 fn str_to_ulong(text: &str) -> Option<u64> {
     let bytes = text.as_bytes();
     let mut index = 0;
-    while index < bytes.len()
-        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    while index < bytes.len() && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
     {
         index += 1;
     }
@@ -2832,7 +3042,9 @@ fn str_to_ulong(text: &str) -> Option<u64> {
     let digits = index;
     let mut value: u64 = 0;
     while index < bytes.len() && bytes[index].is_ascii_digit() {
-        value = value.checked_mul(10)?.checked_add(u64::from(bytes[index] - b'0'))?;
+        value = value
+            .checked_mul(10)?
+            .checked_add(u64::from(bytes[index] - b'0'))?;
         index += 1;
     }
     if index == digits || index != bytes.len() {
@@ -2846,8 +3058,7 @@ fn str_to_ulong(text: &str) -> Option<u64> {
 fn atof_prefix(text: &str) -> f64 {
     let bytes = text.as_bytes();
     let mut index = 0;
-    while index < bytes.len()
-        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    while index < bytes.len() && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
     {
         index += 1;
     }

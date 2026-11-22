@@ -4,35 +4,50 @@ use crate::interp::Interp;
 
 pub mod configure_file;
 pub mod core;
-pub mod export;
-pub mod find;
 pub mod custom_actions;
 pub mod directory;
-pub mod targets;
-#[path = "../target.rs"]
-pub mod target;
-pub mod install;
-pub mod project;
-pub mod string;
-pub mod language;
+pub mod export;
 pub mod file;
+pub mod find;
+pub mod install;
+pub mod language;
 pub mod legacy_fs;
 pub mod list;
 pub mod math;
 pub mod message;
 pub mod parse_arguments;
+pub mod path;
 pub mod pkg_config;
 pub mod process;
+pub mod project;
 pub mod property;
 pub mod separate_arguments;
+pub mod string;
 pub mod sysinfo;
-pub mod path;
+#[path = "../target.rs"]
+pub mod target;
+pub mod targets;
 pub mod try_compile;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
-        "if", "elseif", "else", "endif", "foreach", "endforeach", "while", "endwhile", "function",
-        "endfunction", "macro", "endmacro", "block", "endblock", "break", "continue", "return",
+        "if",
+        "elseif",
+        "else",
+        "endif",
+        "foreach",
+        "endforeach",
+        "while",
+        "endwhile",
+        "function",
+        "endfunction",
+        "macro",
+        "endmacro",
+        "block",
+        "endblock",
+        "break",
+        "continue",
+        "return",
     ] {
         interp.register_flow(name);
     }

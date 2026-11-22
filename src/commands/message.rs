@@ -219,7 +219,10 @@ pub fn status_line(interp: &mut Interp, text: &str) {
         return;
     }
     let mut line = format!("-- {text}");
-    if interp.debug.output && !interp.ext.execution_file_bases.is_empty() && text.starts_with("Configuring") {
+    if interp.debug.output
+        && !interp.ext.execution_file_bases.is_empty()
+        && text.starts_with("Configuring")
+    {
         line.push(' ');
         line.push_str(&interp.mf().source_dir);
     }
@@ -249,7 +252,8 @@ fn configure_log(interp: &mut Interp, message: &str) {
     let log_dir = format!("{}/CMakeFiles", interp.home_binary);
     let checks = interp.ext.message_checks.clone();
     let mut slot = interp.ext.configure_log.borrow_mut();
-    let log = slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+    let log =
+        slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
     if !log.is_any_log_version_enabled(&[1]) {
         return;
     }

@@ -627,9 +627,7 @@ impl Parser {
                             p += 1;
                             S::Comment
                         }
-                        b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'.' => {
-                            S::InvokeLineBegin
-                        }
+                        b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'.' => S::InvokeLineBegin,
                         _ => return self.fail(0x2, "Expected key", p),
                     }
                 }

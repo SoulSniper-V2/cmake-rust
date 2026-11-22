@@ -68,7 +68,10 @@ pub fn strtol(value: &str, base: i32) -> (i64, bool) {
     let parsed = unsafe { libc::strtol(c.as_ptr(), &mut end, base) };
     // SAFETY: end points into c.
     let rest = unsafe { *end };
-    (parsed as i64, rest == 0 && end as *const libc::c_char != c.as_ptr())
+    (
+        parsed as i64,
+        rest == 0 && end as *const libc::c_char != c.as_ptr(),
+    )
 }
 
 /// `cmList` expansion of a single value (`cmExpandList`). Splits on `;`
@@ -247,13 +250,15 @@ pub fn filename_name(path: &str) -> String {
 /// `cmSystemTools::GetFilenameLastExtension`.
 pub fn filename_last_extension(path: &str) -> String {
     let name = filename_name(path);
-    name.rfind('.').map_or_else(String::new, |dot| name[dot..].to_owned())
+    name.rfind('.')
+        .map_or_else(String::new, |dot| name[dot..].to_owned())
 }
 
 /// `cmSystemTools::GetFilenameWithoutLastExtension`.
 pub fn filename_without_last_extension(path: &str) -> String {
     let name = filename_name(path);
-    name.rfind('.').map_or_else(|| name.clone(), |dot| name[..dot].to_owned())
+    name.rfind('.')
+        .map_or_else(|| name.clone(), |dot| name[..dot].to_owned())
 }
 
 /// `cmSystemTools::GetCurrentDateTime`: `strftime` of the local time.
@@ -267,7 +272,12 @@ pub fn current_date_time(format: &str) -> String {
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&now, &mut tm);
         let mut buffer = [0u8; 1024];
-        let n = libc::strftime(buffer.as_mut_ptr().cast(), buffer.len(), format.as_ptr(), &tm);
+        let n = libc::strftime(
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            format.as_ptr(),
+            &tm,
+        );
         String::from_utf8_lossy(&buffer[..n]).into_owned()
     }
 }

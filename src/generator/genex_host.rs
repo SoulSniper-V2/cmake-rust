@@ -27,21 +27,36 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         self.ctx.target_at(self.dir, name)
     }
 
-    fn artifact_dir_name(&self, target: &Target, kind: ArtifactKind, config: &str) -> Result<(String, String), String> {
+    fn artifact_dir_name(
+        &self,
+        target: &Target,
+        kind: ArtifactKind,
+        config: &str,
+    ) -> Result<(String, String), String> {
         let ctx = self.ctx;
         let names = gt::names(ctx, target, config);
         let runtime = gt::directory(ctx, target, config, ArtifactType::Runtime);
         Ok(match kind {
             ArtifactKind::File | ArtifactKind::LinkerFile | ArtifactKind::LinkerLibraryFile => {
-                let artifact = if kind == ArtifactKind::File { ArtifactType::Runtime } else { ArtifactType::Import };
+                let artifact = if kind == ArtifactKind::File {
+                    ArtifactType::Runtime
+                } else {
+                    ArtifactType::Import
+                };
                 let path = gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File);
-                (crate::util::filename_path(&path), crate::util::filename_name(&path))
+                (
+                    crate::util::filename_path(&path),
+                    crate::util::filename_name(&path),
+                )
             }
             ArtifactKind::ImportFile | ArtifactKind::LinkerImportFile => {
                 if names.import_library.is_empty() {
                     (String::new(), String::new())
                 } else {
-                    (gt::directory(ctx, target, config, ArtifactType::Import), names.import_library.clone())
+                    (
+                        gt::directory(ctx, target, config, ArtifactType::Import),
+                        names.import_library.clone(),
+                    )
                 }
             }
             ArtifactKind::SonameFile | ArtifactKind::SonameImportFile => {
@@ -99,7 +114,10 @@ impl GenexHost for CtxHost<'_, '_> {
         }
         self.target_property_raw(name, prop)
             .into_iter()
-            .map(|value| PropertyEntry { value, backtrace: None })
+            .map(|value| PropertyEntry {
+                value,
+                backtrace: None,
+            })
             .collect()
     }
 
@@ -138,13 +156,25 @@ impl GenexHost for CtxHost<'_, '_> {
             if let Some(key) = crate::state::find_target_key_at(self.ctx.interp, index, name) {
                 return Some(key);
             }
-            dir = self.ctx.interp.makefiles.get(index).and_then(|mf| mf.parent);
+            dir = self
+                .ctx
+                .interp
+                .makefiles
+                .get(index)
+                .and_then(|mf| mf.parent);
         }
         None
     }
 
-    fn target_artifact(&self, name: &str, kind: ArtifactKind, config: &str) -> Result<String, String> {
-        let target = self.find(name).ok_or_else(|| format!("No target \"{name}\""))?;
+    fn target_artifact(
+        &self,
+        name: &str,
+        kind: ArtifactKind,
+        config: &str,
+    ) -> Result<String, String> {
+        let target = self
+            .find(name)
+            .ok_or_else(|| format!("No target \"{name}\""))?;
         let (dir, file) = self.artifact_dir_name(target, kind, config)?;
         if file.is_empty() {
             return Ok(dir);
@@ -159,13 +189,17 @@ impl GenexHost for CtxHost<'_, '_> {
         component: ArtifactComponent,
         config: &str,
     ) -> Result<String, String> {
-        let target = self.find(name).ok_or_else(|| format!("No target \"{name}\""))?;
+        let target = self
+            .find(name)
+            .ok_or_else(|| format!("No target \"{name}\""))?;
         let (dir, file) = self.artifact_dir_name(target, kind, config)?;
         Ok(match component {
             ArtifactComponent::Path => format!("{dir}/{file}"),
             ArtifactComponent::Name => file,
             ArtifactComponent::Directory => dir,
-            ArtifactComponent::BaseName => gt::output_name(self.ctx, target, config, ArtifactType::Runtime),
+            ArtifactComponent::BaseName => {
+                gt::output_name(self.ctx, target, config, ArtifactType::Runtime)
+            }
             ArtifactComponent::Prefix => {
                 gt::full_name_components(self.ctx, target, config, ArtifactType::Runtime).prefix
             }
@@ -176,7 +210,9 @@ impl GenexHost for CtxHost<'_, '_> {
     }
 
     fn target_objects(&self, name: &str, config: &str) -> Result<Vec<String>, String> {
-        let target = self.find(name).ok_or_else(|| format!("No target \"{name}\""))?;
+        let target = self
+            .find(name)
+            .ok_or_else(|| format!("No target \"{name}\""))?;
         let objects: Vec<String> = if target.imported {
             gt::mapped_import_config(target, config)
                 .and_then(|info| info.location)

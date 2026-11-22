@@ -432,7 +432,12 @@ impl<'a> Reader<'a> {
         false
     }
 
-    fn add_error_and_recover(&mut self, message: impl Into<String>, token: &Token, skip_until: TokenType) -> bool {
+    fn add_error_and_recover(
+        &mut self,
+        message: impl Into<String>,
+        token: &Token,
+        skip_until: TokenType,
+    ) -> bool {
         self.add_error(message, token);
         self.recover_from_error(skip_until)
     }
@@ -539,7 +544,11 @@ impl<'a> Reader<'a> {
                 return true;
             }
         };
-        self.add_error_and_recover("Missing '}' or object member name", &token_name, TokenType::ObjectEnd)
+        self.add_error_and_recover(
+            "Missing '}' or object member name",
+            &token_name,
+            TokenType::ObjectEnd,
+        )
     }
 
     fn read_array(&mut self, token: &Token, slot: &mut Value) -> bool {
@@ -568,7 +577,8 @@ impl<'a> Reader<'a> {
                 return self.recover_from_error(TokenType::ArrayEnd);
             }
             let (ok, current) = self.read_token_skipping();
-            if !ok || (current.tt != TokenType::ArraySeparator && current.tt != TokenType::ArrayEnd) {
+            if !ok || (current.tt != TokenType::ArraySeparator && current.tt != TokenType::ArrayEnd)
+            {
                 return self.add_error_and_recover(
                     "Missing ',' or ']' in array declaration",
                     &current,
@@ -599,7 +609,9 @@ impl<'a> Reader<'a> {
             let mut as_double = false;
             for (i, &c) in digits.iter().enumerate() {
                 let digit = u64::from(c - b'0');
-                if value >= threshold && (value > threshold || i + 1 != digits.len() || digit > max_last) {
+                if value >= threshold
+                    && (value > threshold || i + 1 != digits.len() || digit > max_last)
+                {
                     as_double = true;
                     break;
                 }
@@ -618,7 +630,10 @@ impl<'a> Reader<'a> {
                 return true;
             }
         }
-        match std::str::from_utf8(text).ok().and_then(|s| s.parse::<f64>().ok()) {
+        match std::str::from_utf8(text)
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+        {
             Some(value) => {
                 slot.kind = Kind::Real(value);
                 slot.start = token.start;
@@ -684,7 +699,12 @@ impl<'a> Reader<'a> {
         Some(String::from_utf8_lossy(&decoded).into_owned())
     }
 
-    fn decode_unicode_codepoint(&mut self, token: &Token, current: &mut usize, end: usize) -> Option<u32> {
+    fn decode_unicode_codepoint(
+        &mut self,
+        token: &Token,
+        current: &mut usize,
+        end: usize,
+    ) -> Option<u32> {
         let mut unicode = self.decode_unicode_escape(token, current, end)?;
         if (0xD800..=0xDBFF).contains(&unicode) {
             if end - *current < 6 {
@@ -711,9 +731,18 @@ impl<'a> Reader<'a> {
         Some(unicode)
     }
 
-    fn decode_unicode_escape(&mut self, token: &Token, current: &mut usize, end: usize) -> Option<u32> {
+    fn decode_unicode_escape(
+        &mut self,
+        token: &Token,
+        current: &mut usize,
+        end: usize,
+    ) -> Option<u32> {
         if end - *current < 4 {
-            self.add_error_extra("Bad unicode escape sequence in string: four digits expected.", token, *current);
+            self.add_error_extra(
+                "Bad unicode escape sequence in string: four digits expected.",
+                token,
+                *current,
+            );
             return None;
         }
         let mut unicode = 0u32;
@@ -750,7 +779,11 @@ pub struct Parsed {
 
 /// `OurCharReader::parse` with the given features (skipBom is on).
 pub fn parse_with(doc: &[u8], features: Features) -> Parsed {
-    let doc_start = if doc.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+    let doc_start = if doc.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
     let mut reader = Reader {
         doc,
         cur: doc_start,
@@ -804,16 +837,26 @@ impl Parsed {
                 line += 1;
             }
         }
-        format!("Line {}, Column {}", line + 1, location.saturating_sub(last_line_start) + 1)
+        format!(
+            "Line {}, Column {}",
+            line + 1,
+            location.saturating_sub(last_line_start) + 1
+        )
     }
 
     /// `OurReader::getFormattedErrorMessages`.
     pub fn formatted_errors(&self, doc: &[u8]) -> String {
         let mut out = String::new();
         for (start, message, extra) in &self.errors {
-            out += &format!("* {}\n  {message}\n", Self::location(doc, self.doc_start, *start));
+            out += &format!(
+                "* {}\n  {message}\n",
+                Self::location(doc, self.doc_start, *start)
+            );
             if let Some(extra) = extra {
-                out += &format!("See {} for detail.\n", Self::location(doc, self.doc_start, *extra));
+                out += &format!(
+                    "See {} for detail.\n",
+                    Self::location(doc, self.doc_start, *extra)
+                );
             }
         }
         out
@@ -823,7 +866,11 @@ impl Parsed {
 /// strictMode parse with structured errors (offset_start, message).
 fn parse(doc: &[u8]) -> (Value, Vec<(usize, String)>) {
     let parsed = parse_with(doc, Features::STRICT);
-    let errors = parsed.errors.into_iter().map(|(start, message, _)| (start, message)).collect();
+    let errors = parsed
+        .errors
+        .into_iter()
+        .map(|(start, message, _)| (start, message))
+        .collect();
     (parsed.root, errors)
 }
 
@@ -957,7 +1004,10 @@ impl State {
     }
 
     pub fn key(&self) -> String {
-        self.parse_stack.last().map(|(k, _)| k.clone()).unwrap_or_default()
+        self.parse_stack
+            .last()
+            .map(|(k, _)| k.clone())
+            .unwrap_or_default()
     }
 
     pub fn key_after(&self, key: &str) -> String {
@@ -1031,37 +1081,46 @@ pub fn invalid_int() -> ErrorGen {
 }
 
 /// `JsonErrors::INVALID_NAMED_OBJECT`.
-pub fn invalid_named_object(name_gen: impl Fn(Option<&V>, &State) -> String + 'static) -> ObjectErrorGen {
+pub fn invalid_named_object(
+    name_gen: impl Fn(Option<&V>, &State) -> String + 'static,
+) -> ObjectErrorGen {
     let name_gen = Rc::new(name_gen);
-    Rc::new(move |error_type: ObjectError, extra: &[String]| -> ErrorGen {
-        let name_gen = name_gen.clone();
-        let extra = extra.to_vec();
-        error_gen(move |value, state| {
-            let name = name_gen(value, state);
-            match error_type {
-                ObjectError::RequiredMissing => {
-                    state.add_error_at_value(format!("Invalid Required {name}"), value)
-                }
-                ObjectError::InvalidObject => state.add_error_at_value(format!("Invalid {name}"), value),
-                ObjectError::ExtraField => {
-                    for member in &extra {
-                        let message = format!("Invalid extra field \"{member}\" in {name}");
-                        match value {
-                            Some(value) => {
-                                let member_value = value.member(member);
-                                state.add_error_at_value(message, member_value.as_ref())
+    Rc::new(
+        move |error_type: ObjectError, extra: &[String]| -> ErrorGen {
+            let name_gen = name_gen.clone();
+            let extra = extra.to_vec();
+            error_gen(move |value, state| {
+                let name = name_gen(value, state);
+                match error_type {
+                    ObjectError::RequiredMissing => {
+                        state.add_error_at_value(format!("Invalid Required {name}"), value)
+                    }
+                    ObjectError::InvalidObject => {
+                        state.add_error_at_value(format!("Invalid {name}"), value)
+                    }
+                    ObjectError::ExtraField => {
+                        for member in &extra {
+                            let message = format!("Invalid extra field \"{member}\" in {name}");
+                            match value {
+                                Some(value) => {
+                                    let member_value = value.member(member);
+                                    state.add_error_at_value(message, member_value.as_ref())
+                                }
+                                None => state.add_error(message),
                             }
-                            None => state.add_error(message),
                         }
                     }
+                    ObjectError::MissingRequired => {
+                        let key = state.key();
+                        state.add_error_at_value(
+                            format!("Missing required field \"{key}\" in {name}"),
+                            value,
+                        )
+                    }
                 }
-                ObjectError::MissingRequired => {
-                    let key = state.key();
-                    state.add_error_at_value(format!("Missing required field \"{key}\" in {name}"), value)
-                }
-            }
-        })
-    })
+            })
+        },
+    )
 }
 
 /// `JsonErrors::INVALID_OBJECT`.
@@ -1107,7 +1166,13 @@ impl<T: 'static> Object<T> {
     }
 
     /// `Bind(name, &T::member, func, required)`.
-    pub fn bind<M: 'static>(self, name: &'static str, get: fn(&mut T) -> &mut M, func: Helper<M>, required: bool) -> Self {
+    pub fn bind<M: 'static>(
+        self,
+        name: &'static str,
+        get: fn(&mut T) -> &mut M,
+        func: Helper<M>,
+        required: bool,
+    ) -> Self {
         self.bind_fn(
             name,
             helper(move |out: &mut T, value, state| func(get(out), value, state)),
@@ -1116,7 +1181,12 @@ impl<T: 'static> Object<T> {
     }
 
     /// `Bind<M>(name, nullptr, func, required)`.
-    pub fn bind_dummy<M: Default + 'static>(self, name: &'static str, func: Helper<M>, required: bool) -> Self {
+    pub fn bind_dummy<M: Default + 'static>(
+        self,
+        name: &'static str,
+        func: Helper<M>,
+        required: bool,
+    ) -> Self {
         self.bind_fn(
             name,
             helper(move |_: &mut T, value, state| {
@@ -1129,57 +1199,63 @@ impl<T: 'static> Object<T> {
 
     /// `Bind(name, func, required)` with a function of the whole object.
     pub fn bind_fn(mut self, name: &'static str, func: Helper<T>, required: bool) -> Self {
-        self.members.push(Member { name, func, required });
+        self.members.push(Member {
+            name,
+            func,
+            required,
+        });
         self.any_required = self.any_required || required;
         self
     }
 
     pub fn build(self) -> Helper<T> {
-        Rc::new(move |out: &mut T, value: Option<&V>, state: &mut State| -> bool {
-            let mut extra: Vec<String> = Vec::new();
-            if value.is_none() && self.any_required {
-                (self.error)(ObjectError::RequiredMissing, &extra)(value, state);
-                return false;
-            }
-            if let Some(v) = value
-                && !v.is_object()
-            {
-                (self.error)(ObjectError::InvalidObject, &extra)(value, state);
-                return false;
-            }
-            if let Some(v) = value {
-                extra = v.member_names();
-            }
-            if state.allow_comments {
-                extra.retain(|name| name != "$comment");
-            }
-            let mut success = true;
-            for m in &self.members {
-                state.push_stack(m.name, value.cloned());
-                let member = value.and_then(|v| v.member(m.name));
-                if let Some(member) = member {
-                    if !(m.func)(out, Some(&member), state) {
+        Rc::new(
+            move |out: &mut T, value: Option<&V>, state: &mut State| -> bool {
+                let mut extra: Vec<String> = Vec::new();
+                if value.is_none() && self.any_required {
+                    (self.error)(ObjectError::RequiredMissing, &extra)(value, state);
+                    return false;
+                }
+                if let Some(v) = value
+                    && !v.is_object()
+                {
+                    (self.error)(ObjectError::InvalidObject, &extra)(value, state);
+                    return false;
+                }
+                if let Some(v) = value {
+                    extra = v.member_names();
+                }
+                if state.allow_comments {
+                    extra.retain(|name| name != "$comment");
+                }
+                let mut success = true;
+                for m in &self.members {
+                    state.push_stack(m.name, value.cloned());
+                    let member = value.and_then(|v| v.member(m.name));
+                    if let Some(member) = member {
+                        if !(m.func)(out, Some(&member), state) {
+                            success = false;
+                        }
+                        if let Some(pos) = extra.iter().position(|n| n == m.name) {
+                            extra.remove(pos);
+                        }
+                    } else if !m.required {
+                        if !(m.func)(out, None, state) {
+                            success = false;
+                        }
+                    } else {
+                        (self.error)(ObjectError::MissingRequired, &extra)(value, state);
                         success = false;
                     }
-                    if let Some(pos) = extra.iter().position(|n| n == m.name) {
-                        extra.remove(pos);
-                    }
-                } else if !m.required {
-                    if !(m.func)(out, None, state) {
-                        success = false;
-                    }
-                } else {
-                    (self.error)(ObjectError::MissingRequired, &extra)(value, state);
+                    state.pop_stack();
+                }
+                if !self.allow_extra && !extra.is_empty() {
+                    (self.error)(ObjectError::ExtraField, &extra)(value, state);
                     success = false;
                 }
-                state.pop_stack();
-            }
-            if !self.allow_extra && !extra.is_empty() {
-                (self.error)(ObjectError::ExtraField, &extra)(value, state);
-                success = false;
-            }
-            success
-        })
+                success
+            },
+        )
     }
 }
 
@@ -1271,7 +1347,10 @@ pub fn vector_helper<T: Default + 'static>(error: ErrorGen, func: Helper<T>) -> 
 }
 
 /// `cmJSONHelperBuilder::Map<T>`.
-pub fn map_helper<T: Default + 'static>(error: ErrorGen, func: Helper<T>) -> Helper<BTreeMap<String, T>> {
+pub fn map_helper<T: Default + 'static>(
+    error: ErrorGen,
+    func: Helper<T>,
+) -> Helper<BTreeMap<String, T>> {
     helper(move |out: &mut BTreeMap<String, T>, value, state| {
         let Some(value) = value else {
             out.clear();
@@ -1319,7 +1398,11 @@ pub fn required_helper<T: 'static>(error: ErrorGen, func: Helper<T>) -> Helper<T
 }
 
 /// `cmJSONHelperBuilder::Checked<T>`.
-pub fn checked_helper<T: 'static>(error: ErrorGen, func: Helper<T>, predicate: impl Fn(&T) -> bool + 'static) -> Helper<T> {
+pub fn checked_helper<T: 'static>(
+    error: ErrorGen,
+    func: Helper<T>,
+    predicate: impl Fn(&T) -> bool + 'static,
+) -> Helper<T> {
     helper(move |out: &mut T, value, state| {
         let mut result = func(out, value, state);
         if result && !predicate(out) {

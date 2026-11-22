@@ -61,7 +61,10 @@ impl Layouts<'_> {
             }),
         };
         let mut entries: Vec<_> = entries.collect();
-        if matches!(segment, Segment::Package | Segment::PackageExact | Segment::Any) {
+        if matches!(
+            segment,
+            Segment::Package | Segment::PackageExact | Segment::Any
+        ) {
             match self.order.as_str() {
                 "NAME" => entries.sort_unstable(),
                 "NATURAL" => entries
@@ -251,8 +254,8 @@ impl Package {
             descending: interp.get_def("CMAKE_FIND_PACKAGE_SORT_DIRECTION") == Some("DEC"),
         };
 
-        use Segment::{Any, Bundle, CaseInsensitive, Common, Exact, Package as PackageDir};
         use Segment::PackageExact;
+        use Segment::{Any, Bundle, CaseInsensitive, Common, Exact, Package as PackageDir};
         let cmake = CaseInsensitive("cmake");
         let cps_ci = CaseInsensitive("cps");
         let lib_cmake = Exact("cmake");
@@ -323,7 +326,9 @@ impl Package {
         // implied trailing 'cps', that may specify additional directories to
         // directly search for CPS files.
         let mut file = None;
-        if self.use_cps && let Some(cps_env) = env::var_os("CPS_PATH") {
+        if self.use_cps
+            && let Some(cps_env) = env::var_os("CPS_PATH")
+        {
             for path in env::split_paths(&cps_env) {
                 let prefix = format!("{}/", path.to_string_lossy());
                 if !Path::new(&prefix).is_dir() {
@@ -426,7 +431,12 @@ impl Package {
         None
     }
 
-    pub(super) fn find_config_file(&mut self, interp: &mut Interp, dir: &str, kind: Desc) -> Option<String> {
+    pub(super) fn find_config_file(
+        &mut self,
+        interp: &mut Interp,
+        dir: &str,
+        kind: Desc,
+    ) -> Option<String> {
         for config in self.configs.clone() {
             if kind != Desc::Any && cps::config_desc(&config) != kind {
                 continue;

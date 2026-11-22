@@ -275,11 +275,21 @@ pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
     };
     // The import library names (GetLibraryNames): ComputeVersionedName of the
     // import output with the effective SOVERSION.
-    let import_library = if matches!(target.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary) {
-        let import_output = full_name_components(ctx, target, config, ArtifactType::Import).filename();
+    let import_library = if matches!(
+        target.kind,
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) {
+        let import_output =
+            full_name_components(ctx, target, config, ArtifactType::Import).filename();
         let versioned = has_soname(ctx, target, config)
-            && !is_on_opt(ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME").as_deref());
-        let soversion = target.props.get("SOVERSION").or_else(|| target.props.get("VERSION"));
+            && !is_on_opt(
+                ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME")
+                    .as_deref(),
+            );
+        let soversion = target
+            .props
+            .get("SOVERSION")
+            .or_else(|| target.props.get("VERSION"));
         match soversion.filter(|_| versioned) {
             Some(soversion) => format!("{import_output}.{soversion}"),
             None => import_output,
@@ -393,7 +403,10 @@ pub fn full_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifact
 /// when no `<kind>_OUTPUT_DIRECTORY[_<CONFIG>]` property selects one.
 fn pdb_output_dir(ctx: &GenCtx, target: &Target, config: &str, kind: &str) -> Option<String> {
     let config_upper = config.to_ascii_uppercase();
-    let out = if let Some(value) = target.props.get(&format!("{kind}_OUTPUT_DIRECTORY_{config_upper}")) {
+    let out = if let Some(value) = target
+        .props
+        .get(&format!("{kind}_OUTPUT_DIRECTORY_{config_upper}"))
+    {
         ctx.genex(value, None, None)
     } else if let Some(value) = target.props.get(&format!("{kind}_OUTPUT_DIRECTORY")) {
         ctx.genex(value, None, None)
@@ -404,7 +417,10 @@ fn pdb_output_dir(ctx: &GenCtx, target: &Target, config: &str, kind: &str) -> Op
         return None;
     }
     // AppendDirectoryForConfig is a no-op for the single-config Ninja generator.
-    Some(collapse_full_path(&out, &ctx.interp.makefiles[target.makefile].binary_dir))
+    Some(collapse_full_path(
+        &out,
+        &ctx.interp.makefiles[target.makefile].binary_dir,
+    ))
 }
 
 /// `cmGeneratorTarget::GetPDBDirectory`.
@@ -420,7 +436,12 @@ pub fn compile_pdb_name(ctx: &GenCtx, target: &Target, config: &str) -> String {
         .props
         .get(&per_config)
         .filter(|value| !value.is_empty())
-        .or_else(|| target.props.get("COMPILE_PDB_NAME").filter(|value| !value.is_empty()));
+        .or_else(|| {
+            target
+                .props
+                .get("COMPILE_PDB_NAME")
+                .filter(|value| !value.is_empty())
+        });
     match name {
         Some(name) => {
             let pdb = ctx.genex(name, Some(target), None);
@@ -448,7 +469,9 @@ pub fn compile_pdb_path(ctx: &GenCtx, target: &Target, config: &str) -> String {
 
 /// `cmGeneratorTarget::GetSupportDirectory`.
 pub fn support_directory(ctx: &GenCtx, target: &Target) -> String {
-    object_directory(ctx, target, "").trim_end_matches('/').to_owned()
+    object_directory(ctx, target, "")
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 /// `cmCommonTargetGenerator::ComputeTargetCompilePDB` (single-config).
@@ -656,7 +679,10 @@ pub fn import_info<'a>(target: &'a Target, config: &str) -> Option<ImportInfo<'a
 
 /// `CM_FOR_EACH_TARGET_POLICY`: policies recorded on the target when it is
 /// created (cmTarget's PolicyMap).
-const TARGET_POLICIES: &[usize] = &[3, 4, 8, 20, 21, 22, 27, 37, 38, 41, 42, 46, 52, 60, 63, 65, 68, 69, 73, 76, 81, 83, 95, 99, 104, 105, 108, 112, 113, 119, 131, 142, 154, 155, 156, 157, 160, 162, 179, 181, 182, 195];
+const TARGET_POLICIES: &[usize] = &[
+    3, 4, 8, 20, 21, 22, 27, 37, 38, 41, 42, 46, 52, 60, 63, 65, 68, 69, 73, 76, 81, 83, 95, 99,
+    104, 105, 108, 112, 113, 119, 131, 142, 154, 155, 156, 157, 160, 162, 179, 181, 182, 195,
+];
 
 /// `cmGeneratorTarget::GetPolicyStatus*`: target policies come from the
 /// target's creation-time snapshot; others from its directory's final state.
@@ -698,7 +724,11 @@ fn warning(ctx: &GenCtx, kind: MessageType, text: &str, backtrace: &[Frame]) {
 
 /// The non-diagnosing part of `cmTarget::ImportedGetFullPath` (shared by
 /// configure-time LOCATION reads and generation).
-pub fn imported_artifact_path<'a>(target: &'a Target, config: &str, artifact: ArtifactType) -> Option<&'a str> {
+pub fn imported_artifact_path<'a>(
+    target: &'a Target,
+    config: &str,
+    artifact: ArtifactType,
+) -> Option<&'a str> {
     if target.kind == TargetKind::InterfaceLibrary {
         return None;
     }
@@ -843,7 +873,10 @@ pub(crate) fn source_prop(
         return value;
     }
     if matches!(name, "GENERATED" | "EXTERNAL_OBJECT")
-        && ctx.target_objects.borrow().contains_key(&(dir_index, path.to_owned()))
+        && ctx
+            .target_objects
+            .borrow()
+            .contains_key(&(dir_index, path.to_owned()))
     {
         return Some("1".to_owned());
     }
@@ -854,7 +887,11 @@ pub(crate) fn source_prop(
             .as_ref()
             .map(|_| "1".to_owned());
     }
-    crate::properties::get(ctx.interp, crate::properties::Object::Source(dir_index, path), name)
+    crate::properties::get(
+        ctx.interp,
+        crate::properties::Object::Source(dir_index, path),
+        name,
+    )
 }
 
 /// `cmSourceFile::GetCompileOptions`/`GetIncludeDirectories`/
@@ -879,7 +916,10 @@ pub(crate) fn source_prop_entries(
 
 /// The OBJECT library whose `$<TARGET_OBJECTS>` named `path` in `dir`.
 fn target_object_library(ctx: &GenCtx, dir: usize, path: &str) -> Option<String> {
-    ctx.target_objects.borrow().get(&(dir, path.to_owned())).cloned()
+    ctx.target_objects
+        .borrow()
+        .get(&(dir, path.to_owned()))
+        .cloned()
 }
 
 const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
@@ -1269,11 +1309,7 @@ fn object_file_name(
 
 /// Default link discovery until the generator's compile/link usage closures
 /// are available. The public *_with_link_closure queries accept those closures.
-pub(super) fn link_closure<'a>(
-    ctx: &GenCtx<'a>,
-    target: &Target,
-    config: &str,
-) -> Vec<&'a Target> {
+pub(super) fn link_closure<'a>(ctx: &GenCtx<'a>, target: &Target, config: &str) -> Vec<&'a Target> {
     let mut seen = HashSet::from([(target.makefile, target.name.as_str())]);
     let mut pending = evaluated_links(ctx, target, target, "LINK_LIBRARIES")
         .into_iter()
@@ -1297,15 +1333,20 @@ pub(super) fn link_closure<'a>(
             )
         } else {
             (
-                dep.props.get("INTERFACE_LINK_LIBRARIES").unwrap_or_default(),
+                dep.props
+                    .get("INTERFACE_LINK_LIBRARIES")
+                    .unwrap_or_default(),
                 "INTERFACE_LINK_LIBRARIES",
             )
         };
         pending.extend(
-            expand_list(&ctx.genex_with_dag(value, dep, target, property, None), false)
-                .into_iter()
-                .rev()
-                .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
+            expand_list(
+                &ctx.genex_with_dag(value, dep, target, property, None),
+                false,
+            )
+            .into_iter()
+            .rev()
+            .filter_map(|name| target_in_directory(ctx, dep.makefile, &name)),
         );
     }
     closure
@@ -1318,7 +1359,13 @@ pub(super) fn evaluated_links(
     property: &str,
 ) -> Vec<String> {
     expand_list(
-        &ctx.genex_with_dag(provider.props.get(property).unwrap_or_default(), provider, head, property, None),
+        &ctx.genex_with_dag(
+            provider.props.get(property).unwrap_or_default(),
+            provider,
+            head,
+            property,
+            None,
+        ),
         false,
     )
 }
@@ -1526,8 +1573,10 @@ fn collect_sources(
         let mut entries = Vec::new();
         for (items, backtrace) in evaluated_entries(ctx, target, target, "LINK_LIBRARIES") {
             for item in items {
-                let Some(library) = target_in_directory(ctx, target.makefile, &item)
-                    .filter(|dep| dep.kind == TargetKind::ObjectLibrary && !std::ptr::eq(*dep, target))
+                let Some(library) =
+                    target_in_directory(ctx, target.makefile, &item).filter(|dep| {
+                        dep.kind == TargetKind::ObjectLibrary && !std::ptr::eq(*dep, target)
+                    })
                 else {
                     continue;
                 };
@@ -1674,7 +1723,12 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
     // GetKindedSources: an uninitialized entry means the SOURCES depend on
     // themselves (e.g. $<TARGET_OBJECTS:self>).
     let pending = format!("{key}:pending");
-    if ctx.memo.borrow_mut().insert(pending.clone(), String::new()).is_some() {
+    if ctx
+        .memo
+        .borrow_mut()
+        .insert(pending.clone(), String::new())
+        .is_some()
+    {
         ctx.error(
             target.backtrace.clone(),
             format!(
@@ -1719,9 +1773,7 @@ pub fn check_targets_for_missing_sources(ctx: &GenCtx) -> bool {
             let Some(target) = ctx.interp.ext.targets.get(key) else {
                 continue;
             };
-            if !can_compile_sources(target)
-                || is_on_opt(target.props.get("ghs_integrity_app"))
-            {
+            if !can_compile_sources(target) || is_on_opt(target.props.get("ghs_integrity_app")) {
                 continue;
             }
             if sources(ctx, target, &ctx.config).is_empty() {

@@ -290,7 +290,13 @@ struct Spec {
     positions: [Option<Dest>; 5],
 }
 
-const fn pos(a: Dest, b: Option<Dest>, c: Option<Dest>, d: Option<Dest>, e: Option<Dest>) -> [Option<Dest>; 5] {
+const fn pos(
+    a: Dest,
+    b: Option<Dest>,
+    c: Option<Dest>,
+    d: Option<Dest>,
+    e: Option<Dest>,
+) -> [Option<Dest>; 5] {
     [Some(a), b, c, d, e]
 }
 
@@ -530,8 +536,12 @@ impl<'a> Parser<'a> {
                 Some(dest)
             }
             // Plain string/vector members.
-            Dest::CMakeFlags | Dest::CMakeInternal | Dest::SourcesType
-            | Dest::CompileDefs | Dest::LinkOptions | Dest::LangProp => Some(dest),
+            Dest::CMakeFlags
+            | Dest::CMakeInternal
+            | Dest::SourcesType
+            | Dest::CompileDefs
+            | Dest::LinkOptions
+            | Dest::LangProp => Some(dest),
             // Positional-only destinations are bound by `bind_positional`.
             Dest::CompileResultVariable => unreachable!(),
         }
@@ -626,11 +636,19 @@ impl<'a> Parser<'a> {
                 Continue::Yes
             }
             Dest::RunArgs => {
-                self.args.run_args.as_mut().expect("bind").push(arg.to_owned());
+                self.args
+                    .run_args
+                    .as_mut()
+                    .expect("bind")
+                    .push(arg.to_owned());
                 Continue::Yes
             }
             Dest::LinkLibraries => {
-                self.args.link_libraries.as_mut().expect("bind").push(arg.to_owned());
+                self.args
+                    .link_libraries
+                    .as_mut()
+                    .expect("bind")
+                    .push(arg.to_owned());
                 Continue::Yes
             }
             Dest::Sources => {
@@ -862,8 +880,10 @@ fn copy_file_always(source: &str, destination: &str) -> Result<(), (String, &'st
         );
     }
     // If files are the same do not copy.
-    if let (Ok(a), Ok(b)) = (source_path.canonicalize(), std::path::Path::new(&real_destination).canonicalize())
-        && a == b
+    if let (Ok(a), Ok(b)) = (
+        source_path.canonicalize(),
+        std::path::Path::new(&real_destination).canonicalize(),
+    ) && a == b
     {
         return Ok(());
     }
@@ -931,7 +951,10 @@ fn policy_optional_warning_enabled(interp: &Interp, var: &str) -> bool {
 fn export_escape(text: &str) -> String {
     util::escape_for_cmake(text)
         .replace("\\${_IMPORT_PREFIX}", "${_IMPORT_PREFIX}")
-        .replace("\\${CMAKE_IMPORT_LIBRARY_SUFFIX}", "${CMAKE_IMPORT_LIBRARY_SUFFIX}")
+        .replace(
+            "\\${CMAKE_IMPORT_LIBRARY_SUFFIX}",
+            "${CMAKE_IMPORT_LIBRARY_SUFFIX}",
+        )
 }
 
 fn target_type_name(kind: TargetKind) -> &'static str {
@@ -940,10 +963,7 @@ fn target_type_name(kind: TargetKind) -> &'static str {
 
 fn target_is_executable_with_exports(target: &state::Target) -> bool {
     target.kind == TargetKind::Executable
-        && target
-            .props
-            .get("ENABLE_EXPORTS")
-            .is_some_and(util::is_on)
+        && target.props.get("ENABLE_EXPORTS").is_some_and(util::is_on)
 }
 
 fn target_export_name(target: &state::Target) -> String {
@@ -996,7 +1016,9 @@ fn generate_import_target_code(out: &mut String, target: &state::Target, target_
     let target_name = target_export_name(target);
     out.push_str(&format!("# Create imported target {target_name}\n"));
     match target_type {
-        TargetKind::Executable => out.push_str(&format!("add_executable({target_name} IMPORTED)\n")),
+        TargetKind::Executable => {
+            out.push_str(&format!("add_executable({target_name} IMPORTED)\n"))
+        }
         TargetKind::StaticLibrary => {
             out.push_str(&format!("add_library({target_name} STATIC IMPORTED)\n"))
         }
@@ -1024,7 +1046,9 @@ fn generate_import_target_code(out: &mut String, target: &state::Target, target_
             && target.props.get("ENABLE_EXPORTS").is_some_and(util::is_on)
             && has_import_library(target))
     {
-        out.push_str(&format!("set_property(TARGET {target_name} PROPERTY ENABLE_EXPORTS 1)\n"));
+        out.push_str(&format!(
+            "set_property(TARGET {target_name} PROPERTY ENABLE_EXPORTS 1)\n"
+        ));
     }
 
     // Framework/application bundle markers only apply on Apple platforms.
@@ -1035,13 +1059,19 @@ fn generate_import_target_code(out: &mut String, target: &state::Target, target_
             TargetKind::SharedLibrary | TargetKind::StaticLibrary
         ) && target.props.get("FRAMEWORK").is_some_and(util::is_on);
         if framework {
-            out.push_str(&format!("set_property(TARGET {target_name} PROPERTY FRAMEWORK 1)\n"));
+            out.push_str(&format!(
+                "set_property(TARGET {target_name} PROPERTY FRAMEWORK 1)\n"
+            ));
         }
         if target.props.get("MACOSX_BUNDLE").is_some_and(util::is_on) {
-            out.push_str(&format!("set_property(TARGET {target_name} PROPERTY MACOSX_BUNDLE 1)\n"));
+            out.push_str(&format!(
+                "set_property(TARGET {target_name} PROPERTY MACOSX_BUNDLE 1)\n"
+            ));
         }
         if target.props.get("BUNDLE").is_some_and(util::is_on) {
-            out.push_str(&format!("set_property(TARGET {target_name} PROPERTY BUNDLE 1)\n"));
+            out.push_str(&format!(
+                "set_property(TARGET {target_name} PROPERTY BUNDLE 1)\n"
+            ));
         }
     }
 
@@ -1053,12 +1083,24 @@ fn generate_import_target_code(out: &mut String, target: &state::Target, target_
         ));
     }
 
-    if target.props.get("IMPORTED_NO_SYSTEM").is_some_and(util::is_on) {
-        out.push_str(&format!("set_property(TARGET {target_name} PROPERTY IMPORTED_NO_SYSTEM 1)\n"));
+    if target
+        .props
+        .get("IMPORTED_NO_SYSTEM")
+        .is_some_and(util::is_on)
+    {
+        out.push_str(&format!(
+            "set_property(TARGET {target_name} PROPERTY IMPORTED_NO_SYSTEM 1)\n"
+        ));
     }
 
-    if target.props.get("EXPORT_NO_SYSTEM").is_some_and(util::is_on) {
-        out.push_str(&format!("set_property(TARGET {target_name} PROPERTY SYSTEM 0)\n"));
+    if target
+        .props
+        .get("EXPORT_NO_SYSTEM")
+        .is_some_and(util::is_on)
+    {
+        out.push_str(&format!(
+            "set_property(TARGET {target_name} PROPERTY SYSTEM 0)\n"
+        ));
     }
 
     out.push('\n');
@@ -1088,7 +1130,11 @@ fn generate_interface_properties(
 
 /// `cmExportTryCompileFileGenerator::GenerateMainFile` — exported targets and
 /// their interface dependency targets, in stack order.
-fn generate_targets_file(interp: &Interp, targets: &[String], languages: &BTreeSet<String>) -> String {
+fn generate_targets_file(
+    interp: &Interp,
+    targets: &[String],
+    languages: &BTreeSet<String>,
+) -> String {
     let mut out = String::new();
     // RequiredCMakeVersion defaults to 2.8.3.
     out.push_str(
@@ -1275,10 +1321,7 @@ fn write_source(
     match file.write_all(content.as_bytes()) {
         Ok(()) => Some(filepath),
         Err(_) => {
-            fatal(
-                interp,
-                format!("{command} failed to write \"{filename}\""),
-            );
+            fatal(interp, format!("{command} failed to write \"{filename}\""));
             None
         }
     }
@@ -1347,9 +1390,8 @@ fn find_output_file(tc: &mut TryCompile, target_name: &str) {
 
     let command = format!("{}{tmp_output_file}", tc.binary_directory);
     if !std::path::Path::new(&command).exists() {
-        tc.find_error_message = format!(
-            "Unable to find the recorded try_compile output location:\n  {command}\n"
-        );
+        tc.find_error_message =
+            format!("Unable to find the recorded try_compile output location:\n  {command}\n");
         return;
     }
 
@@ -1417,7 +1459,9 @@ fn emit_test_project(
     /* Set CUDA architectures policy to match outer project.  */
     if interp.policy_status("CMP0104") != PolicyStatus::New
         && test_langs.contains("CUDA")
-        && interp.get_def("CMAKE_CUDA_ARCHITECTURES").is_none_or(str::is_empty)
+        && interp
+            .get_def("CMAKE_CUDA_ARCHITECTURES")
+            .is_none_or(str::is_empty)
     {
         out.push_str("cmake_policy(SET CMP0104 OLD)\n");
     }
@@ -1447,7 +1491,7 @@ fn emit_test_project(
     }
 
     /* Set cache/normal variable policy to match outer project.
-       It may affect toolchain files.  */
+    It may affect toolchain files.  */
     if interp.policy_status("CMP0126") != PolicyStatus::New {
         out.push_str("cmake_policy(SET CMP0126 OLD)\n");
     }
@@ -1491,9 +1535,15 @@ fn emit_test_project(
         // the underlying host compiler.
         for lang in ["CUDA", "HIP"] {
             if test_langs.contains(lang) {
-                out.push_str(&format!("set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_INCLUDES OFF)\n"));
-                out.push_str(&format!("set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)\n"));
-                out.push_str(&format!("set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_OBJECTS OFF)\n"));
+                out.push_str(&format!(
+                    "set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_INCLUDES OFF)\n"
+                ));
+                out.push_str(&format!(
+                    "set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)\n"
+                ));
+                out.push_str(&format!(
+                    "set(CMAKE_{lang}_USE_RESPONSE_FILE_FOR_OBJECTS OFF)\n"
+                ));
             }
         }
     }
@@ -1579,7 +1629,8 @@ fn emit_test_project(
         if let Some(link_libraries) = &args.link_libraries {
             for lib in link_libraries {
                 if let Some(alias_target_name) = interp.ext.aliases.get(lib).cloned() {
-                    if let Some(alias_target) = state::find_target_to_use(interp, &alias_target_name)
+                    if let Some(alias_target) =
+                        state::find_target_to_use(interp, &alias_target_name)
                     {
                         // Create equivalent library/executable alias.
                         if alias_target.kind == TargetKind::Executable {
@@ -1632,7 +1683,7 @@ fn emit_test_project(
     ));
 
     /* Set the appropriate policy information for the LINKER: prefix
-       expansion */
+    expansion */
     out.push_str(&format!(
         "cmake_policy(SET CMP0181 {})\n",
         if interp.policy_status("CMP0181") == PolicyStatus::New {
@@ -1816,7 +1867,9 @@ fn emit_test_project(
             "target_link_libraries({target_name} {libs_to_link})\n"
         ));
     } else {
-        out.push_str(&format!("target_link_libraries({target_name} ${{LINK_LIBRARIES}})\n"));
+        out.push_str(&format!(
+            "target_link_libraries({target_name} ${{LINK_LIBRARIES}})\n"
+        ));
     }
 
     Some((out, targets_file.map(|(_, content)| content)))
@@ -1850,7 +1903,7 @@ fn try_compile_code(
         target_name = args.target_name.clone().unwrap_or_default();
     } else {
         /* Use a random file name to avoid rapid creation and deletion
-           of the same executable name (some filesystems fail on that).  */
+        of the same executable name (some filesystems fail on that).  */
         target_name = format!("cmTC_{:05x}", random_number() & 0xFFFFF);
     }
 
@@ -1918,7 +1971,10 @@ fn try_compile_code(
     }
 
     if args.copy_file_to.as_deref() == Some("") {
-        fatal(interp, "COPY_FILE must be followed by a file path".to_owned());
+        fatal(
+            interp,
+            "COPY_FILE must be followed by a file path".to_owned(),
+        );
         return None;
     }
 
@@ -1947,21 +2003,33 @@ fn try_compile_code(
     }
 
     if tc.src_file_signature {
-        if args.source_from_content.as_ref().is_some_and(|v| v.len() % 2 == 1) {
+        if args
+            .source_from_content
+            .as_ref()
+            .is_some_and(|v| v.len() % 2 == 1)
+        {
             fatal(
                 interp,
                 "SOURCE_FROM_CONTENT requires exactly two arguments".to_owned(),
             );
             return None;
         }
-        if args.source_from_var.as_ref().is_some_and(|v| v.len() % 2 == 1) {
+        if args
+            .source_from_var
+            .as_ref()
+            .is_some_and(|v| v.len() % 2 == 1)
+        {
             fatal(
                 interp,
                 "SOURCE_FROM_VAR requires exactly two arguments".to_owned(),
             );
             return None;
         }
-        if args.source_from_file.as_ref().is_some_and(|v| v.len() % 2 == 1) {
+        if args
+            .source_from_file
+            .as_ref()
+            .is_some_and(|v| v.len() % 2 == 1)
+        {
             fatal(
                 interp,
                 "SOURCE_FROM_FILE requires exactly two arguments".to_owned(),
@@ -2055,7 +2123,13 @@ fn try_compile_code(
                 let name = &chunk[0].0;
                 let var = &chunk[1].0;
                 let content = interp.get_def(var).unwrap_or_default().to_owned();
-                let out = write_source(interp, &tc.binary_directory, name, &content, "SOURCE_FROM_VAR")?;
+                let out = write_source(
+                    interp,
+                    &tc.binary_directory,
+                    name,
+                    &content,
+                    "SOURCE_FROM_VAR",
+                )?;
                 sources.push((out, chunk[0].1));
             }
         }
@@ -2140,9 +2214,7 @@ fn try_compile_code(
         if let Err(error) = std::fs::write(&out_file_name, &cmakelists) {
             fatal(
                 interp,
-                format!(
-                    "Failed to open\n  {out_file_name}\n{error}"
-                ),
+                format!("Failed to open\n  {out_file_name}\n{error}"),
             );
             return None;
         }
@@ -2156,8 +2228,7 @@ fn try_compile_code(
     }
 
     // Forward a set of variables to the inner project cache.
-    if (tc.src_file_signature
-        || interp.policy_status("CMP0137") == PolicyStatus::New)
+    if (tc.src_file_signature || interp.policy_status("CMP0137") == PolicyStatus::New)
         && !interp.is_on("CMAKE_TRY_COMPILE_NO_PLATFORM_VARIABLES")
     {
         let mut vars: BTreeSet<String> = BTreeSet::new();
@@ -2208,7 +2279,8 @@ fn try_compile_code(
             // propagate various variables to support linker selection
             vars.insert("CMAKE_LINKER_TYPE".to_owned());
             let defs = interp.definition_names();
-            let linker_type_def = crate::cmregex::Regex::new("^CMAKE_[A-Za-z_-]+_USING_LINKER_").ok();
+            let linker_type_def =
+                crate::cmregex::Regex::new("^CMAKE_[A-Za-z_-]+_USING_LINKER_").ok();
             if let Some(regex) = linker_type_def {
                 for def in defs {
                     if regex.find(&def).is_some() {
@@ -2228,13 +2300,16 @@ fn try_compile_code(
         }
 
         /* for the TRY_COMPILEs we want to be able to specify the architecture.
-           So the user can set CMAKE_OSX_ARCHITECTURES to i386;ppc and then
-           set CMAKE_TRY_COMPILE_OSX_ARCHITECTURES first to i386 and then to
-           ppc to have the tests run for each specific architecture.  */
-        if let Some(tc_archs) = interp.get_def("CMAKE_TRY_COMPILE_OSX_ARCHITECTURES").map(str::to_owned)
+        So the user can set CMAKE_OSX_ARCHITECTURES to i386;ppc and then
+        set CMAKE_TRY_COMPILE_OSX_ARCHITECTURES first to i386 and then to
+        ppc to have the tests run for each specific architecture.  */
+        if let Some(tc_archs) = interp
+            .get_def("CMAKE_TRY_COMPILE_OSX_ARCHITECTURES")
+            .map(str::to_owned)
         {
             vars.remove("CMAKE_OSX_ARCHITECTURES");
-            args.cmake_flags.push(format!("-DCMAKE_OSX_ARCHITECTURES={tc_archs}"));
+            args.cmake_flags
+                .push(format!("-DCMAKE_OSX_ARCHITECTURES={tc_archs}"));
             cmake_variables.insert("CMAKE_OSX_ARCHITECTURES".to_owned(), tc_archs);
         }
 
@@ -2380,7 +2455,9 @@ fn write_try_compile_event_fields(
 
 /// `cmMakefile::GetOrCreateConfigureLog` equivalent — lazily creates the
 /// configure log for this project (used on first event write).
-fn configure_log<'a>(interp: &'a Interp) -> std::cell::RefMut<'a, crate::configure_log::ConfigureLog> {
+fn configure_log<'a>(
+    interp: &'a Interp,
+) -> std::cell::RefMut<'a, crate::configure_log::ConfigureLog> {
     let log_dir = format!("{}/CMakeFiles", interp.home_binary);
     std::cell::RefMut::map(interp.ext.configure_log.borrow_mut(), |slot| {
         slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()))
@@ -2408,7 +2485,10 @@ fn try_compile_command(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
 
     let mut target_type = TargetKind::Executable;
-    if let Some(tt) = interp.get_def("CMAKE_TRY_COMPILE_TARGET_TYPE").filter(|t| !t.is_empty()) {
+    if let Some(tt) = interp
+        .get_def("CMAKE_TRY_COMPILE_TARGET_TYPE")
+        .filter(|t| !t.is_empty())
+    {
         if tt == "EXECUTABLE" {
             target_type = TargetKind::Executable;
         } else if tt == "STATIC_LIBRARY" {
@@ -2578,12 +2658,8 @@ impl TryRun {
             find_error_message: String::new(),
             src_file_signature: false,
         };
-        let compile_result = try_compile_code(
-            interp,
-            &mut arguments,
-            TargetKind::Executable,
-            &mut tc,
-        );
+        let compile_result =
+            try_compile_code(interp, &mut arguments, TargetKind::Executable, &mut tc);
 
         let mut run_result = TryRunResult {
             variable: self.run_result_variable.clone(),
@@ -2623,7 +2699,10 @@ impl TryRun {
                         &tc,
                         &run_args,
                         arguments.source_directory_or_file.as_deref(),
-                        &arguments.compile_result_variable.clone().unwrap_or_default(),
+                        &arguments
+                            .compile_result_variable
+                            .clone()
+                            .unwrap_or_default(),
                         capture_run_output.then_some(&mut run_output_contents),
                         capture_run_output_std_outerr.then_some(&mut run_output_stdout_contents),
                         capture_run_output_std_outerr.then_some(&mut run_output_stderr_contents),
@@ -2808,7 +2887,9 @@ impl TryRun {
                 false,
             );
             if let Some(entry) = interp.cache.entries.get_mut(&self.run_result_variable) {
-                entry.properties.insert("ADVANCED".to_owned(), "1".to_owned());
+                entry
+                    .properties
+                    .insert("ADVANCED".to_owned(), "1".to_owned());
             }
             error = true;
         }
@@ -2831,7 +2912,9 @@ impl TryRun {
                         false,
                     );
                     if let Some(entry) = interp.cache.entries.get_mut(internal_name) {
-                        entry.properties.insert("ADVANCED".to_owned(), "1".to_owned());
+                        entry
+                            .properties
+                            .insert("ADVANCED".to_owned(), "1".to_owned());
                     }
                     error = true;
                 }
@@ -2848,7 +2931,9 @@ impl TryRun {
                 false,
             );
             if let Some(entry) = interp.cache.entries.get_mut(&internal_run_output_name) {
-                entry.properties.insert("ADVANCED".to_owned(), "1".to_owned());
+                entry
+                    .properties
+                    .insert("ADVANCED".to_owned(), "1".to_owned());
             }
             error = true;
         }
@@ -2862,8 +2947,7 @@ impl TryRun {
             // try_run writes the header (later ones append).
             static FIRST_TRY_RUN: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(true);
-            let first_try_run =
-                FIRST_TRY_RUN.swap(false, std::sync::atomic::Ordering::Relaxed);
+            let first_try_run = FIRST_TRY_RUN.swap(false, std::sync::atomic::Ordering::Relaxed);
             let mut text = String::new();
             if first_try_run {
                 text.push_str(
@@ -3237,8 +3321,7 @@ mod tests {
         }
         let mut args = Arguments::new();
         (case.args)(&mut args);
-        let test_langs: BTreeSet<String> =
-            case.langs.iter().map(|lang| lang.to_string()).collect();
+        let test_langs: BTreeSet<String> = case.langs.iter().map(|lang| lang.to_string()).collect();
         let tc_config = interp.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
         let mut cmake_variables = BTreeMap::new();
         let targets: Vec<String> = if case.name == "link_libs_imported" {
@@ -3271,8 +3354,7 @@ mod tests {
             "{}/tests/data/try_compile/{name}/{file}",
             env!("CARGO_MANIFEST_DIR")
         );
-        std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("cannot read {path}: {error}"))
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("cannot read {path}: {error}"))
     }
 
     fn check(case: &EmitCase) {
@@ -3369,8 +3451,7 @@ mod tests {
             binary_dir: TC,
             target_type: TargetKind::Executable,
             args: |args| {
-                args.compile_defs =
-                    vec!["X=<SRC>".to_owned(), "Y=a".to_owned(), "b".to_owned()];
+                args.compile_defs = vec!["X=<SRC>".to_owned(), "Y=a".to_owned(), "b".to_owned()];
             },
         });
     }
@@ -3386,11 +3467,8 @@ mod tests {
             binary_dir: TC,
             target_type: TargetKind::Executable,
             args: |args| {
-                args.compile_defs = vec![
-                    "FOO=1".to_owned(),
-                    "-DBAR=xx".to_owned(),
-                    "BAZ".to_owned(),
-                ];
+                args.compile_defs =
+                    vec!["FOO=1".to_owned(), "-DBAR=xx".to_owned(), "BAZ".to_owned()];
             },
         });
     }
@@ -3416,7 +3494,11 @@ mod tests {
             policies: "3.30",
             defs: &[],
             langs: &["CXX"],
-            sources: vec![("<SRC>/mod.cxx", M), ("<SRC>/mod2.cxx", M), ("<SRC>/main.cxx", N)],
+            sources: vec![
+                ("<SRC>/mod.cxx", M),
+                ("<SRC>/mod2.cxx", M),
+                ("<SRC>/main.cxx", N),
+            ],
             binary_dir: TC,
             target_type: TargetKind::Executable,
             args: |_| {},
@@ -3448,7 +3530,10 @@ mod tests {
             defs: &[
                 ("CMAKE_POSITION_INDEPENDENT_CODE", "ON"),
                 ("CMAKE_SYSROOT", "/opt/root"),
-                ("CMAKE_TRY_COMPILE_PLATFORM_VARIABLES", "MY_OWN_VAR;ALSO_THIS"),
+                (
+                    "CMAKE_TRY_COMPILE_PLATFORM_VARIABLES",
+                    "MY_OWN_VAR;ALSO_THIS",
+                ),
                 ("MY_OWN_VAR", "hello"),
             ],
             langs: &["C"],
@@ -3473,7 +3558,8 @@ mod tests {
             binary_dir: TC,
             target_type: TargetKind::Executable,
             args: |args| {
-                args.lang_props.insert("C_STANDARD".to_owned(), "11".to_owned());
+                args.lang_props
+                    .insert("C_STANDARD".to_owned(), "11".to_owned());
                 args.lang_props
                     .insert("C_STANDARD_REQUIRED".to_owned(), "ON".to_owned());
                 args.lang_props
@@ -3634,8 +3720,7 @@ mod tests {
             binary_dir: TC,
             target_type: TargetKind::Executable,
             args: |args| {
-                args.link_libraries =
-                    Some(vec!["m".to_owned(), "-lsomelib".to_owned()]);
+                args.link_libraries = Some(vec!["m".to_owned(), "-lsomelib".to_owned()]);
             },
         });
     }
@@ -3770,11 +3855,22 @@ mod tests {
         let spec = try_compile_old_spec();
         let (arguments, _) = parse_argv(
             &spec,
-            &["RES", "/b", "/s/proj", "ProjName", "tgt", "COMPILE_DEFINITIONS", "X"],
+            &[
+                "RES",
+                "/b",
+                "/s/proj",
+                "ProjName",
+                "tgt",
+                "COMPILE_DEFINITIONS",
+                "X",
+            ],
         );
         assert_eq!(arguments.compile_result_variable.as_deref(), Some("RES"));
         assert_eq!(arguments.binary_directory.as_deref(), Some("/b"));
-        assert_eq!(arguments.source_directory_or_file.as_deref(), Some("/s/proj"));
+        assert_eq!(
+            arguments.source_directory_or_file.as_deref(),
+            Some("/s/proj")
+        );
         assert_eq!(arguments.project_name.as_deref(), Some("ProjName"));
         assert_eq!(arguments.target_name.as_deref(), Some("tgt"));
         assert_eq!(arguments.compile_defs, vec!["X".to_owned()]);
@@ -3783,8 +3879,7 @@ mod tests {
     #[test]
     fn parser_unparsed_arguments() {
         let spec = try_compile_sources_spec();
-        let (arguments, unparsed) =
-            parse_argv(&spec, &["RES", "EXTRA", "SOURCES", "a.c", "JUNK"]);
+        let (arguments, unparsed) = parse_argv(&spec, &["RES", "EXTRA", "SOURCES", "a.c", "JUNK"]);
         assert_eq!(unparsed, vec!["EXTRA".to_owned()]);
         // "JUNK" is a value of SOURCES, not an unparsed argument.
         let sources = arguments.sources.expect("present");
@@ -3796,7 +3891,14 @@ mod tests {
         let spec = try_compile_sources_spec();
         let (arguments, _) = parse_argv(
             &spec,
-            &["RES", "SOURCES", "a.c", "COMPILE_DEFINITIONS", "X=1;Y=2", "Z"],
+            &[
+                "RES",
+                "SOURCES",
+                "a.c",
+                "COMPILE_DEFINITIONS",
+                "X=1;Y=2",
+                "Z",
+            ],
         );
         assert_eq!(
             arguments.compile_defs,
@@ -3809,7 +3911,10 @@ mod tests {
         let mut interp = test_interp();
         match try_compile_command(&mut interp, &["R".to_owned(), "x".to_owned()]) {
             Err(crate::interp::CmdErr::Error(text)) => {
-                assert_eq!(text, "The try_compile() command requires at least 3 arguments.")
+                assert_eq!(
+                    text,
+                    "The try_compile() command requires at least 3 arguments."
+                )
             }
             other => panic!("expected error, got {other:?}"),
         }

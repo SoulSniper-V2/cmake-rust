@@ -34,7 +34,10 @@ pub fn foreach_plan(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan>
     }
     Some(ForeachPlan {
         vars: vec![args[0].clone()],
-        iterations: args[1..].iter().map(|item| vec![Some(item.clone())]).collect(),
+        iterations: args[1..]
+            .iter()
+            .map(|item| vec![Some(item.clone())])
+            .collect(),
     })
 }
 
@@ -54,8 +57,7 @@ enum Stoi {
 fn stoi(text: &str) -> Stoi {
     let bytes = text.as_bytes();
     let mut index = 0;
-    while index < bytes.len()
-        && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+    while index < bytes.len() && matches!(bytes[index], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
     {
         index += 1;
     }
@@ -142,11 +144,7 @@ fn foreach_range(interp: &mut Interp, args: &[String]) -> Option<ForeachPlan> {
         _ => {}
     }
     let step = if step == 0 {
-        if start > stop {
-            -1
-        } else {
-            1
-        }
+        if start > stop { -1 } else { 1 }
     } else {
         step
     };
@@ -202,9 +200,16 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
                 return fatal(interp, "ZIP_LISTS can not be used with LISTS or ITEMS");
             }
             if vars_count != 1 {
-                return fatal(interp, "ITEMS or LISTS require exactly one iteration variable");
+                return fatal(
+                    interp,
+                    "ITEMS or LISTS require exactly one iteration variable",
+                );
             }
-            doing = if arg == "LISTS" { Doing::Lists } else { Doing::Items };
+            doing = if arg == "LISTS" {
+                Doing::Lists
+            } else {
+                Doing::Items
+            };
         } else if arg == "ZIP_LISTS" {
             if doing != Doing::None {
                 return fatal(interp, "ZIP_LISTS can not be used with LISTS or ITEMS");
@@ -225,7 +230,10 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
     if doing == Doing::ZipLists && vars_count > 1 && vars_count != args.len() {
         return fatal(
             interp,
-            &format!("Expected {vars_count} list variables, but given {}", args.len()),
+            &format!(
+                "Expected {vars_count} list variables, but given {}",
+                args.len()
+            ),
         );
     }
     if !zip {
@@ -263,12 +271,17 @@ fn foreach_in_mode(interp: &mut Interp, vars: &[String], rest: &[String]) -> Opt
             .or_else(|| args.first())
             .cloned()
             .unwrap_or_default();
-        (0..lists.len()).map(|index| format!("{prefix}_{index}")).collect()
+        (0..lists.len())
+            .map(|index| format!("{prefix}_{index}"))
+            .collect()
     };
     let iterations = (0..longest)
         .map(|index| lists.iter().map(|list| list.get(index).cloned()).collect())
         .collect();
-    Some(ForeachPlan { vars: names, iterations })
+    Some(ForeachPlan {
+        vars: names,
+        iterations,
+    })
 }
 
 pub struct BlockOptions {
@@ -292,7 +305,8 @@ pub fn parse_block(args: &[String]) -> Result<BlockOptions, String> {
                 let mut variables = false;
                 let mut policies = false;
                 index += 1;
-                while index < args.len() && matches!(args[index].as_str(), "VARIABLES" | "POLICIES") {
+                while index < args.len() && matches!(args[index].as_str(), "VARIABLES" | "POLICIES")
+                {
                     if args[index] == "VARIABLES" {
                         variables = true;
                     } else {

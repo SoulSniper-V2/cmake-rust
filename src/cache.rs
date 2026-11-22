@@ -158,12 +158,15 @@ impl Cache {
     /// `cmCacheManager::AddCacheEntry`.
     pub fn add(&mut self, key: &str, value: Option<&str>, help: Option<&str>, kind: CacheType) {
         self.touched.insert(key.to_owned());
-        let entry = self.entries.entry(key.to_owned()).or_insert_with(|| CacheEntry {
-            value: String::new(),
-            kind,
-            initialized: false,
-            properties: BTreeMap::new(),
-        });
+        let entry = self
+            .entries
+            .entry(key.to_owned())
+            .or_insert_with(|| CacheEntry {
+                value: String::new(),
+                kind,
+                initialized: false,
+                properties: BTreeMap::new(),
+            });
         entry.kind = kind;
         if let Some(value) = value {
             entry.value = value.to_owned();
@@ -171,7 +174,8 @@ impl Cache {
         }
         entry.properties.insert(
             "HELPSTRING".into(),
-            help.unwrap_or("(This variable does not exist and should not be used)").to_owned(),
+            help.unwrap_or("(This variable does not exist and should not be used)")
+                .to_owned(),
         );
         // Normalize paths for PATH/FILEPATH entries (`cmSystemTools::ConvertToUnixSlashes`
         // of each list element).
@@ -232,7 +236,13 @@ impl Cache {
         Ok(true)
     }
 
-    fn load_entry(&mut self, line: &str, help: String, lineno: usize, path: &Path) -> Result<(), String> {
+    fn load_entry(
+        &mut self,
+        line: &str,
+        help: String,
+        lineno: usize,
+        path: &Path,
+    ) -> Result<(), String> {
         let line = line.trim_end_matches('\r');
         let Some((key, value, kind)) = parse_entry(line) else {
             return Err(format!(
@@ -243,15 +253,20 @@ impl Cache {
         // Property entries: KEY-ADVANCED etc. (INTERNAL only).
         if kind == CacheType::Internal {
             for property in PERSISTENT {
-                if let Some(base) = key.strip_suffix(property).and_then(|rest| rest.strip_suffix('-'))
+                if let Some(base) = key
+                    .strip_suffix(property)
+                    .and_then(|rest| rest.strip_suffix('-'))
                     && !base.is_empty()
                 {
-                    let entry = self.entries.entry(base.to_owned()).or_insert_with(|| CacheEntry {
-                        value: String::new(),
-                        kind: CacheType::Uninitialized,
-                        initialized: false,
-                        properties: BTreeMap::new(),
-                    });
+                    let entry = self
+                        .entries
+                        .entry(base.to_owned())
+                        .or_insert_with(|| CacheEntry {
+                            value: String::new(),
+                            kind: CacheType::Uninitialized,
+                            initialized: false,
+                            properties: BTreeMap::new(),
+                        });
                     entry.properties.insert(property.to_owned(), value);
                     return Ok(());
                 }
@@ -271,13 +286,33 @@ impl Cache {
 
     /// Writes `<dir>/CMakeCache.txt` (only when content changes) and
     /// `CMakeFiles/cmake.check_cache`.
-    pub fn save(&mut self, dir: &Path, cmake_command: &str, version: (u32, u32, u32)) -> std::io::Result<()> {
+    pub fn save(
+        &mut self,
+        dir: &Path,
+        cmake_command: &str,
+        version: (u32, u32, u32),
+    ) -> std::io::Result<()> {
         let help_major = "Major version of cmake used to create the current loaded cache";
         let help_minor = "Minor version of cmake used to create the current loaded cache";
         let help_patch = "Patch version of cmake used to create the current loaded cache";
-        self.add("CMAKE_CACHE_MAJOR_VERSION", Some(&version.0.to_string()), Some(help_major), CacheType::Internal);
-        self.add("CMAKE_CACHE_MINOR_VERSION", Some(&version.1.to_string()), Some(help_minor), CacheType::Internal);
-        self.add("CMAKE_CACHE_PATCH_VERSION", Some(&version.2.to_string()), Some(help_patch), CacheType::Internal);
+        self.add(
+            "CMAKE_CACHE_MAJOR_VERSION",
+            Some(&version.0.to_string()),
+            Some(help_major),
+            CacheType::Internal,
+        );
+        self.add(
+            "CMAKE_CACHE_MINOR_VERSION",
+            Some(&version.1.to_string()),
+            Some(help_minor),
+            CacheType::Internal,
+        );
+        self.add(
+            "CMAKE_CACHE_PATCH_VERSION",
+            Some(&version.2.to_string()),
+            Some(help_patch),
+            CacheType::Internal,
+        );
         let cwd = convert_to_unix_slashes(&dir.to_string_lossy());
         self.add(
             "CMAKE_CACHEFILE_DIR",
@@ -304,14 +339,19 @@ impl Cache {
             out.push('\n');
             out.push('\n');
         }
-        out.push_str("\n########################\n# INTERNAL cache entries\n########################\n\n");
+        out.push_str(
+            "\n########################\n# INTERNAL cache entries\n########################\n\n",
+        );
         for (key, entry) in &self.entries {
             if !entry.initialized {
                 continue;
             }
             for property in PERSISTENT {
                 if let Some(value) = entry.properties.get(property) {
-                    output_help(&mut out, &format!("{property} property for variable: {key}"));
+                    output_help(
+                        &mut out,
+                        &format!("{property} property for variable: {key}"),
+                    );
                     output_key(&mut out, &format!("{key}-{property}"));
                     out.push_str(":INTERNAL=");
                     output_value(&mut out, value);
@@ -385,7 +425,8 @@ pub fn convert_to_unix_slashes(path: &str) -> String {
     }
     let replaced = path.replace('\\', "/");
     let bytes = replaced.as_bytes();
-    let double = bytes.len() >= 2 && bytes[0] == b'/' && bytes[1] == b'/' && bytes.get(2) != Some(&b'/');
+    let double =
+        bytes.len() >= 2 && bytes[0] == b'/' && bytes[1] == b'/' && bytes.get(2) != Some(&b'/');
     let mut out = String::with_capacity(replaced.len());
     let mut previous_slash = false;
     for (index, ch) in replaced.char_indices() {
@@ -434,7 +475,11 @@ fn home_of_user(user: &str) -> Option<String> {
         return None;
     }
     // SAFETY: non-null C string.
-    Some(unsafe { std::ffi::CStr::from_ptr(dir) }.to_string_lossy().into_owned())
+    Some(
+        unsafe { std::ffi::CStr::from_ptr(dir) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[cfg(test)]
@@ -462,7 +507,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cmrs-cache-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut cache = Cache::default();
-        cache.add("FOO", Some("bar "), Some("A help string\nsecond line"), CacheType::String);
+        cache.add(
+            "FOO",
+            Some("bar "),
+            Some("A help string\nsecond line"),
+            CacheType::String,
+        );
         cache.add("INT", Some("1"), Some("internal"), CacheType::Internal);
         cache
             .entries

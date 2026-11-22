@@ -51,10 +51,16 @@ impl Flags<'_, '_> {
 
     fn usage(&self, property: &str) -> Vec<String> {
         match property {
-            "INCLUDE_DIRECTORIES" | "COMPILE_DEFINITIONS" | "COMPILE_OPTIONS" | "COMPILE_FEATURES"
-            | "LINK_OPTIONS" | "LINK_DIRECTORIES" => {
-                self.usage_items(property).into_iter().map(|item| item.value).collect()
-            }
+            "INCLUDE_DIRECTORIES"
+            | "COMPILE_DEFINITIONS"
+            | "COMPILE_OPTIONS"
+            | "COMPILE_FEATURES"
+            | "LINK_OPTIONS"
+            | "LINK_DIRECTORIES" => self
+                .usage_items(property)
+                .into_iter()
+                .map(|item| item.value)
+                .collect(),
             _ => self
                 .prop(property)
                 .map(|value| expand_list(&self.eval(value), false))
@@ -71,17 +77,21 @@ impl Flags<'_, '_> {
             return items.as_ref().clone();
         }
         let mut host = super::genex_host::CtxHost::new(self.ctx, self.target.makefile);
-        let items = match crate::genex::target_usage(&mut host, &key, property, self.config, self.lang) {
-            Ok(items) => items,
-            Err(error) => {
-                if !error.quiet {
-                    let backtrace = self.ctx.backtrace(error.backtrace);
-                    self.ctx.error(backtrace, error.to_string());
+        let items =
+            match crate::genex::target_usage(&mut host, &key, property, self.config, self.lang) {
+                Ok(items) => items,
+                Err(error) => {
+                    if !error.quiet {
+                        let backtrace = self.ctx.backtrace(error.backtrace);
+                        self.ctx.error(backtrace, error.to_string());
+                    }
+                    Vec::new()
                 }
-                Vec::new()
-            }
-        };
-        self.ctx.usage.borrow_mut().insert(memo, std::rc::Rc::new(items.clone()));
+            };
+        self.ctx
+            .usage
+            .borrow_mut()
+            .insert(memo, std::rc::Rc::new(items.clone()));
         items
     }
 
@@ -247,7 +257,13 @@ mod oracle_tests;
 
 /// `cmGeneratorTarget::IsIPOEnabled` for the file API codemodel.
 pub(crate) fn ipo_enabled(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> bool {
-    Flags { ctx, target, config, lang }.ipo_enabled()
+    Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    }
+    .ipo_enabled()
 }
 
 /// `target->GetLinkDirectories` usage entries for the codemodel
@@ -258,11 +274,16 @@ pub(crate) fn link_dir_items(
     config: &str,
     lang: &str,
 ) -> Vec<(String, Vec<crate::messages::Frame>)> {
-    Flags { ctx, target, config, lang }
-        .usage_items("LINK_DIRECTORIES")
-        .into_iter()
-        .map(|item| (item.value, ctx.backtrace(item.backtrace)))
-        .collect()
+    Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    }
+    .usage_items("LINK_DIRECTORIES")
+    .into_iter()
+    .map(|item| (item.value, ctx.backtrace(item.backtrace)))
+    .collect()
 }
 
 pub(crate) use link::codemodel_link_flags;
@@ -277,9 +298,14 @@ pub(crate) fn usage_item_fragments(
     lang: &str,
     property: &str,
 ) -> Vec<(String, Vec<crate::messages::Frame>)> {
-    Flags { ctx, target, config, lang }
-        .usage_items(property)
-        .into_iter()
-        .map(|item| (item.value, ctx.backtrace(item.backtrace)))
-        .collect()
+    Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    }
+    .usage_items(property)
+    .into_iter()
+    .map(|item| (item.value, ctx.backtrace(item.backtrace)))
+    .collect()
 }

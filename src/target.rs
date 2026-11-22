@@ -608,7 +608,12 @@ pub fn register_target(interp: &mut Interp, target: Target) -> String {
     let key =
         if target.imported && !target.imported_global || interp.ext.targets.contains_key(&name) {
             let key = format!("[{dir}]{name}");
-            interp.ext.scoped_keys_by_name.entry(name.clone()).or_default().push(key.clone());
+            interp
+                .ext
+                .scoped_keys_by_name
+                .entry(name.clone())
+                .or_default()
+                .push(key.clone());
             interp.ext.scoped_targets.insert((dir, name), key.clone());
             key
         } else {
@@ -796,7 +801,11 @@ fn location_config(kind: TargetKind, prop: &str) -> Option<&str> {
 }
 
 fn imported_location<'a>(target: &'a Target, config: &str) -> Option<&'a str> {
-    crate::generator::target::imported_artifact_path(target, config, crate::generator::target::ArtifactType::Runtime)
+    crate::generator::target::imported_artifact_path(
+        target,
+        config,
+        crate::generator::target::ArtifactType::Runtime,
+    )
 }
 
 fn file_set_property(prop: &str) -> Option<(&str, &str, bool)> {
@@ -1334,7 +1343,11 @@ fn matching_source(interp: &Interp, dir: usize, location: &SourceFileLocation) -
             .location
             .matches(location, &mf.source_dir, &mf.binary_dir)
     };
-    match interp.ext.source_name_index.get(&(dir, source_key(&location.name).to_owned())) {
+    match interp
+        .ext
+        .source_name_index
+        .get(&(dir, source_key(&location.name).to_owned()))
+    {
         Some(candidates) => candidates.iter().copied().find(|index| matches(index)),
         // Sources inserted directly (test fixtures) are not indexed.
         None if interp.ext.source_name_index.is_empty() => (0..sources.len()).find(matches),
@@ -1373,7 +1386,12 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
         custom_command: None,
     });
     let index = sources.len() - 1;
-    interp.ext.source_name_index.entry(key).or_default().push(index);
+    interp
+        .ext
+        .source_name_index
+        .entry(key)
+        .or_default()
+        .push(index);
     index
 }
 

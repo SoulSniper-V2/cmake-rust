@@ -110,7 +110,11 @@ pub fn add_cmake_paths(interp: &mut Interp) {
     let directory = util::filename_path(&command);
     let root = interp.cmake_root.clone();
     let entries = [
-        ("CMAKE_COMMAND", command.clone(), "Path to CMake executable."),
+        (
+            "CMAKE_COMMAND",
+            command.clone(),
+            "Path to CMake executable.",
+        ),
         (
             "CMAKE_CPACK_COMMAND",
             format!("{directory}/cpack"),
@@ -124,7 +128,9 @@ pub fn add_cmake_paths(interp: &mut Interp) {
         ("CMAKE_ROOT", root, "Path to CMake installation."),
     ];
     for (name, value, help) in entries {
-        interp.cache.add(name, Some(&value), Some(help), CacheType::Internal);
+        interp
+            .cache
+            .add(name, Some(&value), Some(help), CacheType::Internal);
     }
 }
 
@@ -148,7 +154,11 @@ pub fn add_default_definitions(interp: &mut Interp) {
     interp.set_def("UNIX", "1");
     interp.set_def(
         "CMAKE_HOST_SYSTEM_NAME",
-        if cfg!(target_os = "macos") { "Darwin" } else { "Linux" },
+        if cfg!(target_os = "macos") {
+            "Darwin"
+        } else {
+            "Linux"
+        },
     );
 }
 
@@ -362,7 +372,12 @@ pub fn print_trace_format_version(options: &ConfigureOptions) {
 }
 
 pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
-    let mut interp = Interp::new(Mode::Project, &options.source_dir, &options.binary_dir, root);
+    let mut interp = Interp::new(
+        Mode::Project,
+        &options.source_dir,
+        &options.binary_dir,
+        root,
+    );
     install_trace(&mut interp, options);
     interp.in_try_compile = options.in_try_compile;
     interp.debug_trycompile = options.debug_trycompile;
@@ -412,7 +427,10 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     add_cmake_paths(interp);
     if !apply_cache_args(interp, options) {
-        system_error(Some(interp), "Run 'cmake --help' for all supported options.");
+        system_error(
+            Some(interp),
+            "Run 'cmake --help' for all supported options.",
+        );
         return -1;
     }
     for (index, script) in options.preload_scripts.iter().enumerate() {
@@ -461,14 +479,27 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     };
     let set_internal = |interp: &mut Interp, name: &str, value: bool, help: &str| {
         let value = if value { "TRUE" } else { "FALSE" };
-        interp.cache.add(name, Some(value), Some(help), CacheType::Internal);
+        interp
+            .cache
+            .add(name, Some(value), Some(help), CacheType::Internal);
     };
     const WARN_DEPRECATED_HELP: &str = "Whether to issue warnings for deprecated functionality.";
-    const ERROR_DEPRECATED_HELP: &str = "Whether to issue deprecation errors for macros and functions.";
+    const ERROR_DEPRECATED_HELP: &str =
+        "Whether to issue deprecation errors for macros and functions.";
     let set_deprecated = |interp: &mut Interp, level: u8| {
         // SetSuppressDeprecatedWarnings + SetDeprecatedWarningsAsErrors
-        set_internal(interp, "CMAKE_WARN_DEPRECATED", level != 0, WARN_DEPRECATED_HELP);
-        set_internal(interp, "CMAKE_ERROR_DEPRECATED", level == 2, ERROR_DEPRECATED_HELP);
+        set_internal(
+            interp,
+            "CMAKE_WARN_DEPRECATED",
+            level != 0,
+            WARN_DEPRECATED_HELP,
+        );
+        set_internal(
+            interp,
+            "CMAKE_ERROR_DEPRECATED",
+            level == 2,
+            ERROR_DEPRECATED_HELP,
+        );
     };
     if let Some(deprecated) = level(options.warn_deprecated, options.warn_deprecated_error) {
         set_deprecated(interp, deprecated);
@@ -527,7 +558,9 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     drop(generate_profile);
     if code != 0 {
-        interp.stderr_line("CMake Generate step failed.  Build files cannot be regenerated correctly.");
+        interp.stderr_line(
+            "CMake Generate step failed.  Build files cannot be regenerated correctly.",
+        );
         return code;
     }
     if !options.in_try_compile {
@@ -584,7 +617,11 @@ fn actual_configure(
         system_error(Some(interp), &message);
         return -2;
     }
-    if let Some(cached) = interp.cache.value("CMAKE_HOME_DIRECTORY").map(str::to_owned) {
+    if let Some(cached) = interp
+        .cache
+        .value("CMAKE_HOME_DIRECTORY")
+        .map(str::to_owned)
+    {
         let cache_start = format!("{cached}/{list_name}");
         if !same_file(&cache_start, &source_list) {
             let message = format!(
@@ -613,7 +650,10 @@ fn actual_configure(
     // Generator selection.
     let requested = options.generator.clone();
     let cached = interp.cache.value("CMAKE_GENERATOR").map(str::to_owned);
-    let generator = requested.clone().or(cached.clone()).unwrap_or_else(|| "Ninja".to_owned());
+    let generator = requested
+        .clone()
+        .or(cached.clone())
+        .unwrap_or_else(|| "Ninja".to_owned());
     if generator != "Ninja" {
         let message = format!("Could not create named generator {generator}");
         system_error(Some(interp), &message);
@@ -629,7 +669,12 @@ fn actual_configure(
         return -2;
     }
     if cached.is_none() {
-        interp.cache.add("CMAKE_GENERATOR", Some(&generator), Some("Name of generator."), CacheType::Internal);
+        interp.cache.add(
+            "CMAKE_GENERATOR",
+            Some(&generator),
+            Some("Name of generator."),
+            CacheType::Internal,
+        );
         interp.cache.add(
             "CMAKE_EXTRA_GENERATOR",
             Some(""),
@@ -649,7 +694,11 @@ fn actual_configure(
         }
     }
     for (name, value, help) in [
-        ("CMAKE_GENERATOR_INSTANCE", String::new(), "Generator instance identifier."),
+        (
+            "CMAKE_GENERATOR_INSTANCE",
+            String::new(),
+            "Generator instance identifier.",
+        ),
         (
             "CMAKE_GENERATOR_PLATFORM",
             options.platform.clone().unwrap_or_default(),
@@ -662,7 +711,9 @@ fn actual_configure(
         ),
     ] {
         if interp.cache.value(name).is_none() {
-            interp.cache.add(name, Some(&value), Some(help), CacheType::Internal);
+            interp
+                .cache
+                .add(name, Some(&value), Some(help), CacheType::Internal);
         }
     }
     if interp.cache.value("CMAKE_TEST_LAUNCHER").is_none()
@@ -676,7 +727,10 @@ fn actual_configure(
             CacheType::String,
         );
     }
-    if interp.cache.value("CMAKE_CROSSCOMPILING_EMULATOR").is_none()
+    if interp
+        .cache
+        .value("CMAKE_CROSSCOMPILING_EMULATOR")
+        .is_none()
         && let Ok(emulator) = std::env::var("CMAKE_CROSSCOMPILING_EMULATOR")
         && !emulator.is_empty()
     {
@@ -705,7 +759,9 @@ fn actual_configure(
         };
         crate::commands::core::status_line(interp, &message);
     }
-    if interp.is_on("CTEST_USE_LAUNCHERS") && interp.global_props.get("RULE_LAUNCH_COMPILE").is_none() {
+    if interp.is_on("CTEST_USE_LAUNCHERS")
+        && interp.global_props.get("RULE_LAUNCH_COMPILE").is_none()
+    {
         interp.issue_at(
             MessageType::FatalError,
             "CTEST_USE_LAUNCHERS is enabled, but the RULE_LAUNCH_COMPILE global property is not defined.\nDid you forget to include(CTest) in the toplevel CMakeLists.txt ?",
@@ -718,7 +774,10 @@ fn actual_configure(
         .cache
         .save(std::path::Path::new(&binary), &command, version)
     {
-        system_error(Some(interp), &format!("Unable to open cache file for save. {binary}/CMakeCache.txt: {error}"));
+        system_error(
+            Some(interp),
+            &format!("Unable to open cache file for save. {binary}/CMakeCache.txt: {error}"),
+        );
     }
     if interp.error {
         if let Some(api) = file_api {
@@ -831,11 +890,27 @@ pub fn try_compile_project(
     inner.recursion_depth_base = outer.recursion_depth_now();
     let _ = inner.cache.load(std::path::Path::new(bindir));
     add_cmake_paths(&mut inner);
-    if let Some(config) = outer.get_def("CMAKE_TRY_COMPILE_CONFIGURATION").map(str::to_owned) {
-        inner.cache.add("CMAKE_BUILD_TYPE", Some(&config), Some("Build configuration"), CacheType::String);
+    if let Some(config) = outer
+        .get_def("CMAKE_TRY_COMPILE_CONFIGURATION")
+        .map(str::to_owned)
+    {
+        inner.cache.add(
+            "CMAKE_BUILD_TYPE",
+            Some(&config),
+            Some("Build configuration"),
+            CacheType::String,
+        );
     }
-    if let Some(depth) = outer.get_def("CMAKE_MAXIMUM_RECURSION_DEPTH").map(str::to_owned) {
-        inner.cache.add("CMAKE_MAXIMUM_RECURSION_DEPTH", Some(&depth), Some("Maximum recursion depth"), CacheType::String);
+    if let Some(depth) = outer
+        .get_def("CMAKE_MAXIMUM_RECURSION_DEPTH")
+        .map(str::to_owned)
+    {
+        inner.cache.add(
+            "CMAKE_MAXIMUM_RECURSION_DEPTH",
+            Some(&depth),
+            Some("Maximum recursion depth"),
+            CacheType::String,
+        );
     }
     for definition in &options.definitions {
         inner.cache.add(
@@ -855,10 +930,24 @@ pub fn try_compile_project(
     inner.langs.configured_files_path = Some(configured);
     inner.langs.in_progress.clear();
     if let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned) {
-        inner.cache.add("CMAKE_MAKE_PROGRAM", Some(&make), Some("make program"), CacheType::Filepath);
+        inner.cache.add(
+            "CMAKE_MAKE_PROGRAM",
+            Some(&make),
+            Some("make program"),
+            CacheType::Filepath,
+        );
     }
-    let suppress = if outer.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") { "TRUE" } else { "FALSE" };
-    inner.cache.add("CMAKE_SUPPRESS_DEVELOPER_WARNINGS", Some(suppress), Some(""), CacheType::Internal);
+    let suppress = if outer.is_on("CMAKE_SUPPRESS_DEVELOPER_WARNINGS") {
+        "TRUE"
+    } else {
+        "FALSE"
+    };
+    inner.cache.add(
+        "CMAKE_SUPPRESS_DEVELOPER_WARNINGS",
+        Some(suppress),
+        Some(""),
+        CacheType::Internal,
+    );
     inner.suppress_dev_warnings = outer.suppress_dev_warnings;
     // cmake::SetTraceRedirect: the inner instance traces into the parent's
     // output with the parent's settings.
@@ -871,7 +960,10 @@ pub fn try_compile_project(
     // The try_compile cmake instance runs the file API like any other.
     let mut file_api = None;
     if actual_configure(&mut inner, &options, &mut file_api) != 0 {
-        outer.issue(MessageType::FatalError, "Failed to configure test project build system.");
+        outer.issue(
+            MessageType::FatalError,
+            "Failed to configure test project build system.",
+        );
         outer.set_fatal();
         restore(&previous_cwd);
         return (1, String::new());
@@ -886,7 +978,10 @@ pub fn try_compile_project(
         api.write_replies(&inner, index_for);
     }
     if generated != 0 {
-        outer.issue(MessageType::FatalError, "Failed to generate test project build system.");
+        outer.issue(
+            MessageType::FatalError,
+            "Failed to generate test project build system.",
+        );
         outer.set_fatal();
         restore(&previous_cwd);
         return (1, String::new());
@@ -902,7 +997,10 @@ pub fn try_compile_project(
         .iter()
         .map(|arg| crate::outconv::escape_for_shell(arg, crate::outconv::FLAG_IS_UNIX))
         .collect();
-    output.push_str(&format!("\nRun Build Command(s): {}\n", printable.join(" ")));
+    output.push_str(&format!(
+        "\nRun Build Command(s): {}\n",
+        printable.join(" ")
+    ));
     let result = run_merged(&command, bindir);
     let code = match result {
         Ok((code, text)) => {
@@ -915,7 +1013,10 @@ pub fn try_compile_project(
                 command.join(" ")
             );
             system_error(Some(outer), &message);
-            output.push_str(&format!("{error}\nGenerator: build tool execution failed, command was: {}\n", printable.join(" ")));
+            output.push_str(&format!(
+                "{error}\nGenerator: build tool execution failed, command was: {}\n",
+                printable.join(" ")
+            ));
             restore(&previous_cwd);
             return (1, output);
         }
@@ -975,7 +1076,10 @@ fn reserve_global_target_codegen(interp: &mut Interp) {
     use crate::policy::PolicyStatus;
     let status = interp.policy_status_at(0, "CMP0171");
     if status == PolicyStatus::New {
-        interp.ext.misc.insert("allow-global-target-codegen".to_owned(), "1".to_owned());
+        interp
+            .ext
+            .misc
+            .insert("allow-global-target-codegen".to_owned(), "1".to_owned());
     }
     let Some(key) = crate::state::find_global_target_key(interp, "codegen") else {
         return;
@@ -993,7 +1097,11 @@ fn reserve_global_target_codegen(interp: &mut Interp) {
         ),
         PolicyStatus::Old => {}
         PolicyStatus::New => {
-            interp.issue_at(MessageType::FatalError, "The target name \"codegen\" is reserved.", &backtrace);
+            interp.issue_at(
+                MessageType::FatalError,
+                "The target name \"codegen\" is reserved.",
+                &backtrace,
+            );
             interp.set_fatal();
         }
     }

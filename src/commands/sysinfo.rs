@@ -941,8 +941,16 @@ fn build_command(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 /// `cmGlobalGenerator::GenerateCMakeBuildCommand` (no native options).
-fn generate_cmake_build_command(interp: &Interp, target: &str, config: &str, parallel: &str) -> String {
-    let mut command = format!("{} --build .", convert_to_unix_output_path(&interp.cmake_command));
+fn generate_cmake_build_command(
+    interp: &Interp,
+    target: &str,
+    config: &str,
+    parallel: &str,
+) -> String {
+    let mut command = format!(
+        "{} --build .",
+        convert_to_unix_output_path(&interp.cmake_command)
+    );
     if !config.is_empty() {
         command.push_str(&format!(" --config \"{config}\""));
     }

@@ -235,7 +235,11 @@ pub fn finish_directory(interp: &mut Interp) {
     } else {
         interp.ext.testing_enabled.remove(&current);
     }
-    let dirs = interp.ext.pending_subdirs.remove(&interp.mf_index()).unwrap_or_default();
+    let dirs = interp
+        .ext
+        .pending_subdirs
+        .remove(&interp.mf_index())
+        .unwrap_or_default();
     for dir in dirs {
         // cmMakefile::Configure runs deferred subdirectories after the
         // parent's list file; diagnostics use the parent's file-scope
@@ -258,12 +262,21 @@ pub fn finish_directory(interp: &mut Interp) {
 /// `cmMakefile::AddCMakeDependFilesFromUser`: the CMAKE_CONFIGURE_DEPENDS
 /// directory property, relative entries taken from the source directory.
 fn add_cmake_depend_files_from_user(interp: &mut Interp) {
-    let Some(deps) = interp.mf().props.get("CMAKE_CONFIGURE_DEPENDS").map(str::to_owned) else {
+    let Some(deps) = interp
+        .mf()
+        .props
+        .get("CMAKE_CONFIGURE_DEPENDS")
+        .map(str::to_owned)
+    else {
         return;
     };
     let source = interp.mf().source_dir.clone();
     for dep in crate::util::expand_list(&deps, false) {
-        let file = if full_path(&dep) { dep } else { format!("{source}/{dep}") };
+        let file = if full_path(&dep) {
+            dep
+        } else {
+            format!("{source}/{dep}")
+        };
         interp.mf_mut().list_files.push(file);
     }
 }
@@ -395,7 +408,11 @@ fn define_flags(interp: &mut Interp, args: &[String], remove: bool) {
             }
         } else {
             // cmMakefile initializes DefineFlags to " ".
-            let flags = interp.ext.directory_define_flags.entry(dir).or_insert_with(|| " ".to_owned());
+            let flags = interp
+                .ext
+                .directory_define_flags
+                .entry(dir)
+                .or_insert_with(|| " ".to_owned());
             if !remove {
                 flags.push(' ');
                 flags.push_str(&flag.replace(['\n', '\r'], " "));

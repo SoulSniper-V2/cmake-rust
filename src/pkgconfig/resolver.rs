@@ -140,7 +140,11 @@ impl PkgConfig {
     }
 
     pub fn requires(&self, priv_: bool) -> Vec<Dependency> {
-        let key = if priv_ { "Requires.private" } else { "Requires" };
+        let key = if priv_ {
+            "Requires.private"
+        } else {
+            "Requires"
+        };
         match self.keywords.get(key) {
             Some(deps) => parse_dependencies(deps),
             None => Vec::new(),
@@ -179,11 +183,7 @@ impl PkgConfig {
         }
 
         if let Some(sysroot) = &env.sysroot_dir {
-            return mangle_cflags_sysroot_syspaths(
-                &tokens,
-                sysroot,
-                &["/usr/include".to_owned()],
-            );
+            return mangle_cflags_sysroot_syspaths(&tokens, sysroot, &["/usr/include".to_owned()]);
         }
 
         mangle_cflags_syspaths(&tokens, &["/usr/include".to_owned()])
@@ -213,11 +213,7 @@ impl PkgConfig {
         }
 
         if let Some(sysroot) = &env.sysroot_dir {
-            return mangle_libs_sysroot_syspaths(
-                &tokens,
-                sysroot,
-                &["/usr/lib".to_owned()],
-            );
+            return mangle_libs_sysroot_syspaths(&tokens, sysroot, &["/usr/lib".to_owned()]);
         }
 
         mangle_libs_syspaths(&tokens, &["/usr/lib".to_owned()])
@@ -371,10 +367,7 @@ pub fn resolve_best_effort(entries: &[Entry], env: &Env) -> PkgConfig {
 }
 
 /// `cmPkgConfigResolver::HandleVariablePermissive`.
-fn handle_variable_permissive(
-    entry: &Entry,
-    variables: &HashMap<String, String>,
-) -> String {
+fn handle_variable_permissive(entry: &Entry, variables: &HashMap<String, String>) -> String {
     let mut result = Vec::new();
     for segment in &entry.val {
         if !segment.is_variable {
@@ -391,10 +384,7 @@ fn handle_variable_permissive(
 }
 
 /// `cmPkgConfigResolver::HandleVariableStrict`.
-fn handle_variable_strict(
-    entry: &Entry,
-    variables: &HashMap<String, String>,
-) -> Option<String> {
+fn handle_variable_strict(entry: &Entry, variables: &HashMap<String, String>) -> Option<String> {
     let mut value = Vec::new();
     for segment in &entry.val {
         if !segment.is_variable {
@@ -461,7 +451,9 @@ fn mangle_cflags(flags: &[&[u8]]) -> CflagsResult {
     for flag in flags {
         if flag.starts_with(b"-I") {
             let token = append_and_trim(&mut result.flagline, flag);
-            result.includes.push(String::from_utf8_lossy(&token).into_owned());
+            result
+                .includes
+                .push(String::from_utf8_lossy(&token).into_owned());
         } else {
             let token = append_and_trim(&mut result.flagline, flag);
             result
@@ -478,7 +470,9 @@ fn mangle_cflags_sysroot(flags: &[&[u8]], sysroot: &str) -> CflagsResult {
         if flag.starts_with(b"-I") {
             let reroot = reroot(flag, b"-I", sysroot);
             let token = append_and_trim(&mut result.flagline, &reroot);
-            result.includes.push(String::from_utf8_lossy(&token).into_owned());
+            result
+                .includes
+                .push(String::from_utf8_lossy(&token).into_owned());
         } else {
             let token = append_and_trim(&mut result.flagline, flag);
             result
@@ -618,11 +612,7 @@ fn mangle_libs_syspaths(flags: &[&[u8]], syspaths: &[String]) -> LibsResult {
     result
 }
 
-fn mangle_libs_sysroot_syspaths(
-    flags: &[&[u8]],
-    sysroot: &str,
-    syspaths: &[String],
-) -> LibsResult {
+fn mangle_libs_sysroot_syspaths(flags: &[&[u8]], sysroot: &str, syspaths: &[String]) -> LibsResult {
     let mut result = LibsResult::default();
     for flag in flags {
         if flag.starts_with(b"-L") {
@@ -720,7 +710,9 @@ fn parse_version_it(bytes: &[u8], cur: &mut usize) -> VersionReq {
     }
 
     while *cur != end && !c_isspace(bytes[*cur]) && bytes[*cur] != b',' {
-        result.version.push_str(&String::from_utf8_lossy(&bytes[*cur..*cur + 1]));
+        result
+            .version
+            .push_str(&String::from_utf8_lossy(&bytes[*cur..*cur + 1]));
         *cur += 1;
     }
 

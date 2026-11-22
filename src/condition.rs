@@ -1,8 +1,8 @@
 //! `if()`/`while()` condition evaluation, a port of `cmConditionEvaluator`.
 //! CMake 4.x always uses NEW behavior for CMP0012 and CMP0054.
 
-use crate::messages::MessageType;
 use crate::interp::Interp;
+use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
 use crate::util::{self, CompareOp};
 
@@ -88,7 +88,10 @@ fn is_true(interp: &mut Interp, args: Vec<CArg>, error: &mut CondError) -> bool 
         }
     }
     if list.len() != 1 {
-        *error = Some((MessageType::FatalError, "Unknown arguments specified".into()));
+        *error = Some((
+            MessageType::FatalError,
+            "Unknown arguments specified".into(),
+        ));
         return false;
     }
     get_boolean_value(interp, &list[0])
@@ -243,7 +246,10 @@ fn level2(interp: &mut Interp, list: &mut Vec<CArg>, error: &mut CondError) -> b
             }
             reduced = Some(found.is_some());
         } else {
-            let numeric = match_key(&op, &["LESS", "LESS_EQUAL", "GREATER", "GREATER_EQUAL", "EQUAL"]);
+            let numeric = match_key(
+                &op,
+                &["LESS", "LESS_EQUAL", "GREATER", "GREATER_EQUAL", "EQUAL"],
+            );
             if numeric > 0 {
                 let l = get_variable_or_string(interp, &lhs_arg);
                 let r = get_variable_or_string(interp, &rhs_arg);
@@ -255,7 +261,13 @@ fn level2(interp: &mut Interp, list: &mut Vec<CArg>, error: &mut CondError) -> b
             } else {
                 let string = match_key(
                     &op,
-                    &["STRLESS", "STRLESS_EQUAL", "STRGREATER", "STRGREATER_EQUAL", "STREQUAL"],
+                    &[
+                        "STRLESS",
+                        "STRLESS_EQUAL",
+                        "STRGREATER",
+                        "STRGREATER_EQUAL",
+                        "STREQUAL",
+                    ],
                 );
                 if string > 0 {
                     let l = get_variable_or_string(interp, &lhs_arg);

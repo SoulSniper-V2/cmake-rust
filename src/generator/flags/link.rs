@@ -105,7 +105,8 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         }
         append(&mut flags, &encode_literal(&raw));
 
-        let options = inputs.usage("LINK_OPTIONS")
+        let options = inputs
+            .usage("LINK_OPTIONS")
             .into_iter()
             .scan(false, |device_only, item| {
                 if item == "<DEVICE_LINK>" || item == "</DEVICE_LINK>" {
@@ -386,7 +387,12 @@ pub(crate) fn codemodel_link_flags(
     config: &str,
     language: &str,
 ) -> (String, Vec<(String, Vec<crate::messages::Frame>)>) {
-    let inputs = Flags { ctx, target, config, lang: language };
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: language,
+    };
     let mut language_flags = String::new();
     let mut out: Vec<BtFrag> = Vec::new();
     let upper = config.to_ascii_uppercase();
@@ -407,14 +413,18 @@ pub(crate) fn codemodel_link_flags(
     match target.kind {
         TargetKind::StaticLibrary => {
             let mut flags = String::new();
-            append(&mut flags, &inputs.config_flags("CMAKE_STATIC_LINKER_FLAGS"));
+            append(
+                &mut flags,
+                &inputs.config_flags("CMAKE_STATIC_LINKER_FLAGS"),
+            );
             if !flags.is_empty() {
                 out.push((flags, Vec::new()));
             }
             let mut prop_flags = String::new();
-            for name in
-                ["STATIC_LIBRARY_FLAGS".to_owned(), format!("STATIC_LIBRARY_FLAGS_{upper}")]
-            {
+            for name in [
+                "STATIC_LIBRARY_FLAGS".to_owned(),
+                format!("STATIC_LIBRARY_FLAGS_{upper}"),
+            ] {
                 if (name == "STATIC_LIBRARY_FLAGS" || !config.is_empty())
                     && let Some(raw) = inputs.prop(&name)
                 {
@@ -425,9 +435,7 @@ pub(crate) fn codemodel_link_flags(
                 out.push((prop_flags, Vec::new()));
             }
             for item in inputs.usage_items("STATIC_LIBRARY_OPTIONS") {
-                for option in
-                    resolve_wrapper(&inputs, vec![item.value.clone()], "ARCHIVER")
-                {
+                for option in resolve_wrapper(&inputs, vec![item.value.clone()], "ARCHIVER") {
                     out.push((shell(&option), ctx.backtrace(item.backtrace)));
                 }
             }
@@ -458,15 +466,16 @@ pub(crate) fn codemodel_link_flags(
                 out.push((encode_literal(&shared), Vec::new()));
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
-                for option in
-                    resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER")
-                {
+                for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
                     out.push((shell(&option), ctx.backtrace(item.backtrace)));
                 }
             }
         }
         TargetKind::Executable => {
-            language_flags = inputs.language_flags(true).trim_matches(cmake_space).to_owned();
+            language_flags = inputs
+                .language_flags(true)
+                .trim_matches(cmake_space)
+                .to_owned();
             let mut exe_flags = String::new();
             append_link_variable(
                 &inputs,
@@ -477,7 +486,11 @@ pub(crate) fn codemodel_link_flags(
                 out.push((exe_flags.trim_end().to_owned(), Vec::new()));
             }
             let mut create_exe = String::new();
-            let exe = if is_on_opt(inputs.prop("WIN32_EXECUTABLE")) { "WIN32" } else { "CONSOLE" };
+            let exe = if is_on_opt(inputs.prop("WIN32_EXECUTABLE")) {
+                "WIN32"
+            } else {
+                "CONSOLE"
+            };
             append_link_variable(
                 &inputs,
                 &mut create_exe,
@@ -527,9 +540,7 @@ pub(crate) fn codemodel_link_flags(
                 out.push((encode_literal(&raw), Vec::new()));
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
-                for option in
-                    resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER")
-                {
+                for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
                     out.push((shell(&option), ctx.backtrace(item.backtrace)));
                 }
             }
@@ -555,7 +566,9 @@ pub(crate) fn codemodel_link_flags(
         {
             let mode = if pic { "PIE" } else { "NO_PIE" };
             if !is_off_opt(
-                inputs.lang_var(&format!("LINK_{mode}_SUPPORTED")).as_deref(),
+                inputs
+                    .lang_var(&format!("LINK_{mode}_SUPPORTED"))
+                    .as_deref(),
             ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
             {
                 append_options(&mut extra, expand_list(&options, false));

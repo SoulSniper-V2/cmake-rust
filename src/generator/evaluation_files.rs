@@ -58,13 +58,20 @@ pub fn generate(ctx: &GenCtx) -> Vec<String> {
         let target = if file.target.is_empty() {
             None
         } else {
-            ctx.target_at(file.dir, &file.target).map(|target| ctx.target_key(target))
+            ctx.target_at(file.dir, &file.target)
+                .map(|target| ctx.target_key(target))
         };
         let mut outputs: BTreeMap<String, String> = BTreeMap::new();
         for language in &languages {
             let language = Some(language.as_str());
             if !file.condition.is_empty() {
-                let result = ctx.genex_full(&file.condition, file.dir, target.as_deref(), language, false);
+                let result = ctx.genex_full(
+                    &file.condition,
+                    file.dir,
+                    target.as_deref(),
+                    language,
+                    false,
+                );
                 if result == "0" {
                     continue;
                 }
@@ -79,7 +86,8 @@ pub fn generate(ctx: &GenCtx) -> Vec<String> {
                     continue;
                 }
             }
-            let mut output = ctx.genex_full(&file.output, file.dir, target.as_deref(), language, false);
+            let mut output =
+                ctx.genex_full(&file.output, file.dir, target.as_deref(), language, false);
             output = if util::is_full_path(&output) {
                 util::collapse_full_path(&output, "")
             } else if file.cmp0070_new {
@@ -124,7 +132,8 @@ pub fn generate(ctx: &GenCtx) -> Vec<String> {
                 continue;
             }
             if permissions != 0 {
-                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions));
+                let _ =
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions));
             }
             outputs.insert(output.clone(), value);
             written.push(output);

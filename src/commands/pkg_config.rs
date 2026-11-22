@@ -10,13 +10,9 @@ use crate::cache::CacheType;
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::pkgconfig::parser::{PCE_OK, Parser};
-use crate::pkgconfig::resolver::{
-    self, Env, PkgConfig, VersionReq, check_version, parse_version,
-};
+use crate::pkgconfig::resolver::{self, Env, PkgConfig, VersionReq, check_version, parse_version};
 use crate::state::{TargetKind, find_target_to_use};
-use crate::util::{
-    collapse_full_path, expand_list, is_notfound, is_on_opt, join_list,
-};
+use crate::util::{collapse_full_path, expand_list, is_notfound, is_on_opt, join_list};
 
 pub fn register(interp: &mut Interp) {
     interp.register("cmake_pkg_config", cmake_pkg_config);
@@ -232,12 +228,24 @@ fn get_locations(
     let pkgcfg = get_pkg_config_bin(interp);
     let Some(bin) = pkgcfg else {
         let joined = join_list(&default_locs);
-        interp.add_cache_def(cachevar, Some(&joined), Some(desc), CacheType::String, false);
+        interp.add_cache_def(
+            cachevar,
+            Some(&joined),
+            Some(desc),
+            CacheType::String,
+            false,
+        );
         return default_locs;
     };
     if need_pkgconf && !bin.contains("pkgconf") {
         let joined = join_list(&default_locs);
-        interp.add_cache_def(cachevar, Some(&joined), Some(desc), CacheType::String, false);
+        interp.add_cache_def(
+            cachevar,
+            Some(&joined),
+            Some(desc),
+            CacheType::String,
+            false,
+        );
         return default_locs;
     }
 
@@ -307,7 +315,10 @@ fn get_sys_cflags(interp: &mut Interp) -> Vec<String> {
 
 /// `GetPkgConfSysLibs`.
 fn get_pkgconf_sys_libs(interp: &mut Interp) -> Vec<String> {
-    if let Some(def) = interp.get_def("CMAKE_PKG_CONFIG_PKGCONF_LIB_DIRS").map(str::to_owned) {
+    if let Some(def) = interp
+        .get_def("CMAKE_PKG_CONFIG_PKGCONF_LIB_DIRS")
+        .map(str::to_owned)
+    {
         return expand_list(&def, false);
     }
 
@@ -328,7 +339,10 @@ fn get_pkgconf_sys_libs(interp: &mut Interp) -> Vec<String> {
 
 /// `GetPkgConfSysCflags`.
 fn get_pkgconf_sys_cflags(interp: &mut Interp) -> Vec<String> {
-    if let Some(def) = interp.get_def("CMAKE_PKG_CONFIG_PKGCONF_INCLUDES").map(str::to_owned) {
+    if let Some(def) = interp
+        .get_def("CMAKE_PKG_CONFIG_PKGCONF_INCLUDES")
+        .map(str::to_owned)
+    {
         return expand_list(&def, false);
     }
 
@@ -370,7 +384,10 @@ fn get_pkgconf_sys_cflags(interp: &mut Interp) -> Vec<String> {
 
 /// `GetPcPath`.
 fn get_pc_path(interp: &mut Interp) -> Vec<String> {
-    if let Some(def) = interp.get_def("CMAKE_PKG_CONFIG_PC_PATH").map(str::to_owned) {
+    if let Some(def) = interp
+        .get_def("CMAKE_PKG_CONFIG_PC_PATH")
+        .map(str::to_owned)
+    {
         return expand_list(&def, false);
     }
 
@@ -404,7 +421,13 @@ fn get_path(interp: &mut Interp, cachevar: &str, envvar: &str, desc: &str) -> Op
     }
 
     if let Some(path) = get_env(envvar) {
-        interp.add_cache_def(cachevar, Some(&path), Some(desc), CacheType::Filepath, false);
+        interp.add_cache_def(
+            cachevar,
+            Some(&path),
+            Some(desc),
+            CacheType::Filepath,
+            false,
+        );
         return Some(path);
     }
 
@@ -718,12 +741,8 @@ fn parse_subcommand<S: ArgSink>(args: &[String], sink: &mut S) {
             }
             Some(Active::PcLibdir) => sink.list(Kw::PcLibdir).push(arg.clone()),
             Some(Active::PcPath) => sink.list(Kw::PcPath).push(arg.clone()),
-            Some(Active::SystemIncludeDirs) => {
-                sink.list(Kw::SystemIncludeDirs).push(arg.clone())
-            }
-            Some(Active::SystemLibraryDirs) => {
-                sink.list(Kw::SystemLibraryDirs).push(arg.clone())
-            }
+            Some(Active::SystemIncludeDirs) => sink.list(Kw::SystemIncludeDirs).push(arg.clone()),
+            Some(Active::SystemLibraryDirs) => sink.list(Kw::SystemLibraryDirs).push(arg.clone()),
             Some(Active::BindPcRequires) => sink.list(Kw::BindPcRequires).push(arg.clone()),
             Some(Active::Strictness) => sink.common().set_strictness(arg),
             Some(Active::EnvModeKw) => sink.common().set_env_mode(arg),
@@ -784,7 +803,10 @@ impl ArgSink for PopulateArgs {
 
     fn keywords(&self) -> Vec<(&'static str, Kw)> {
         let mut kw = common_keywords();
-        kw.extend([("PREFIX", Kw::Prefix), ("BIND_PC_REQUIRES", Kw::BindPcRequires)]);
+        kw.extend([
+            ("PREFIX", Kw::Prefix),
+            ("BIND_PC_REQUIRES", Kw::BindPcRequires),
+        ]);
         kw
     }
 
@@ -914,10 +936,7 @@ fn warn_or_error(interp: &mut Interp, im_env: &mut ImportEnv, error: String) {
 
 /// `HandleCommon`: `Err(msg)` corresponds to `status.SetError(msg)` with a
 /// `CheckArgs` failure.
-fn handle_common(
-    interp: &mut Interp,
-    args: &CommonArgs,
-) -> Result<(Env, ImportEnv), String> {
+fn handle_common(interp: &mut Interp, args: &CommonArgs) -> Result<(Env, ImportEnv), String> {
     if let Some(msg) = args.check_args() {
         return Err(msg);
     }
@@ -972,7 +991,10 @@ fn read_package(
     im_env: &mut ImportEnv,
     pc_env: &Env,
 ) -> Option<PkgConfig> {
-    let path = if Path::new(package).extension().is_some_and(|ext| ext == "pc") {
+    let path = if Path::new(package)
+        .extension()
+        .is_some_and(|ext| ext == "pc")
+    {
         if !file_exists(package) {
             return None;
         }
@@ -1026,7 +1048,11 @@ fn read_package(
     };
 
     if result.is_none() {
-        warn_or_error(interp, im_env, format!("Resolution failed for file '{path}'"));
+        warn_or_error(
+            interp,
+            im_env,
+            format!("Resolution failed for file '{path}'"),
+        );
     }
 
     result
@@ -1044,13 +1070,19 @@ fn import_package(
 
     let Some(pkg) = result else {
         if !im_env.err {
-            warn_or_error(interp, im_env, format!("Could not find pkg-config: '{package}'"));
+            warn_or_error(
+                interp,
+                im_env,
+                format!("Could not find pkg-config: '{package}'"),
+            );
         }
         return None;
     };
 
     if im_env.exact {
-        let ver = version.map(|v| parse_version(v).version).unwrap_or_default();
+        let ver = version
+            .map(|v| parse_version(v).version)
+            .unwrap_or_default();
         if ver != pkg.version() {
             warn_or_error(
                 interp,
@@ -1191,9 +1223,11 @@ fn create_cmake_target(
             .props
             .append("INTERFACE_LINK_DIRECTORIES", &flag[2..], false);
     }
-    target
-        .props
-        .append("INTERFACE_LINK_OPTIONS", &join_list(&libs.link_options), false);
+    target.props.append(
+        "INTERFACE_LINK_OPTIONS",
+        &join_list(&libs.link_options),
+        false,
+    );
 
     let cflags = pkg.cflags(pc_env, false);
     for flag in &cflags.includes {
@@ -1201,13 +1235,11 @@ fn create_cmake_target(
             .props
             .append("INTERFACE_INCLUDE_DIRECTORIES", &flag[2..], false);
     }
-    target
-        .props
-        .append(
-            "INTERFACE_COMPILE_OPTIONS",
-            &join_list(&cflags.compile_options),
-            false,
-        );
+    target.props.append(
+        "INTERFACE_COMPILE_OPTIONS",
+        &join_list(&cflags.compile_options),
+        false,
+    );
 
     for dep in pkg.requires(false) {
         if let Some(target_name) = providers.get(&dep.name) {
@@ -1290,10 +1322,7 @@ fn check_package_dependencies(
 }
 
 /// `PopulatePCTarget`: returns (command success, found, status error).
-fn populate_pc_target(
-    interp: &mut Interp,
-    args: &PopulateArgs,
-) -> (bool, bool, Option<String>) {
+fn populate_pc_target(interp: &mut Interp, args: &PopulateArgs) -> (bool, bool, Option<String>) {
     let prefix = args
         .prefix
         .as_ref()
@@ -1315,8 +1344,7 @@ fn populate_pc_target(
                     );
                 }
                 None => {
-                    let msg =
-                        format!("No '=' found in BIND_PC_REQUIRES argument '{provider_str}'");
+                    let msg = format!("No '=' found in BIND_PC_REQUIRES argument '{provider_str}'");
                     im_env.status_error = Some(msg.clone());
                     interp.set_fatal();
                     return (false, false, Some(msg));
@@ -1394,7 +1422,11 @@ fn handle_extract(interp: &mut Interp, args: &[String]) -> CmdResult {
     let (mut pc_env, mut im_env) = match handle_common(interp, &parsed.common) {
         Ok(env) => env,
         Err(msg) => {
-            return if parsed.common.required { err(msg) } else { Ok(()) };
+            return if parsed.common.required {
+                err(msg)
+            } else {
+                Ok(())
+            };
         }
     };
 
@@ -1448,10 +1480,7 @@ fn handle_extract(interp: &mut Interp, args: &[String]) -> CmdResult {
         "CMAKE_PKG_CONFIG_CFLAGS",
         String::from_utf8_lossy(&cflags.flagline).into_owned(),
     );
-    interp.set_def(
-        "CMAKE_PKG_CONFIG_INCLUDES",
-        join_list(&cflags.includes),
-    );
+    interp.set_def("CMAKE_PKG_CONFIG_INCLUDES", join_list(&cflags.includes));
     interp.set_def(
         "CMAKE_PKG_CONFIG_COMPILE_OPTIONS",
         join_list(&cflags.compile_options),
@@ -1560,7 +1589,11 @@ fn handle_import(interp: &mut Interp, args: &[String]) -> CmdResult {
         let (ok, found, status_error) = populate_pc_target(interp, &parsed.populate);
         if !found {
             interp.set_def(&found_var, "FALSE");
-            return if ok { Ok(()) } else { err(status_error.unwrap_or_default()) };
+            return if ok {
+                Ok(())
+            } else {
+                err(status_error.unwrap_or_default())
+            };
         }
     }
 

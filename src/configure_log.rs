@@ -238,7 +238,10 @@ impl ConfigureLog {
     pub fn write_value_map(&mut self, key: &str, map: &std::collections::BTreeMap<String, String>) {
         self.begin_object(key);
         for (name, value) in map {
-            if name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+            if name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            {
                 self.write_value_str(name, value);
             } else {
                 self.begin_line();
@@ -417,7 +420,11 @@ fn utf8_to_codepoint(bytes: &[u8]) -> (u32, usize) {
         }
         let calculated = (u32::from(first & 0x1F) << 6) | u32::from(bytes[1] & 0x3F);
         // oversized encoded characters are invalid
-        return if calculated < 0x80 { (0xFFFD, 1) } else { (calculated, 1) };
+        return if calculated < 0x80 {
+            (0xFFFD, 1)
+        } else {
+            (calculated, 1)
+        };
     }
     if first < 0xF0 {
         if bytes.len() < 3 {
@@ -432,7 +439,11 @@ fn utf8_to_codepoint(bytes: &[u8]) -> (u32, usize) {
             return (0xFFFD, 2);
         }
         // oversized encoded characters are invalid
-        return if calculated < 0x800 { (0xFFFD, 2) } else { (calculated, 2) };
+        return if calculated < 0x800 {
+            (0xFFFD, 2)
+        } else {
+            (calculated, 2)
+        };
     }
     if first < 0xF8 {
         if bytes.len() < 4 {
@@ -442,7 +453,11 @@ fn utf8_to_codepoint(bytes: &[u8]) -> (u32, usize) {
             | (u32::from(bytes[1] & 0x3F) << 12)
             | (u32::from(bytes[2] & 0x3F) << 6)
             | u32::from(bytes[3] & 0x3F);
-        return if calculated < 0x10000 { (0xFFFD, 3) } else { (calculated, 3) };
+        return if calculated < 0x10000 {
+            (0xFFFD, 3)
+        } else {
+            (calculated, 3)
+        };
     }
     (0xFFFD, 0)
 }
@@ -532,7 +547,10 @@ mod tests {
         log.write_literal_text_block("out", "a\rb\r\nc\\d\x01z");
         log.finish();
         let text = log.text().unwrap();
-        assert_eq!(text, "\n---\nevents:\n  out: |\n    a\\x0db\n    c\\\\d\\x01z\n...\n");
+        assert_eq!(
+            text,
+            "\n---\nevents:\n  out: |\n    a\\x0db\n    c\\\\d\\x01z\n...\n"
+        );
     }
 
     #[test]

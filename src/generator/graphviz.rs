@@ -79,7 +79,15 @@ struct Writer<'c, 'i> {
 fn is_reserved_target(name: &str) -> bool {
     matches!(
         name,
-        "all" | "ALL_BUILD" | "help" | "install" | "INSTALL" | "preinstall" | "clean" | "edit_cache" | "rebuild_cache"
+        "all"
+            | "ALL_BUILD"
+            | "help"
+            | "install"
+            | "INSTALL"
+            | "preinstall"
+            | "clean"
+            | "edit_cache"
+            | "rebuild_cache"
             | "ZERO_CHECK"
     )
 }
@@ -134,7 +142,10 @@ fn read_settings(interp: &Interp, settings: &mut Settings) {
     let mut mf = Interp::new(Mode::Script, "", "", &interp.cmake_root);
     crate::configure::add_default_definitions(&mut mf);
     if !mf.read_list_file(&file) {
-        crate::configure::system_error(None, &format!("Problem opening GraphViz options file: {file}"));
+        crate::configure::system_error(
+            None,
+            &format!("Problem opening GraphViz options file: {file}"),
+        );
         return;
     }
     println!("Reading GraphViz options file: {file}");
@@ -383,7 +394,10 @@ impl<'c, 'i> Writer<'c, 'i> {
         };
         let (implementation, interface) = graph_link_libraries(ctx, target, "");
         for lib in implementation.into_iter().flatten() {
-            deps.insert(lib.name.clone(), (DependencyType::LinkPrivate, convert(lib)));
+            deps.insert(
+                lib.name.clone(),
+                (DependencyType::LinkPrivate, convert(lib)),
+            );
         }
         for lib in interface.into_iter().flatten() {
             let kind = if deps.contains_key(&lib.name) {
@@ -495,7 +509,11 @@ impl<'c, 'i> Writer<'c, 'i> {
             if self.excluded(root) {
                 continue;
             }
-            let file = format!("{}.{}{suffix}", self.file_name, path_safe_string(&root.name));
+            let file = format!(
+                "{}.{}{suffix}",
+                self.file_name,
+                path_safe_string(&root.name)
+            );
             let mut text = self.header(&root.name);
             text += &self.node(root);
             for (src, dst, scope) in &extended {

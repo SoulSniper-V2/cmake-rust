@@ -144,7 +144,10 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         } else if let Some(executable) = target_in_directory(ctx, dir, &argv[0])
             .filter(|target| target.kind == TargetKind::Executable)
         {
-            if !utilities.iter().any(|(name, cross)| *name == executable.name && *cross) {
+            if !utilities
+                .iter()
+                .any(|(name, cross)| *name == executable.name && *cross)
+            {
                 utilities.push((executable.name.clone(), true));
             }
             add_target_dependency(&mut result.target_dependencies, &executable.name);
@@ -176,7 +179,10 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         paths
             .iter()
             .flat_map(|path| {
-                expand_list(&ctx.genex_command(path, dir, None, true, &spec.backtrace, None), false)
+                expand_list(
+                    &ctx.genex_command(path, dir, None, true, &spec.backtrace, None),
+                    false,
+                )
             })
             .map(|path| collapse_full_path(&path, &directory.binary_dir))
             .collect()
@@ -276,7 +282,14 @@ pub fn spec_from_command(ctx: &GenCtx, command: &crate::state::CustomCommand) ->
     // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW.
     let cmp0116 = crate::policy::index_of("CMP0116").and_then(|index| command.policies.get(index));
     if cmp0116 == Some(crate::policy::PolicyStatus::New) && !command.depfile.is_empty() {
-        let depfile = ctx.genex_command(&command.depfile, command.makefile, None, true, &command.backtrace, None);
+        let depfile = ctx.genex_command(
+            &command.depfile,
+            command.makefile,
+            None,
+            true,
+            &command.backtrace,
+            None,
+        );
         if !depfile.is_empty() {
             let full = unix_full_path(&depfile, &ctx.interp.makefiles[command.makefile].binary_dir);
             spec.internal_depfile = Some(internal_depfile_name(ctx, &full));

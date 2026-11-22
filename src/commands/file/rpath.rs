@@ -189,9 +189,7 @@ fn adjust_rpath_elf(
                         should_remove = false;
                     }
                     if entry.size < value.len() as u64 + 1 {
-                        *emsg = format!(
-                            "The replacement path is too long for the {name} entry."
-                        );
+                        *emsg = format!("The replacement path is too long for the {name} entry.");
                         return Some(false);
                     }
                     rp.push(RPathInfo {
@@ -235,10 +233,7 @@ fn adjust_rpath_elf(
             let mut bytes = entry.value.clone().into_bytes();
             bytes.resize(entry.size as usize, 0);
             if f.write_all(&bytes).is_err() {
-                *emsg = format!(
-                    "Error writing the new {} string to the file.",
-                    entry.name
-                );
+                *emsg = format!("Error writing the new {} string to the file.", entry.name);
                 return Some(false);
             }
         }
@@ -366,40 +361,38 @@ fn change_rpath(
     emsg: &mut String,
     changed: &mut bool,
 ) -> bool {
-    let adjust = |out: &mut Option<String>,
-                  in_rpath: &str,
-                  se_name: &'static str,
-                  emsg2: &mut String| {
-        let Some(pos) = find_rpath(in_rpath, old_rpath) else {
-            // If it contains the new rpath instead then it is okay.
-            if find_rpath(in_rpath, new_rpath).is_some() {
-                return true;
-            }
-            *emsg2 = format!(
-                "The current {se_name} is:\n  {in_rpath}\nwhich does not contain:\n  \
+    let adjust =
+        |out: &mut Option<String>, in_rpath: &str, se_name: &'static str, emsg2: &mut String| {
+            let Some(pos) = find_rpath(in_rpath, old_rpath) else {
+                // If it contains the new rpath instead then it is okay.
+                if find_rpath(in_rpath, new_rpath).is_some() {
+                    return true;
+                }
+                *emsg2 = format!(
+                    "The current {se_name} is:\n  {in_rpath}\nwhich does not contain:\n  \
                  {old_rpath}\nas was expected."
-            );
-            return false;
+                );
+                return false;
+            };
+            let mut prefix_len = pos;
+            // If oldRPath was at the end of the file's RPath, and newRPath is
+            // empty, remove the unnecessary ':' at the end.
+            if new_rpath.is_empty()
+                && pos > 0
+                && in_rpath.as_bytes()[pos - 1] == b':'
+                && pos + old_rpath.len() == in_rpath.len()
+            {
+                prefix_len -= 1;
+            }
+            let mut value = String::new();
+            if !remove_environment_rpath {
+                value.push_str(&in_rpath[..prefix_len]);
+            }
+            value.push_str(new_rpath);
+            value.push_str(&in_rpath[pos + old_rpath.len()..]);
+            *out = Some(value);
+            true
         };
-        let mut prefix_len = pos;
-        // If oldRPath was at the end of the file's RPath, and newRPath is
-        // empty, remove the unnecessary ':' at the end.
-        if new_rpath.is_empty()
-            && pos > 0
-            && in_rpath.as_bytes()[pos - 1] == b':'
-            && pos + old_rpath.len() == in_rpath.len()
-        {
-            prefix_len -= 1;
-        }
-        let mut value = String::new();
-        if !remove_environment_rpath {
-            value.push_str(&in_rpath[..prefix_len]);
-        }
-        value.push_str(new_rpath);
-        value.push_str(&in_rpath[pos + old_rpath.len()..]);
-        *out = Some(value);
-        true
-    };
     match adjust_rpath_elf(
         file,
         |emsg, elf| empty_callback(new_rpath, emsg, elf),
@@ -421,15 +414,13 @@ fn change_rpath(
 
 /// `cmSystemTools::SetRPath`.
 fn set_rpath(file: &str, new_rpath: &str, emsg: &mut String, changed: &mut bool) -> bool {
-    let adjust = |out: &mut Option<String>,
-                  in_rpath: &str,
-                  _se_name: &'static str,
-                  _emsg: &mut String| {
-        if in_rpath != new_rpath {
-            *out = Some(new_rpath.to_string());
-        }
-        true
-    };
+    let adjust =
+        |out: &mut Option<String>, in_rpath: &str, _se_name: &'static str, _emsg: &mut String| {
+            if in_rpath != new_rpath {
+                *out = Some(new_rpath.to_string());
+            }
+            true
+        };
     match adjust_rpath_elf(
         file,
         |emsg, elf| empty_callback(new_rpath, emsg, elf),
@@ -494,9 +485,9 @@ fn parse(args: &[String], single: &[&'static str], flags: &[&'static str]) -> Pa
             .find(|k| **k == arg.as_str());
         if let Some(&keyword) = keyword {
             if let Some(previous) = pending.take() {
-                parsed
-                    .keyword_errors
-                    .push(format!("Error after keyword \"{previous}\":\n  missing required value\n"));
+                parsed.keyword_errors.push(format!(
+                    "Error after keyword \"{previous}\":\n  missing required value\n"
+                ));
             }
             if single.contains(&keyword) {
                 pending = Some(keyword);
@@ -513,9 +504,9 @@ fn parse(args: &[String], single: &[&'static str], flags: &[&'static str]) -> Pa
         }
     }
     if let Some(previous) = pending.take() {
-        parsed
-            .keyword_errors
-            .push(format!("Error after keyword \"{previous}\":\n  missing required value\n"));
+        parsed.keyword_errors.push(format!(
+            "Error after keyword \"{previous}\":\n  missing required value\n"
+        ));
     }
     parsed
 }
@@ -572,7 +563,9 @@ fn rpath_change(interp: &mut Interp, args: &[String]) -> CmdResult {
         &file,
         old_rpath,
         new_rpath,
-        parsed.flags.contains_key("INSTALL_REMOVE_ENVIRONMENT_RPATH"),
+        parsed
+            .flags
+            .contains_key("INSTALL_REMOVE_ENVIRONMENT_RPATH"),
         &mut emsg,
         &mut changed,
     ) {
@@ -584,9 +577,7 @@ fn rpath_change(interp: &mut Interp, args: &[String]) -> CmdResult {
     if changed {
         status_line(
             interp,
-            &format!(
-                "Set non-toolchain portion of runtime path of \"{file}\" to \"{new_rpath}\""
-            ),
+            &format!("Set non-toolchain portion of runtime path of \"{file}\" to \"{new_rpath}\""),
         );
     }
     if let Some(times) = times {
@@ -630,9 +621,7 @@ fn rpath_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     if changed {
         status_line(
             interp,
-            &format!(
-                "Set non-toolchain portion of runtime path of \"{file}\" to \"{new_rpath}\""
-            ),
+            &format!("Set non-toolchain portion of runtime path of \"{file}\" to \"{new_rpath}\""),
         );
     }
     if let Some(times) = times {
@@ -703,9 +692,7 @@ fn rpath_check(interp: &mut Interp, args: &[String]) -> CmdResult {
 /// `HandleReadElfCommand` (READ_ELF).
 fn read_elf(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() < 4 {
-        return err(
-            "READ_ELF must be called with at least three additional arguments.",
-        );
+        return err("READ_ELF must be called with at least three additional arguments.");
     }
     let file = args[1].clone();
     // Unrecognized arguments are dropped (unparsedArguments is nullptr)

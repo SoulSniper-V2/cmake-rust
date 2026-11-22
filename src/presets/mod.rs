@@ -52,10 +52,22 @@ pub struct CacheVariable {
 pub enum Condition {
     Null,
     Const(bool),
-    Equals { lhs: String, rhs: String },
-    InList { string: String, list: Vec<String> },
-    Matches { string: String, regex: String },
-    AnyAllOf { conditions: Vec<Condition>, stop_value: bool },
+    Equals {
+        lhs: String,
+        rhs: String,
+    },
+    InList {
+        string: String,
+        list: Vec<String>,
+    },
+    Matches {
+        string: String,
+        regex: String,
+    },
+    AnyAllOf {
+        conditions: Vec<Condition>,
+        stop_value: bool,
+    },
     Not(Box<Condition>),
 }
 
@@ -423,7 +435,14 @@ fn get_env(name: &str) -> Option<String> {
 }
 
 impl Expander<'_> {
-    fn expand(&self, ns: &str, name: &str, out: &mut String, version: i32, all: &[Expander]) -> ExpandResult {
+    fn expand(
+        &self,
+        ns: &str,
+        name: &str,
+        out: &mut String,
+        version: i32,
+        all: &[Expander],
+    ) -> ExpandResult {
         match self {
             Expander::Base { source_dir, file } => {
                 if ns.is_empty() {
@@ -449,14 +468,20 @@ impl Expander<'_> {
                                 return ExpandResult::Error;
                             }
                             // cmSystemTools::GetSystemName
-                            out.push_str(if cfg!(target_os = "macos") { "Darwin" } else { "Linux" });
+                            out.push_str(if cfg!(target_os = "macos") {
+                                "Darwin"
+                            } else {
+                                "Linux"
+                            });
                             return ExpandResult::Ok;
                         }
                         "fileDir" if file.is_some() => {
                             if version < 4 {
                                 return ExpandResult::Error;
                             }
-                            out.push_str(&crate::util::filename_path(file.as_deref().unwrap_or_default()));
+                            out.push_str(&crate::util::filename_path(
+                                file.as_deref().unwrap_or_default(),
+                            ));
                             return ExpandResult::Ok;
                         }
                         "pathListSep" => {
@@ -544,7 +569,13 @@ impl Expander<'_> {
 }
 
 /// `VisitEnv`.
-fn visit_env(value: &mut String, key: &str, ctx: &RefCell<EnvContext>, all: &[Expander], version: i32) -> ExpandResult {
+fn visit_env(
+    value: &mut String,
+    key: &str,
+    ctx: &RefCell<EnvContext>,
+    all: &[Expander],
+    version: i32,
+) -> ExpandResult {
     let status = *ctx
         .borrow_mut()
         .cycles
@@ -648,7 +679,13 @@ fn expand_macros(out: &mut String, expanders: &[Expander], version: i32) -> Expa
 }
 
 /// `cmCMakePresetsGraphInternal::ExpandMacro`.
-fn expand_macro(out: &mut String, ns: &str, name: &str, expanders: &[Expander], version: i32) -> ExpandResult {
+fn expand_macro(
+    out: &mut String,
+    ns: &str,
+    name: &str,
+    expanders: &[Expander],
+    version: i32,
+) -> ExpandResult {
     for expander in expanders {
         let result = expander.expand(ns, name, out, version, expanders);
         if result != ExpandResult::Ignore {
@@ -675,7 +712,12 @@ pub trait PresetKind: Clone + Default + 'static {
         true
     }
     /// The type-specific `ExpandMacros` overload.
-    fn expand_fields(graph: &Graph, preset: &Self, out: &mut Self, expanders: &[Expander]) -> ExpandResult;
+    fn expand_fields(
+        graph: &Graph,
+        preset: &Self,
+        out: &mut Self,
+        expanders: &[Expander],
+    ) -> ExpandResult;
 }
 
 fn inherit_string(child: &mut String, parent: &str) {
@@ -717,7 +759,10 @@ impl PresetKind for ConfigurePreset {
         inherit_string(&mut self.generator, &parent.generator);
         inherit_string(&mut self.architecture, &parent.architecture);
         inherit_string(&mut self.toolset, &parent.toolset);
-        inherit_optional(&mut self.architecture_strategy, &parent.architecture_strategy);
+        inherit_optional(
+            &mut self.architecture_strategy,
+            &parent.architecture_strategy,
+        );
         inherit_optional(&mut self.toolset_strategy, &parent.toolset_strategy);
         inherit_string(&mut self.binary_dir, &parent.binary_dir);
         inherit_string(&mut self.install_dir, &parent.install_dir);
@@ -731,7 +776,9 @@ impl PresetKind for ConfigurePreset {
         inherit_optional(&mut self.warn_unused_cli, &parent.warn_unused_cli);
         inherit_optional(&mut self.warn_system_vars, &parent.warn_system_vars);
         for (k, v) in &parent.cache_variables {
-            self.cache_variables.entry(k.clone()).or_insert_with(|| v.clone());
+            self.cache_variables
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
         true
     }
@@ -765,7 +812,12 @@ impl PresetKind for ConfigurePreset {
         true
     }
 
-    fn expand_fields(graph: &Graph, preset: &Self, out: &mut Self, expanders: &[Expander]) -> ExpandResult {
+    fn expand_fields(
+        graph: &Graph,
+        preset: &Self,
+        out: &mut Self,
+        expanders: &[Expander],
+    ) -> ExpandResult {
         let version = graph.version(preset);
         let mut binary_dir = preset.binary_dir.clone();
         check_expand!(binary_dir, expanders, version);
@@ -831,7 +883,12 @@ impl PresetKind for BuildPreset {
         self.base.hidden || !self.configure_preset.is_empty()
     }
 
-    fn expand_fields(graph: &Graph, preset: &Self, out: &mut Self, expanders: &[Expander]) -> ExpandResult {
+    fn expand_fields(
+        graph: &Graph,
+        preset: &Self,
+        out: &mut Self,
+        expanders: &[Expander],
+    ) -> ExpandResult {
         let version = graph.version(preset);
         for target in &mut out.targets {
             check_expand!(*target, expanders, version);
@@ -867,12 +924,21 @@ impl PresetKind for TestPreset {
                 inherit_optional(&mut output.short_progress, &parent_output.short_progress);
                 inherit_optional(&mut output.verbosity, &parent_output.verbosity);
                 inherit_optional(&mut output.debug, &parent_output.debug);
-                inherit_optional(&mut output.output_on_failure, &parent_output.output_on_failure);
+                inherit_optional(
+                    &mut output.output_on_failure,
+                    &parent_output.output_on_failure,
+                );
                 inherit_optional(&mut output.quiet, &parent_output.quiet);
                 inherit_string(&mut output.output_log_file, &parent_output.output_log_file);
-                inherit_string(&mut output.output_junit_file, &parent_output.output_junit_file);
+                inherit_string(
+                    &mut output.output_junit_file,
+                    &parent_output.output_junit_file,
+                );
                 inherit_optional(&mut output.label_summary, &parent_output.label_summary);
-                inherit_optional(&mut output.subproject_summary, &parent_output.subproject_summary);
+                inherit_optional(
+                    &mut output.subproject_summary,
+                    &parent_output.subproject_summary,
+                );
                 inherit_optional(
                     &mut output.max_passed_test_output_size,
                     &parent_output.max_passed_test_output_size,
@@ -885,7 +951,10 @@ impl PresetKind for TestPreset {
                     &mut output.test_output_truncation,
                     &parent_output.test_output_truncation,
                 );
-                inherit_optional(&mut output.max_test_name_width, &parent_output.max_test_name_width);
+                inherit_optional(
+                    &mut output.max_test_name_width,
+                    &parent_output.max_test_name_width,
+                );
             } else {
                 self.output = parent.output.clone();
             }
@@ -897,8 +966,9 @@ impl PresetKind for TestPreset {
                     inherit_string(&mut include.label, &parent_include.label);
                     inherit_optional(&mut include.index, &parent_include.index);
                 } else {
-                    self.filter.get_or_insert_with(FilterOptions::default).include =
-                        parent_filter.include.clone();
+                    self.filter
+                        .get_or_insert_with(FilterOptions::default)
+                        .include = parent_filter.include.clone();
                 }
             }
             if let Some(parent_exclude) = &parent_filter.exclude {
@@ -907,17 +977,27 @@ impl PresetKind for TestPreset {
                     inherit_string(&mut exclude.label, &parent_exclude.label);
                     inherit_optional(&mut exclude.fixtures, &parent_exclude.fixtures);
                 } else {
-                    self.filter.get_or_insert_with(FilterOptions::default).exclude =
-                        parent_filter.exclude.clone();
+                    self.filter
+                        .get_or_insert_with(FilterOptions::default)
+                        .exclude = parent_filter.exclude.clone();
                 }
             }
         }
         if let Some(parent_execution) = &parent.execution {
             if let Some(execution) = &mut self.execution {
-                inherit_optional(&mut execution.stop_on_failure, &parent_execution.stop_on_failure);
-                inherit_optional(&mut execution.enable_failover, &parent_execution.enable_failover);
+                inherit_optional(
+                    &mut execution.stop_on_failure,
+                    &parent_execution.stop_on_failure,
+                );
+                inherit_optional(
+                    &mut execution.enable_failover,
+                    &parent_execution.enable_failover,
+                );
                 inherit_optional(&mut execution.jobs, &parent_execution.jobs);
-                inherit_string(&mut execution.resource_spec_file, &parent_execution.resource_spec_file);
+                inherit_string(
+                    &mut execution.resource_spec_file,
+                    &parent_execution.resource_spec_file,
+                );
                 inherit_optional(&mut execution.test_load, &parent_execution.test_load);
                 inherit_optional(&mut execution.show_only, &parent_execution.show_only);
                 inherit_optional(&mut execution.repeat, &parent_execution.repeat);
@@ -925,9 +1005,15 @@ impl PresetKind for TestPreset {
                     &mut execution.interactive_debugging,
                     &parent_execution.interactive_debugging,
                 );
-                inherit_optional(&mut execution.schedule_random, &parent_execution.schedule_random);
+                inherit_optional(
+                    &mut execution.schedule_random,
+                    &parent_execution.schedule_random,
+                );
                 inherit_optional(&mut execution.timeout, &parent_execution.timeout);
-                inherit_optional(&mut execution.no_tests_action, &parent_execution.no_tests_action);
+                inherit_optional(
+                    &mut execution.no_tests_action,
+                    &parent_execution.no_tests_action,
+                );
             } else {
                 self.execution = parent.execution.clone();
             }
@@ -939,7 +1025,12 @@ impl PresetKind for TestPreset {
         self.base.hidden || !self.configure_preset.is_empty()
     }
 
-    fn expand_fields(graph: &Graph, preset: &Self, out: &mut Self, expanders: &[Expander]) -> ExpandResult {
+    fn expand_fields(
+        graph: &Graph,
+        preset: &Self,
+        out: &mut Self,
+        expanders: &[Expander],
+    ) -> ExpandResult {
         let version = graph.version(preset);
         for overwrite in &mut out.overwrite_configuration_file {
             check_expand!(*overwrite, expanders, version);
@@ -1005,7 +1096,12 @@ impl PresetKind for PackagePreset {
         self.base.hidden || !self.configure_preset.is_empty()
     }
 
-    fn expand_fields(graph: &Graph, preset: &Self, out: &mut Self, expanders: &[Expander]) -> ExpandResult {
+    fn expand_fields(
+        graph: &Graph,
+        preset: &Self,
+        out: &mut Self,
+        expanders: &[Expander],
+    ) -> ExpandResult {
         let version = graph.version(preset);
         for value in out.variables.values_mut() {
             check_expand!(*value, expanders, version);
@@ -1029,7 +1125,12 @@ impl PresetKind for WorkflowPreset {
     fn visit_inherit(&mut self, _parent: &Self) -> bool {
         true
     }
-    fn expand_fields(_graph: &Graph, _preset: &Self, _out: &mut Self, _expanders: &[Expander]) -> ExpandResult {
+    fn expand_fields(
+        _graph: &Graph,
+        _preset: &Self,
+        _out: &mut Self,
+        _expanders: &[Expander],
+    ) -> ExpandResult {
         ExpandResult::Ok
     }
 }
@@ -1098,7 +1199,10 @@ fn visit_preset<T: PresetKind>(
             return false;
         };
         let parent_file = parent.unexpanded.base().origin_file;
-        if !files[preset.base().origin_file].reachable.contains(&parent_file) {
+        if !files[preset.base().origin_file]
+            .reachable
+            .contains(&parent_file)
+        {
             errors::inherited_preset_unreachable_from_file(&preset.base().name, state);
             return false;
         }
@@ -1121,7 +1225,12 @@ fn visit_preset<T: PresetKind>(
             preset.base_mut().condition = parent.base().condition.clone();
         }
     }
-    if preset.base().condition.as_ref().is_some_and(|c| c.is_null()) {
+    if preset
+        .base()
+        .condition
+        .as_ref()
+        .is_some_and(|c| c.is_null())
+    {
         preset.base_mut().condition = None;
     }
     let version = files[preset.base().origin_file].version;
@@ -1209,14 +1318,26 @@ impl Graph {
         let mut file = 0;
         let mut filename = Self::user_filename(&self.source_dir);
         if std::path::Path::new(&filename).exists() {
-            if !self.read_json_file(&filename, RootType::User, ReadReason::Root, &mut in_progress, &mut file) {
+            if !self.read_json_file(
+                &filename,
+                RootType::User,
+                ReadReason::Root,
+                &mut in_progress,
+                &mut file,
+            ) {
                 return false;
             }
             have_one_file = true;
         } else {
             filename = Self::filename(&self.source_dir);
             if std::path::Path::new(&filename).exists() {
-                if !self.read_json_file(&filename, RootType::Project, ReadReason::Root, &mut in_progress, &mut file) {
+                if !self.read_json_file(
+                    &filename,
+                    RootType::Project,
+                    ReadReason::Root,
+                    &mut in_progress,
+                    &mut file,
+                ) {
                     return false;
                 }
                 have_one_file = true;
@@ -1231,11 +1352,28 @@ impl Graph {
         }
 
         let files = std::mem::take(&mut self.files);
-        let ok = compute_preset_inheritance(&mut self.configure_presets, &files, &mut self.parse_state)
-            && compute_preset_inheritance(&mut self.build_presets, &files, &mut self.parse_state)
-            && compute_preset_inheritance(&mut self.test_presets, &files, &mut self.parse_state)
-            && compute_preset_inheritance(&mut self.package_presets, &files, &mut self.parse_state)
-            && compute_preset_inheritance(&mut self.workflow_presets, &files, &mut self.parse_state);
+        let ok =
+            compute_preset_inheritance(&mut self.configure_presets, &files, &mut self.parse_state)
+                && compute_preset_inheritance(
+                    &mut self.build_presets,
+                    &files,
+                    &mut self.parse_state,
+                )
+                && compute_preset_inheritance(
+                    &mut self.test_presets,
+                    &files,
+                    &mut self.parse_state,
+                )
+                && compute_preset_inheritance(
+                    &mut self.package_presets,
+                    &files,
+                    &mut self.parse_state,
+                )
+                && compute_preset_inheritance(
+                    &mut self.workflow_presets,
+                    &files,
+                    &mut self.parse_state,
+                );
         self.files = files;
         if !ok {
             return false;
@@ -1266,12 +1404,19 @@ impl Graph {
                             .reachable
                             .contains(&configure.unexpanded.base.origin_file)
                         {
-                            errors::configure_preset_unreachable_from_file(&name, &mut self.parse_state);
+                            errors::configure_preset_unreachable_from_file(
+                                &name,
+                                &mut self.parse_state,
+                            );
                             return false;
                         }
                         let configure_env = configure.unexpanded.base.environment.clone();
                         let pair = self.$map.get_mut(&name).unwrap();
-                        if pair.unexpanded.inherit_configure_environment.unwrap_or(true) {
+                        if pair
+                            .unexpanded
+                            .inherit_configure_environment
+                            .unwrap_or(true)
+                        {
                             for (k, v) in configure_env {
                                 pair.unexpanded.base.environment.entry(k).or_insert(v);
                             }
@@ -1295,11 +1440,17 @@ impl Graph {
             let mut configure_preset: Option<String> = None;
             for step in &workflow.steps {
                 if configure_preset.is_none() && step.preset_type != StepType::Configure {
-                    errors::first_workflow_step_not_configure(&step.preset_name, &mut self.parse_state);
+                    errors::first_workflow_step_not_configure(
+                        &step.preset_name,
+                        &mut self.parse_state,
+                    );
                     return false;
                 }
                 if configure_preset.is_some() && step.preset_type == StepType::Configure {
-                    errors::configure_workflow_step_not_first(&step.preset_name, &mut self.parse_state);
+                    errors::configure_workflow_step_not_first(
+                        &step.preset_name,
+                        &mut self.parse_state,
+                    );
                     return false;
                 }
                 let found = match step.preset_type {
@@ -1307,26 +1458,38 @@ impl Graph {
                         .configure_presets
                         .get(&step.preset_name)
                         .map(|p| (p.unexpanded.base.origin_file, None)),
-                    StepType::Build => self
-                        .build_presets
-                        .get(&step.preset_name)
-                        .map(|p| (p.unexpanded.base.origin_file, Some(p.unexpanded.configure_preset.clone()))),
-                    StepType::Test => self
-                        .test_presets
-                        .get(&step.preset_name)
-                        .map(|p| (p.unexpanded.base.origin_file, Some(p.unexpanded.configure_preset.clone()))),
-                    StepType::Package => self
-                        .package_presets
-                        .get(&step.preset_name)
-                        .map(|p| (p.unexpanded.base.origin_file, Some(p.unexpanded.configure_preset.clone()))),
+                    StepType::Build => self.build_presets.get(&step.preset_name).map(|p| {
+                        (
+                            p.unexpanded.base.origin_file,
+                            Some(p.unexpanded.configure_preset.clone()),
+                        )
+                    }),
+                    StepType::Test => self.test_presets.get(&step.preset_name).map(|p| {
+                        (
+                            p.unexpanded.base.origin_file,
+                            Some(p.unexpanded.configure_preset.clone()),
+                        )
+                    }),
+                    StepType::Package => self.package_presets.get(&step.preset_name).map(|p| {
+                        (
+                            p.unexpanded.base.origin_file,
+                            Some(p.unexpanded.configure_preset.clone()),
+                        )
+                    }),
                 };
                 // TryReachPresetFromWorkflow
                 let Some((origin, step_configure)) = found else {
                     errors::invalid_workflow_steps(&step.preset_name, &mut self.parse_state);
                     return false;
                 };
-                if !self.files[workflow.base.origin_file].reachable.contains(&origin) {
-                    errors::workflow_step_unreachable_from_file(&step.preset_name, &mut self.parse_state);
+                if !self.files[workflow.base.origin_file]
+                    .reachable
+                    .contains(&origin)
+                {
+                    errors::workflow_step_unreachable_from_file(
+                        &step.preset_name,
+                        &mut self.parse_state,
+                    );
                     return false;
                 }
                 match step_configure {
@@ -1461,7 +1624,9 @@ impl Graph {
             .map(|name| &presets[name])
             .filter(|p| {
                 !p.unexpanded.base().hidden
-                    && p.expanded.as_ref().is_some_and(|e| e.base().condition_result)
+                    && p.expanded
+                        .as_ref()
+                        .is_some_and(|e| e.base().condition_result)
                     && filter(&p.unexpanded)
             })
             .map(|p| p.unexpanded.base())
@@ -1478,24 +1643,58 @@ impl Graph {
         }
     }
 
-    pub fn print_configure_preset_list(&self, filter: &dyn Fn(&ConfigurePreset) -> bool, newline: Option<&mut bool>) {
-        Self::print_list(&self.configure_order, &self.configure_presets, filter, "configure", newline);
+    pub fn print_configure_preset_list(
+        &self,
+        filter: &dyn Fn(&ConfigurePreset) -> bool,
+        newline: Option<&mut bool>,
+    ) {
+        Self::print_list(
+            &self.configure_order,
+            &self.configure_presets,
+            filter,
+            "configure",
+            newline,
+        );
     }
 
     pub fn print_build_preset_list(&self, newline: Option<&mut bool>) {
-        Self::print_list(&self.build_order, &self.build_presets, &|_| true, "build", newline);
+        Self::print_list(
+            &self.build_order,
+            &self.build_presets,
+            &|_| true,
+            "build",
+            newline,
+        );
     }
 
     pub fn print_test_preset_list(&self, newline: Option<&mut bool>) {
-        Self::print_list(&self.test_order, &self.test_presets, &|_| true, "test", newline);
+        Self::print_list(
+            &self.test_order,
+            &self.test_presets,
+            &|_| true,
+            "test",
+            newline,
+        );
     }
 
     pub fn print_package_preset_list(&self, newline: Option<&mut bool>) {
-        Self::print_list(&self.package_order, &self.package_presets, &|_| true, "package", newline);
+        Self::print_list(
+            &self.package_order,
+            &self.package_presets,
+            &|_| true,
+            "package",
+            newline,
+        );
     }
 
     pub fn print_workflow_preset_list(&self, newline: Option<&mut bool>) {
-        Self::print_list(&self.workflow_order, &self.workflow_presets, &|_| true, "workflow", newline);
+        Self::print_list(
+            &self.workflow_order,
+            &self.workflow_presets,
+            &|_| true,
+            "workflow",
+            newline,
+        );
     }
 
     /// `PrintAllPresets`; the configure list uses no generator filter.

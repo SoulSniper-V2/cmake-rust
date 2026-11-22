@@ -166,9 +166,7 @@ impl<'a> KwsysCheck<'a> {
                             let lo = self.b[self.pos - 2] as u32 + 1;
                             let hi = self.b[self.pos] as u32;
                             if lo > hi + 1 {
-                                return Err(
-                                    "RegularExpression::compile(): Invalid range in [].\n"
-                                );
+                                return Err("RegularExpression::compile(): Invalid range in [].\n");
                             }
                             self.pos += 1;
                         }
@@ -548,15 +546,11 @@ impl ReplaceHelper {
         let expr = self.replace_expression.as_bytes();
         let mut l = 0usize;
         while l < expr.len() {
-            let r = expr[l..]
-                .iter()
-                .position(|&b| b == b'\\')
-                .map(|p| l + p);
+            let r = expr[l..].iter().position(|&b| b == b'\\').map(|p| l + p);
             match r {
                 None => {
-                    self.replacements.push(Replacement::Text(
-                        self.replace_expression[l..].to_owned(),
-                    ));
+                    self.replacements
+                        .push(Replacement::Text(self.replace_expression[l..].to_owned()));
                     break;
                 }
                 Some(r) => {
@@ -602,9 +596,7 @@ impl ReplaceHelper {
             // or when start is the beginning of the full text.
             let not_bol = if bol_at_offset { false } else { start != 0 };
             let found = self.regex.find_at(input, start, not_bol)?;
-            if nonempty_at_offset
-                && found.groups[0] == Some((base, base))
-            {
+            if nonempty_at_offset && found.groups[0] == Some((base, base)) {
                 // Match ending at the reject position: skip to next offset.
                 start = base + 1;
                 continue;
@@ -613,12 +605,7 @@ impl ReplaceHelper {
         }
     }
 
-    fn replace(
-        &self,
-        interp: &mut Interp,
-        input: &str,
-        output: &mut String,
-    ) -> LResult<()> {
+    fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
         output.clear();
         let bol_at_offset = interp.policy_status("CMP0186") != PolicyStatus::New;
 
@@ -826,7 +813,9 @@ fn handle_find(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.set_def(variable_name, "-1");
         return Ok(());
     };
-    let index = list.find(&args[2]).map_or("-1".to_owned(), |i| i.to_string());
+    let index = list
+        .find(&args[2])
+        .map_or("-1".to_owned(), |i| i.to_string());
     interp.set_def(variable_name, index);
     Ok(())
 }
@@ -1061,7 +1050,10 @@ fn strip_all_generator_expressions(input: &str) -> String {
                 continue;
             }
             if bytes[c] == b':' && c_name.is_some() {
-                genexps.push((input[pos + (c_name.unwrap() - c_start)..c].to_owned(), pos + (c + 1 - c_start)));
+                genexps.push((
+                    input[pos + (c_name.unwrap() - c_start)..c].to_owned(),
+                    pos + (c + 1 - c_start),
+                ));
                 c_name = None;
             } else if bytes[c] == b'>' {
                 if c_name.is_none() && !genexps.is_empty() {
@@ -1262,8 +1254,10 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
 
     // Action Initialize (REPLACE compiles its regex before selector runs).
     let helper = match action {
-        TransformAction::Replace => Some(ReplaceHelper::new(&action_args[0], &action_args[1])
-            .map_err(|e| crate::interp::CmdErr::Error(e.0))?),
+        TransformAction::Replace => Some(
+            ReplaceHelper::new(&action_args[0], &action_args[1])
+                .map_err(|e| crate::interp::CmdErr::Error(e.0))?,
+        ),
         _ => None,
     };
 
@@ -1285,10 +1279,7 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
                     .unwrap()
                     .replace(interp, s, &mut out)
                     .map_err(|e| {
-                        OutOfRange(format!(
-                            "sub-command TRANSFORM, action REPLACE: {}.",
-                            e.0
-                        ))
+                        OutOfRange(format!("sub-command TRANSFORM, action REPLACE: {}.", e.0))
                     })?;
                 out
             }
@@ -1527,7 +1518,9 @@ fn handle_filter(interp: &mut Interp, args: &[String]) -> CmdResult {
         "INCLUDE" => true,
         "EXCLUDE" => false,
         op => {
-            return err(format!("sub-command FILTER does not recognize operator {op}"));
+            return err(format!(
+                "sub-command FILTER does not recognize operator {op}"
+            ));
         }
     };
     let list_name = args[1].clone();

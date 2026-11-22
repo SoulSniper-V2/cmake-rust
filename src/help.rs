@@ -13,20 +13,28 @@ fn re(pattern: &str) -> Regex {
 
 static CMAKE_DIRECTIVE: LazyLock<Regex> =
     LazyLock::new(|| re("^.. (cmake:)?(command|envvar|genex|signature|variable)::"));
-static CMAKE_MODULE_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. cmake-module::[ \t]+([^ \t\n]+)$"));
-static PARSED_LITERAL_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. parsed-literal::[ \t]*(.*)$"));
+static CMAKE_MODULE_DIRECTIVE: LazyLock<Regex> =
+    LazyLock::new(|| re("^.. cmake-module::[ \t]+([^ \t\n]+)$"));
+static PARSED_LITERAL_DIRECTIVE: LazyLock<Regex> =
+    LazyLock::new(|| re("^.. parsed-literal::[ \t]*(.*)$"));
 static CODE_BLOCK_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. code-block::[ \t]*(.*)$"));
-static REPLACE_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. (\\|[^|]+\\|) replace::[ \t]*(.*)$"));
+static REPLACE_DIRECTIVE: LazyLock<Regex> =
+    LazyLock::new(|| re("^.. (\\|[^|]+\\|) replace::[ \t]*(.*)$"));
 static INCLUDE_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. include::[ \t]+([^ \t\n]+)$"));
 static TOC_TREE_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. toctree::[ \t]*(.*)$"));
-static PRODUCTION_LIST_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. productionlist::[ \t]*(.*)$"));
+static PRODUCTION_LIST_DIRECTIVE: LazyLock<Regex> =
+    LazyLock::new(|| re("^.. productionlist::[ \t]*(.*)$"));
 static NOTE_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. note::[ \t]*(.*)$"));
-static VERSION_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| re("^.. version(added|changed)::[ \t]*(.*)$"));
+static VERSION_DIRECTIVE: LazyLock<Regex> =
+    LazyLock::new(|| re("^.. version(added|changed)::[ \t]*(.*)$"));
 static MODULE_RST: LazyLock<Regex> = LazyLock::new(|| re("^#\\[(=*)\\[\\.rst:$"));
 static CMAKE_ROLE: LazyLock<Regex> = LazyLock::new(|| {
-    re("(:cmake)?:(cref|command|cpack_gen|generator|genex|variable|envvar|module|policy|prop_cache|prop_dir|prop_gbl|prop_inst|prop_sf|prop_test|prop_tgt|manual):`(<*([^`<]|[^` \t]<)*)([ \t]+<[^`]*>)?`")
+    re(
+        "(:cmake)?:(cref|command|cpack_gen|generator|genex|variable|envvar|module|policy|prop_cache|prop_dir|prop_gbl|prop_inst|prop_sf|prop_test|prop_tgt|manual):`(<*([^`<]|[^` \t]<)*)([ \t]+<[^`]*>)?`",
+    )
 });
-static INLINE_LINK: LazyLock<Regex> = LazyLock::new(|| re("`(<*([^`<]|[^` \t]<)*)([ \t]+<[^`]*>)?`_"));
+static INLINE_LINK: LazyLock<Regex> =
+    LazyLock::new(|| re("`(<*([^`<]|[^` \t]<)*)([ \t]+<[^`]*>)?`_"));
 static INLINE_LITERAL: LazyLock<Regex> = LazyLock::new(|| re("``([^`]*)``"));
 static SUBSTITUTION: LazyLock<Regex> = LazyLock::new(|| {
     re("(^|[^A-Za-z0-9_])((\\|[^| \t\r\n]([^|\r\n]*[^| \t\r\n])?\\|)(__|_|))([^A-Za-z0-9_]|$)")
@@ -35,7 +43,11 @@ static TOC_TREE_LINK: LazyLock<Regex> = LazyLock::new(|| re("^.*[ \t]+<([^>]+)>$
 
 /// `RegularExpressionMatch::match(n)`: empty when the group did not take part.
 fn group<'t>(m: &Match, text: &'t str, n: usize) -> &'t str {
-    m.groups.get(n).copied().flatten().map_or("", |(start, end)| &text[start..end])
+    m.groups
+        .get(n)
+        .copied()
+        .flatten()
+        .map_or("", |(start, end)| &text[start..end])
 }
 
 fn start(m: &Match, n: usize) -> usize {
@@ -109,7 +121,10 @@ pub struct Rst<'o> {
 impl<'o> Rst<'o> {
     pub fn new(out: &'o mut String, doc_root: &str) -> Self {
         let mut replace = BTreeMap::new();
-        replace.insert("|release|".to_owned(), crate::interp::VERSION_STRING.to_owned());
+        replace.insert(
+            "|release|".to_owned(),
+            crate::interp::VERSION_STRING.to_owned(),
+        );
         Self {
             out,
             doc_root: doc_root.to_owned(),
@@ -222,7 +237,9 @@ impl<'o> Rst<'o> {
         self.last_line_ended_in_colon_colon = false;
         let bytes = line.as_bytes();
         // A line starting in .. is an explicit markup start.
-        if line == ".." || (bytes.len() >= 3 && bytes[0] == b'.' && bytes[1] == b'.' && is_space(bytes[2])) {
+        if line == ".."
+            || (bytes.len() >= 3 && bytes[0] == b'.' && bytes[1] == b'.' && is_space(bytes[2]))
+        {
             self.reset();
             self.markup = if line[2..].bytes().all(|b| b == b' ' || b == b'\t') {
                 Markup::Empty
@@ -287,8 +304,9 @@ impl<'o> Rst<'o> {
         // Print non-markup lines.
         else {
             self.normal_line(line);
-            self.last_line_ended_in_colon_colon =
-                bytes.len() >= 2 && bytes[bytes.len() - 2] == b':' && bytes[bytes.len() - 1] == b':';
+            self.last_line_ended_in_colon_colon = bytes.len() >= 2
+                && bytes[bytes.len() - 2] == b':'
+                && bytes[bytes.len() - 1] == b':';
         }
     }
 
@@ -408,7 +426,11 @@ impl<'o> Rst<'o> {
     fn output_markup_lines(&mut self, inline_markup: bool) {
         let lines = std::mem::take(&mut self.markup_lines);
         for line in &lines {
-            let line = if line.is_empty() { String::new() } else { format!(" {line}") };
+            let line = if line.is_empty() {
+                String::new()
+            } else {
+                format!(" {line}")
+            };
             self.output_line(&line, inline_markup);
         }
         self.markup_lines = lines;
@@ -496,7 +518,11 @@ fn unindent_lines(lines: &mut Vec<String>) {
         }
     }
     let leading = lines.iter().take_while(|line| line.is_empty()).count();
-    let trailing = lines.iter().rev().take_while(|line| line.is_empty()).count();
+    let trailing = lines
+        .iter()
+        .rev()
+        .take_while(|line| line.is_empty())
+        .count();
     if leading + trailing >= lines.len() {
         // All lines are empty. The markup block is empty. Leave only one.
         lines.truncate(1);
@@ -573,7 +599,11 @@ fn warn_form_from_filename(item: &mut HelpItem, result: &mut bool) {
 /// items, or `None` when no help option was given. `args` excludes argv[0].
 pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
     if args.is_empty() {
-        return Some(vec![HelpItem { kind: HelpType::Usage, argument: String::new(), filename: String::new() }]);
+        return Some(vec![HelpItem {
+            kind: HelpType::Usage,
+            argument: String::new(),
+            filename: String::new(),
+        }]);
     }
     let mut items = Vec::new();
     let mut result = false;
@@ -584,7 +614,11 @@ pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
         if arg == "--" {
             return result.then_some(items);
         }
-        let mut item = HelpItem { kind: HelpType::None, argument: String::new(), filename: String::new() };
+        let mut item = HelpItem {
+            kind: HelpType::None,
+            argument: String::new(),
+            filename: String::new(),
+        };
         let take = |i: &mut usize, target: &mut String| {
             if let Some(value) = optional(*i + 1) {
                 *target = value;
@@ -601,7 +635,8 @@ pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
                     take(&mut i, &mut item.filename);
                 }
             }
-            "--help-properties" | "--help-policies" | "--help-variables" | "--help-modules" | "--help-commands" => {
+            "--help-properties" | "--help-policies" | "--help-variables" | "--help-modules"
+            | "--help-commands" => {
                 let (kind, argument) = manual(match arg {
                     "--help-properties" => "cmake-properties.7",
                     "--help-policies" => "cmake-policies.7",
@@ -636,8 +671,8 @@ pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
                 eprintln!("Warning: {arg} no longer supported");
                 return Some(items);
             }
-            "--help-command" | "--help-module" | "--help-property" | "--help-policy" | "--help-variable"
-            | "--help-manual" => {
+            "--help-command" | "--help-module" | "--help-property" | "--help-policy"
+            | "--help-variable" | "--help-manual" => {
                 item.kind = match arg {
                     "--help-command" => HelpType::OneCommand,
                     "--help-module" => HelpType::OneModule,
@@ -653,8 +688,12 @@ pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
                 }
                 warn_form_from_filename(&mut item, &mut result);
             }
-            "--help-command-list" | "--help-module-list" | "--help-property-list" | "--help-variable-list"
-            | "--help-policy-list" | "--help-manual-list" => {
+            "--help-command-list"
+            | "--help-module-list"
+            | "--help-property-list"
+            | "--help-variable-list"
+            | "--help-policy-list"
+            | "--help-manual-list" => {
                 item.kind = match arg {
                     "--help-command-list" => HelpType::ListCommands,
                     "--help-module-list" => HelpType::ListModules,
@@ -736,11 +775,19 @@ fn glob_help(root: &str, pattern: &str) -> Vec<String> {
         let mut next = Vec::new();
         for base in &paths {
             if !has_wildcard(component) {
-                let path = if index == 0 { (*component).to_owned() } else { format!("{base}/{component}") };
+                let path = if index == 0 {
+                    (*component).to_owned()
+                } else {
+                    format!("{base}/{component}")
+                };
                 next.push(path);
                 continue;
             }
-            let dir = if base.is_empty() { "/".to_owned() } else { base.clone() };
+            let dir = if base.is_empty() {
+                "/".to_owned()
+            } else {
+                base.clone()
+            };
             let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
@@ -768,7 +815,9 @@ pub struct Documentation {
 
 impl Documentation {
     pub fn new(root: &str) -> Self {
-        Self { root: root.to_owned() }
+        Self {
+            root: root.to_owned(),
+        }
     }
 
     /// `cmDocumentation::PrintNames`.
@@ -779,7 +828,11 @@ impl Documentation {
                 continue;
             };
             for line in stream_lines(&String::from_utf8_lossy(&bytes)) {
-                if line.as_bytes().first().is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'<') {
+                if line
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'<')
+                {
                     names.push(line);
                     break;
                 }
@@ -807,12 +860,28 @@ impl Documentation {
     /// `cmDocumentation::GeneralizeKeyword`.
     fn generalize_keyword(mut name: String) -> String {
         let conversions: [(&str, &[&str]); 2] = [
-            ("CONFIG", &["DEBUG", "RELEASE", "RELWITHDEBINFO", "MINSIZEREL"]),
+            (
+                "CONFIG",
+                &["DEBUG", "RELEASE", "RELWITHDEBINFO", "MINSIZEREL"],
+            ),
             (
                 "LANG",
                 &[
-                    "C", "CXX", "CSharp", "CUDA", "OBJC", "OBJCXX", "Fortran", "HIP", "ISPC", "Swift", "ASM",
-                    "ASM_NASM", "ASM_MARMASM", "ASM_MASM", "ASM-ATT",
+                    "C",
+                    "CXX",
+                    "CSharp",
+                    "CUDA",
+                    "OBJC",
+                    "OBJCXX",
+                    "Fortran",
+                    "HIP",
+                    "ISPC",
+                    "Swift",
+                    "ASM",
+                    "ASM_NASM",
+                    "ASM_MARMASM",
+                    "ASM_MASM",
+                    "ASM-ATT",
                 ],
             ),
         ];
@@ -861,7 +930,8 @@ impl Documentation {
                 if found {
                     out.push('\n');
                 }
-                found = self.print_files(out, &format!("command/{}", word.to_ascii_lowercase())) || found;
+                found = self.print_files(out, &format!("command/{}", word.to_ascii_lowercase()))
+                    || found;
                 if found {
                     return true;
                 }
@@ -869,7 +939,8 @@ impl Documentation {
                 if found {
                     out.push('\n');
                 }
-                found = self.print_files(out, &format!("command/{}", word_m.to_ascii_lowercase())) || found;
+                found = self.print_files(out, &format!("command/{}", word_m.to_ascii_lowercase()))
+                    || found;
                 if found {
                     return true;
                 }
@@ -895,7 +966,9 @@ impl Documentation {
                 if self.print_files(out, &format!("module/{arg}")) {
                     return true;
                 }
-                out.push_str(&format!("Argument \"{arg}\" to --help-module is not a CMake module.\n"));
+                out.push_str(&format!(
+                    "Argument \"{arg}\" to --help-module is not a CMake module.\n"
+                ));
                 false
             }
             HelpType::ListModules => {
@@ -930,7 +1003,9 @@ impl Documentation {
                 if self.print_files(out, &format!("policy/{arg}")) {
                     return true;
                 }
-                out.push_str(&format!("Argument \"{arg}\" to --help-policy is not a CMake policy.\n"));
+                out.push_str(&format!(
+                    "Argument \"{arg}\" to --help-policy is not a CMake policy.\n"
+                ));
                 false
             }
             HelpType::ListPolicies => {
@@ -957,7 +1032,9 @@ impl Documentation {
                 let summary = "cmake --help-custom-modules no longer supported\n";
                 let detail = "CMake versions prior to 3.0 exposed their internal module help page\ngeneration functionality through the --help-custom-modules option.\nCMake versions 3.0 and above use other means to generate their module\nhelp pages so this functionality is no longer available to be exposed.\n\nThis file was generated as a placeholder to provide this information.\n";
                 if ext == ".HTM" || ext == ".HTML" {
-                    out.push_str(&format!("<html><title>{name}</title><body>\n{summary}<p/>\n{detail}</body></html>\n"));
+                    out.push_str(&format!(
+                        "<html><title>{name}</title><body>\n{summary}<p/>\n{detail}</body></html>\n"
+                    ));
                 } else if ext.len() == 2 && (b'1'..=b'9').contains(&ext.as_bytes()[1]) {
                     // The date comes from cmSystemTools::GetCurrentDateTime("%B %d, %Y").
                     let date = crate::util::current_date_time("%B %d, %Y");
@@ -982,7 +1059,13 @@ mod tests {
 
     #[test]
     fn unindent() {
-        let mut lines = vec!["".to_owned(), "".to_owned(), "   a".to_owned(), "     b".to_owned(), "".to_owned()];
+        let mut lines = vec![
+            "".to_owned(),
+            "".to_owned(),
+            "   a".to_owned(),
+            "     b".to_owned(),
+            "".to_owned(),
+        ];
         unindent_lines(&mut lines);
         assert_eq!(lines, vec!["a".to_owned(), "  b".to_owned()]);
     }
@@ -996,7 +1079,13 @@ mod tests {
 
     #[test]
     fn generalize() {
-        assert_eq!(Documentation::generalize_keyword("CMAKE_CXX_IGNORE_EXTENSIONS".into()), "CMAKE_LANG_IGNORE_EXTENSIONS");
-        assert_eq!(Documentation::generalize_keyword("CMAKE_C_FLAGS_DEBUG".into()), "CMAKE_LANG_FLAGS_CONFIG");
+        assert_eq!(
+            Documentation::generalize_keyword("CMAKE_CXX_IGNORE_EXTENSIONS".into()),
+            "CMAKE_LANG_IGNORE_EXTENSIONS"
+        );
+        assert_eq!(
+            Documentation::generalize_keyword("CMAKE_C_FLAGS_DEBUG".into()),
+            "CMAKE_LANG_FLAGS_CONFIG"
+        );
     }
 }

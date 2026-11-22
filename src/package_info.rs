@@ -56,7 +56,11 @@ impl PackageInfoArguments {
             version: args.get("VERSION").to_owned(),
             compat_version: args.get("COMPAT_VERSION").to_owned(),
             version_schema: args.get("VERSION_SCHEMA").to_owned(),
-            default_targets: args.list("DEFAULT_TARGETS").iter().map(|s| s.to_owned()).collect(),
+            default_targets: args
+                .list("DEFAULT_TARGETS")
+                .iter()
+                .map(|s| s.to_owned())
+                .collect(),
             default_configs: args
                 .list("DEFAULT_CONFIGURATIONS")
                 .iter()
@@ -72,10 +76,18 @@ impl PackageInfoArguments {
     /// `cmPackageInfoArguments::Check`.
     pub fn check(&self, enable: bool) -> CmdResult {
         fn requires(req: &str, specified: bool, arg: &str) -> CmdResult {
-            if specified { err(format!("{arg} requires {req}.")) } else { Ok(()) }
+            if specified {
+                err(format!("{arg} requires {req}."))
+            } else {
+                Ok(())
+            }
         }
         fn exclusive(arg1: &str, specified: bool, arg2: &str) -> CmdResult {
-            if specified { err(format!("{arg1} and {arg2} are mutually exclusive.")) } else { Ok(()) }
+            if specified {
+                err(format!("{arg1} and {arg2} are mutually exclusive."))
+            } else {
+                Ok(())
+            }
         }
         if !enable {
             // Check if any options were given.
@@ -84,10 +96,22 @@ impl PackageInfoArguments {
             requires("PACKAGE_INFO", !self.version.is_empty(), "VERSION")?;
             requires("PACKAGE_INFO", !self.description.is_empty(), "DESCRIPTION")?;
             requires("PACKAGE_INFO", !self.website.is_empty(), "HOMEPAGE_URL")?;
-            requires("PACKAGE_INFO", !self.default_targets.is_empty(), "DEFAULT_TARGETS")?;
-            requires("PACKAGE_INFO", !self.default_configs.is_empty(), "DEFAULT_CONFIGURATIONS")?;
+            requires(
+                "PACKAGE_INFO",
+                !self.default_targets.is_empty(),
+                "DEFAULT_TARGETS",
+            )?;
+            requires(
+                "PACKAGE_INFO",
+                !self.default_configs.is_empty(),
+                "DEFAULT_CONFIGURATIONS",
+            )?;
             requires("PACKAGE_INFO", !self.project_name.is_empty(), "PROJECT")?;
-            requires("PACKAGE_INFO", self.no_project_defaults, "NO_PROJECT_METADATA")?;
+            requires(
+                "PACKAGE_INFO",
+                self.no_project_defaults,
+                "NO_PROJECT_METADATA",
+            )?;
         }
 
         // Check for incompatible options.
@@ -95,12 +119,24 @@ impl PackageInfoArguments {
             exclusive("APPENDIX", !self.version.is_empty(), "VERSION")?;
             exclusive("APPENDIX", !self.description.is_empty(), "DESCRIPTION")?;
             exclusive("APPENDIX", !self.website.is_empty(), "HOMEPAGE_URL")?;
-            exclusive("APPENDIX", !self.default_targets.is_empty(), "DEFAULT_TARGETS")?;
-            exclusive("APPENDIX", !self.default_configs.is_empty(), "DEFAULT_CONFIGURATIONS")?;
+            exclusive(
+                "APPENDIX",
+                !self.default_targets.is_empty(),
+                "DEFAULT_TARGETS",
+            )?;
+            exclusive(
+                "APPENDIX",
+                !self.default_configs.is_empty(),
+                "DEFAULT_CONFIGURATIONS",
+            )?;
             exclusive("APPENDIX", !self.project_name.is_empty(), "PROJECT")?;
         }
         if self.no_project_defaults {
-            exclusive("PROJECT", !self.project_name.is_empty(), "NO_PROJECT_METADATA")?;
+            exclusive(
+                "PROJECT",
+                !self.project_name.is_empty(),
+                "NO_PROJECT_METADATA",
+            )?;
         }
 
         // Check for options that require other options.
@@ -186,7 +222,11 @@ impl PackageInfoArguments {
 
     /// `cmPackageInfoArguments::GetPackageDirName`.
     pub fn package_dir_name(&self) -> String {
-        if self.lower_case { self.package_name.to_lowercase() } else { self.package_name.clone() }
+        if self.lower_case {
+            self.package_name.to_lowercase()
+        } else {
+            self.package_name.clone()
+        }
     }
 
     /// `cmPackageInfoArguments::GetPackageFileName`.
@@ -224,12 +264,19 @@ pub(crate) fn check_project_name(interp: &Interp, name: &str) -> bool {
         .ext
         .misc
         .get(&format!("project-names:{}", interp.mf_index()))
-        .is_some_and(|list| crate::util::expand_list(list, false).iter().any(|n| n == name))
+        .is_some_and(|list| {
+            crate::util::expand_list(list, false)
+                .iter()
+                .any(|n| n == name)
+        })
 }
 
 /// `cmStateSnapshot::GetProjectName`.
 pub(crate) fn project_name(interp: &Interp) -> String {
-    interp.mf().props.get("PROJECT_NAME").unwrap_or_default().to_owned()
+    interp
+        .mf()
+        .props
+        .get("PROJECT_NAME")
+        .unwrap_or_default()
+        .to_owned()
 }
-
-

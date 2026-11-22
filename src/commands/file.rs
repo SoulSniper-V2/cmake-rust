@@ -3,9 +3,9 @@
 mod copy;
 mod curl_strerror;
 mod download;
+mod generate;
 mod glob;
 mod lock;
-mod generate;
 mod rpath;
 mod strings;
 
@@ -17,7 +17,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
-
 
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
@@ -60,15 +59,13 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "LOCK" => lock::run(interp, args),
         "CONFIGURE" => configure(interp, args),
         "DIFFERENT" => different(interp, &args[1..]),
-        "RPATH_CHANGE" | "CHRPATH" | "RPATH_SET" | "RPATH_CHECK" | "RPATH_REMOVE"
-        | "READ_ELF" => rpath::run(interp, args),
+        "RPATH_CHANGE" | "CHRPATH" | "RPATH_SET" | "RPATH_CHECK" | "RPATH_REMOVE" | "READ_ELF" => {
+            rpath::run(interp, args)
+        }
         "GENERATE" => generate::run(interp, args),
         "DOWNLOAD" => download::download(interp, args),
         "UPLOAD" => download::upload(interp, args),
-        "ARCHIVE_CREATE"
-        | "ARCHIVE_EXTRACT"
-        | "GET_RUNTIME_DEPENDENCIES"
-        | "READ_MACHO" => {
+        "ARCHIVE_CREATE" | "ARCHIVE_EXTRACT" | "GET_RUNTIME_DEPENDENCIES" | "READ_MACHO" => {
             // SetError prefixes the command name. The unsupported command is
             // named explicitly in the diagnostic.
             Err(fatal(interp, &format!("file({action}) not yet supported")))

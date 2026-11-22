@@ -17,9 +17,7 @@ use super::install::{CopyRule, absolute_dest, write_copy};
 use crate::commands::string::json::{Json, write_json_indent2};
 use crate::fsutil::write_if_different;
 use crate::genex::{self, PreprocessContext};
-use crate::install_model::{
-    BuildExport, CopyKind, InstallOptions, InstallRule,
-};
+use crate::install_model::{BuildExport, CopyKind, InstallOptions, InstallRule};
 use crate::package_info::PackageInfoArguments;
 use crate::state::{Target, TargetKind};
 use crate::util::{expand_list, is_full_path};
@@ -66,7 +64,10 @@ fn package_root(package: &PackageInfoArguments) -> Obj {
         }
     }
     if !package.default_targets.is_empty() {
-        root.insert(skey("default_components"), jarr(package.default_targets.iter()));
+        root.insert(
+            skey("default_components"),
+            jarr(package.default_targets.iter()),
+        );
     }
     if !package.default_configs.is_empty() {
         root.insert(skey("configurations"), jarr(package.default_configs.iter()));
@@ -173,15 +174,15 @@ fn interface_link_properties(
     tgt: &Target,
     props: &BTreeMap<String, String>,
 ) -> bool {
-    let Some(value) = props.get("INTERFACE_LINK_LIBRARIES") else { return true };
+    let Some(value) = props.get("INTERFACE_LINK_LIBRARIES") else {
+        return true;
+    };
 
     // Extract any $<LINK_ONLY:...> from the link libraries, and assert that
     // no other generator expressions are present.
     let mut allow: BTreeMap<String, Vec<String>> =
         BTreeMap::from([("LINK_ONLY".to_owned(), Vec::new())]);
-    let Some(cleaned) =
-        forbid_genex(ex, tgt, "INTERFACE_LINK_LIBRARIES", value, &mut allow)
-    else {
+    let Some(cleaned) = forbid_genex(ex, tgt, "INTERFACE_LINK_LIBRARIES", value, &mut allow) else {
         return false;
     };
 
@@ -215,8 +216,12 @@ fn interface_link_properties(
     ) {
         return false;
     }
-    if !add_libraries(ex, &expand_list(&cleaned, false), &mut build_requires, &mut link_libraries)
-    {
+    if !add_libraries(
+        ex,
+        &expand_list(&cleaned, false),
+        &mut build_requires,
+        &mut link_libraries,
+    ) {
         return false;
     }
     if !build_requires.is_empty() {
@@ -238,7 +243,9 @@ fn interface_compile_features(
     tgt: &Target,
     props: &BTreeMap<String, String>,
 ) -> bool {
-    let Some(value) = props.get("INTERFACE_COMPILE_FEATURES") else { return true };
+    let Some(value) = props.get("INTERFACE_COMPILE_FEATURES") else {
+        return true;
+    };
     if forbid_genex_simple(ex, tgt, "INTERFACE_COMPILE_FEATURES", value).is_none() {
         return false;
     }
@@ -265,7 +272,9 @@ fn interface_compile_defines(
     tgt: &Target,
     props: &BTreeMap<String, String>,
 ) -> bool {
-    let Some(value) = props.get("INTERFACE_COMPILE_DEFINITIONS") else { return true };
+    let Some(value) = props.get("INTERFACE_COMPILE_DEFINITIONS") else {
+        return true;
+    };
     if forbid_genex_simple(ex, tgt, "INTERFACE_COMPILE_DEFINITIONS", value).is_none() {
         return false;
     }
@@ -298,7 +307,9 @@ fn interface_list_property(
     props: &BTreeMap<String, String>,
 ) -> bool {
     let prop = format!("INTERFACE_{in_key}");
-    let Some(value) = props.get(&prop) else { return true };
+    let Some(value) = props.get(&prop) else {
+        return true;
+    };
     if forbid_genex_simple(ex, tgt, &prop, value).is_none() {
         return false;
     }
@@ -307,7 +318,11 @@ fn interface_list_property(
     let items: Vec<Json> = expand_list(value, false).iter().map(|v| jstr(v)).collect();
     component.insert(
         skey(out_name),
-        if items.is_empty() { Json::Null } else { Json::Array(items) },
+        if items.is_empty() {
+            Json::Null
+        } else {
+            Json::Array(items)
+        },
     );
     true
 }
@@ -321,7 +336,9 @@ fn interface_scalar_property(
     in_key: &str,
     props: &BTreeMap<String, String>,
 ) -> bool {
-    let Some(value) = props.get(in_key) else { return true };
+    let Some(value) = props.get(in_key) else {
+        return true;
+    };
     if forbid_genex_simple(ex, tgt, in_key, value).is_none() {
         return false;
     }
@@ -339,7 +356,14 @@ fn generate_interface_properties(
     interface_link_properties(ex, component, tgt, props);
     interface_compile_features(ex, component, tgt, props);
     interface_compile_defines(ex, component, tgt, props);
-    interface_list_property(ex, component, tgt, "compile_flags", "COMPILE_OPTIONS", props);
+    interface_list_property(
+        ex,
+        component,
+        tgt,
+        "compile_flags",
+        "COMPILE_OPTIONS",
+        props,
+    );
     interface_list_property(ex, component, tgt, "link_flags", "LINK_OPTIONS", props);
     interface_list_property(
         ex,
@@ -414,7 +438,11 @@ fn interface_properties_config(
     };
     let component = interface_config_props(&suffix, &props);
     if !component.is_empty() {
-        let key = if config.is_empty() { "noconfig" } else { config };
+        let key = if config.is_empty() {
+            "noconfig"
+        } else {
+            config
+        };
         configurations.insert(skey(key), Json::Object(component));
     }
 }
@@ -427,7 +455,10 @@ pub(super) fn write_build(
     package: &PackageInfoArguments,
 ) -> std::io::Result<()> {
     let inst = &ctx.interp.ext.install;
-    let set = export.set.as_ref().and_then(|name| inst.export_sets.get(name));
+    let set = export
+        .set
+        .as_ref()
+        .and_then(|name| inst.export_sets.get(name));
     if export.set.is_some() && set.is_none() {
         ctx.error(export.backtrace.clone(), "Could not write export file.");
         return Ok(());
@@ -465,8 +496,7 @@ pub(super) fn write_build(
         if name.is_empty() {
             return Ok(());
         }
-        let props =
-            ex.populate_interface_props_rule(record, PreprocessContext::InstallInterface);
+        let props = ex.populate_interface_props_rule(record, PreprocessContext::InstallInterface);
         let mut component = Obj::new();
         component.insert(skey("type"), jstr(component_type(record.kind)));
         if record.kind != TargetKind::InterfaceLibrary {
@@ -577,10 +607,16 @@ pub(super) fn write_install(
     }
     let dest = &rule.options.destination;
     let binary = &ctx.interp.makefiles[index].binary_dir;
-    let temp = format!("{binary}/CMakeFiles/Export/{:x}", Md5::digest(dest.as_bytes()));
+    let temp = format!(
+        "{binary}/CMakeFiles/Export/{:x}",
+        Md5::digest(dest.as_bytes())
+    );
     let filename = package.package_file_name();
     let file = format!("{temp}/{filename}");
-    let stem = filename.strip_suffix(".cps").unwrap_or(&filename).to_owned();
+    let stem = filename
+        .strip_suffix(".cps")
+        .unwrap_or(&filename)
+        .to_owned();
     let glob = format!("{stem}@*.cps");
 
     // `GenerateMainFile`.
@@ -598,8 +634,7 @@ pub(super) fn write_install(
         if name.is_empty() {
             return Ok(());
         }
-        let props =
-            ex.populate_interface_props_rule(record, PreprocessContext::InstallInterface);
+        let props = ex.populate_interface_props_rule(record, PreprocessContext::InstallInterface);
         let mut component = Obj::new();
         component.insert(skey("type"), jstr(component_type(record.kind)));
         generate_interface_properties(&ex, &mut component, record.target, &props);
@@ -613,26 +648,49 @@ pub(super) fn write_install(
     )?;
 
     // Install rules for the main file (`GenerateScriptActions`).
-    let opts = InstallOptions { optional: false, ..rule.options.clone() };
+    let opts = InstallOptions {
+        optional: false,
+        ..rule.options.clone()
+    };
     let installed_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(dest));
     let installed_file = format!("{installed_dir}{filename}");
-    replacement_check(out, indent, &installed_file, &file, &format!("{installed_dir}{glob}"), "export");
-    write_copy(out, indent, &opts, CopyRule::new(dest, CopyKind::File, std::slice::from_ref(&file)));
+    replacement_check(
+        out,
+        indent,
+        &installed_file,
+        &file,
+        &format!("{installed_dir}{glob}"),
+        "export",
+    );
+    write_copy(
+        out,
+        indent,
+        &opts,
+        CopyRule::new(dest, CopyKind::File, std::slice::from_ref(&file)),
+    );
 
     // Per-config file (`GenerateImportFileConfig` for the enabled config).
-    let has_config = records.iter().any(|r| r.kind != TargetKind::InterfaceLibrary);
+    let has_config = records
+        .iter()
+        .any(|r| r.kind != TargetKind::InterfaceLibrary);
     let installs = opts.configurations.is_empty()
-        || opts.configurations.iter().any(|c| c.eq_ignore_ascii_case(&ctx.config));
+        || opts
+            .configurations
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(&ctx.config));
     if has_config && installs {
-        let config_file =
-            format!("{temp}/{stem}@{}.cps", config_suffix(&ctx.config));
+        let config_file = format!("{temp}/{stem}@{}.cps", config_suffix(&ctx.config));
         let config = &ctx.config;
         let suffix = property_config_suffix(config);
         let mut cfg_root = Obj::new();
         cfg_root.insert(skey("name"), jstr(&package.package_name));
         cfg_root.insert(
             skey("configuration"),
-            jstr(if config.is_empty() { "noconfig" } else { config }),
+            jstr(if config.is_empty() {
+                "noconfig"
+            } else {
+                config
+            }),
         );
         // `GenerateImportTargetsConfig` iterates all exports including
         // namelink-only entries.
@@ -665,8 +723,7 @@ pub(super) fn write_install(
             }
             let component = interface_config_props(&suffix, &props);
             if !component.is_empty() {
-                cfg_components
-                    .insert(skey(export_name(record.target)), Json::Object(component));
+                cfg_components.insert(skey(export_name(record.target)), Json::Object(component));
             }
         }
         cfg_root.insert(skey("components"), Json::Object(cfg_components));

@@ -183,9 +183,9 @@ pub fn render(kind: MessageType, text: &str, backtrace: &[Frame], top: Option<&s
         MessageType::AuthorWarning => {
             msg.push_str("This warning is for project developers.  Use -Wno-dev to suppress it.")
         }
-        MessageType::AuthorError => msg.push_str(
-            "This error is for project developers. Use -Wno-error=dev to suppress it.",
-        ),
+        MessageType::AuthorError => {
+            msg.push_str("This error is for project developers. Use -Wno-error=dev to suppress it.")
+        }
         _ => {}
     }
     msg.push('\n');

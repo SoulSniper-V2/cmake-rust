@@ -355,7 +355,10 @@ impl<'a> Lexer<'a> {
                 });
             }
             if byte == b'#' {
-                while self.at(self.pos).is_some_and(|byte| byte != b'\n' && byte != 0) {
+                while self
+                    .at(self.pos)
+                    .is_some_and(|byte| byte != b'\n' && byte != 0)
+                {
                     self.advance(1);
                 }
                 continue;
@@ -692,7 +695,11 @@ fn check_nesting(commands: &[Command]) -> Option<(usize, String)> {
                 if top != Some(Kind::If) {
                     return here(command);
                 }
-                let kind = if command.lname == "else" { Kind::Else } else { Kind::If };
+                let kind = if command.lname == "else" {
+                    Kind::Else
+                } else {
+                    Kind::If
+                };
                 *stack.last_mut().expect("top") = (kind, command);
             }
             "endif" => {

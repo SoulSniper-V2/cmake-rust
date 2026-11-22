@@ -725,7 +725,6 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
         (flags, change)
     }
 
-
     fn runtime_paths(
         &self,
         ordered: &Ordered<'_>,

@@ -19,11 +19,20 @@ pub struct Policy {
 }
 
 /// `Policies::LogicalPath`.
-pub const LOGICAL_PATH: Policy = Policy { symlinks: Symlinks::Lazy, existence_required: false };
+pub const LOGICAL_PATH: Policy = Policy {
+    symlinks: Symlinks::Lazy,
+    existence_required: false,
+};
 /// `Policies::RealPath`.
-pub const REAL_PATH: Policy = Policy { symlinks: Symlinks::Eager, existence_required: true };
+pub const REAL_PATH: Policy = Policy {
+    symlinks: Symlinks::Eager,
+    existence_required: true,
+};
 /// `Policies::NaivePath` (and `CasePath` off Windows and macOS).
-pub const NAIVE_PATH: Policy = Policy { symlinks: Symlinks::None, existence_required: false };
+pub const NAIVE_PATH: Policy = Policy {
+    symlinks: Symlinks::None,
+    existence_required: false,
+};
 
 const MAX_SYMBOLIC_LINKS: usize = 32;
 
@@ -47,7 +56,9 @@ fn read_link(path: &str) -> Result<Option<String>, i32> {
     // SAFETY: buffer is writable for its length.
     let n = unsafe { libc::readlink(c_path.as_ptr(), buffer.as_mut_ptr().cast(), buffer.len()) };
     if n < 0 {
-        return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL));
+        return Err(std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EINVAL));
     }
     buffer.truncate(n as usize);
     Ok(Some(String::from_utf8_lossy(&buffer).into_owned()))
@@ -115,7 +126,9 @@ impl Impl {
 
     /// `Impl::ResolveComponent`.
     fn resolve_component(&mut self, root_slash: usize, mut slash: usize) -> Control {
-        let mut next_slash = self.p[slash + 1..].find('/').map_or(self.p.len(), |i| slash + 1 + i);
+        let mut next_slash = self.p[slash + 1..]
+            .find('/')
+            .map_or(self.p.len(), |i| slash + 1 + i);
         let component = self.p[slash + 1..next_slash].to_owned();
         if slash == root_slash {
             if component.is_empty() || component == "." || component == ".." {
@@ -212,7 +225,11 @@ pub fn logical_working_directory() -> String {
 /// `Resolver<Policy>::Resolve`: the resolved path, or the partial path and
 /// the errno of the failure.
 pub fn resolve(input: &str, policy: Policy) -> Result<String, (String, i32)> {
-    let mut resolver = Impl { policy, p: input.replace('\\', "/"), symlink_depth: 0 };
+    let mut resolver = Impl {
+        policy,
+        p: input.replace('\\', "/"),
+        symlink_depth: 0,
+    };
     loop {
         match resolver.resolve_path() {
             Control::Continue(_) => return Ok(resolver.p),
@@ -246,7 +263,11 @@ pub fn resolve_tilde_path(p: &str) -> String {
                 return None;
             }
             // SAFETY: non-null C string.
-            Some(unsafe { std::ffi::CStr::from_ptr(dir) }.to_string_lossy().into_owned())
+            Some(
+                unsafe { std::ffi::CStr::from_ptr(dir) }
+                    .to_string_lossy()
+                    .into_owned(),
+            )
         })
     };
     match home {

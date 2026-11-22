@@ -49,8 +49,7 @@ fn import_header(out: &mut String, config: &str) {
     );
 }
 
-const IMPORT_FOOTER: &str =
-    "# Commands beyond this point should not need to know the version.\nset(CMAKE_IMPORT_FILE_VERSION)\n";
+const IMPORT_FOOTER: &str = "# Commands beyond this point should not need to know the version.\nset(CMAKE_IMPORT_FILE_VERSION)\n";
 
 fn target_guard(out: &mut String, names: &[String]) {
     out.push_str(
@@ -119,7 +118,11 @@ unset(_cmake_import_check_targets)
 const END: &str = "cmake_policy(POP)\n";
 
 pub(super) fn config_suffix(config: &str) -> String {
-    if config.is_empty() { "noconfig".into() } else { config.to_ascii_lowercase() }
+    if config.is_empty() {
+        "noconfig".into()
+    } else {
+        config.to_ascii_lowercase()
+    }
 }
 
 /// `cmExportFileGeneratorEscape` (cmExportCMakeConfigGenerator.cxx).
@@ -165,7 +168,12 @@ fn is_linkable(tgt: &Target) -> bool {
 /// frame reported by `IssueMessage` for generate-time export errors.
 pub(super) fn dir_backtrace(ctx: &GenCtx, dir: usize) -> Vec<Frame> {
     let file = format!("{}/CMakeLists.txt", ctx.interp.makefiles[dir].source_dir);
-    vec![Frame { file: file.into(), line: 0, name: None, deferred: false }]
+    vec![Frame {
+        file: file.into(),
+        line: 0,
+        name: None,
+        deferred: false,
+    }]
 }
 
 pub(super) struct Record<'a> {
@@ -217,7 +225,8 @@ impl<'a, 'b> Exporter<'a, 'b> {
     }
 
     pub(super) fn report_error(&self, message: impl Into<String>) {
-        self.ctx.error(dir_backtrace(self.ctx, self.error_dir), message.into());
+        self.ctx
+            .error(dir_backtrace(self.ctx, self.error_dir), message.into());
     }
 
     pub(super) fn depender_backtrace(&self, depender: &Target) -> Vec<Frame> {
@@ -238,12 +247,20 @@ impl<'a, 'b> Exporter<'a, 'b> {
 
     /// `GetInstallPrefix` / `GetImportPrefix` (`"@prefix@"` for CPS).
     pub fn import_prefix(&self) -> &'static str {
-        if self.package.is_some() { "@prefix@" } else { IMPORT_PREFIX }
+        if self.package.is_some() {
+            "@prefix@"
+        } else {
+            IMPORT_PREFIX
+        }
     }
 
     /// `GetImportPrefixWithSlash`.
     pub fn import_prefix_slash(&self) -> &'static str {
-        if self.package.is_some() { "@prefix@/" } else { IMPORT_PREFIX_SLASH }
+        if self.package.is_some() {
+            "@prefix@/"
+        } else {
+            IMPORT_PREFIX_SLASH
+        }
     }
 
     /// `cmExportBuildFileGenerator`/`cmExportInstallFileGenerator`
@@ -267,18 +284,14 @@ impl<'a, 'b> Exporter<'a, 'b> {
                             format!("{}/{}", rule.options.destination, export.filename),
                             export.options.namespace.clone(),
                         )),
-                        InstallAction::PackageInfo { set, arguments }
-                            if set == set_name =>
-                        {
-                            Some((
-                                format!(
-                                    "{}/{}",
-                                    rule.options.destination,
-                                    arguments.package_file_name()
-                                ),
-                                arguments.namespace(),
-                            ))
-                        }
+                        InstallAction::PackageInfo { set, arguments } if set == set_name => Some((
+                            format!(
+                                "{}/{}",
+                                rule.options.destination,
+                                arguments.package_file_name()
+                            ),
+                            arguments.namespace(),
+                        )),
                         _ => None,
                     })
                     .collect();
@@ -315,7 +328,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 }
             }
         }
-        ExportInfo { files, sets, namespaces }
+        ExportInfo {
+            files,
+            sets,
+            namespaces,
+        }
     }
 
     /// `HandleMissingTarget`.
@@ -327,8 +344,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
         }
         let info = self.find_export_info(dependee);
         if info.namespaces.len() == 1 && info.sets.len() == 1 {
-            let missing =
-                format!("{}{}", info.namespaces.iter().next().unwrap(), export_name(dependee));
+            let missing = format!(
+                "{}{}",
+                info.namespaces.iter().next().unwrap(),
+                export_name(dependee)
+            );
             out.push_str(&missing);
             self.missing.push(missing);
         } else {
@@ -341,7 +361,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let mut e = if self.installed {
             format!(
                 "install({} \"{}\" ...) includes target \"{}\" which requires target \"{}\" ",
-                if self.package.is_some() { "PACKAGE_INFO" } else { "EXPORT" },
+                if self.package.is_some() {
+                    "PACKAGE_INFO"
+                } else {
+                    "EXPORT"
+                },
                 self.export_label,
                 depender.name,
                 dependee.name
@@ -374,7 +398,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
     /// `AddTargetNamespace`; `dir` is the current link lookup scope.
     /// Returns false when the reference does not resolve to a target.
     fn add_target_namespace(&mut self, input: &mut String, depender: &Target, dir: usize) -> bool {
-        let Some(tgt) = self.resolve(dir, input) else { return false };
+        let Some(tgt) = self.resolve(dir, input) else {
+            return false;
+        };
         if !tgt.find_package_stack.is_empty() || tgt.props.contains("EXPORT_FIND_PACKAGE_NAME") {
             let ptr = std::ptr::from_ref(tgt);
             if !self.external.contains(&ptr) {
@@ -390,7 +416,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
         } else {
             let mut namespaced = String::new();
             self.handle_missing(&mut namespaced, depender, tgt);
-            *input = if namespaced.is_empty() { tgt.name.clone() } else { namespaced };
+            *input = if namespaced.is_empty() {
+                tgt.name.clone()
+            } else {
+                namespaced
+            };
         }
         self.note_linked_target(depender, input, tgt)
     }
@@ -398,8 +428,15 @@ impl<'a, 'b> Exporter<'a, 'b> {
     /// `cmExportPackageInfoGenerator::NoteLinkedTarget`: record the CPS
     /// component name for a linked target and, for external packages, the
     /// package requirement.  No-op for non-CPS exports.
-    fn note_linked_target(&mut self, depender: &Target, linked_name: &str, linked: &'a Target) -> bool {
-        let Some(package) = self.package else { return true };
+    fn note_linked_target(
+        &mut self,
+        depender: &Target,
+        linked_name: &str,
+        linked: &'a Target,
+    ) -> bool {
+        let Some(package) = self.package else {
+            return true;
+        };
         if self.exported.contains(&std::ptr::from_ref(linked)) {
             // Target is internal to this package.
             self.link_targets
@@ -446,7 +483,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
             self.link_targets
                 .entry(linked_name.to_owned())
                 .or_insert_with(|| format!("{pkg}:{component}"));
-            self.requirements.entry(pkg).or_default().insert(component.to_owned());
+            self.requirements
+                .entry(pkg)
+                .or_default()
+                .insert(component.to_owned());
             return true;
         }
         // Target belongs to another export from this build.
@@ -516,7 +556,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let mut error = String::new();
         let mut last = 0usize;
         while error.is_empty() {
-            let Some(pos) = input[last..].find("$<TARGET_NAME:").map(|o| last + o) else { break };
+            let Some(pos) = input[last..].find("$<TARGET_NAME:").map(|o| last + o) else {
+                break;
+            };
             let name_start = pos + "$<TARGET_NAME:".len();
             let Some(end) = input[name_start..].find('>').map(|o| name_start + o) else {
                 error = "$<TARGET_NAME:...> expression incomplete".into();
@@ -528,7 +570,8 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 break;
             }
             if !self.add_target_namespace(&mut name, depender, dir) {
-                error = "$<TARGET_NAME:...> requires its parameter to be a reachable target.".into();
+                error =
+                    "$<TARGET_NAME:...> requires its parameter to be a reachable target.".into();
                 break;
             }
             input.replace_range(pos..end + 1, &name);
@@ -539,7 +582,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
             let mut last = 0usize;
             let marker = format!("$<{tag}:");
             while error.is_empty() {
-                let Some(pos) = input[last..].find(&marker).map(|o| last + o) else { break };
+                let Some(pos) = input[last..].find(&marker).map(|o| last + o) else {
+                    break;
+                };
                 let name_start = pos + marker.len();
                 let Some(end) = input[name_start..].find('>').map(|o| name_start + o) else {
                     error = format!("$<{tag}:...> expression incomplete");
@@ -617,13 +662,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
 
     /// `cmGeneratorExpression::Preprocess` + `CheckInterfaceDirs` +
     /// target-name resolution for a path-valued interface property.
-    fn path_property(
-        &mut self,
-        key: &str,
-        tgt: &Target,
-        props: &mut BTreeMap<String, String>,
-    ) {
-        let Some(input) = tgt.props.get(key) else { return };
+    fn path_property(&mut self, key: &str, tgt: &Target, props: &mut BTreeMap<String, String>) {
+        let Some(input) = tgt.props.get(key) else {
+            return;
+        };
         if input.is_empty() {
             props.insert(key.to_owned(), String::new());
             return;
@@ -651,7 +693,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
         rule: genex::PreprocessContext,
         props: &mut BTreeMap<String, String>,
     ) {
-        let Some(input) = tgt.props.get(key) else { return };
+        let Some(input) = tgt.props.get(key) else {
+            return;
+        };
         if input.is_empty() {
             props.insert(out_key.to_owned(), String::new());
             return;
@@ -800,10 +844,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
         for (key, always) in [("CXX_EXTENSIONS", false), ("CXX_MODULE_STD", true)] {
             match tgt.props.get(key) {
                 Some(value) => {
-                    props.insert(
-                        key.to_owned(),
-                        genex::preprocess(value, rule, ""),
-                    );
+                    props.insert(key.to_owned(), genex::preprocess(value, rule, ""));
                 }
                 None if always => {
                     props.insert(key.to_owned(), String::new());
@@ -817,7 +858,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
             ("COMPILE_OPTIONS", "strings"),
             ("COMPILE_FEATURES", "strings"),
         ] {
-            let Some(value) = tgt.props.get(key) else { continue };
+            let Some(value) = tgt.props.get(key) else {
+                continue;
+            };
             let out_key = format!("IMPORTED_CXX_MODULES_{key}");
             let mut value = genex::preprocess(value, rule, "");
             if self.installed && kind != "strings" {
@@ -832,7 +875,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
             }
             props.insert(out_key, value);
         }
-        let Some(link) = tgt.props.get("LINK_LIBRARIES") else { return };
+        let Some(link) = tgt.props.get("LINK_LIBRARIES") else {
+            return;
+        };
         let mut value = genex::preprocess(link, rule, "");
         self.resolve_genexes(&mut value, tgt);
         props.insert("IMPORTED_CXX_MODULES_LINK_LIBRARIES".into(), value);
@@ -840,7 +885,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
 
     /// `PopulateExportProperties`.
     fn export_properties(&self, tgt: &Target, props: &mut BTreeMap<String, String>) {
-        let Some(export_props) = tgt.props.get("EXPORT_PROPERTIES") else { return };
+        let Some(export_props) = tgt.props.get("EXPORT_PROPERTIES") else {
+            return;
+        };
         for prop in expand_list(export_props, false) {
             if prop.starts_with("IMPORTED_") || prop.starts_with("INTERFACE_") {
                 self.ctx.error(
@@ -852,7 +899,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 );
                 continue;
             }
-            let Some(value) = tgt.props.get(&prop) else { continue };
+            let Some(value) = tgt.props.get(&prop) else {
+                continue;
+            };
             if genex::strip(value) != *value {
                 self.ctx.error(
                     self.depender_backtrace(tgt),
@@ -896,7 +945,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
                     );
                 }
                 for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
-                    let Some(dep) = self.resolve(tgt.makefile, &name) else { continue };
+                    let Some(dep) = self.resolve(tgt.makefile, &name) else {
+                        continue;
+                    };
                     if dep.kind == TargetKind::ObjectLibrary {
                         continue;
                     }
@@ -914,12 +965,20 @@ impl<'a, 'b> Exporter<'a, 'b> {
     }
 
     /// `PopulateCustomTransitiveInterfaceProperties`.
-    fn custom_transitive(&mut self, tgt: &Target, rule: genex::PreprocessContext, props: &mut BTreeMap<String, String>) {
+    fn custom_transitive(
+        &mut self,
+        tgt: &Target,
+        rule: genex::PreprocessContext,
+        props: &mut BTreeMap<String, String>,
+    ) {
         self.raw_property("TRANSITIVE_COMPILE_PROPERTIES", tgt, props);
         self.raw_property("TRANSITIVE_LINK_PROPERTIES", tgt, props);
         let mut iface_properties = BTreeSet::new();
         let mut collect = |t: &Target| {
-            for key in ["TRANSITIVE_COMPILE_PROPERTIES", "TRANSITIVE_LINK_PROPERTIES"] {
+            for key in [
+                "TRANSITIVE_COMPILE_PROPERTIES",
+                "TRANSITIVE_LINK_PROPERTIES",
+            ] {
                 if let Some(value) = t.props.get(key) {
                     iface_properties.extend(expand_list(value, false));
                 }
@@ -951,7 +1010,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
             "INTERFACE_LINK_LIBRARIES_DIRECT",
             "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE",
         ] {
-            let Some(input) = tgt.props.get(key) else { continue };
+            let Some(input) = tgt.props.get(key) else {
+                continue;
+            };
             let mut prepro = genex::preprocess(input, rule, "");
             if !prepro.is_empty() {
                 self.resolve_genexes(&mut prepro, tgt);
@@ -965,10 +1026,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
     /// `PopulateInterfaceProperties` + `PopulateInterfaceLinkLibrariesProperty`
     /// for `.cmake` exports (`GenerateImportTargetData` / `GenerateMainFile`
     /// usage): build exports use the `BuildInterface` rule.
-    fn populate_interface_props(
-        &mut self,
-        record: &Record<'_>,
-    ) -> BTreeMap<String, String> {
+    fn populate_interface_props(&mut self, record: &Record<'_>) -> BTreeMap<String, String> {
         let rule = if self.installed {
             genex::PreprocessContext::InstallInterface
         } else {
@@ -1014,8 +1072,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
             // `AppendBuildInterfaceIncludes` ran at generate time via
             // `FinalizeTargetConfiguration`, so the property already carries
             // the build-interface directories.
-            let include_value =
-                tgt.props.get("INTERFACE_INCLUDE_DIRECTORIES").map(str::to_owned);
+            let include_value = tgt
+                .props
+                .get("INTERFACE_INCLUDE_DIRECTORIES")
+                .map(str::to_owned);
             if let Some(input) = include_value.as_deref() {
                 if input.is_empty() {
                     props.insert("INTERFACE_INCLUDE_DIRECTORIES".into(), String::new());
@@ -1101,7 +1161,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let mut have = false;
         for name in expand_list(tgt.props.get("HEADER_SETS").unwrap_or_default(), false)
             .into_iter()
-            .chain(expand_list(tgt.props.get("CXX_MODULE_SETS").unwrap_or_default(), false))
+            .chain(expand_list(
+                tgt.props.get("CXX_MODULE_SETS").unwrap_or_default(),
+                false,
+            ))
         {
             match tgt.file_sets.get(&name) {
                 Some(set) if set.kind == "CXX_MODULES" => have = true,
@@ -1150,7 +1213,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
             Err(error) => {
                 if !error.quiet {
                     let bt = self.ctx.backtrace(error.backtrace);
-                    let bt = if bt.is_empty() { backtrace.unwrap_or_default() } else { bt };
+                    let bt = if bt.is_empty() {
+                        backtrace.unwrap_or_default()
+                    } else {
+                        bt
+                    };
                     self.ctx.error(bt, error.to_string());
                 }
                 (String::new(), ectx.context_sensitive)
@@ -1169,7 +1236,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let mut records = Vec::new();
         let mut failed = false;
         let mut visit = |item: Option<&'a ExportTarget>, name: &str| {
-            let Some(tgt) = self.find(dir, name) else { return };
+            let Some(tgt) = self.find(dir, name) else {
+                return;
+            };
             let ptr = std::ptr::from_ref(tgt);
             if !self.exported.insert(ptr) {
                 if self.installed {
@@ -1275,12 +1344,19 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let mut properties = BTreeMap::new();
         let mut locations = BTreeSet::new();
         let artifact = record.installed.and_then(|item| {
-            if item.namelink_only { item.namelink.as_ref() } else { item.artifact.as_ref() }
+            if item.namelink_only {
+                item.namelink.as_ref()
+            } else {
+                item.artifact.as_ref()
+            }
         });
         if self.installed
             && artifact.is_none_or(|arg| {
                 !arg.configurations.is_empty()
-                    && !arg.configurations.iter().any(|c| c.eq_ignore_ascii_case(config))
+                    && !arg
+                        .configurations
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case(config))
             })
         {
             return None;
@@ -1297,8 +1373,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
             } else {
                 target::object_directory(self.ctx, tgt, config)
             };
-            let files: Vec<String> =
-                object_names(self.ctx, tgt).iter().map(|name| format!("{base}{name}")).collect();
+            let files: Vec<String> = object_names(self.ctx, tgt)
+                .iter()
+                .map(|name| format!("{base}{name}"))
+                .collect();
             let prop = format!("IMPORTED_OBJECTS{suffix}");
             properties.insert(prop.clone(), files.join(";"));
             locations.insert(prop);
@@ -1335,7 +1413,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
         props: &mut BTreeMap<String, String>,
     ) {
         let tgt = record.target;
-        if matches!(tgt.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary) {
+        if matches!(
+            tgt.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
             let names = target::names(self.ctx, tgt, config);
             if target::has_soname(self.ctx, tgt, config) {
                 props.insert(format!("IMPORTED_SONAME{suffix}"), names.shared_object);
@@ -1360,8 +1441,10 @@ impl<'a, 'b> Exporter<'a, 'b> {
         }
         // IMPORTED_LINK_DEPENDENT_LIBRARIES: runtime dependencies of shared
         // libraries not already in the link interface.
-        if matches!(tgt.kind, TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::InterfaceLibrary)
-            && tgt.kind != TargetKind::InterfaceLibrary
+        if matches!(
+            tgt.kind,
+            TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::InterfaceLibrary
+        ) && tgt.kind != TargetKind::InterfaceLibrary
         {
             let emitted: HashSet<(usize, String)> =
                 target::evaluated_links(self.ctx, tgt, tgt, "INTERFACE_LINK_LIBRARIES")
@@ -1379,8 +1462,12 @@ impl<'a, 'b> Exporter<'a, 'b> {
             let mut shared_deps = Vec::new();
             for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
                 let dep = self.resolve(tgt.makefile, &name);
-                let key = (dep.map_or(0, |t| std::ptr::from_ref(t) as usize), name.clone());
-                if !emitted.contains(&key) && dep.is_some_and(|d| d.kind == TargetKind::SharedLibrary)
+                let key = (
+                    dep.map_or(0, |t| std::ptr::from_ref(t) as usize),
+                    name.clone(),
+                );
+                if !emitted.contains(&key)
+                    && dep.is_some_and(|d| d.kind == TargetKind::SharedLibrary)
                 {
                     let mut item = name.clone();
                     self.add_target_namespace(&mut item, tgt, tgt.makefile);
@@ -1432,9 +1519,17 @@ impl<'a, 'b> Exporter<'a, 'b> {
         if !managed {
             return;
         }
-        let value = tgt.props.get("COMMON_LANGUAGE_RUNTIME").map(str::to_owned).unwrap_or_else(|| {
-            if self.is_csharp_only(tgt) { "CSharp".to_owned() } else { String::new() }
-        });
+        let value = tgt
+            .props
+            .get("COMMON_LANGUAGE_RUNTIME")
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                if self.is_csharp_only(tgt) {
+                    "CSharp".to_owned()
+                } else {
+                    String::new()
+                }
+            });
         props.insert(format!("IMPORTED_COMMON_LANGUAGE_RUNTIME{suffix}"), value);
     }
 
@@ -1447,7 +1542,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
             return false;
         }
         let mut languages: BTreeSet<String> =
-            target::link_implementation_languages(self.ctx, tgt, &self.ctx.config).into_iter().collect();
+            target::link_implementation_languages(self.ctx, tgt, &self.ctx.config)
+                .into_iter()
+                .collect();
         if let Some(lang) = tgt.props.get("LINKER_LANGUAGE").filter(|v| !v.is_empty()) {
             languages.insert(lang.to_owned());
         }
@@ -1533,13 +1630,18 @@ fn eval_dirs(
     let mut collapsed: Vec<String> = Vec::new();
     let mut result: Vec<String> = Vec::new();
     'entries: for (value, bt) in file_set.base_dirs.iter().flat_map(|(value, bt)| {
-        expand_list(value, false).into_iter().map(|v| (v, bt.clone()))
+        expand_list(value, false)
+            .into_iter()
+            .map(|v| (v, bt.clone()))
     }) {
         let (entry, cs) = ex.eval_entry(&value, tgt, config, Some(bt.clone()));
         sensitive |= cs;
         for dir in expand_list(&entry, false) {
-            let dir =
-                if is_full_path(&dir) { dir } else { format!("{source_dir}/{dir}") };
+            let dir = if is_full_path(&dir) {
+                dir
+            } else {
+                format!("{source_dir}/{dir}")
+            };
             let collapsed_dir = collapse_full_path(&dir, source_dir);
             for (i, prior) in collapsed.iter().enumerate() {
                 if is_subdirectory(&collapsed_dir, prior) || is_subdirectory(prior, &collapsed_dir)
@@ -1573,18 +1675,25 @@ fn eval_files(
     let mut sensitive = false;
     let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (value, bt) in file_set.files.iter().flat_map(|(value, bt)| {
-        expand_list(value, false).into_iter().map(|v| (v, bt.clone()))
+        expand_list(value, false)
+            .into_iter()
+            .map(|v| (v, bt.clone()))
     }) {
         let (entry, cs) = ex.eval_entry(&value, tgt, config, Some(bt.clone()));
         sensitive |= cs;
         for file in expand_list(&entry, false) {
-            let file =
-                if is_full_path(&file) { file } else { format!("{source_dir}/{file}") };
+            let file = if is_full_path(&file) {
+                file
+            } else {
+                format!("{source_dir}/{file}")
+            };
             let collapsed = collapse_full_path(&file, source_dir);
             let rel_dir = dirs.iter().find_map(|dir| {
                 let base = collapse_full_path(dir, source_dir);
                 is_subdirectory(&collapsed, &base).then(|| {
-                    let rel = collapsed.strip_prefix(&format!("{base}/")).unwrap_or(&collapsed);
+                    let rel = collapsed
+                        .strip_prefix(&format!("{base}/"))
+                        .unwrap_or(&collapsed);
                     filename_path(rel)
                 })
             });
@@ -1646,7 +1755,11 @@ fn file_set_dirs_files(
         }
         let mut file_out = Vec::new();
         for (rel, names) in &files {
-            let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
+            let prefix = if rel.is_empty() {
+                String::new()
+            } else {
+                format!("{rel}/")
+            };
             for file in names {
                 file_out.push(format!(
                     "\"{}{}{}\"",
@@ -1662,8 +1775,10 @@ fn file_set_dirs_files(
         if sensitive && kind == "CXX_MODULES" {
             return module_error("base directory entries");
         }
-        let dirs_out: Vec<String> =
-            dirs.iter().map(|d| format!("\"{}\"", escape_nowrap(d))).collect();
+        let dirs_out: Vec<String> = dirs
+            .iter()
+            .map(|d| format!("\"{}\"", escape_nowrap(d)))
+            .collect();
         let (files, file_sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
         if file_sensitive && kind == "CXX_MODULES" {
             return module_error("file entries");
@@ -1679,20 +1794,20 @@ fn file_set_dirs_files(
 }
 
 /// `GenerateTargetFileSets`.
-fn write_target_file_sets(
-    ex: &Exporter<'_, '_>,
-    out: &mut String,
-    record: &Record<'_>,
-) {
+fn write_target_file_sets(ex: &Exporter<'_, '_>, out: &mut String, record: &Record<'_>) {
     let tgt = record.target;
-    let names: Vec<String> =
-        expand_list(tgt.props.get("INTERFACE_HEADER_SETS").unwrap_or_default(), false)
-            .into_iter()
-            .chain(expand_list(
-                tgt.props.get("INTERFACE_CXX_MODULE_SETS").unwrap_or_default(),
-                false,
-            ))
-            .collect();
+    let names: Vec<String> = expand_list(
+        tgt.props.get("INTERFACE_HEADER_SETS").unwrap_or_default(),
+        false,
+    )
+    .into_iter()
+    .chain(expand_list(
+        tgt.props
+            .get("INTERFACE_CXX_MODULE_SETS")
+            .unwrap_or_default(),
+        false,
+    ))
+    .collect();
     if names.is_empty() {
         return;
     }
@@ -1764,11 +1879,19 @@ fn import_target_code(out: &mut String, record: &Record<'_>) {
         writeln!(out, "set_property(TARGET {name} PROPERTY ENABLE_EXPORTS 1)").unwrap();
     }
     if let Some(value) = tgt.props.get("DEPRECATION").filter(|v| !v.is_empty()) {
-        writeln!(out, "set_property(TARGET {name} PROPERTY DEPRECATION {})", export_escape(value))
-            .unwrap();
+        writeln!(
+            out,
+            "set_property(TARGET {name} PROPERTY DEPRECATION {})",
+            export_escape(value)
+        )
+        .unwrap();
     }
     if is_on_opt(tgt.props.get("IMPORTED_NO_SYSTEM")) {
-        writeln!(out, "set_property(TARGET {name} PROPERTY IMPORTED_NO_SYSTEM 1)").unwrap();
+        writeln!(
+            out,
+            "set_property(TARGET {name} PROPERTY IMPORTED_NO_SYSTEM 1)"
+        )
+        .unwrap();
     }
     if is_on_opt(tgt.props.get("EXPORT_NO_SYSTEM")) {
         writeln!(out, "set_property(TARGET {name} PROPERTY SYSTEM 0)").unwrap();
@@ -1810,11 +1933,7 @@ fn missing_targets(out: &mut String, missing: &[String]) {
 }
 
 /// `GenerateFindDependencyCalls`.
-fn package_dependencies(
-    ex: &Exporter<'_, '_>,
-    out: &mut String,
-    set: &ExportSet,
-) {
+fn package_dependencies(ex: &Exporter<'_, '_>, out: &mut String, set: &ExportSet) {
     out.push_str("include(CMakeFindDependencyMacro)\n");
     let mut deps: Vec<(String, String, Vec<String>)> = set.package_dependencies.clone();
     for ptr in &ex.external {
@@ -1860,9 +1979,16 @@ fn write_prefix(ctx: &GenCtx, out: &mut String, index: usize, dest: &str) {
     }
     let absolute = format!("{prefix}/{dest}");
     out.push_str("# Compute the installation prefix relative to this file.\nget_filename_component(_IMPORT_PREFIX \"${CMAKE_CURRENT_LIST_FILE}\" PATH)\n");
-    if ["/lib/", "/lib64/", "/libx32/", "/usr/lib/", "/usr/lib64/", "/usr/libx32/"]
-        .iter()
-        .any(|path| format!("{absolute}/").starts_with(path))
+    if [
+        "/lib/",
+        "/lib64/",
+        "/libx32/",
+        "/usr/lib/",
+        "/usr/lib64/",
+        "/usr/libx32/",
+    ]
+    .iter()
+    .any(|path| format!("{absolute}/").starts_with(path))
     {
         write!(
             out,
@@ -1903,7 +2029,10 @@ fn build_module_files(
             .unwrap();
         }
     }
-    write_if_different(&dir.join(format!("cxx-modules-{name}-{config}.cmake")), content.as_bytes())
+    write_if_different(
+        &dir.join(format!("cxx-modules-{name}-{config}.cmake")),
+        content.as_bytes(),
+    )
 }
 
 /// `cmGeneratorTarget::GetFilesystemExportName`.
@@ -1932,7 +2061,10 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
         return super::package_info::write_build(ctx, file, export, package);
     }
     let inst = &ctx.interp.ext.install;
-    let set = export.set.as_ref().and_then(|name| inst.export_sets.get(name));
+    let set = export
+        .set
+        .as_ref()
+        .and_then(|name| inst.export_sets.get(name));
     if export.set.is_some() && set.is_none() {
         ctx.error(export.backtrace.clone(), "Could not write export file.");
         return Ok(());
@@ -2017,7 +2149,10 @@ pub(super) fn write_install_export(
 ) -> std::io::Result<()> {
     let set = ctx.interp.ext.install.export_sets.get(&export.set);
     if set.is_none_or(|set| set.targets.is_empty()) {
-        ctx.error(rule.backtrace.clone(), format!("INSTALL(EXPORT) given unknown export \"{}\"", export.set));
+        ctx.error(
+            rule.backtrace.clone(),
+            format!("INSTALL(EXPORT) given unknown export \"{}\"", export.set),
+        );
         return Ok(());
     }
     let set = set.unwrap();
@@ -2040,9 +2175,15 @@ pub(super) fn write_install_export(
     let records = ex.collect(Some(set), &[], index);
     let dest = &rule.options.destination;
     let binary = &ctx.interp.makefiles[index].binary_dir;
-    let temp = format!("{binary}/CMakeFiles/Export/{:x}", Md5::digest(dest.as_bytes()));
+    let temp = format!(
+        "{binary}/CMakeFiles/Export/{:x}",
+        Md5::digest(dest.as_bytes())
+    );
     let file = format!("{temp}/{}", export.filename);
-    let stem = export.filename.strip_suffix(".cmake").unwrap_or(&export.filename);
+    let stem = export
+        .filename
+        .strip_suffix(".cmake")
+        .unwrap_or(&export.filename);
     let glob = format!("{stem}-*.cmake");
     let mut body = String::new();
     let names: Vec<String> = records.iter().map(|r| r.name.clone()).collect();
@@ -2052,7 +2193,11 @@ pub(super) fn write_install_export(
         write_target(&mut ex, &mut body, record);
     }
     writeln!(body, "# Load information for each installed configuration.").unwrap();
-    writeln!(body, "file(GLOB _cmake_config_files \"${{CMAKE_CURRENT_LIST_DIR}}/{glob}\")").unwrap();
+    writeln!(
+        body,
+        "file(GLOB _cmake_config_files \"${{CMAKE_CURRENT_LIST_DIR}}/{glob}\")"
+    )
+    .unwrap();
     body.push_str(
         "foreach(_cmake_config_file IN LISTS _cmake_config_files)\n  include(\"${_cmake_config_file}\")\nendforeach()\nunset(_cmake_config_file)\nunset(_cmake_config_files)\n\n",
     );
@@ -2074,13 +2219,30 @@ pub(super) fn write_install_export(
     file_out.push_str(END);
     write_if_different(Path::new(&file), file_out.as_bytes())?;
     // Install rules for the main file.
-    let opts = crate::install_model::InstallOptions { optional: false, ..rule.options.clone() };
+    let opts = crate::install_model::InstallOptions {
+        optional: false,
+        ..rule.options.clone()
+    };
     let installed_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(dest));
     let installed_file = format!("{installed_dir}{}", export.filename);
-    replacement_check(out, indent, &installed_file, &file, &format!("{installed_dir}{glob}"), "export");
-    write_copy(out, indent, &opts, CopyRule::new(dest, CopyKind::File, &[file.clone()]));
+    replacement_check(
+        out,
+        indent,
+        &installed_file,
+        &file,
+        &format!("{installed_dir}{glob}"),
+        "export",
+    );
+    write_copy(
+        out,
+        indent,
+        &opts,
+        CopyRule::new(dest, CopyKind::File, &[file.clone()]),
+    );
     // Per-config import file.
-    let has_config = records.iter().any(|r| r.kind != TargetKind::InterfaceLibrary);
+    let has_config = records
+        .iter()
+        .any(|r| r.kind != TargetKind::InterfaceLibrary);
     let suffix = config_suffix(&ctx.config);
     if has_config {
         let config_file = format!("{temp}/{stem}-{suffix}.cmake");
@@ -2110,7 +2272,10 @@ pub(super) fn write_install_export(
         config_out.push_str(IMPORT_FOOTER);
         write_if_different(Path::new(&config_file), config_out.as_bytes())?;
         if opts.configurations.is_empty()
-            || opts.configurations.iter().any(|c| c.eq_ignore_ascii_case(&ctx.config))
+            || opts
+                .configurations
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(&ctx.config))
         {
             write_config_copy(ctx, out, indent, &opts, dest, config_file);
         }
@@ -2136,13 +2301,22 @@ pub(super) fn write_install_export(
             &format!("{installed_dir}{glob}"),
             "C++ module export",
         );
-        write_copy(out, indent, &opts, CopyRule::new(&module_destination, CopyKind::File, &[main]));
+        write_copy(
+            out,
+            indent,
+            &opts,
+            CopyRule::new(&module_destination, CopyKind::File, &[main]),
+        );
         if has_config {
             let mut content = String::new();
             for record in &records {
                 if ex.have_cxx20_module_sources(record.target) {
                     let fs = filesystem_export_name(record.target);
-                    writeln!(content, "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs}-{suffix}.cmake\")").unwrap();
+                    writeln!(
+                        content,
+                        "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs}-{suffix}.cmake\")"
+                    )
+                    .unwrap();
                 }
             }
             let per_config = modules.join(format!("cxx-modules-{set_name}-{suffix}.cmake"));
@@ -2171,10 +2345,18 @@ pub(super) fn write_config_copy(
     writeln!(
         out,
         "{indent}if({})",
-        config_test("CMAKE_INSTALL_CONFIG_NAME", std::slice::from_ref(&ctx.config))
+        config_test(
+            "CMAKE_INSTALL_CONFIG_NAME",
+            std::slice::from_ref(&ctx.config)
+        )
     )
     .unwrap();
-    write_copy(out, &format!("{indent}  "), opts, CopyRule::new(dest, CopyKind::File, &[config_file]));
+    write_copy(
+        out,
+        &format!("{indent}  "),
+        opts,
+        CopyRule::new(dest, CopyKind::File, &[config_file]),
+    );
     writeln!(out, "{indent}endif()").unwrap();
 }
 

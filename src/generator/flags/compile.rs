@@ -145,7 +145,13 @@ fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
 
     // cmMakefile::GetDefineFlags: add_definitions arguments that are not
     // -D/-/D definitions (initially " ").
-    if let Some(raw) = inputs.ctx.interp.ext.directory_define_flags.get(&inputs.target.makefile) {
+    if let Some(raw) = inputs
+        .ctx
+        .interp
+        .ext
+        .directory_define_flags
+        .get(&inputs.target.makefile)
+    {
         append(&mut flags, raw);
     }
     flags
@@ -558,8 +564,18 @@ pub fn object_dependencies(properties: &Props) -> Vec<String> {
 pub(crate) type BtFrag = (String, Vec<crate::messages::Frame>);
 
 /// `GetTargetCompileFlags` as codemodel "compileCommandFragments".
-pub(crate) fn flag_fragments(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
-    let inputs = Flags { ctx, target, config, lang };
+pub(crate) fn flag_fragments(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Vec<BtFrag> {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
     let mut out = Vec::new();
     let blob = flags_blob(&inputs);
     if !blob.is_empty() {
@@ -601,28 +617,47 @@ pub(crate) fn flag_fragments(ctx: &GenCtx, target: &Target, config: &str, lang: 
 /// `GetTargetDefines` as codemodel "defines" (export macro first, then
 /// usage definitions; std::set<BT> sorts by value, first insertion wins).
 pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
-    let inputs = Flags { ctx, target, config, lang };
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
     let mut items: Vec<BtFrag> = Vec::new();
-    if matches!(inputs.target.kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary)
-        || (inputs.target.kind == TargetKind::Executable && is_on_opt(inputs.prop("ENABLE_EXPORTS")))
+    if matches!(
+        inputs.target.kind,
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) || (inputs.target.kind == TargetKind::Executable
+        && is_on_opt(inputs.prop("ENABLE_EXPORTS")))
     {
-        let symbol = inputs.prop("DEFINE_SYMBOL").map(str::to_owned).unwrap_or_else(|| {
-            let name = format!("{}_EXPORTS", inputs.target.name);
-            let mut symbol = String::new();
-            if name.starts_with(|c: char| c.is_ascii_digit()) {
-                symbol.push('_');
-            }
-            symbol.extend(name.bytes().map(|c| {
-                if c.is_ascii_alphanumeric() { char::from(c) } else { '_' }
-            }));
-            symbol
-        });
+        let symbol = inputs
+            .prop("DEFINE_SYMBOL")
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                let name = format!("{}_EXPORTS", inputs.target.name);
+                let mut symbol = String::new();
+                if name.starts_with(|c: char| c.is_ascii_digit()) {
+                    symbol.push('_');
+                }
+                symbol.extend(name.bytes().map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        char::from(c)
+                    } else {
+                        '_'
+                    }
+                }));
+                symbol
+            });
         for define in expand_list(&symbol, false) {
             items.push((define, Vec::new()));
         }
     }
     for item in inputs.usage_items("COMPILE_DEFINITIONS") {
-        let value = item.value.strip_prefix("-D").unwrap_or(&item.value).to_owned();
+        let value = item
+            .value
+            .strip_prefix("-D")
+            .unwrap_or(&item.value)
+            .to_owned();
         items.push((value, ctx.backtrace(item.backtrace)));
     }
     items.retain(|(d, _)| check_definition(d));
@@ -639,9 +674,16 @@ pub(crate) fn include_items(
     config: &str,
     lang: &str,
 ) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
-    let inputs = Flags { ctx, target, config, lang };
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
     let standard: Vec<String> = expand_list(
-        &inputs.lang_var("STANDARD_INCLUDE_DIRECTORIES").unwrap_or_default(),
+        &inputs
+            .lang_var("STANDARD_INCLUDE_DIRECTORIES")
+            .unwrap_or_default(),
         false,
     )
     .iter()
@@ -650,9 +692,14 @@ pub(crate) fn include_items(
     let mut implicit = standard.clone();
     if lang != "Fortran" {
         implicit.extend(
-            expand_list(&inputs.lang_var("IMPLICIT_INCLUDE_DIRECTORIES").unwrap_or_default(), false)
-                .iter()
-                .map(|dir| unix_slashes(dir)),
+            expand_list(
+                &inputs
+                    .lang_var("IMPLICIT_INCLUDE_DIRECTORIES")
+                    .unwrap_or_default(),
+                false,
+            )
+            .iter()
+            .map(|dir| unix_slashes(dir)),
         );
     }
     let implicit: HashSet<String> = implicit.iter().map(|dir| real_path(dir)).collect();
@@ -687,18 +734,29 @@ pub(crate) fn include_items(
 
     let mut result: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
     let mut seen = HashSet::new();
-    let mut emit = |entry: (String, bool, Vec<crate::messages::Frame>, bool),
-                    result: &mut Vec<(String, bool, Vec<crate::messages::Frame>, bool)>| {
-        if seen.insert(entry.0.clone()) {
-            result.push(entry);
-        }
-    };
+    let mut emit =
+        |entry: (String, bool, Vec<crate::messages::Frame>, bool),
+         result: &mut Vec<(String, bool, Vec<crate::messages::Frame>, bool)>| {
+            if seen.insert(entry.0.clone()) {
+                result.push(entry);
+            }
+        };
     if is_on_opt(inputs.var("CMAKE_INCLUDE_CURRENT_DIR").as_deref()) {
         let directory = &ctx.interp.makefiles[target.makefile];
-        emit((directory.binary_dir.clone(), false, Vec::new(), false), &mut result);
-        emit((directory.source_dir.clone(), false, Vec::new(), false), &mut result);
+        emit(
+            (directory.binary_dir.clone(), false, Vec::new(), false),
+            &mut result,
+        );
+        emit(
+            (directory.source_dir.clone(), false, Vec::new(), false),
+            &mut result,
+        );
     }
-    if is_on_opt(inputs.var("CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE").as_deref()) {
+    if is_on_opt(
+        inputs
+            .var("CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE")
+            .as_deref(),
+    ) {
         for entry in &users {
             if not_excluded(&entry.0)
                 && (Path::new(&entry.0).starts_with(&ctx.interp.home_source)
@@ -736,7 +794,12 @@ pub(crate) fn include_items(
 /// `cmGeneratorTarget::GetPrecompileHeaders` as codemodel
 /// "precompileHeaders" entries.
 pub(crate) fn pch_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
-    let inputs = Flags { ctx, target, config, lang };
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
     inputs
         .usage_items("PRECOMPILE_HEADERS")
         .into_iter()

@@ -127,9 +127,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     }
-                    if c == b'0'
-                        && matches!(bytes.get(self.pos + 1), Some(b'x') | Some(b'X'))
-                    {
+                    if c == b'0' && matches!(bytes.get(self.pos + 1), Some(b'x') | Some(b'X')) {
                         self.pull(self.pos + 3);
                     }
                     while self.pos < bytes.len() && bytes[self.pos].is_ascii_digit() {
@@ -221,8 +219,8 @@ impl<'a> Lexer<'a> {
 // ------------------------------------------------------------------
 
 const YYPACT: [i32; 41] = [
-    1, 1, 1, 1, 1, -11, 6, -10, -4, 9, 4, 11, 2, -11, -11, -11, -11, 7, -11, -11, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, -11, -4, 9, 4, 11, 11, 2, 2, -11, -11, -11,
+    1, 1, 1, 1, 1, -11, 6, -10, -4, 9, 4, 11, 2, -11, -11, -11, -11, 7, -11, -11, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, -11, -4, 9, 4, 11, 11, 2, 2, -11, -11, -11,
 ];
 
 const YYDEFACT: [i32; 41] = [
@@ -306,7 +304,10 @@ fn syntax_error(state: i32, token: i32) -> String {
     match names.len() {
         0 => "syntax error".to_owned(),
         1 => format!("syntax error, unexpected {}", names[0]),
-        2 => format!("syntax error, unexpected {}, expecting {}", names[0], names[1]),
+        2 => format!(
+            "syntax error, unexpected {}, expecting {}",
+            names[0], names[1]
+        ),
         3 => format!(
             "syntax error, unexpected {}, expecting {} or {}",
             names[0], names[1], names[2]

@@ -58,7 +58,10 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         missing.push(previous);
     }
     if !missing.is_empty() {
-        let text = format!("Error after keyword \"{}\":\n  missing required value", missing[0]);
+        let text = format!(
+            "Error after keyword \"{}\":\n  missing required value",
+            missing[0]
+        );
         interp.issue(crate::messages::MessageType::FatalError, &text);
         interp.set_fatal_if_script();
         return Ok(());
@@ -66,7 +69,11 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
     if unparsed {
         return err("Unknown argument to GENERATE subcommand.");
     }
-    let Some(output) = values.get("OUTPUT").filter(|_| parsed.first() == Some(&"OUTPUT")).cloned() else {
+    let Some(output) = values
+        .get("OUTPUT")
+        .filter(|_| parsed.first() == Some(&"OUTPUT"))
+        .cloned()
+    else {
         return err("GENERATE requires OUTPUT as first option.");
     };
     if !values.contains_key("INPUT") && !values.contains_key("CONTENT") {
@@ -76,7 +83,11 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
     if !input_is_content && parsed.get(1) != Some(&"INPUT") {
         return err("Unknown argument to GENERATE subcommand.");
     }
-    let input = if input_is_content { values["CONTENT"].clone() } else { values["INPUT"].clone() };
+    let input = if input_is_content {
+        values["CONTENT"].clone()
+    } else {
+        values["INPUT"].clone()
+    };
     let condition = values.get("CONDITION").cloned().unwrap_or_default();
     if values.contains_key("CONDITION") && condition.is_empty() {
         return err("CONDITION of sub-command GENERATE must not be empty if specified.");
@@ -90,18 +101,26 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         Some("LF" | "UNIX") => "\n".to_owned(),
         Some("CRLF" | "WIN32" | "DOS") => "\r\n".to_owned(),
         Some(other) => {
-            return err(format!("GENERATE NEWLINE_STYLE sets an unknown style, only LF, CRLF, UNIX, DOS, and WIN32 are supported: {other}"));
+            return err(format!(
+                "GENERATE NEWLINE_STYLE sets an unknown style, only LF, CRLF, UNIX, DOS, and WIN32 are supported: {other}"
+            ));
         }
     };
     if no_source && use_source {
-        return err("given both NO_SOURCE_PERMISSIONS and USE_SOURCE_PERMISSIONS. Only one option allowed.");
+        return err(
+            "given both NO_SOURCE_PERMISSIONS and USE_SOURCE_PERMISSIONS. Only one option allowed.",
+        );
     }
     if !permissions_list.is_empty() {
         if no_source {
-            return err("given both NO_SOURCE_PERMISSIONS and FILE_PERMISSIONS. Only one option allowed.");
+            return err(
+                "given both NO_SOURCE_PERMISSIONS and FILE_PERMISSIONS. Only one option allowed.",
+            );
         }
         if use_source {
-            return err("given both USE_SOURCE_PERMISSIONS and FILE_PERMISSIONS. Only one option allowed.");
+            return err(
+                "given both USE_SOURCE_PERMISSIONS and FILE_PERMISSIONS. Only one option allowed.",
+            );
         }
     }
     if use_source && input_is_content {
@@ -124,7 +143,9 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
     // AddEvaluationFile compiles OUTPUT and CONDITION here (the compiled
     // forms are evaluated at generate time without recompiling).
     drop(crate::profiling::entry("genex_compile", &output, || None));
-    drop(crate::profiling::entry("genex_compile", &condition, || None));
+    drop(crate::profiling::entry("genex_compile", &condition, || {
+        None
+    }));
     let dir = interp.mf_index();
     let backtrace = interp.backtrace.clone();
     let cmp0070 = interp.policy_status("CMP0070");

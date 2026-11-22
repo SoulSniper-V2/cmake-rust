@@ -125,10 +125,10 @@ pub struct Match {
 /// match hints).
 pub struct Regex {
     program: Vec<u8>,
-    regstart: u8,      // byte that must begin a match; 0 = none obvious
-    reganch: bool,     // match is anchored at beginning-of-line
+    regstart: u8,             // byte that must begin a match; 0 = none obvious
+    reganch: bool,            // match is anchored at beginning-of-line
     regmust: Option<Vec<u8>>, // literal that must appear in any match
-    regnpar: usize,    // internal () count + 1 (mirrors the C++ member)
+    regnpar: usize,           // internal () count + 1 (mirrors the C++ member)
 }
 
 impl Regex {
@@ -209,7 +209,13 @@ impl Regex {
     /// `RegularExpression::find(text, offset, options)` with explicit
     /// BOL_AT_OFFSET / NONEMPTY_AT_OFFSET flags (the repeated-search loops
     /// of string(REGEX MATCHALL/REPLACE)).
-    pub fn find_with(&self, text: &str, offset: usize, bol_at_offset: bool, nonempty_at_offset: bool) -> Option<Match> {
+    pub fn find_with(
+        &self,
+        text: &str,
+        offset: usize,
+        bol_at_offset: bool,
+        nonempty_at_offset: bool,
+    ) -> Option<Match> {
         let mut options = 0;
         if bol_at_offset {
             options |= BOL_AT_OFFSET;
@@ -429,9 +435,7 @@ impl Compiler<'_> {
             let c = self.peek();
             self.parse += 1;
             if c != b')' {
-                return Err(
-                    "RegularExpression::compile(): Unmatched parentheses.".to_string()
-                );
+                return Err("RegularExpression::compile(): Unmatched parentheses.".to_string());
             }
         } else if self.peek() != 0 {
             return if self.peek() == b')' {
@@ -476,9 +480,7 @@ impl Compiler<'_> {
         }
 
         if flags & HASWIDTH == 0 && op != b'?' {
-            return Err(
-                "RegularExpression::compile() : *+ operand could be empty.".to_string()
-            );
+            return Err("RegularExpression::compile() : *+ operand could be empty.".to_string());
         }
         let flagp = if op != b'+' {
             WORST | SPSTART
@@ -562,10 +564,8 @@ impl Compiler<'_> {
                             let lo = u16::from(self.peek_at(self.parse - 2)) + 1;
                             let hi = u16::from(self.peek());
                             if lo > hi + 1 {
-                                return Err(
-                                    "RegularExpression::compile(): Invalid range in []."
-                                        .to_string(),
-                                );
+                                return Err("RegularExpression::compile(): Invalid range in []."
+                                    .to_string());
                             }
                             for b in lo..=hi {
                                 self.regc(b as u8);
@@ -601,9 +601,7 @@ impl Compiler<'_> {
             b'\\' => {
                 let e = self.peek();
                 if e == 0 {
-                    return Err(
-                        "RegularExpression::compile(): Trailing backslash.".to_string()
-                    );
+                    return Err("RegularExpression::compile(): Trailing backslash.".to_string());
                 }
                 self.parse += 1;
                 let r = self.regnode(EXACTLY);
@@ -699,9 +697,9 @@ impl Compiler<'_> {
 struct Matcher<'a> {
     program: &'a [u8],
     input: &'a [u8],
-    reginput: usize,            // String-input pointer.
-    regbol: usize,              // Beginning of input, for ^ check.
-    regreject: Option<usize>,   // Reject matches ending here.
+    reginput: usize,          // String-input pointer.
+    regbol: usize,            // Beginning of input, for ^ check.
+    regreject: Option<usize>, // Reject matches ending here.
     regstartp: [Option<usize>; NSUBEXP],
     regendp: [Option<usize>; NSUBEXP],
 }
@@ -975,10 +973,9 @@ mod tests {
     }
 
     fn corpus() {
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/data/regex_corpus.json"
-        ))
-        .expect("corpus JSON parses");
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/data/regex_corpus.json"))
+                .expect("corpus JSON parses");
         let cases = json["cases"].as_array().expect("cases array");
         assert!(cases.len() >= 150, "corpus must have >= 150 cases");
 
@@ -1008,9 +1005,8 @@ mod tests {
                             let g = case["g"].as_array().unwrap();
                             for (n, want) in g.iter().enumerate() {
                                 let want = unhex(want.as_str().unwrap());
-                                let got: &[u8] = m.groups[n].map_or(&[], |(s, e)| {
-                                    &input.as_bytes()[s..e]
-                                });
+                                let got: &[u8] =
+                                    m.groups[n].map_or(&[], |(s, e)| &input.as_bytes()[s..e]);
                                 assert_eq!(
                                     got,
                                     want.as_slice(),
@@ -1022,11 +1018,7 @@ mod tests {
                     for (key, new_policy) in [("mo", false), ("mn", true)] {
                         let want = unhex(case[key].as_str().unwrap());
                         let got = matchall(&re, input.as_bytes(), new_policy);
-                        assert_eq!(
-                            got,
-                            want,
-                            "{label}: matchall {key} mismatch"
-                        );
+                        assert_eq!(got, want, "{label}: matchall {key} mismatch");
                     }
                 }
             }

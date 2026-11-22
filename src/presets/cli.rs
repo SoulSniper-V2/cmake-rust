@@ -95,10 +95,19 @@ fn set_diag_level(level: Option<u8>, warn: &mut Option<bool>, error: &mut Option
 }
 
 /// `cmake::SetWarningFromPreset`.
-fn set_warning_from_preset(warn_option: &mut Option<bool>, error_option: &mut Option<bool>, warning: Option<bool>, error: Option<bool>) {
+fn set_warning_from_preset(
+    warn_option: &mut Option<bool>,
+    error_option: &mut Option<bool>,
+    warning: Option<bool>,
+    error: Option<bool>,
+) {
     let mut level = diag_level(*warn_option, *error_option);
     if let Some(warning) = warning {
-        level = Some(if warning { level.unwrap_or(0).max(1) } else { 0 });
+        level = Some(if warning {
+            level.unwrap_or(0).max(1)
+        } else {
+            0
+        });
     }
     if let Some(error) = error {
         level = Some(if error { 2 } else { level.unwrap_or(0).min(1) });
@@ -145,7 +154,9 @@ pub fn apply_configure_preset(
         return Err(1);
     };
     if pair.unexpanded.base.hidden {
-        error(format!("Cannot use hidden preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "Cannot use hidden preset in {home}: \"{preset_name}\""
+        ));
         print_preset_list(&graph);
         return Err(1);
     }
@@ -170,7 +181,10 @@ pub fn apply_configure_preset(
     if options.generator.is_none() && !expanded.generator.is_empty() {
         // cmake::CreateAndSetGlobalGenerator
         if !crate::cli::known_generator(&expanded.generator) {
-            error(format!("Could not create named generator {}", expanded.generator));
+            error(format!(
+                "Could not create named generator {}",
+                expanded.generator
+            ));
             crate::cli::print_generators();
             return Err(1);
         }
@@ -204,7 +218,8 @@ pub fn apply_configure_preset(
     {
         options.platform = Some(expanded.architecture.clone());
     }
-    if (expanded.toolset_strategy.is_none() || expanded.toolset_strategy == Some(ArchToolsetStrategy::Set))
+    if (expanded.toolset_strategy.is_none()
+        || expanded.toolset_strategy == Some(ArchToolsetStrategy::Set))
         && options.toolset.is_none()
         && !expanded.toolset.is_empty()
     {
@@ -258,7 +273,9 @@ pub fn apply_configure_preset(
     }
     if !expanded.trace_source.is_empty() {
         options.trace = true;
-        options.trace_sources.extend(expanded.trace_source.iter().cloned());
+        options
+            .trace_sources
+            .extend(expanded.trace_source.iter().cloned());
     }
     if !expanded.trace_redirect.is_empty() {
         options.trace = true;
@@ -287,7 +304,9 @@ pub fn apply_configure_preset(
             continue;
         };
         let kind = (!var.type_.is_empty()).then(|| CacheType::parse(&var.type_));
-        definitions.push(crate::cli::cache_definition_from_parts(name, &var.value, kind));
+        definitions.push(crate::cli::cache_definition_from_parts(
+            name, &var.value, kind,
+        ));
         printed.push((name.clone(), kind, var.value.clone()));
     }
     definitions.append(&mut options.definitions);
@@ -361,7 +380,12 @@ pub struct BuildSettings<'a> {
 }
 
 /// The presets part of `cmake::Build`. `Err(code)` ends the build.
-pub fn apply_build_preset(cwd: &str, preset_name: &str, list: bool, settings: BuildSettings<'_>) -> Result<(), i32> {
+pub fn apply_build_preset(
+    cwd: &str,
+    preset_name: &str,
+    list: bool,
+    settings: BuildSettings<'_>,
+) -> Result<(), i32> {
     let home = cwd;
     let graph = read_graph(home).ok_or(1)?;
     if list {
@@ -374,7 +398,9 @@ pub fn apply_build_preset(cwd: &str, preset_name: &str, list: bool, settings: Bu
         return Err(1);
     };
     if pair.unexpanded.base.hidden {
-        error(format!("Cannot use hidden build preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "Cannot use hidden build preset in {home}: \"{preset_name}\""
+        ));
         graph.print_build_preset_list(None);
         return Err(1);
     }
@@ -386,7 +412,9 @@ pub fn apply_build_preset(cwd: &str, preset_name: &str, list: bool, settings: Bu
         return Err(1);
     };
     if !expanded.base.condition_result {
-        error(format!("Cannot use disabled build preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "Cannot use disabled build preset in {home}: \"{preset_name}\""
+        ));
         graph.print_build_preset_list(None);
         return Err(1);
     }
@@ -444,7 +472,9 @@ pub fn apply_build_preset(cwd: &str, preset_name: &str, list: bool, settings: Bu
         *settings.verbose = verbose;
     }
     if settings.native.is_empty() {
-        settings.native.extend(expanded.native_tool_options.iter().cloned());
+        settings
+            .native
+            .extend(expanded.native_tool_options.iter().cloned());
     }
     Ok(())
 }
@@ -460,7 +490,10 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
         let arg = input[i].clone();
         let mut matched = true;
         let mut parsed = true;
-        if arg == "--preset" || arg.starts_with("--preset=") || i == 0 && arg != "--list-presets" && arg != "--fresh" {
+        if arg == "--preset"
+            || arg.starts_with("--preset=")
+            || i == 0 && arg != "--list-presets" && arg != "--fresh"
+        {
             if !(arg == "--preset" || arg.starts_with("--preset=")) {
                 input.insert(0, "--preset".to_owned());
             }
@@ -469,7 +502,10 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
             if let Some(value) = current.strip_prefix("--preset=") {
                 preset_name = value.to_owned();
                 parsed = !value.is_empty();
-            } else if input.get(i + 1).is_some_and(|next| !crate::cli::is_flag(next)) {
+            } else if input
+                .get(i + 1)
+                .is_some_and(|next| !crate::cli::is_flag(next))
+            {
                 preset_name = input[i + 1].clone();
                 i += 1;
             } else {
@@ -508,12 +544,16 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
         return 0;
     }
     let Some(pair) = graph.workflow_presets.get(&preset_name) else {
-        error(format!("No such workflow preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "No such workflow preset in {home}: \"{preset_name}\""
+        ));
         graph.print_workflow_preset_list(None);
         return 1;
     };
     if pair.unexpanded.base.hidden {
-        error(format!("Cannot use hidden workflow preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "Cannot use hidden workflow preset in {home}: \"{preset_name}\""
+        ));
         graph.print_workflow_preset_list(None);
         return 1;
     }
@@ -525,7 +565,9 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
         return 1;
     };
     if !expanded.base.condition_result {
-        error(format!("Cannot use disabled workflow preset in {home}: \"{preset_name}\""));
+        error(format!(
+            "Cannot use disabled workflow preset in {home}: \"{preset_name}\""
+        ));
         graph.print_workflow_preset_list(None);
         return 1;
     }
@@ -552,7 +594,9 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
             return false;
         };
         if pair.unexpanded.base().hidden {
-            error(format!("Cannot use hidden {kind} preset in {home}: \"{name}\""));
+            error(format!(
+                "Cannot use hidden {kind} preset in {home}: \"{name}\""
+            ));
             return false;
         }
         let Some(expanded) = &pair.expanded else {
@@ -562,7 +606,9 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
             return false;
         };
         if !expanded.base().condition_result {
-            error(format!("Cannot use disabled {kind} preset in {home}: \"{name}\""));
+            error(format!(
+                "Cannot use disabled {kind} preset in {home}: \"{name}\""
+            ));
             return false;
         }
         true
@@ -577,12 +623,21 @@ pub fn workflow(args: &[String], cwd: &str) -> i32 {
                 if fresh {
                     command.push("--fresh".to_owned());
                 }
-                ("configure", find(home, "configure", &graph.configure_presets, &name), command)
+                (
+                    "configure",
+                    find(home, "configure", &graph.configure_presets, &name),
+                    command,
+                )
             }
             StepType::Build => (
                 "build",
                 find(home, "build", &graph.build_presets, &name),
-                vec![cmake.clone(), "--build".to_owned(), "--preset".to_owned(), name.clone()],
+                vec![
+                    cmake.clone(),
+                    "--build".to_owned(),
+                    "--preset".to_owned(),
+                    name.clone(),
+                ],
             ),
             StepType::Test => (
                 "test",

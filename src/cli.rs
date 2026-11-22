@@ -283,7 +283,11 @@ fn set_source(options: &mut ConfigureOptions, source: String, script_mode: bool)
 /// directory `cwd`.
 fn normalized_path(value: &str, cwd: &str) -> String {
     let value = crate::pathresolver::resolve_tilde_path(value);
-    let joined = if value.starts_with('/') { value } else { format!("{cwd}/{value}") };
+    let joined = if value.starts_with('/') {
+        value
+    } else {
+        format!("{cwd}/{value}")
+    };
     crate::pathresolver::to_normalized_path_on_disk(&joined)
 }
 
@@ -586,9 +590,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
             }
             if matches!(
                 name,
-                "--project-file"
-                    | "--debugger-pipe"
-                    | "--debugger-dap-log"
+                "--project-file" | "--debugger-pipe" | "--debugger-dap-log"
             ) {
                 unsupported = Some(name);
             }
@@ -667,9 +669,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     "Ignoring LINK_WARNING_AS_ERROR target property and CMAKE_LINK_WARNING_AS_ERROR variable."
                 ),
                 "-O" | "--warn-unused-vars" => {}
-                "--system-information" | "--find-package" | "--debugger" => {
-                    unsupported = Some(arg)
-                }
+                "--system-information" | "--find-package" | "--debugger" => unsupported = Some(arg),
                 "--explain" => {
                     let Some(target) = args.get(index + 1) else {
                         cmcmd::error("--explain requires a target and flag");
@@ -808,7 +808,10 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         return Ok(cli_failure());
     }
     if let Some(state) = &preset_state
-        && matches!(options.log_level.as_deref(), Some("verbose" | "debug" | "trace"))
+        && matches!(
+            options.log_level.as_deref(),
+            Some("verbose" | "debug" | "trace")
+        )
     {
         // Entries the command line set or removed are no longer
         // "unprocessed" preset variables.
@@ -921,7 +924,9 @@ fn set_option<'a>(
                 "Put cmake in trace mode, but output only lines of a specified file. Multiple options are allowed."
             );
             for file in value.split(';') {
-                options.trace_sources.push(cache::convert_to_unix_slashes(file));
+                options
+                    .trace_sources
+                    .push(cache::convert_to_unix_slashes(file));
             }
             options.trace = true;
         }
@@ -961,7 +966,11 @@ fn cache_definition(value: &str) -> Result<CacheDefinition, String> {
 
 /// A command-line style cache definition (`cmake::ProcessCacheArg` input),
 /// with PATH/FILEPATH values normalized as `-D` does.
-pub(crate) fn cache_definition_from_parts(name: &str, value: &str, kind: Option<CacheType>) -> CacheDefinition {
+pub(crate) fn cache_definition_from_parts(
+    name: &str,
+    value: &str,
+    kind: Option<CacheType>,
+) -> CacheDefinition {
     let mut value = value.to_owned();
     if matches!(kind, Some(CacheType::Path | CacheType::Filepath)) {
         value = util::expand_list(&value, false)

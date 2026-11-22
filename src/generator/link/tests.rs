@@ -193,7 +193,10 @@ fn model(fixture: &Fixture) -> Interp {
         };
         let mut target = target;
         // install(TARGETS) marks the target (cmTarget::SetHaveInstallRule).
-        target.have_install_rule = record.properties.iter().any(|(key, _)| key == "HAVE_INSTALL_RULE");
+        target.have_install_rule = record
+            .properties
+            .iter()
+            .any(|(key, _)| key == "HAVE_INSTALL_RULE");
         crate::state::register_target(&mut interp, target);
     }
     let active = |policy, old| {

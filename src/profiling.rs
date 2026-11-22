@@ -50,7 +50,11 @@ impl Drop for Suspended {
 /// and writes "[".
 pub fn start(path: &str) -> Result<(), String> {
     let file = File::create(path).map_err(|_| format!("Unable to open: {path}"))?;
-    let mut profiler = Profiler { out: BufWriter::new(file), written: 0, good: true };
+    let mut profiler = Profiler {
+        out: BufWriter::new(file),
+        written: 0,
+        good: true,
+    };
     profiler.write(b"[");
     PROFILER.with(|cell| *cell.borrow_mut() = Some(profiler));
     Ok(())
@@ -73,7 +77,10 @@ impl Profiler {
 
 fn timestamp() -> u64 {
     // std::chrono::steady_clock: CLOCK_MONOTONIC.
-    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: valid out-pointer.
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
     (now.tv_sec as u64) * 1_000_000 + (now.tv_nsec as u64) / 1_000

@@ -245,11 +245,23 @@ fn configure_file(interp: &mut Interp, args: &[String]) -> CmdResult {
             return err(format!(" given invalid permission {}.", invalid.join(",")));
         }
     }
-    configure_file_core(interp, &input, &output, copy_only, newline, at_only, escape_quotes, bits)
+    configure_file_core(
+        interp,
+        &input,
+        &output,
+        copy_only,
+        newline,
+        at_only,
+        escape_quotes,
+        bits,
+    )
 }
 
 /// `cmMakefile::ConfigureFile` after argument handling.
-#[allow(clippy::too_many_arguments, reason = "mirrors cmMakefile::ConfigureFile")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors cmMakefile::ConfigureFile"
+)]
 pub(super) fn configure_file_core(
     interp: &mut Interp,
     input: &str,
@@ -366,9 +378,16 @@ fn create_test_sourcelist(interp: &mut Interp, args: &[String]) -> CmdResult {
     let listed = &tests[2..];
     let func_base = |test: &str| {
         let name = crate::util::filename_name(test);
-        let stem = name.rfind('.').map_or(name.as_str(), |dot| &name[..dot]).to_owned();
+        let stem = name
+            .rfind('.')
+            .map_or(name.as_str(), |dot| &name[..dot])
+            .to_owned();
         let path = crate::util::filename_path(test);
-        if path.is_empty() { stem } else { format!("{path}/{stem}") }
+        if path.is_empty() {
+            stem
+        } else {
+            format!("{path}/{stem}")
+        }
     };
     let mut forward_declare = String::new();
     let mut func_names: Vec<String> = Vec::new();
@@ -384,7 +403,10 @@ fn create_test_sourcelist(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let mut function_map = String::new();
     for (test, func_name) in listed.iter().zip(&func_names) {
-        function_map.push_str(&format!("  {{\n    \"{}\",\n    {func_name}\n  }},\n", func_base(test)));
+        function_map.push_str(&format!(
+            "  {{\n    \"{}\",\n    {func_name}\n  }},\n",
+            func_base(test)
+        ));
     }
     if !extra_include.is_empty() {
         interp.set_def("CMAKE_TESTDRIVER_EXTRA_INCLUDES", extra_include);
@@ -397,12 +419,17 @@ fn create_test_sourcelist(interp: &mut Interp, args: &[String]) -> CmdResult {
     // cmMakefile::ConfigureFile(configFile, driver, false, true, false).
     let mut result = Ok(());
     if !can_write(interp, &driver) {
-        raw_error(interp, &format!("Attempt to write file: {driver} into a source directory."));
+        raw_error(
+            interp,
+            &format!("Attempt to write file: {driver} into a source directory."),
+        );
         result = Err(CmdErr::Reported);
     } else if !Path::new(&config_file).exists() {
         raw_error(interp, &format!("File {config_file} does not exist."));
         result = Err(CmdErr::Reported);
-    } else if configure_file_core(interp, &config_file, &driver, false, None, true, false, 0).is_err() {
+    } else if configure_file_core(interp, &config_file, &driver, false, None, true, false, 0)
+        .is_err()
+    {
         result = Err(CmdErr::Reported);
     }
     // Construct the source list.

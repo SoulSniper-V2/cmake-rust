@@ -32,7 +32,21 @@ fn is_whitespace(byte: u8) -> bool {
 fn needs_quotes_unix(byte: u8) -> bool {
     matches!(
         byte,
-        b'\'' | b'`' | b';' | b'#' | b'&' | b'$' | b'(' | b')' | b'~' | b'<' | b'>' | b'|' | b'*' | b'^' | b'\\'
+        b'\''
+            | b'`'
+            | b';'
+            | b'#'
+            | b'&'
+            | b'$'
+            | b'('
+            | b')'
+            | b'~'
+            | b'<'
+            | b'>'
+            | b'|'
+            | b'*'
+            | b'^'
+            | b'\\'
     )
 }
 
@@ -93,10 +107,18 @@ fn argument_needs_quotes(input: &[u8], flags: u32) -> bool {
         }
         index += 1;
     }
-    if flags & FLAG_IS_UNIX != 0 && input.len() == 1 && matches!(input[0], b'?' | b'&' | b'^' | b'|' | b'#') {
+    if flags & FLAG_IS_UNIX != 0
+        && input.len() == 1
+        && matches!(input[0], b'?' | b'&' | b'^' | b'|' | b'#')
+    {
         return true;
     }
-    if flags & FLAG_MINGW_MAKE != 0 && flags & FLAG_MAKE != 0 && input.len() > 1 && input[0] == b'\\' && input[1] == b'\\' {
+    if flags & FLAG_MINGW_MAKE != 0
+        && flags & FLAG_MAKE != 0
+        && input.len() > 1
+        && input[0] == b'\\'
+        && input[1] == b'\\'
+    {
         return true;
     }
     false
@@ -167,7 +189,8 @@ pub fn shell_get_argument(input: &str, flags: u32) -> String {
             }
             b'%' => {
                 if flags & FLAG_VSIDE != 0
-                    || (flags & FLAG_MAKE != 0 && (flags & FLAG_MINGW_MAKE != 0 || flags & FLAG_NMAKE != 0))
+                    || (flags & FLAG_MAKE != 0
+                        && (flags & FLAG_MINGW_MAKE != 0 || flags & FLAG_NMAKE != 0))
                 {
                     out.extend_from_slice(b"%%");
                 } else {

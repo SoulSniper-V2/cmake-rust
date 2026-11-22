@@ -72,7 +72,11 @@ fn condition_string() -> Helper<String> {
     string_helper(invalid_string(), "")
 }
 
-fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: &mut State) -> bool {
+fn condition_helper(
+    out: &mut Option<Box<Condition>>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let Some(v) = value else {
         *out = None;
         return true;
@@ -100,7 +104,12 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
             "const" => {
                 let h = Object::<ConstC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("value", |c: &mut ConstC| &mut c.value, bool_helper(invalid_bool(), false), true)
+                    .bind(
+                        "value",
+                        |c: &mut ConstC| &mut c.value,
+                        bool_helper(invalid_bool(), false),
+                        true,
+                    )
                     .build();
                 let mut c = ConstC::default();
                 if !h(&mut c, value, state) {
@@ -112,14 +121,27 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
             "equals" | "notEquals" => {
                 let h = Object::<EqualsC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("lhs", |c: &mut EqualsC| &mut c.lhs, condition_string(), true)
-                    .bind("rhs", |c: &mut EqualsC| &mut c.rhs, condition_string(), true)
+                    .bind(
+                        "lhs",
+                        |c: &mut EqualsC| &mut c.lhs,
+                        condition_string(),
+                        true,
+                    )
+                    .bind(
+                        "rhs",
+                        |c: &mut EqualsC| &mut c.rhs,
+                        condition_string(),
+                        true,
+                    )
                     .build();
                 let mut c = EqualsC::default();
                 if !h(&mut c, value, state) {
                     return false;
                 }
-                let cond = Condition::Equals { lhs: c.lhs, rhs: c.rhs };
+                let cond = Condition::Equals {
+                    lhs: c.lhs,
+                    rhs: c.rhs,
+                };
                 *out = Some(Box::new(invert_if(cond, type_ == "notEquals")));
                 return true;
             }
@@ -127,7 +149,12 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
                 let list = vector_helper(e(errors::invalid_condition), condition_string());
                 let h = Object::<InListC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("string", |c: &mut InListC| &mut c.string, condition_string(), true)
+                    .bind(
+                        "string",
+                        |c: &mut InListC| &mut c.string,
+                        condition_string(),
+                        true,
+                    )
                     .bind("list", |c: &mut InListC| &mut c.list, list, true)
                     .build();
                 let mut c = InListC::default();
@@ -144,8 +171,18 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
             "matches" | "notMatches" => {
                 let h = Object::<MatchesC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("string", |c: &mut MatchesC| &mut c.string, condition_string(), true)
-                    .bind("regex", |c: &mut MatchesC| &mut c.regex, condition_string(), true)
+                    .bind(
+                        "string",
+                        |c: &mut MatchesC| &mut c.string,
+                        condition_string(),
+                        true,
+                    )
+                    .bind(
+                        "regex",
+                        |c: &mut MatchesC| &mut c.regex,
+                        condition_string(),
+                        true,
+                    )
                     .build();
                 let mut c = MatchesC::default();
                 if !h(&mut c, value, state) {
@@ -159,10 +196,16 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
                 return true;
             }
             "anyOf" | "allOf" => {
-                let list = vector_helper(e(errors::invalid_condition), helper(sub_condition_helper));
+                let list =
+                    vector_helper(e(errors::invalid_condition), helper(sub_condition_helper));
                 let h = Object::<AnyAllC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("conditions", |c: &mut AnyAllC| &mut c.conditions, list, true)
+                    .bind(
+                        "conditions",
+                        |c: &mut AnyAllC| &mut c.conditions,
+                        list,
+                        true,
+                    )
                     .build();
                 let mut c = AnyAllC::default();
                 if !h(&mut c, value, state) {
@@ -181,13 +224,20 @@ fn condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: 
             "not" => {
                 let h = Object::<NotC>::new(error(), false)
                     .bind_dummy::<String>("type", condition_string(), true)
-                    .bind("condition", |c: &mut NotC| &mut c.sub, helper(sub_condition_helper), true)
+                    .bind(
+                        "condition",
+                        |c: &mut NotC| &mut c.sub,
+                        helper(sub_condition_helper),
+                        true,
+                    )
                     .build();
                 let mut c = NotC::default();
                 if !h(&mut c, value, state) {
                     return false;
                 }
-                *out = Some(Box::new(Condition::Not(c.sub.unwrap_or_else(|| Box::new(Condition::Null)))));
+                *out = Some(Box::new(Condition::Not(
+                    c.sub.unwrap_or_else(|| Box::new(Condition::Null)),
+                )));
                 return true;
             }
             _ => {}
@@ -205,7 +255,11 @@ fn invert_if(condition: Condition, invert: bool) -> Condition {
     }
 }
 
-fn sub_condition_helper(out: &mut Option<Box<Condition>>, value: Option<&V>, state: &mut State) -> bool {
+fn sub_condition_helper(
+    out: &mut Option<Box<Condition>>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let mut ptr = None;
     let result = condition_helper(&mut ptr, value, state);
     if ptr.as_ref().is_some_and(|c| c.is_null()) {
@@ -233,16 +287,14 @@ fn preset_string() -> Helper<String> {
 }
 
 fn preset_name() -> Helper<String> {
-    helper(|out: &mut String, value, state| {
-        match value {
-            Some(v) if v.is_string() && !v.as_string().is_empty() => {
-                *out = v.as_string();
-                true
-            }
-            _ => {
-                errors::invalid_preset_name(value, state);
-                false
-            }
+    helper(|out: &mut String, value, state| match value {
+        Some(v) if v.is_string() && !v.as_string().is_empty() => {
+            *out = v.as_string();
+            true
+        }
+        _ => {
+            errors::invalid_preset_name(value, state);
+            false
         }
     })
 }
@@ -330,32 +382,66 @@ macro_rules! base_field {
         $obj.bind("name", |p: &mut $t| &mut p.base.name, preset_name(), true)
     };
     ($obj:expr, $t:ty, inherits) => {
-        $obj.bind("inherits", |p: &mut $t| &mut p.base.inherits, preset_vector_one_or_more_string(), false)
+        $obj.bind(
+            "inherits",
+            |p: &mut $t| &mut p.base.inherits,
+            preset_vector_one_or_more_string(),
+            false,
+        )
     };
     ($obj:expr, $t:ty, hidden) => {
-        $obj.bind("hidden", |p: &mut $t| &mut p.base.hidden, preset_bool(), false)
+        $obj.bind(
+            "hidden",
+            |p: &mut $t| &mut p.base.hidden,
+            preset_bool(),
+            false,
+        )
     };
     ($obj:expr, $t:ty, vendor) => {
         $obj.bind_dummy::<()>("vendor", vendor_helper(e(errors::invalid_preset)), false)
     };
     ($obj:expr, $t:ty, displayName) => {
-        $obj.bind("displayName", |p: &mut $t| &mut p.base.display_name, preset_string(), false)
+        $obj.bind(
+            "displayName",
+            |p: &mut $t| &mut p.base.display_name,
+            preset_string(),
+            false,
+        )
     };
     ($obj:expr, $t:ty, description) => {
-        $obj.bind("description", |p: &mut $t| &mut p.base.description, preset_string(), false)
+        $obj.bind(
+            "description",
+            |p: &mut $t| &mut p.base.description,
+            preset_string(),
+            false,
+        )
     };
     ($obj:expr, $t:ty, environment) => {
-        $obj.bind("environment", |p: &mut $t| &mut p.base.environment, environment_map(), false)
+        $obj.bind(
+            "environment",
+            |p: &mut $t| &mut p.base.environment,
+            environment_map(),
+            false,
+        )
     };
     ($obj:expr, $t:ty, condition) => {
-        $obj.bind("condition", |p: &mut $t| &mut p.base.condition, preset_condition_helper(), false)
+        $obj.bind(
+            "condition",
+            |p: &mut $t| &mut p.base.condition,
+            preset_condition_helper(),
+            false,
+        )
     };
 }
 
 // ---------------------------------------------------------------------
 // Configure presets
 
-fn arch_toolset_strategy(out: &mut Option<ArchToolsetStrategy>, value: Option<&V>, state: &mut State) -> bool {
+fn arch_toolset_strategy(
+    out: &mut Option<ArchToolsetStrategy>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let Some(v) = value else {
         *out = None;
         return true;
@@ -386,7 +472,12 @@ fn arch_toolset_helper(
 ) -> Helper<ConfigurePreset> {
     let object = Object::<ConfigurePreset>::new(invalid_object(), false)
         .bind("value", value_field, preset_string(), false)
-        .bind("strategy", strategy_field, helper(arch_toolset_strategy), false)
+        .bind(
+            "strategy",
+            strategy_field,
+            helper(arch_toolset_strategy),
+            false,
+        )
         .build();
     helper(move |out: &mut ConfigurePreset, value, state| {
         let Some(v) = value else {
@@ -407,7 +498,11 @@ fn arch_toolset_helper(
     })
 }
 
-fn trace_enable_mode(out: &mut Option<TraceEnableMode>, value: Option<&V>, state: &mut State) -> bool {
+fn trace_enable_mode(
+    out: &mut Option<TraceEnableMode>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let Some(v) = value else {
         *out = None;
         return true;
@@ -428,7 +523,11 @@ fn trace_enable_mode(out: &mut Option<TraceEnableMode>, value: Option<&V>, state
     true
 }
 
-fn trace_output_format(out: &mut Option<TraceOutputFormat>, value: Option<&V>, state: &mut State) -> bool {
+fn trace_output_format(
+    out: &mut Option<TraceOutputFormat>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let Some(v) = value else {
         *out = None;
         return true;
@@ -462,8 +561,18 @@ fn variable_value(out: &mut String, value: Option<&V>, state: &mut State) -> boo
 
 fn variable_helper() -> Helper<Option<CacheVariable>> {
     let object = Object::<CacheVariable>::new(errors::invalid_variable_object(), false)
-        .bind("type", |c: &mut CacheVariable| &mut c.type_, preset_string(), false)
-        .bind("value", |c: &mut CacheVariable| &mut c.value, helper(variable_value), true)
+        .bind(
+            "type",
+            |c: &mut CacheVariable| &mut c.type_,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "value",
+            |c: &mut CacheVariable| &mut c.value,
+            helper(variable_value),
+            true,
+        )
         .build();
     helper(move |out: &mut Option<CacheVariable>, value, state| {
         let Some(v) = value else {
@@ -499,26 +608,96 @@ fn variable_helper() -> Helper<Option<CacheVariable>> {
 fn configure_preset_helper() -> Helper<ConfigurePreset> {
     type C = ConfigurePreset;
     let warnings = Object::<C>::new(invalid_named_object_key(), false)
-        .bind("dev", |p: &mut C| &mut p.warn_dev, preset_optional_bool(), false)
-        .bind("deprecated", |p: &mut C| &mut p.warn_deprecated, preset_optional_bool(), false)
-        .bind("uninitialized", |p: &mut C| &mut p.warn_uninitialized, preset_optional_bool(), false)
-        .bind("unusedCli", |p: &mut C| &mut p.warn_unused_cli, preset_optional_bool(), false)
-        .bind("systemVars", |p: &mut C| &mut p.warn_system_vars, preset_optional_bool(), false)
+        .bind(
+            "dev",
+            |p: &mut C| &mut p.warn_dev,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "deprecated",
+            |p: &mut C| &mut p.warn_deprecated,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "uninitialized",
+            |p: &mut C| &mut p.warn_uninitialized,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "unusedCli",
+            |p: &mut C| &mut p.warn_unused_cli,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "systemVars",
+            |p: &mut C| &mut p.warn_system_vars,
+            preset_optional_bool(),
+            false,
+        )
         .build();
     let errors_ = Object::<C>::new(invalid_named_object_key(), false)
-        .bind("dev", |p: &mut C| &mut p.error_dev, preset_optional_bool(), false)
-        .bind("deprecated", |p: &mut C| &mut p.error_deprecated, preset_optional_bool(), false)
+        .bind(
+            "dev",
+            |p: &mut C| &mut p.error_dev,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "deprecated",
+            |p: &mut C| &mut p.error_deprecated,
+            preset_optional_bool(),
+            false,
+        )
         .build();
     let debug = Object::<C>::new(invalid_named_object_key(), false)
-        .bind("output", |p: &mut C| &mut p.debug_output, preset_optional_bool(), false)
-        .bind("tryCompile", |p: &mut C| &mut p.debug_try_compile, preset_optional_bool(), false)
-        .bind("find", |p: &mut C| &mut p.debug_find, preset_optional_bool(), false)
+        .bind(
+            "output",
+            |p: &mut C| &mut p.debug_output,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "tryCompile",
+            |p: &mut C| &mut p.debug_try_compile,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "find",
+            |p: &mut C| &mut p.debug_find,
+            preset_optional_bool(),
+            false,
+        )
         .build();
     let trace = Object::<C>::new(errors::invalid_preset_object(), false)
-        .bind("mode", |p: &mut C| &mut p.trace_mode, helper(trace_enable_mode), false)
-        .bind("format", |p: &mut C| &mut p.trace_format, helper(trace_output_format), false)
-        .bind("source", |p: &mut C| &mut p.trace_source, preset_vector_one_or_more_string(), false)
-        .bind("redirect", |p: &mut C| &mut p.trace_redirect, preset_string(), false)
+        .bind(
+            "mode",
+            |p: &mut C| &mut p.trace_mode,
+            helper(trace_enable_mode),
+            false,
+        )
+        .bind(
+            "format",
+            |p: &mut C| &mut p.trace_format,
+            helper(trace_output_format),
+            false,
+        )
+        .bind(
+            "source",
+            |p: &mut C| &mut p.trace_source,
+            preset_vector_one_or_more_string(),
+            false,
+        )
+        .bind(
+            "redirect",
+            |p: &mut C| &mut p.trace_redirect,
+            preset_string(),
+            false,
+        )
         .build();
     let obj = Object::<C>::new(errors::invalid_preset_object(), false);
     let obj = base_field!(obj, C, name);
@@ -528,7 +707,12 @@ fn configure_preset_helper() -> Helper<ConfigurePreset> {
     let obj = base_field!(obj, C, displayName);
     let obj = base_field!(obj, C, description);
     let obj = obj
-        .bind("generator", |p: &mut C| &mut p.generator, preset_string(), false)
+        .bind(
+            "generator",
+            |p: &mut C| &mut p.generator,
+            preset_string(),
+            false,
+        )
         .bind_fn(
             "architecture",
             arch_toolset_helper(|p| &mut p.architecture, |p| &mut p.architecture_strategy),
@@ -539,10 +723,30 @@ fn configure_preset_helper() -> Helper<ConfigurePreset> {
             arch_toolset_helper(|p| &mut p.toolset, |p| &mut p.toolset_strategy),
             false,
         )
-        .bind("toolchainFile", |p: &mut C| &mut p.toolchain_file, preset_string(), false)
-        .bind("graphviz", |p: &mut C| &mut p.graphviz_file, preset_string(), false)
-        .bind("binaryDir", |p: &mut C| &mut p.binary_dir, preset_string(), false)
-        .bind("installDir", |p: &mut C| &mut p.install_dir, preset_string(), false)
+        .bind(
+            "toolchainFile",
+            |p: &mut C| &mut p.toolchain_file,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "graphviz",
+            |p: &mut C| &mut p.graphviz_file,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "binaryDir",
+            |p: &mut C| &mut p.binary_dir,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "installDir",
+            |p: &mut C| &mut p.install_dir,
+            preset_string(),
+            false,
+        )
         .bind_dummy::<String>("cmakeExecutable", preset_string(), false)
         .bind(
             "cacheVariables",
@@ -563,7 +767,11 @@ fn configure_preset_helper() -> Helper<ConfigurePreset> {
 // ---------------------------------------------------------------------
 // Build presets
 
-fn package_resolve_mode(out: &mut Option<PackageResolveMode>, value: Option<&V>, state: &mut State) -> bool {
+fn package_resolve_mode(
+    out: &mut Option<PackageResolveMode>,
+    value: Option<&V>,
+    state: &mut State,
+) -> bool {
     let Some(v) = value else {
         *out = None;
         return true;
@@ -595,19 +803,54 @@ fn build_preset_helper() -> Helper<BuildPreset> {
     let obj = base_field!(obj, B, description);
     let obj = base_field!(obj, B, environment);
     let obj = obj
-        .bind("configurePreset", |p: &mut B| &mut p.configure_preset, preset_string(), false)
+        .bind(
+            "configurePreset",
+            |p: &mut B| &mut p.configure_preset,
+            preset_string(),
+            false,
+        )
         .bind(
             "inheritConfigureEnvironment",
             |p: &mut B| &mut p.inherit_configure_environment,
             preset_optional_bool(),
             false,
         )
-        .bind("jobs", |p: &mut B| &mut p.jobs, preset_optional_int(), false)
-        .bind("targets", |p: &mut B| &mut p.targets, preset_vector_one_or_more_string(), false)
-        .bind("configuration", |p: &mut B| &mut p.configuration, preset_string(), false)
-        .bind("cleanFirst", |p: &mut B| &mut p.clean_first, preset_optional_bool(), false)
-        .bind("verbose", |p: &mut B| &mut p.verbose, preset_optional_bool(), false)
-        .bind("nativeToolOptions", |p: &mut B| &mut p.native_tool_options, preset_vector_string(), false);
+        .bind(
+            "jobs",
+            |p: &mut B| &mut p.jobs,
+            preset_optional_int(),
+            false,
+        )
+        .bind(
+            "targets",
+            |p: &mut B| &mut p.targets,
+            preset_vector_one_or_more_string(),
+            false,
+        )
+        .bind(
+            "configuration",
+            |p: &mut B| &mut p.configuration,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "cleanFirst",
+            |p: &mut B| &mut p.clean_first,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "verbose",
+            |p: &mut B| &mut p.verbose,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "nativeToolOptions",
+            |p: &mut B| &mut p.native_tool_options,
+            preset_vector_string(),
+            false,
+        );
     let obj = base_field!(obj, B, condition);
     obj.bind(
         "resolvePackageReferences",
@@ -725,15 +968,60 @@ fn test_preset_helper() -> Helper<TestPreset> {
     type O = OutputOptions;
     let output = optional_helper(
         Object::<O>::new(invalid_object(), false)
-            .bind("shortProgress", |o: &mut O| &mut o.short_progress, preset_optional_bool(), false)
-            .bind("verbosity", |o: &mut O| &mut o.verbosity, optional_helper(helper(verbosity)), false)
-            .bind("debug", |o: &mut O| &mut o.debug, preset_optional_bool(), false)
-            .bind("outputOnFailure", |o: &mut O| &mut o.output_on_failure, preset_optional_bool(), false)
-            .bind("quiet", |o: &mut O| &mut o.quiet, preset_optional_bool(), false)
-            .bind("outputLogFile", |o: &mut O| &mut o.output_log_file, preset_string(), false)
-            .bind("outputJUnitFile", |o: &mut O| &mut o.output_junit_file, preset_string(), false)
-            .bind("labelSummary", |o: &mut O| &mut o.label_summary, preset_optional_bool(), false)
-            .bind("subprojectSummary", |o: &mut O| &mut o.subproject_summary, preset_optional_bool(), false)
+            .bind(
+                "shortProgress",
+                |o: &mut O| &mut o.short_progress,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "verbosity",
+                |o: &mut O| &mut o.verbosity,
+                optional_helper(helper(verbosity)),
+                false,
+            )
+            .bind(
+                "debug",
+                |o: &mut O| &mut o.debug,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "outputOnFailure",
+                |o: &mut O| &mut o.output_on_failure,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "quiet",
+                |o: &mut O| &mut o.quiet,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "outputLogFile",
+                |o: &mut O| &mut o.output_log_file,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "outputJUnitFile",
+                |o: &mut O| &mut o.output_junit_file,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "labelSummary",
+                |o: &mut O| &mut o.label_summary,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "subprojectSummary",
+                |o: &mut O| &mut o.subproject_summary,
+                preset_optional_bool(),
+                false,
+            )
             .bind(
                 "maxPassedTestOutputSize",
                 |o: &mut O| &mut o.max_passed_test_output_size,
@@ -746,78 +1034,205 @@ fn test_preset_helper() -> Helper<TestPreset> {
                 preset_optional_int(),
                 false,
             )
-            .bind("testOutputTruncation", |o: &mut O| &mut o.test_output_truncation, helper(truncation), false)
-            .bind("maxTestNameWidth", |o: &mut O| &mut o.max_test_name_width, preset_optional_int(), false)
+            .bind(
+                "testOutputTruncation",
+                |o: &mut O| &mut o.test_output_truncation,
+                helper(truncation),
+                false,
+            )
+            .bind(
+                "maxTestNameWidth",
+                |o: &mut O| &mut o.max_test_name_width,
+                preset_optional_int(),
+                false,
+            )
             .build(),
     );
     let index_object = optional_helper(
         Object::<IndexOptions>::new(invalid_object(), true)
-            .bind("start", |o: &mut IndexOptions| &mut o.start, preset_optional_int(), false)
-            .bind("end", |o: &mut IndexOptions| &mut o.end, preset_optional_int(), false)
-            .bind("stride", |o: &mut IndexOptions| &mut o.stride, preset_optional_int(), false)
-            .bind("specificTests", |o: &mut IndexOptions| &mut o.specific_tests, preset_vector_int(), false)
+            .bind(
+                "start",
+                |o: &mut IndexOptions| &mut o.start,
+                preset_optional_int(),
+                false,
+            )
+            .bind(
+                "end",
+                |o: &mut IndexOptions| &mut o.end,
+                preset_optional_int(),
+                false,
+            )
+            .bind(
+                "stride",
+                |o: &mut IndexOptions| &mut o.stride,
+                preset_optional_int(),
+                false,
+            )
+            .bind(
+                "specificTests",
+                |o: &mut IndexOptions| &mut o.specific_tests,
+                preset_vector_int(),
+                false,
+            )
             .build(),
     );
-    let index = helper(move |out: &mut Option<IndexOptions>, value: Option<&V>, state: &mut State| {
-        let Some(v) = value else {
-            *out = None;
-            return true;
-        };
-        if v.is_string() {
-            *out = Some(IndexOptions {
-                index_file: v.as_string(),
-                ..IndexOptions::default()
-            });
-            return true;
-        }
-        if v.is_object() {
-            return index_object(out, value, state);
-        }
-        false
-    });
+    let index = helper(
+        move |out: &mut Option<IndexOptions>, value: Option<&V>, state: &mut State| {
+            let Some(v) = value else {
+                *out = None;
+                return true;
+            };
+            if v.is_string() {
+                *out = Some(IndexOptions {
+                    index_file: v.as_string(),
+                    ..IndexOptions::default()
+                });
+                return true;
+            }
+            if v.is_object() {
+                return index_object(out, value, state);
+            }
+            false
+        },
+    );
     let include = optional_helper(
         Object::<IncludeOptions>::new(invalid_object(), true)
-            .bind("name", |o: &mut IncludeOptions| &mut o.name, preset_string(), false)
-            .bind("label", |o: &mut IncludeOptions| &mut o.label, preset_string(), false)
+            .bind(
+                "name",
+                |o: &mut IncludeOptions| &mut o.name,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "label",
+                |o: &mut IncludeOptions| &mut o.label,
+                preset_string(),
+                false,
+            )
             .bind("index", |o: &mut IncludeOptions| &mut o.index, index, false)
-            .bind("useUnion", |o: &mut IncludeOptions| &mut o.use_union, preset_optional_bool(), false)
+            .bind(
+                "useUnion",
+                |o: &mut IncludeOptions| &mut o.use_union,
+                preset_optional_bool(),
+                false,
+            )
             .build(),
     );
     let fixtures = optional_helper(
         Object::<FixturesOptions>::new(invalid_object(), true)
-            .bind("any", |o: &mut FixturesOptions| &mut o.any, preset_string(), false)
-            .bind("setup", |o: &mut FixturesOptions| &mut o.setup, preset_string(), false)
-            .bind("cleanup", |o: &mut FixturesOptions| &mut o.cleanup, preset_string(), false)
+            .bind(
+                "any",
+                |o: &mut FixturesOptions| &mut o.any,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "setup",
+                |o: &mut FixturesOptions| &mut o.setup,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "cleanup",
+                |o: &mut FixturesOptions| &mut o.cleanup,
+                preset_string(),
+                false,
+            )
             .build(),
     );
     let exclude = optional_helper(
         Object::<ExcludeOptions>::new(invalid_object(), true)
-            .bind("name", |o: &mut ExcludeOptions| &mut o.name, preset_string(), false)
-            .bind("label", |o: &mut ExcludeOptions| &mut o.label, preset_string(), false)
-            .bind("fixtures", |o: &mut ExcludeOptions| &mut o.fixtures, fixtures, false)
+            .bind(
+                "name",
+                |o: &mut ExcludeOptions| &mut o.name,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "label",
+                |o: &mut ExcludeOptions| &mut o.label,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "fixtures",
+                |o: &mut ExcludeOptions| &mut o.fixtures,
+                fixtures,
+                false,
+            )
             .build(),
     );
     let filter = optional_helper(
         Object::<FilterOptions>::new(invalid_object(), true)
-            .bind("include", |o: &mut FilterOptions| &mut o.include, include, false)
-            .bind("exclude", |o: &mut FilterOptions| &mut o.exclude, exclude, false)
+            .bind(
+                "include",
+                |o: &mut FilterOptions| &mut o.include,
+                include,
+                false,
+            )
+            .bind(
+                "exclude",
+                |o: &mut FilterOptions| &mut o.exclude,
+                exclude,
+                false,
+            )
             .build(),
     );
     let repeat = optional_helper(
         Object::<RepeatOptions>::new(invalid_object(), true)
-            .bind("mode", |o: &mut RepeatOptions| &mut o.mode, helper(repeat_mode), true)
-            .bind("count", |o: &mut RepeatOptions| &mut o.count, preset_int(), true)
+            .bind(
+                "mode",
+                |o: &mut RepeatOptions| &mut o.mode,
+                helper(repeat_mode),
+                true,
+            )
+            .bind(
+                "count",
+                |o: &mut RepeatOptions| &mut o.count,
+                preset_int(),
+                true,
+            )
             .build(),
     );
     type X = ExecutionOptions;
     let execution = optional_helper(
         Object::<X>::new(invalid_object(), true)
-            .bind("stopOnFailure", |o: &mut X| &mut o.stop_on_failure, preset_optional_bool(), false)
-            .bind("enableFailover", |o: &mut X| &mut o.enable_failover, preset_optional_bool(), false)
-            .bind("jobs", |o: &mut X| &mut o.jobs, preset_optional_int(), false)
-            .bind("resourceSpecFile", |o: &mut X| &mut o.resource_spec_file, preset_string(), false)
-            .bind("testLoad", |o: &mut X| &mut o.test_load, preset_optional_int(), false)
-            .bind("showOnly", |o: &mut X| &mut o.show_only, optional_helper(helper(show_only)), false)
+            .bind(
+                "stopOnFailure",
+                |o: &mut X| &mut o.stop_on_failure,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "enableFailover",
+                |o: &mut X| &mut o.enable_failover,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "jobs",
+                |o: &mut X| &mut o.jobs,
+                preset_optional_int(),
+                false,
+            )
+            .bind(
+                "resourceSpecFile",
+                |o: &mut X| &mut o.resource_spec_file,
+                preset_string(),
+                false,
+            )
+            .bind(
+                "testLoad",
+                |o: &mut X| &mut o.test_load,
+                preset_optional_int(),
+                false,
+            )
+            .bind(
+                "showOnly",
+                |o: &mut X| &mut o.show_only,
+                optional_helper(helper(show_only)),
+                false,
+            )
             .bind("repeat", |o: &mut X| &mut o.repeat, repeat, false)
             .bind(
                 "interactiveDebugging",
@@ -825,8 +1240,18 @@ fn test_preset_helper() -> Helper<TestPreset> {
                 preset_optional_bool(),
                 false,
             )
-            .bind("scheduleRandom", |o: &mut X| &mut o.schedule_random, preset_optional_bool(), false)
-            .bind("timeout", |o: &mut X| &mut o.timeout, preset_optional_int(), false)
+            .bind(
+                "scheduleRandom",
+                |o: &mut X| &mut o.schedule_random,
+                preset_optional_bool(),
+                false,
+            )
+            .bind(
+                "timeout",
+                |o: &mut X| &mut o.timeout,
+                preset_optional_int(),
+                false,
+            )
             .bind(
                 "noTestsAction",
                 |o: &mut X| &mut o.no_tests_action,
@@ -844,14 +1269,24 @@ fn test_preset_helper() -> Helper<TestPreset> {
     let obj = base_field!(obj, T, description);
     let obj = base_field!(obj, T, environment);
     let obj = obj
-        .bind("configurePreset", |p: &mut T| &mut p.configure_preset, preset_string(), false)
+        .bind(
+            "configurePreset",
+            |p: &mut T| &mut p.configure_preset,
+            preset_string(),
+            false,
+        )
         .bind(
             "inheritConfigureEnvironment",
             |p: &mut T| &mut p.inherit_configure_environment,
             preset_optional_bool(),
             false,
         )
-        .bind("configuration", |p: &mut T| &mut p.configuration, preset_string(), false)
+        .bind(
+            "configuration",
+            |p: &mut T| &mut p.configuration,
+            preset_string(),
+            false,
+        )
         .bind(
             "overwriteConfigurationFile",
             |p: &mut T| &mut p.overwrite_configuration_file,
@@ -871,8 +1306,18 @@ fn test_preset_helper() -> Helper<TestPreset> {
 fn package_preset_helper() -> Helper<PackagePreset> {
     type P = PackagePreset;
     let output = Object::<P>::new(invalid_named_object_key(), false)
-        .bind("debug", |p: &mut P| &mut p.debug_output, preset_optional_bool(), false)
-        .bind("verbose", |p: &mut P| &mut p.verbose_output, preset_optional_bool(), false)
+        .bind(
+            "debug",
+            |p: &mut P| &mut p.debug_output,
+            preset_optional_bool(),
+            false,
+        )
+        .bind(
+            "verbose",
+            |p: &mut P| &mut p.verbose_output,
+            preset_optional_bool(),
+            false,
+        )
         .build();
     let variables = map_helper(
         e(errors::invalid_variable),
@@ -887,22 +1332,62 @@ fn package_preset_helper() -> Helper<PackagePreset> {
     let obj = base_field!(obj, P, description);
     let obj = base_field!(obj, P, environment);
     let obj = obj
-        .bind("configurePreset", |p: &mut P| &mut p.configure_preset, preset_string(), false)
+        .bind(
+            "configurePreset",
+            |p: &mut P| &mut p.configure_preset,
+            preset_string(),
+            false,
+        )
         .bind(
             "inheritConfigureEnvironment",
             |p: &mut P| &mut p.inherit_configure_environment,
             preset_optional_bool(),
             false,
         )
-        .bind("generators", |p: &mut P| &mut p.generators, preset_vector_string(), false)
-        .bind("configurations", |p: &mut P| &mut p.configurations, preset_vector_string(), false)
+        .bind(
+            "generators",
+            |p: &mut P| &mut p.generators,
+            preset_vector_string(),
+            false,
+        )
+        .bind(
+            "configurations",
+            |p: &mut P| &mut p.configurations,
+            preset_vector_string(),
+            false,
+        )
         .bind("variables", |p: &mut P| &mut p.variables, variables, false)
-        .bind("configFile", |p: &mut P| &mut p.config_file, preset_string(), false)
+        .bind(
+            "configFile",
+            |p: &mut P| &mut p.config_file,
+            preset_string(),
+            false,
+        )
         .bind_fn("output", output, false)
-        .bind("packageName", |p: &mut P| &mut p.package_name, preset_string(), false)
-        .bind("packageVersion", |p: &mut P| &mut p.package_version, preset_string(), false)
-        .bind("packageDirectory", |p: &mut P| &mut p.package_directory, preset_string(), false)
-        .bind("vendorName", |p: &mut P| &mut p.vendor_name, preset_string(), false);
+        .bind(
+            "packageName",
+            |p: &mut P| &mut p.package_name,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "packageVersion",
+            |p: &mut P| &mut p.package_version,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "packageDirectory",
+            |p: &mut P| &mut p.package_directory,
+            preset_string(),
+            false,
+        )
+        .bind(
+            "vendorName",
+            |p: &mut P| &mut p.vendor_name,
+            preset_string(),
+            false,
+        );
     let obj = base_field!(obj, P, condition);
     obj.build()
 }
@@ -934,8 +1419,18 @@ fn step_type(out: &mut StepType, value: Option<&V>, state: &mut State) -> bool {
 fn workflow_preset_helper() -> Helper<WorkflowPreset> {
     type W = WorkflowPreset;
     let step = Object::<WorkflowStep>::new(invalid_object(), false)
-        .bind("type", |s: &mut WorkflowStep| &mut s.preset_type, helper(step_type), true)
-        .bind("name", |s: &mut WorkflowStep| &mut s.preset_name, preset_string(), true)
+        .bind(
+            "type",
+            |s: &mut WorkflowStep| &mut s.preset_type,
+            helper(step_type),
+            true,
+        )
+        .bind(
+            "name",
+            |s: &mut WorkflowStep| &mut s.preset_name,
+            preset_string(),
+            true,
+        )
         .build();
     let steps = vector_helper(e(errors::invalid_preset), step);
     let obj = Object::<W>::new(errors::invalid_preset_object(), false);
@@ -943,22 +1438,41 @@ fn workflow_preset_helper() -> Helper<WorkflowPreset> {
     let obj = base_field!(obj, W, vendor);
     let obj = base_field!(obj, W, displayName);
     let obj = base_field!(obj, W, description);
-    obj.bind("steps", |p: &mut W| &mut p.steps, steps, true).build()
+    obj.bind("steps", |p: &mut W| &mut p.steps, steps, true)
+        .build()
 }
 
 // ---------------------------------------------------------------------
 // Root
 
 fn version_helper() -> Helper<i32> {
-    required_helper(e(errors::no_version), int_helper(e(errors::invalid_version), 0))
+    required_helper(
+        e(errors::no_version),
+        int_helper(e(errors::invalid_version), 0),
+    )
 }
 
 fn root_presets_helper() -> Helper<RootPresets> {
     type R = RootPresets;
     let cmake_version = Object::<CMakeVersion>::new(invalid_named_object_key(), false)
-        .bind("major", |v: &mut CMakeVersion| &mut v.major, uint_helper(e(errors::invalid_version), 0), false)
-        .bind("minor", |v: &mut CMakeVersion| &mut v.minor, uint_helper(e(errors::invalid_version), 0), false)
-        .bind("patch", |v: &mut CMakeVersion| &mut v.patch, uint_helper(e(errors::invalid_version), 0), false)
+        .bind(
+            "major",
+            |v: &mut CMakeVersion| &mut v.major,
+            uint_helper(e(errors::invalid_version), 0),
+            false,
+        )
+        .bind(
+            "minor",
+            |v: &mut CMakeVersion| &mut v.minor,
+            uint_helper(e(errors::invalid_version), 0),
+            false,
+        )
+        .bind(
+            "patch",
+            |v: &mut CMakeVersion| &mut v.patch,
+            uint_helper(e(errors::invalid_version), 0),
+            false,
+        )
         .build();
     let include = vector_helper(
         e(errors::invalid_include),
@@ -996,7 +1510,12 @@ fn root_presets_helper() -> Helper<RootPresets> {
             vector_helper(e(errors::invalid_presets), workflow_preset_helper()),
             false,
         )
-        .bind("cmakeMinimumRequired", |r: &mut R| &mut r.cmake_minimum_required, cmake_version, false)
+        .bind(
+            "cmakeMinimumRequired",
+            |r: &mut R| &mut r.cmake_minimum_required,
+            cmake_version,
+            false,
+        )
         .bind("include", |r: &mut R| &mut r.include, include, false)
         .bind_dummy::<()>("vendor", vendor_helper(e(errors::invalid_root)), false)
         .bind_dummy::<()>("$schema", helper(|_: &mut (), _, _| true), false)
@@ -1090,16 +1609,34 @@ impl Graph {
         let cmr = root.member("cmakeMinimumRequired");
         let field = |name: &str| cmr.as_ref().and_then(|c| c.member(name));
         if required.major > major {
-            errors::unrecognized_cmake_version("major", major, required.major, field("major").as_ref(), &mut self.parse_state);
+            errors::unrecognized_cmake_version(
+                "major",
+                major,
+                required.major,
+                field("major").as_ref(),
+                &mut self.parse_state,
+            );
             return false;
         }
         if required.major == major {
             if required.minor > minor {
-                errors::unrecognized_cmake_version("minor", minor, required.minor, field("minor").as_ref(), &mut self.parse_state);
+                errors::unrecognized_cmake_version(
+                    "minor",
+                    minor,
+                    required.minor,
+                    field("minor").as_ref(),
+                    &mut self.parse_state,
+                );
                 return false;
             }
             if required.minor == minor && required.patch > patch {
-                errors::unrecognized_cmake_version("patch", patch, required.patch, field("patch").as_ref(), &mut self.parse_state);
+                errors::unrecognized_cmake_version(
+                    "patch",
+                    patch,
+                    required.patch,
+                    field("patch").as_ref(),
+                    &mut self.parse_state,
+                );
                 return false;
             }
         }
@@ -1141,7 +1678,10 @@ impl Graph {
                 },
             );
             if v < 3 && install_dir {
-                errors::install_prefix_unsupported(root.member("installDir").as_ref(), &mut self.parse_state);
+                errors::install_prefix_unsupported(
+                    root.member("installDir").as_ref(),
+                    &mut self.parse_state,
+                );
                 return false;
             }
             if v < 3 && condition {
@@ -1302,7 +1842,13 @@ impl Graph {
         if root_type == RootType::User && reason == ReadReason::Root {
             let project = Graph::filename(&self.source_dir);
             if std::path::Path::new(&project).exists()
-                && !self.include_file(&project, RootType::Project, ReadReason::Root, in_progress, file)
+                && !self.include_file(
+                    &project,
+                    RootType::Project,
+                    ReadReason::Root,
+                    in_progress,
+                    file,
+                )
             {
                 return false;
             }
@@ -1329,4 +1875,3 @@ impl Graph {
         true
     }
 }
-

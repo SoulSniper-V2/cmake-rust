@@ -100,7 +100,10 @@ pub fn graph_link_libraries<'i>(
     ctx: &GenCtx<'i>,
     target: &Target,
     config: &str,
-) -> (Option<Vec<GraphLinkItem<'i>>>, Option<Vec<GraphLinkItem<'i>>>) {
+) -> (
+    Option<Vec<GraphLinkItem<'i>>>,
+    Option<Vec<GraphLinkItem<'i>>>,
+) {
     let query = Query::new(ctx, config, "");
     let compile_query = Query {
         compile_usage: true,
@@ -129,7 +132,8 @@ pub fn graph_link_libraries<'i>(
     let implementation = can_compile.then(|| convert(implementation(&query, target)));
     let has_interface =
         target.imported || target.kind != TargetKind::Executable || on(target, "ENABLE_EXPORTS");
-    let interface = has_interface.then(|| convert(interface(&compile_query, target, target).libraries));
+    let interface =
+        has_interface.then(|| convert(interface(&compile_query, target, target).libraries));
     (implementation, interface)
 }
 
@@ -218,7 +222,8 @@ impl<'a, 'i> Query<'a, 'i> {
                     .ctx
                     .genex_with_dag_usage(raw, owner, head, property, language, true);
             }
-            self.generator.eval(self.ctx, raw, owner, head, property, language)
+            self.generator
+                .eval(self.ctx, raw, owner, head, property, language)
         } else {
             raw.to_owned()
         }
@@ -449,10 +454,7 @@ fn provenanced_items<'i>(
     head: &Target,
     property: &str,
 ) -> Vec<Item<'i>> {
-    let entries: Vec<(String, Vec<crate::messages::Frame>)> = match owner
-        .provenance
-        .get(property)
-    {
+    let entries: Vec<(String, Vec<crate::messages::Frame>)> = match owner.provenance.get(property) {
         Some(entries) if !entries.is_empty() => entries.clone(),
         _ => match owner.props.get(property) {
             Some(value) => vec![(value.to_owned(), Vec::new())],
@@ -463,7 +465,13 @@ fn provenanced_items<'i>(
     let mut directory = owner.makefile;
     for (value, backtrace) in entries {
         let evaluated = query.eval(&value, owner, head, property);
-        items.extend(plain_items_bt(query, owner, &evaluated, &backtrace, &mut directory));
+        items.extend(plain_items_bt(
+            query,
+            owner,
+            &evaluated,
+            &backtrace,
+            &mut directory,
+        ));
     }
     items
 }
@@ -481,7 +489,11 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
     let mut libraries = if property == "INTERFACE_LINK_LIBRARIES" {
         provenanced_items(query, owner, head, property)
     } else {
-        plain_items(query, owner, &query.eval(value.unwrap_or_default(), owner, head, property))
+        plain_items(
+            query,
+            owner,
+            &query.eval(value.unwrap_or_default(), owner, head, property),
+        )
     };
     libraries.retain(|item| {
         item.target
@@ -490,12 +502,7 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
     validate_items(query, owner, &libraries, true);
     Interface {
         libraries,
-        include: provenanced_items(
-            query,
-            owner,
-            head,
-            "INTERFACE_LINK_LIBRARIES_DIRECT",
-        ),
+        include: provenanced_items(query, owner, head, "INTERFACE_LINK_LIBRARIES_DIRECT"),
         exclude: provenanced_items(
             query,
             owner,

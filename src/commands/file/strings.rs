@@ -57,7 +57,9 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
                             let policy = interp.policy_status("CMP0159");
                             options.store = policy == PolicyStatus::New;
                             if policy == PolicyStatus::Warn
-                                && interp.policy_optional_warning(interp.get_def("CMAKE_POLICY_WARNING_CMP0159"))
+                                && interp.policy_optional_warning(
+                                    interp.get_def("CMAKE_POLICY_WARNING_CMP0159"),
+                                )
                             {
                                 interp.issue(MessageType::AuthorWarning, &format!(
                                     "{}\nFor compatibility, CMake is leaving CMAKE_MATCH_<n> unchanged.",

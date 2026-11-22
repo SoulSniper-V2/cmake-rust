@@ -454,7 +454,10 @@ impl<'i> Collector<'_, '_, 'i> {
         // utilities found by dependency tracing.
         {
             let mut deps: Vec<(String, Rc<Vec<Frame>>)> = expand_list(
-                target.props.get("MANUALLY_ADDED_DEPENDENCIES").unwrap_or_default(),
+                target
+                    .props
+                    .get("MANUALLY_ADDED_DEPENDENCIES")
+                    .unwrap_or_default(),
                 false,
             )
             .into_iter()

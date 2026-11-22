@@ -126,7 +126,9 @@ fn load_curl() -> Result<Curl, String> {
         let message = unsafe { libc::dlerror() };
         if !message.is_null() && reason.is_empty() {
             // SAFETY: non-null dlerror result is a C string.
-            reason = unsafe { CStr::from_ptr(message) }.to_string_lossy().into_owned();
+            reason = unsafe { CStr::from_ptr(message) }
+                .to_string_lossy()
+                .into_owned();
         }
     }
     if handle.is_null() {
@@ -172,7 +174,9 @@ impl Curl {
         let info = unsafe { &*info };
         let _ = info.age;
         // SAFETY: version is a static C string.
-        let version = unsafe { CStr::from_ptr(info.version) }.to_string_lossy().into_owned();
+        let version = unsafe { CStr::from_ptr(info.version) }
+            .to_string_lossy()
+            .into_owned();
         Some((version, info.version_num))
     }
 
@@ -249,19 +253,49 @@ fn set_ca_info(curl: &Curl, easy: Easy, cafile: &str) -> String {
     let file_exists = |path: &str| Path::new(path).is_file();
     let is_dir = |path: &str| Path::new(path).is_dir();
     if !cafile.is_empty() {
-        set(&mut e, CURLOPT_CAINFO, cafile, "Unable to set TLS/SSL Verify CAINFO: ");
+        set(
+            &mut e,
+            CURLOPT_CAINFO,
+            cafile,
+            "Unable to set TLS/SSL Verify CAINFO: ",
+        );
     } else if let Some(ca) = env("SSL_CERT_FILE").filter(|ca| file_exists(ca)) {
-        set(&mut e, CURLOPT_CAINFO, &ca, "Unable to set TLS/SSL Verify CAINFO: ");
+        set(
+            &mut e,
+            CURLOPT_CAINFO,
+            &ca,
+            "Unable to set TLS/SSL Verify CAINFO: ",
+        );
     } else if let Some(ca) = env("SSL_CERT_DIR").filter(|ca| is_dir(ca)) {
-        set(&mut e, CURLOPT_CAPATH, &ca, "Unable to set TLS/SSL Verify CAINFO: ");
+        set(
+            &mut e,
+            CURLOPT_CAPATH,
+            &ca,
+            "Unable to set TLS/SSL Verify CAINFO: ",
+        );
     } else if file_exists("/etc/pki/tls/certs/ca-bundle.crt") {
-        set(&mut e, CURLOPT_CAINFO, "/etc/pki/tls/certs/ca-bundle.crt", "Unable to set TLS/SSL Verify CAINFO: ");
+        set(
+            &mut e,
+            CURLOPT_CAINFO,
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "Unable to set TLS/SSL Verify CAINFO: ",
+        );
     } else {
         if file_exists("/etc/ssl/certs/ca-certificates.crt") {
-            set(&mut e, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt", "Unable to set TLS/SSL Verify CAINFO: ");
+            set(
+                &mut e,
+                CURLOPT_CAINFO,
+                "/etc/ssl/certs/ca-certificates.crt",
+                "Unable to set TLS/SSL Verify CAINFO: ",
+            );
         }
         if is_dir("/etc/ssl/certs") {
-            set(&mut e, CURLOPT_CAPATH, "/etc/ssl/certs", "Unable to set TLS/SSL Verify CAPATH: ");
+            set(
+                &mut e,
+                CURLOPT_CAPATH,
+                "/etc/ssl/certs",
+                "Unable to set TLS/SSL Verify CAPATH: ",
+            );
         }
     }
     e
@@ -295,7 +329,11 @@ fn set_netrc_option(curl: &Curl, easy: Easy, level: &str, file: &str) -> String 
 
 /// `cmCurlFixFileURL`.
 fn fix_file_url(url: String) -> String {
-    if url.starts_with("file://") { url.replace(' ', "%20") } else { url }
+    if url.starts_with("file://") {
+        url.replace(' ', "%20")
+    } else {
+        url
+    }
 }
 
 /// `atol`: leading whitespace, optional sign, decimal digits.
@@ -308,17 +346,31 @@ fn atol(text: &str) -> c_long {
     };
     let mut value: c_long = 0;
     for byte in digits.bytes().take_while(u8::is_ascii_digit) {
-        value = value.wrapping_mul(10).wrapping_add(c_long::from(byte - b'0'));
+        value = value
+            .wrapping_mul(10)
+            .wrapping_add(c_long::from(byte - b'0'));
     }
-    if negative { value.wrapping_neg() } else { value }
+    if negative {
+        value.wrapping_neg()
+    } else {
+        value
+    }
 }
 
 /// `cmCryptoHash::New` names.
 fn known_hash(algo: &str) -> bool {
     matches!(
         algo,
-        "MD5" | "SHA1" | "SHA224" | "SHA256" | "SHA384" | "SHA512" | "SHA3_224" | "SHA3_256"
-            | "SHA3_384" | "SHA3_512"
+        "MD5"
+            | "SHA1"
+            | "SHA224"
+            | "SHA256"
+            | "SHA384"
+            | "SHA512"
+            | "SHA3_224"
+            | "SHA3_256"
+            | "SHA3_384"
+            | "SHA3_512"
     )
 }
 
@@ -352,7 +404,12 @@ struct Sink {
 }
 
 /// `cmWriteToFileCallback`.
-extern "C" fn write_to_file(ptr: *mut c_char, size: usize, nmemb: usize, data: *mut c_void) -> usize {
+extern "C" fn write_to_file(
+    ptr: *mut c_char,
+    size: usize,
+    nmemb: usize,
+    data: *mut c_void,
+) -> usize {
     let realsize = size * nmemb;
     if data.is_null() {
         return realsize;
@@ -372,7 +429,12 @@ extern "C" fn write_to_file(ptr: *mut c_char, size: usize, nmemb: usize, data: *
 }
 
 /// `cmWriteToMemoryCallback`.
-extern "C" fn write_to_memory(ptr: *mut c_char, size: usize, nmemb: usize, data: *mut c_void) -> usize {
+extern "C" fn write_to_memory(
+    ptr: *mut c_char,
+    size: usize,
+    nmemb: usize,
+    data: *mut c_void,
+) -> usize {
     let realsize = size * nmemb;
     // SAFETY: data is the Vec registered as CURLOPT_WRITEDATA.
     let buffer = unsafe { &mut *data.cast::<Vec<u8>>() };
@@ -382,7 +444,13 @@ extern "C" fn write_to_memory(ptr: *mut c_char, size: usize, nmemb: usize, data:
 }
 
 /// `cmFileCommandCurlDebugCallback`.
-extern "C" fn debug_callback(_easy: Easy, kind: c_int, ptr: *mut c_char, size: usize, data: *mut c_void) -> c_int {
+extern "C" fn debug_callback(
+    _easy: Easy,
+    kind: c_int,
+    ptr: *mut c_char,
+    size: usize,
+    data: *mut c_void,
+) -> c_int {
     // SAFETY: data is the Vec registered as CURLOPT_DEBUGDATA.
     let buffer = unsafe { &mut *data.cast::<Vec<u8>>() };
     match kind {
@@ -427,14 +495,26 @@ impl Progress {
 }
 
 /// `cmFileDownloadProgressCallback`.
-extern "C" fn download_progress(client: *mut c_void, dltotal: i64, dlnow: i64, _ultotal: i64, _ulnow: i64) -> c_int {
+extern "C" fn download_progress(
+    client: *mut c_void,
+    dltotal: i64,
+    dlnow: i64,
+    _ultotal: i64,
+    _ulnow: i64,
+) -> c_int {
     // SAFETY: client is the Progress registered as CURLOPT_PROGRESSDATA.
     unsafe { &mut *client.cast::<Progress>() }.update(dlnow, dltotal);
     0
 }
 
 /// `cmFileUploadProgressCallback`.
-extern "C" fn upload_progress(client: *mut c_void, _dltotal: i64, _dlnow: i64, ultotal: i64, ulnow: i64) -> c_int {
+extern "C" fn upload_progress(
+    client: *mut c_void,
+    _dltotal: i64,
+    _dlnow: i64,
+    ultotal: i64,
+    ulnow: i64,
+) -> c_int {
     // SAFETY: client is the Progress registered as CURLOPT_PROGRESSDATA.
     unsafe { &mut *client.cast::<Progress>() }.update(ulnow, ultotal);
     0
@@ -476,7 +556,11 @@ fn load(action: &str) -> Result<&'static Curl, crate::interp::CmdErr> {
 
 /// The TLS verify and version settings shared by DOWNLOAD and UPLOAD:
 /// argument, then CMAKE_TLS_* variable, then environment, then default.
-fn tls_defaults(interp: &Interp, verify: Option<bool>, version: Option<String>) -> (bool, bool, String, bool) {
+fn tls_defaults(
+    interp: &Interp,
+    verify: Option<bool>,
+    version: Option<String>,
+) -> (bool, bool, String, bool) {
     let mut verify = verify;
     if verify.is_none()
         && let Some(value) = interp.get_def("CMAKE_TLS_VERIFY")
@@ -508,7 +592,9 @@ fn tls_defaults(interp: &Interp, verify: Option<bool>, version: Option<String>) 
 
 fn status_text(curl: &Curl, result: c_int, verify_defaulted: bool) -> String {
     let mut message = curl.strerror(result);
-    if (result == CURLE_SSL_CONNECT_ERROR || result == CURLE_PEER_FAILED_VERIFICATION) && verify_defaulted {
+    if (result == CURLE_SSL_CONNECT_ERROR || result == CURLE_PEER_FAILED_VERIFICATION)
+        && verify_defaulted
+    {
         message.push_str(
             ".  If this is due to https certificate verification failure, one may set environment variable CMAKE_TLS_VERIFY=0 to suppress it.",
         );
@@ -529,7 +615,10 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
     let mut status_var = String::new();
     let mut tls_version: Option<String> = None;
     let mut tls_verify: Option<bool> = None;
-    let mut cainfo = interp.get_def("CMAKE_TLS_CAINFO").unwrap_or_default().to_owned();
+    let mut cainfo = interp
+        .get_def("CMAKE_TLS_CAINFO")
+        .unwrap_or_default()
+        .to_owned();
     let mut netrc_level = interp.get_safe("CMAKE_NETRC");
     let mut netrc_file = interp.get_safe("CMAKE_NETRC_FILE");
     let mut expected_hash = String::new();
@@ -547,7 +636,9 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
         match arg {
             "TIMEOUT" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing time for TIMEOUT.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing time for TIMEOUT.");
+                };
                 timeout = atol(value);
             }
             "INACTIVITY_TIMEOUT" => {
@@ -559,17 +650,23 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
             "LOG" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing VAR for LOG.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing VAR for LOG.");
+                };
                 log_var = value.clone();
             }
             "STATUS" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing VAR for STATUS.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing VAR for STATUS.");
+                };
                 status_var = value.clone();
             }
             "TLS_VERSION" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing value for TLS_VERSION.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing value for TLS_VERSION.");
+                };
                 tls_version = Some(value.clone());
             }
             "TLS_VERIFY" => {
@@ -595,7 +692,9 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
             "NETRC" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing level value for NETRC.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing level value for NETRC.");
+                };
                 netrc_level = value.clone();
             }
             "EXPECTED_MD5" => {
@@ -614,7 +713,9 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
                     return err("DOWNLOAD missing ALGO=value for EXPECTED_HASH.");
                 };
                 let Some(pos) = value.find('=') else {
-                    return err(format!("DOWNLOAD EXPECTED_HASH expects ALGO=value but got: {value}"));
+                    return err(format!(
+                        "DOWNLOAD EXPECTED_HASH expects ALGO=value but got: {value}"
+                    ));
                 };
                 let algo = &value[..pos];
                 expected_hash = value[pos + 1..].to_ascii_lowercase();
@@ -626,17 +727,23 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
             "USERPWD" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing string for USERPWD.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing string for USERPWD.");
+                };
                 userpwd = value.clone();
             }
             "HTTPHEADER" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing string for HTTPHEADER.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing string for HTTPHEADER.");
+                };
                 headers.push(value.clone());
             }
             "RANGE_START" => {
                 i += 1;
-                let Some(value) = next else { return err("DOWNLOAD missing value for RANGE_START.") };
+                let Some(value) = next else {
+                    return err("DOWNLOAD missing value for RANGE_START.");
+                };
                 ranges.push((value.clone(), None));
             }
             "RANGE_END" => {
@@ -657,13 +764,17 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             _ if file.is_empty() => file = arg.to_owned(),
             _ => {
                 // Do not return error for compatibility reason.
-                interp.issue(MessageType::AuthorWarning, &format!("Unexpected argument: {arg}"));
+                interp.issue(
+                    MessageType::AuthorWarning,
+                    &format!("Unexpected argument: {arg}"),
+                );
             }
         }
         i += 1;
     }
 
-    let (verify, verify_defaulted, version, version_defaulted) = tls_defaults(interp, tls_verify, tls_version);
+    let (verify, verify_defaulted, version, version_defaulted) =
+        tls_defaults(interp, tls_verify, tls_version);
 
     // Can't calculate hash if we don't save the file.
     if file.is_empty() && hash.is_some() {
@@ -675,7 +786,9 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
         && hash_file(algo, &file) == expected_hash
     {
         if !status_var.is_empty() {
-            let message = format!("skipping download as file already exists with expected {hash_match_msg}\"");
+            let message = format!(
+                "skipping download as file already exists with expected {hash_match_msg}\""
+            );
             interp.set_def(status_var, format!("0;\"{message}"));
         }
         return Ok(());
@@ -689,11 +802,18 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             ));
         }
     }
-    let mut sink = Sink { out: None, failed: false };
+    let mut sink = Sink {
+        out: None,
+        failed: false,
+    };
     if !file.is_empty() {
         match File::create(&file) {
             Ok(out) => sink.out = Some(BufWriter::new(out)),
-            Err(_) => return err(format!("DOWNLOAD cannot open file for write\n  file: \"{file}\"")),
+            Err(_) => {
+                return err(format!(
+                    "DOWNLOAD cannot open file for write\n  file: \"{file}\""
+                ));
+            }
         }
     }
 
@@ -715,16 +835,38 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }};
     }
-    check!(curl.set_str(easy, CURLOPT_URL, &url), "DOWNLOAD cannot set url: ");
-    check!(curl.set_long(easy, CURLOPT_FAILONERROR, 1), "DOWNLOAD cannot set http failure option: ");
-    let agent = format!("curl/{}", curl.version().map(|(version, _)| version).unwrap_or_default());
-    check!(curl.set_str(easy, CURLOPT_USERAGENT, &agent), "DOWNLOAD cannot set user agent option: ");
     check!(
-        curl.set_ptr(easy, CURLOPT_WRITEFUNCTION, write_to_file as WriteFn as *const c_void),
+        curl.set_str(easy, CURLOPT_URL, &url),
+        "DOWNLOAD cannot set url: "
+    );
+    check!(
+        curl.set_long(easy, CURLOPT_FAILONERROR, 1),
+        "DOWNLOAD cannot set http failure option: "
+    );
+    let agent = format!(
+        "curl/{}",
+        curl.version()
+            .map(|(version, _)| version)
+            .unwrap_or_default()
+    );
+    check!(
+        curl.set_str(easy, CURLOPT_USERAGENT, &agent),
+        "DOWNLOAD cannot set user agent option: "
+    );
+    check!(
+        curl.set_ptr(
+            easy,
+            CURLOPT_WRITEFUNCTION,
+            write_to_file as WriteFn as *const c_void
+        ),
         "DOWNLOAD cannot set write function: "
     );
     check!(
-        curl.set_ptr(easy, CURLOPT_DEBUGFUNCTION, debug_callback as DebugFn as *const c_void),
+        curl.set_ptr(
+            easy,
+            CURLOPT_DEBUGFUNCTION,
+            debug_callback as DebugFn as *const c_void
+        ),
         "DOWNLOAD cannot set debug function: "
     );
     match parse_tls_version(&version) {
@@ -733,18 +875,30 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
             if version_defaulted && result == CURLE_NOT_BUILT_IN {
                 result = CURLE_OK;
             }
-            check!(result, format!("DOWNLOAD cannot set TLS/SSL version {version}: "));
+            check!(
+                result,
+                format!("DOWNLOAD cannot set TLS/SSL version {version}: ")
+            );
         }
         None => return err(format!("DOWNLOAD given unknown TLS/SSL version {version}")),
     }
     if verify {
-        check!(curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 1), "DOWNLOAD cannot set TLS/SSL Verify on: ");
+        check!(
+            curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 1),
+            "DOWNLOAD cannot set TLS/SSL Verify on: "
+        );
     } else {
-        check!(curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 0), "DOWNLOAD cannot set TLS/SSL Verify off: ");
+        check!(
+            curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 0),
+            "DOWNLOAD cannot set TLS/SSL Verify off: "
+        );
     }
     for (start, end) in &ranges {
         let range = format!("{start}-{}", end.as_deref().unwrap_or(""));
-        check!(curl.set_str(easy, CURLOPT_RANGE, &range), "DOWNLOAD cannot set range: ");
+        check!(
+            curl.set_str(easy, CURLOPT_RANGE, &range),
+            "DOWNLOAD cannot set range: "
+        );
     }
     let cainfo_err = set_ca_info(curl, easy, &cainfo);
     if !cainfo_err.is_empty() {
@@ -760,37 +914,71 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
     } else {
         (&raw mut sink).cast_const().cast()
     };
-    check!(curl.set_ptr(easy, CURLOPT_WRITEDATA, write_data), "DOWNLOAD cannot set write data: ");
     check!(
-        curl.set_ptr(easy, CURLOPT_DEBUGDATA, (&raw mut debug).cast_const().cast()),
+        curl.set_ptr(easy, CURLOPT_WRITEDATA, write_data),
+        "DOWNLOAD cannot set write data: "
+    );
+    check!(
+        curl.set_ptr(
+            easy,
+            CURLOPT_DEBUGDATA,
+            (&raw mut debug).cast_const().cast()
+        ),
         "DOWNLOAD cannot set debug data: "
     );
-    check!(curl.set_long(easy, CURLOPT_FOLLOWLOCATION, 1), "DOWNLOAD cannot set follow-redirect option: ");
+    check!(
+        curl.set_long(easy, CURLOPT_FOLLOWLOCATION, 1),
+        "DOWNLOAD cannot set follow-redirect option: "
+    );
     if !log_var.is_empty() {
-        check!(curl.set_long(easy, CURLOPT_VERBOSE, 1), "DOWNLOAD cannot set verbose: ");
+        check!(
+            curl.set_long(easy, CURLOPT_VERBOSE, 1),
+            "DOWNLOAD cannot set verbose: "
+        );
     }
     if timeout > 0 {
-        check!(curl.set_long(easy, CURLOPT_TIMEOUT, timeout), "DOWNLOAD cannot set timeout: ");
+        check!(
+            curl.set_long(easy, CURLOPT_TIMEOUT, timeout),
+            "DOWNLOAD cannot set timeout: "
+        );
     }
     if inactivity_timeout > 0 {
         // Give up if there is no progress for a long time.
         curl.set_long(easy, CURLOPT_LOW_SPEED_LIMIT, 1);
         curl.set_long(easy, CURLOPT_LOW_SPEED_TIME, inactivity_timeout);
     }
-    let mut progress = Progress { interp: std::ptr::from_mut(interp), text: "download", current: -1 };
+    let mut progress = Progress {
+        interp: std::ptr::from_mut(interp),
+        text: "download",
+        current: -1,
+    };
     if show_progress {
-        check!(curl.set_long(easy, CURLOPT_NOPROGRESS, 0), "DOWNLOAD cannot set noprogress value: ");
         check!(
-            curl.set_ptr(easy, CURLOPT_XFERINFOFUNCTION, download_progress as XferFn as *const c_void),
+            curl.set_long(easy, CURLOPT_NOPROGRESS, 0),
+            "DOWNLOAD cannot set noprogress value: "
+        );
+        check!(
+            curl.set_ptr(
+                easy,
+                CURLOPT_XFERINFOFUNCTION,
+                download_progress as XferFn as *const c_void
+            ),
             "DOWNLOAD cannot set progress function: "
         );
         check!(
-            curl.set_ptr(easy, CURLOPT_PROGRESSDATA, (&raw mut progress).cast_const().cast()),
+            curl.set_ptr(
+                easy,
+                CURLOPT_PROGRESSDATA,
+                (&raw mut progress).cast_const().cast()
+            ),
             "DOWNLOAD cannot set progress data: "
         );
     }
     if !userpwd.is_empty() {
-        check!(curl.set_str(easy, CURLOPT_USERPWD, &userpwd), "DOWNLOAD cannot set user password: ");
+        check!(
+            curl.set_str(easy, CURLOPT_USERPWD, &userpwd),
+            "DOWNLOAD cannot set user password: "
+        );
     }
     let header_list = append_headers(curl, &headers);
     curl.set_ptr(easy, CURLOPT_HTTPHEADER, header_list.cast_const());
@@ -816,7 +1004,10 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
 
     if !status_var.is_empty() {
-        interp.set_def(status_var.clone(), status_text(curl, result, verify_defaulted));
+        interp.set_def(
+            status_var.clone(),
+            status_text(curl, result, verify_defaulted),
+        );
     }
     // SAFETY: plain libcurl call.
     unsafe { (curl.global_cleanup)() };
@@ -836,7 +1027,9 @@ pub fn download(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         let actual = hash_file(algo, &file);
         if actual.is_empty() {
-            return err(format!("DOWNLOAD cannot compute hash on download\n  for file: \"{file}\""));
+            return err(format!(
+                "DOWNLOAD cannot compute hash on download\n  for file: \"{file}\""
+            ));
         }
         if expected_hash != actual {
             if !status_var.is_empty() && result == 0 {
@@ -877,7 +1070,10 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
     let mut show_progress = false;
     let mut tls_version: Option<String> = None;
     let mut tls_verify: Option<bool> = None;
-    let mut cainfo = interp.get_def("CMAKE_TLS_CAINFO").unwrap_or_default().to_owned();
+    let mut cainfo = interp
+        .get_def("CMAKE_TLS_CAINFO")
+        .unwrap_or_default()
+        .to_owned();
     let mut userpwd = String::new();
     let mut netrc_level = interp.get_safe("CMAKE_NETRC");
     let mut netrc_file = interp.get_safe("CMAKE_NETRC_FILE");
@@ -890,7 +1086,9 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
         match arg {
             "TIMEOUT" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing time for TIMEOUT.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing time for TIMEOUT.");
+                };
                 timeout = atol(value);
             }
             "INACTIVITY_TIMEOUT" => {
@@ -902,59 +1100,81 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
             "LOG" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing VAR for LOG.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing VAR for LOG.");
+                };
                 log_var = value.clone();
             }
             "STATUS" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing VAR for STATUS.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing VAR for STATUS.");
+                };
                 status_var = value.clone();
             }
             "SHOW_PROGRESS" => show_progress = true,
             "TLS_VERSION" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing value for TLS_VERSION.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing value for TLS_VERSION.");
+                };
                 tls_version = Some(value.clone());
             }
             "TLS_VERIFY" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing bool value for TLS_VERIFY.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing bool value for TLS_VERIFY.");
+                };
                 tls_verify = Some(is_on(value));
             }
             "TLS_CAINFO" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing file value for TLS_CAINFO.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing file value for TLS_CAINFO.");
+                };
                 cainfo = value.clone();
             }
             "NETRC_FILE" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing file value for NETRC_FILE.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing file value for NETRC_FILE.");
+                };
                 netrc_file = value.clone();
             }
             "NETRC" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing level value for NETRC.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing level value for NETRC.");
+                };
                 netrc_level = value.clone();
             }
             "USERPWD" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing string for USERPWD.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing string for USERPWD.");
+                };
                 userpwd = value.clone();
             }
             "HTTPHEADER" => {
                 i += 1;
-                let Some(value) = next else { return err("UPLOAD missing string for HTTPHEADER.") };
+                let Some(value) = next else {
+                    return err("UPLOAD missing string for HTTPHEADER.");
+                };
                 headers.push(value.clone());
             }
             _ => {
                 // Do not return error for compatibility reason.
-                interp.issue(MessageType::AuthorWarning, &format!("Unexpected argument: {arg}"));
+                interp.issue(
+                    MessageType::AuthorWarning,
+                    &format!("Unexpected argument: {arg}"),
+                );
             }
         }
         i += 1;
     }
 
-    let (verify, verify_defaulted, version, version_defaulted) = tls_defaults(interp, tls_verify, tls_version);
+    let (verify, verify_defaulted, version, version_defaulted) =
+        tls_defaults(interp, tls_verify, tls_version);
 
     // Open file for reading.
     let path = c_string(&filename);
@@ -991,15 +1211,32 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }};
     }
-    check!(curl.set_long(easy, CURLOPT_FAILONERROR, 1), "UPLOAD cannot set fail on error flag: ");
-    check!(curl.set_long(easy, CURLOPT_UPLOAD, 1), "UPLOAD cannot set upload flag: ");
-    check!(curl.set_str(easy, CURLOPT_URL, &url), "UPLOAD cannot set url: ");
     check!(
-        curl.set_ptr(easy, CURLOPT_WRITEFUNCTION, write_to_memory as WriteFn as *const c_void),
+        curl.set_long(easy, CURLOPT_FAILONERROR, 1),
+        "UPLOAD cannot set fail on error flag: "
+    );
+    check!(
+        curl.set_long(easy, CURLOPT_UPLOAD, 1),
+        "UPLOAD cannot set upload flag: "
+    );
+    check!(
+        curl.set_str(easy, CURLOPT_URL, &url),
+        "UPLOAD cannot set url: "
+    );
+    check!(
+        curl.set_ptr(
+            easy,
+            CURLOPT_WRITEFUNCTION,
+            write_to_memory as WriteFn as *const c_void
+        ),
         "UPLOAD cannot set write function: "
     );
     check!(
-        curl.set_ptr(easy, CURLOPT_DEBUGFUNCTION, debug_callback as DebugFn as *const c_void),
+        curl.set_ptr(
+            easy,
+            CURLOPT_DEBUGFUNCTION,
+            debug_callback as DebugFn as *const c_void
+        ),
         "UPLOAD cannot set debug function: "
     );
     match parse_tls_version(&version) {
@@ -1008,14 +1245,23 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
             if version_defaulted && result == CURLE_NOT_BUILT_IN {
                 result = CURLE_OK;
             }
-            check!(result, format!("UPLOAD cannot set TLS/SSL version {version}: "));
+            check!(
+                result,
+                format!("UPLOAD cannot set TLS/SSL version {version}: ")
+            );
         }
         None => return err(format!("UPLOAD given unknown TLS/SSL version {version}")),
     }
     if verify {
-        check!(curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 1), "UPLOAD cannot set TLS/SSL Verify on: ");
+        check!(
+            curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 1),
+            "UPLOAD cannot set TLS/SSL Verify on: "
+        );
     } else {
-        check!(curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 0), "UPLOAD cannot set TLS/SSL Verify off: ");
+        check!(
+            curl.set_long(easy, CURLOPT_SSL_VERIFYPEER, 0),
+            "UPLOAD cannot set TLS/SSL Verify off: "
+        );
     }
     let cainfo_err = set_ca_info(curl, easy, &cainfo);
     if !cainfo_err.is_empty() {
@@ -1024,47 +1270,85 @@ pub fn upload(interp: &mut Interp, args: &[String]) -> CmdResult {
     let mut response: Vec<u8> = Vec::new();
     let mut debug: Vec<u8> = Vec::new();
     check!(
-        curl.set_ptr(easy, CURLOPT_WRITEDATA, (&raw mut response).cast_const().cast()),
+        curl.set_ptr(
+            easy,
+            CURLOPT_WRITEDATA,
+            (&raw mut response).cast_const().cast()
+        ),
         "UPLOAD cannot set write data: "
     );
     check!(
-        curl.set_ptr(easy, CURLOPT_DEBUGDATA, (&raw mut debug).cast_const().cast()),
+        curl.set_ptr(
+            easy,
+            CURLOPT_DEBUGDATA,
+            (&raw mut debug).cast_const().cast()
+        ),
         "UPLOAD cannot set debug data: "
     );
-    check!(curl.set_long(easy, CURLOPT_FOLLOWLOCATION, 1), "UPLOAD cannot set follow-redirect option: ");
+    check!(
+        curl.set_long(easy, CURLOPT_FOLLOWLOCATION, 1),
+        "UPLOAD cannot set follow-redirect option: "
+    );
     if !log_var.is_empty() {
-        check!(curl.set_long(easy, CURLOPT_VERBOSE, 1), "UPLOAD cannot set verbose: ");
+        check!(
+            curl.set_long(easy, CURLOPT_VERBOSE, 1),
+            "UPLOAD cannot set verbose: "
+        );
     }
     if timeout > 0 {
-        check!(curl.set_long(easy, CURLOPT_TIMEOUT, timeout), "UPLOAD cannot set timeout: ");
+        check!(
+            curl.set_long(easy, CURLOPT_TIMEOUT, timeout),
+            "UPLOAD cannot set timeout: "
+        );
     }
     if inactivity_timeout > 0 {
         // Give up if there is no progress for a long time.
         curl.set_long(easy, CURLOPT_LOW_SPEED_LIMIT, 1);
         curl.set_long(easy, CURLOPT_LOW_SPEED_TIME, inactivity_timeout);
     }
-    let mut progress = Progress { interp: std::ptr::from_mut(interp), text: "upload", current: -1 };
+    let mut progress = Progress {
+        interp: std::ptr::from_mut(interp),
+        text: "upload",
+        current: -1,
+    };
     if show_progress {
-        check!(curl.set_long(easy, CURLOPT_NOPROGRESS, 0), "UPLOAD cannot set noprogress value: ");
         check!(
-            curl.set_ptr(easy, CURLOPT_XFERINFOFUNCTION, upload_progress as XferFn as *const c_void),
+            curl.set_long(easy, CURLOPT_NOPROGRESS, 0),
+            "UPLOAD cannot set noprogress value: "
+        );
+        check!(
+            curl.set_ptr(
+                easy,
+                CURLOPT_XFERINFOFUNCTION,
+                upload_progress as XferFn as *const c_void
+            ),
             "UPLOAD cannot set progress function: "
         );
         check!(
-            curl.set_ptr(easy, CURLOPT_PROGRESSDATA, (&raw mut progress).cast_const().cast()),
+            curl.set_ptr(
+                easy,
+                CURLOPT_PROGRESSDATA,
+                (&raw mut progress).cast_const().cast()
+            ),
             "UPLOAD cannot set progress data: "
         );
     }
     // Now specify which file to upload; libcurl's default read callback
     // freads the FILE*.
-    check!(curl.set_ptr(easy, CURLOPT_INFILE, fin.0.cast_const().cast()), "UPLOAD cannot set input file: ");
+    check!(
+        curl.set_ptr(easy, CURLOPT_INFILE, fin.0.cast_const().cast()),
+        "UPLOAD cannot set input file: "
+    );
     // The C++ casts the unsigned long size to long.
     check!(
         curl.set_long(easy, CURLOPT_INFILESIZE, file_size as c_long),
         "UPLOAD cannot set input file size: "
     );
     if !userpwd.is_empty() {
-        check!(curl.set_str(easy, CURLOPT_USERPWD, &userpwd), "UPLOAD cannot set user password: ");
+        check!(
+            curl.set_str(easy, CURLOPT_USERPWD, &userpwd),
+            "UPLOAD cannot set user password: "
+        );
     }
     let netrc_err = set_netrc_option(curl, easy, &netrc_level.to_ascii_uppercase(), &netrc_file);
     if !netrc_err.is_empty() {

@@ -33,14 +33,16 @@ pub struct GenCtx<'a> {
     /// codemodel target dependencies), computed once per configuration.
     /// Keyed by depender target pointer; dependees are stored by name.
     /// Pointer-free so `GenCtx` stays covariant over `'a`.
-    pub dep_graph: RefCell<
-        Option<std::rc::Rc<HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>>>,
-    >,
+    pub dep_graph:
+        RefCell<Option<std::rc::Rc<HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>>>>,
 }
 
 impl<'a> GenCtx<'a> {
     pub fn new(interp: &'a Interp) -> GenCtx<'a> {
-        let config = interp.get_def("CMAKE_BUILD_TYPE").unwrap_or_default().to_owned();
+        let config = interp
+            .get_def("CMAKE_BUILD_TYPE")
+            .unwrap_or_default()
+            .to_owned();
         GenCtx {
             interp,
             config,
@@ -64,12 +66,15 @@ impl<'a> GenCtx<'a> {
         if self.interp.suppress_dev_warnings {
             return;
         }
-        eprintln!("{}", crate::messages::render(
-            crate::messages::MessageType::AuthorWarning,
-            &message,
-            &backtrace,
-            Some(&self.interp.home_source),
-        ));
+        eprintln!(
+            "{}",
+            crate::messages::render(
+                crate::messages::MessageType::AuthorWarning,
+                &message,
+                &backtrace,
+                Some(&self.interp.home_source),
+            )
+        );
     }
 
     pub fn error(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
@@ -104,7 +109,13 @@ impl<'a> GenCtx<'a> {
     }
 
     pub fn target(&self, name: &str) -> Option<&'a Target> {
-        let real = self.interp.ext.aliases.get(name).map(String::as_str).unwrap_or(name);
+        let real = self
+            .interp
+            .ext
+            .aliases
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or(name);
         self.interp
             .ext
             .targets
@@ -132,7 +143,8 @@ impl<'a> GenCtx<'a> {
     }
 
     pub fn backtrace(&self, id: Option<usize>) -> Vec<Frame> {
-        id.and_then(|id| self.backtraces.borrow().get(id).cloned()).unwrap_or_default()
+        id.and_then(|id| self.backtraces.borrow().get(id).cloned())
+            .unwrap_or_default()
     }
 
     /// Evaluates generator expressions in `text` for `target` (head and
@@ -146,7 +158,13 @@ impl<'a> GenCtx<'a> {
 
     /// The `ext.targets` key of `target`.
     pub fn target_key(&self, target: &Target) -> String {
-        if self.interp.ext.targets.get(&target.name).is_some_and(|found| std::ptr::eq(found, target)) {
+        if self
+            .interp
+            .ext
+            .targets
+            .get(&target.name)
+            .is_some_and(|found| std::ptr::eq(found, target))
+        {
             return target.name.clone();
         }
         self.interp
@@ -310,7 +328,10 @@ impl<'a> GenCtx<'a> {
                 let name = self
                     .target_at(dir, &dependency.target)
                     .map_or(dependency.target.clone(), |target| target.name.clone());
-                if !utilities.iter().any(|(existing, cross)| *existing == name && *cross == dependency.cross) {
+                if !utilities
+                    .iter()
+                    .any(|(existing, cross)| *existing == name && *cross == dependency.cross)
+                {
                     utilities.push((name, dependency.cross));
                 }
             }
@@ -363,6 +384,10 @@ impl<'a> GenCtx<'a> {
             self.error(Vec::new(), format!("Unable to write build files: {error}"));
         }
         let errors = self.errors.borrow().clone();
-        if errors.is_empty() { Ok(()) } else { Err(errors) }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }

@@ -39,7 +39,9 @@ pub(crate) fn export_package_info_enabled(interp: &mut Interp) -> bool {
         let warning = if enabled {
             EXPORT_PACKAGE_INFO_DESCRIPTION.to_owned()
         } else {
-            format!("{EXPORT_PACKAGE_INFO_VARIABLE} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
+            format!(
+                "{EXPORT_PACKAGE_INFO_VARIABLE} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature."
+            )
         };
         interp.issue(MessageType::AuthorWarning, &warning);
     }
@@ -84,7 +86,11 @@ fn enable_languages(interp: &mut Interp, languages: &[String], optional: bool) {
         }
     }
     if !duplicates.is_empty() {
-        let quantity = if duplicates.len() == 1 { " has" } else { "s have" };
+        let quantity = if duplicates.len() == 1 {
+            " has"
+        } else {
+            "s have"
+        };
         let text = format!(
             "Languages to be enabled may not be specified more than once at the same time. The following language{quantity} been specified multiple times: {}",
             duplicates.join(", ")
@@ -113,7 +119,13 @@ fn enable_languages(interp: &mut Interp, languages: &[String], optional: bool) {
 fn top_level_set(interp: &mut Interp, name: &str, value: &str) {
     if interp.get_def(name).is_none() || is_root(interp) {
         interp.unset_def(name);
-        interp.add_cache_def(name, Some(value), Some("Value Computed by CMake"), CacheType::Static, false);
+        interp.add_cache_def(
+            name,
+            Some(value),
+            Some("Value Computed by CMake"),
+            CacheType::Static,
+            false,
+        );
     }
 }
 
@@ -185,8 +197,7 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
             .copied()
             .find(|keyword| *keyword == arg)
             .or_else(|| {
-                (compat_enabled && arg == COMPAT_VERSION_KEYWORD)
-                    .then_some(COMPAT_VERSION_KEYWORD)
+                (compat_enabled && arg == COMPAT_VERSION_KEYWORD).then_some(COMPAT_VERSION_KEYWORD)
             });
         if let Some(keyword) = keyword {
             if let Some(previous) = current
@@ -249,10 +260,19 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
     let cmp0180 = interp.policy_status("CMP0180");
     let binary = interp.current_binary_dir();
     let source = interp.current_source_dir();
-    for (suffix, value) in [("_BINARY_DIR", binary.clone()), ("_SOURCE_DIR", source.clone())] {
+    for (suffix, value) in [
+        ("_BINARY_DIR", binary.clone()),
+        ("_SOURCE_DIR", source.clone()),
+    ] {
         let variable = format!("{name}{suffix}");
         let already = interp.get_normal_def(&variable).is_some();
-        interp.add_cache_def(&variable, Some(&value), Some("Value Computed by CMake"), CacheType::Static, false);
+        interp.add_cache_def(
+            &variable,
+            Some(&value),
+            Some("Value Computed by CMake"),
+            CacheType::Static,
+            false,
+        );
         if cmp0180 == PolicyStatus::New || already {
             interp.set_def(variable, value);
         }
@@ -374,7 +394,11 @@ fn project(interp: &mut Interp, args: &[String]) -> CmdResult {
     create(interp, "VERSION_MINOR", &components[1].clone());
     create(interp, "VERSION_PATCH", &components[2].clone());
     create(interp, "VERSION_TWEAK", &components[3].clone());
-    create(interp, "COMPAT_VERSION", compat_version.as_deref().unwrap_or(""));
+    create(
+        interp,
+        "COMPAT_VERSION",
+        compat_version.as_deref().unwrap_or(""),
+    );
     create(interp, "DESCRIPTION", description.as_deref().unwrap_or(""));
     create(interp, "HOMEPAGE_URL", homepage.as_deref().unwrap_or(""));
     if unparsed.is_empty() && languages.is_none() {

@@ -473,7 +473,10 @@ impl FileApi {
         let object = self.build_object(interp, o);
         let mut entry = jobj();
         entry.set("kind", object.get("kind").cloned().unwrap_or(Json::Null));
-        entry.set("version", object.get("version").cloned().unwrap_or(Json::Null));
+        entry.set(
+            "version",
+            object.get("version").cloned().unwrap_or(Json::Null),
+        );
         let file = self.write_json_file(&object, &object_name(o), false);
         entry.set("jsonFile", jstr(file));
         self.reply_index_objects.insert(o, entry.clone());
@@ -482,11 +485,23 @@ impl FileApi {
 
     fn build_object(&mut self, interp: &Interp, object: Object) -> Json {
         let (mut value, version) = match object.kind {
-            ObjectKind::CodeModel => (codemodel::build(self, interp), build_version(2, CODEMODEL_V2_MINOR)),
-            ObjectKind::ConfigureLog => (dump_configure_log(interp), build_version(1, CONFIGURE_LOG_V1_MINOR)),
+            ObjectKind::CodeModel => (
+                codemodel::build(self, interp),
+                build_version(2, CODEMODEL_V2_MINOR),
+            ),
+            ObjectKind::ConfigureLog => (
+                dump_configure_log(interp),
+                build_version(1, CONFIGURE_LOG_V1_MINOR),
+            ),
             ObjectKind::Cache => (dump_cache(interp), build_version(2, CACHE_V2_MINOR)),
-            ObjectKind::CMakeFiles => (dump_cmake_files(interp), build_version(1, CMAKE_FILES_V1_MINOR)),
-            ObjectKind::Toolchains => (dump_toolchains(interp), build_version(1, TOOLCHAINS_V1_MINOR)),
+            ObjectKind::CMakeFiles => (
+                dump_cmake_files(interp),
+                build_version(1, CMAKE_FILES_V1_MINOR),
+            ),
+            ObjectKind::Toolchains => (
+                dump_toolchains(interp),
+                build_version(1, TOOLCHAINS_V1_MINOR),
+            ),
             ObjectKind::InternalTest => (
                 jobj(),
                 if object.version == 2 {
@@ -667,7 +682,10 @@ fn build_client_request(request: &jsoncpp::V) -> ClientRequest {
     r
 }
 
-fn read_request_versions(version: &jsoncpp::V, versions: &mut Vec<RequestVersion>) -> Result<(), String> {
+fn read_request_versions(
+    version: &jsoncpp::V,
+    versions: &mut Vec<RequestVersion>,
+) -> Result<(), String> {
     if version.is_array() {
         for v in version.items() {
             read_request_version(v, true, versions)?;
@@ -678,7 +696,11 @@ fn read_request_versions(version: &jsoncpp::V, versions: &mut Vec<RequestVersion
     }
 }
 
-fn read_request_version(version: &jsoncpp::V, in_array: bool, result: &mut Vec<RequestVersion>) -> Result<(), String> {
+fn read_request_version(
+    version: &jsoncpp::V,
+    in_array: bool,
+    result: &mut Vec<RequestVersion>,
+) -> Result<(), String> {
     if version.is_uint() {
         result.push(RequestVersion {
             major: version.as_uint(),
@@ -815,7 +837,9 @@ fn dump_cmake_files(interp: &Interp) -> Json {
             if is_cmake {
                 input.set("isCMake", Json::Bool(true));
             }
-            if !crate::util::is_subdirectory(file, top_source) && !crate::util::is_subdirectory(file, top_build) {
+            if !crate::util::is_subdirectory(file, top_source)
+                && !crate::util::is_subdirectory(file, top_build)
+            {
                 input.set("isExternal", Json::Bool(true));
             }
             if out_of_source && crate::util::is_subdirectory(file, top_build) {
@@ -834,8 +858,10 @@ fn dump_cmake_files(interp: &Interp) -> Json {
     cmake_files.set("inputs", inputs);
     // cmGlobVerificationManager::GetCacheEntries: one entry per key, in key
     // order (Recurse, ListDirectories, FollowSymlinks, Relative, Expression).
-    let mut globs: BTreeMap<(bool, bool, bool, String, String), &crate::commands::file::GlobDependency> =
-        BTreeMap::new();
+    let mut globs: BTreeMap<
+        (bool, bool, bool, String, String),
+        &crate::commands::file::GlobDependency,
+    > = BTreeMap::new();
     for entry in &interp.ext.glob_dependencies {
         globs
             .entry((
@@ -881,7 +907,11 @@ fn dump_cmake_files(interp: &Interp) -> Json {
 
 /// `cmMakefile::GetDefinition` on the top-level directory after configure.
 pub(crate) fn top_definition(interp: &Interp, name: &str) -> Option<String> {
-    match interp.dir_final_vars.first().and_then(|vars| vars.get(name)) {
+    match interp
+        .dir_final_vars
+        .first()
+        .and_then(|vars| vars.get(name))
+    {
         Some(value) => value.clone(),
         None => interp.cache.value(name).map(str::to_owned),
     }
@@ -915,8 +945,20 @@ fn dump_toolchains(interp: &Interp) -> Json {
         set_var(&mut compiler, lang, "version", "COMPILER_VERSION", false);
         set_var(&mut compiler, lang, "target", "COMPILER_TARGET", false);
         let mut implicit = jobj();
-        set_var(&mut implicit, lang, "includeDirectories", "IMPLICIT_INCLUDE_DIRECTORIES", true);
-        set_var(&mut implicit, lang, "linkDirectories", "IMPLICIT_LINK_DIRECTORIES", true);
+        set_var(
+            &mut implicit,
+            lang,
+            "includeDirectories",
+            "IMPLICIT_INCLUDE_DIRECTORIES",
+            true,
+        );
+        set_var(
+            &mut implicit,
+            lang,
+            "linkDirectories",
+            "IMPLICIT_LINK_DIRECTORIES",
+            true,
+        );
         set_var(
             &mut implicit,
             lang,
@@ -924,10 +966,22 @@ fn dump_toolchains(interp: &Interp) -> Json {
             "IMPLICIT_LINK_FRAMEWORK_DIRECTORIES",
             true,
         );
-        set_var(&mut implicit, lang, "linkLibraries", "IMPLICIT_LINK_LIBRARIES", true);
+        set_var(
+            &mut implicit,
+            lang,
+            "linkLibraries",
+            "IMPLICIT_LINK_LIBRARIES",
+            true,
+        );
         compiler.set("implicit", implicit);
         toolchain.set("compiler", compiler);
-        set_var(&mut toolchain, lang, "sourceFileExtensions", "SOURCE_FILE_EXTENSIONS", true);
+        set_var(
+            &mut toolchain,
+            lang,
+            "sourceFileExtensions",
+            "SOURCE_FILE_EXTENSIONS",
+            true,
+        );
         toolchains.push(toolchain);
     }
     let mut out = jobj();
@@ -942,10 +996,19 @@ fn dump_configure_log(interp: &Interp) -> Json {
     let mut out = jobj();
     out.set(
         "path",
-        jstr(format!("{}/CMakeFiles/CMakeConfigureLog.yaml", interp.home_binary)),
+        jstr(format!(
+            "{}/CMakeFiles/CMakeConfigureLog.yaml",
+            interp.home_binary
+        )),
     );
     let mut names = jarr();
-    for name in ["message-v1", "try_compile-v1", "try_run-v1", "find-v1", "find_package-v1"] {
+    for name in [
+        "message-v1",
+        "try_compile-v1",
+        "try_run-v1",
+        "find-v1",
+        "find_package-v1",
+    ] {
         names.push(jstr(name));
     }
     out.set("eventKindNames", names);

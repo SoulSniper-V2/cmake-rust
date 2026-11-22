@@ -575,7 +575,9 @@ fn storage<'a>(interp: &'a mut Interp, object: Object<'_>) -> Option<&'a mut Pro
             let key = crate::state::find_target_key(interp, name)?;
             &mut interp.ext.targets.get_mut(&key)?.props
         }
-        Object::Source(index, path) => &mut crate::commands::target::get_or_create_source(interp, index, path).props,
+        Object::Source(index, path) => {
+            &mut crate::commands::target::get_or_create_source(interp, index, path).props
+        }
         Object::Test(index, name) => {
             &mut interp
                 .ext

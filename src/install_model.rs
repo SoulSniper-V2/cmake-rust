@@ -53,7 +53,10 @@ pub enum InstallAction {
         namelink: Namelink,
         imported: bool,
     },
-    FileSet { name: String, set: String },
+    FileSet {
+        name: String,
+        set: String,
+    },
     Bmi(String),
     Export(InstallExport),
     /// `install(PACKAGE_INFO ... EXPORT <set>)`.
@@ -76,10 +79,22 @@ pub enum InstallAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Namelink { None, Only, Skip }
+pub enum Namelink {
+    None,
+    Only,
+    Skip,
+}
 
 #[derive(Clone, Copy, Debug)]
-pub enum CopyKind { File, Program, Directory, Executable, Static, Shared, Module }
+pub enum CopyKind {
+    File,
+    Program,
+    Directory,
+    Executable,
+    Static,
+    Shared,
+    Module,
+}
 
 impl CopyKind {
     pub fn token(self) -> &'static str {

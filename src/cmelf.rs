@@ -251,9 +251,7 @@ impl Internal {
         let n = sec.sh_size / sec.sh_entsize;
         let dyn_size = if self.is64 { 16 } else { 8 };
         for j in 0..n {
-            let off = sec
-                .sh_offset
-                .wrapping_add(sec.sh_entsize.wrapping_mul(j)) as usize;
+            let off = sec.sh_offset.wrapping_add(sec.sh_entsize.wrapping_mul(j)) as usize;
             if self.data.get(off..off.wrapping_add(dyn_size)).is_none() {
                 self.set_error("Error reading entry from DYNAMIC section.");
                 self.dynamic_section_index = -1;
@@ -280,7 +278,8 @@ impl Internal {
             return 0;
         }
         let sec = &self.section_headers[self.dynamic_section_index as usize];
-        sec.sh_offset.wrapping_add(sec.sh_entsize.wrapping_mul(j as u64))
+        sec.sh_offset
+            .wrapping_add(sec.sh_entsize.wrapping_mul(j as u64))
     }
 
     fn get_dynamic_entries(&mut self) -> Vec<DynamicEntry> {
@@ -499,10 +498,7 @@ impl Elf {
 
     fn dynamic_string(&mut self, tag: u32) -> Option<StringEntry> {
         let i = self.internal.as_mut()?;
-        if !matches!(
-            i.file_type,
-            FileType::Executable | FileType::SharedLibrary
-        ) {
+        if !matches!(i.file_type, FileType::Executable | FileType::SharedLibrary) {
             return None;
         }
         i.get_dynamic_section_string(tag)

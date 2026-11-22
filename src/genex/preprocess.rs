@@ -89,7 +89,10 @@ pub fn collect(
             } else if bytes[index] == b'>' {
                 if name_start.is_none() && !genexps.is_empty() {
                     let (name, start) = genexps.pop().unwrap();
-                    collected.entry(name).or_default().push(input[start..index].to_owned());
+                    collected
+                        .entry(name)
+                        .or_default()
+                        .push(input[start..index].to_owned());
                 }
                 if genexps.is_empty() {
                     break;

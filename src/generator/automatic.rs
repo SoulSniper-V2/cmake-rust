@@ -62,7 +62,11 @@ pub fn add_automatic_sources(interp: &mut Interp) {
             }
         }
     }
-    let reuses = |interp: &Interp, key: &str| interp.ext.targets[key].props.contains("PRECOMPILE_HEADERS_REUSE_FROM");
+    let reuses = |interp: &Interp, key: &str| {
+        interp.ext.targets[key]
+            .props
+            .contains("PRECOMPILE_HEADERS_REUSE_FROM")
+    };
     for key in &keys {
         if any_unity && is_on_opt(interp.ext.targets[key].props.get("UNITY_BUILD")) {
             let changes = {
@@ -96,7 +100,11 @@ pub fn add_automatic_sources(interp: &mut Interp) {
 fn apply(interp: &mut Interp, key: &str, changes: Changes) {
     let dir = interp.ext.targets[key].makefile;
     for (backtrace, message) in changes.errors {
-        interp.issue_at(crate::messages::MessageType::FatalError, &message, &backtrace);
+        interp.issue_at(
+            crate::messages::MessageType::FatalError,
+            &message,
+            &backtrace,
+        );
     }
     for (path, name, value, append) in changes.source_props {
         let source = crate::commands::target::get_or_create_source(interp, dir, &path);
@@ -147,7 +155,9 @@ fn copy_file_times(from: &str, to: &str) {
         && let Ok(file) = std::fs::File::options().write(true).open(to)
     {
         let accessed = meta.accessed().unwrap_or(modified);
-        let times = std::fs::FileTimes::new().set_modified(modified).set_accessed(accessed);
+        let times = std::fs::FileTimes::new()
+            .set_modified(modified)
+            .set_accessed(accessed);
         let _ = file.set_times(times);
     }
 }
@@ -250,7 +260,12 @@ fn add_pch_dependencies(ctx: &GenCtx, target: &Target) -> Changes {
         }
         let reuse_from = target.props.get("PRECOMPILE_HEADERS_REUSE_FROM");
         // PCH sources cannot contain C++ module references.
-        changes.source_props.push((pch_source.clone(), "CXX_SCAN_FOR_MODULES".into(), "0".into(), false));
+        changes.source_props.push((
+            pch_source.clone(),
+            "CXX_SCAN_FOR_MODULES".into(),
+            "0".into(),
+            false,
+        ));
         if reuse_from.is_none() {
             changes.add_sources.push((pch_source.clone(), true));
         }
@@ -281,11 +296,11 @@ fn add_pch_dependencies(ctx: &GenCtx, target: &Target) -> Changes {
                         } else {
                             format!("LINK_FLAGS_{config_upper}")
                         };
-                        let escaped = crate::outconv::escape_for_shell(
-                            &object,
-                            crate::outconv::NINJA_UNIX,
-                        );
-                        changes.target_appends.push((property, format!(" {escaped}"), true));
+                        let escaped =
+                            crate::outconv::escape_for_shell(&object, crate::outconv::NINJA_UNIX);
+                        changes
+                            .target_appends
+                            .push((property, format!(" {escaped}"), true));
                     } else if reuse.kind == TargetKind::ObjectLibrary {
                         changes.target_appends.push((
                             "INTERFACE_LINK_LIBRARIES".into(),
@@ -296,7 +311,12 @@ fn add_pch_dependencies(ctx: &GenCtx, target: &Target) -> Changes {
                 }
             }
         } else {
-            changes.source_props.push((pch_source.clone(), "PCH_EXTENSION".into(), pch_extension, false));
+            changes.source_props.push((
+                pch_source.clone(),
+                "PCH_EXTENSION".into(),
+                pch_extension,
+                false,
+            ));
         }
         // The header is grouped as "Precompile Header File".
         changes.add_sources.push((pch_header, false));
@@ -326,7 +346,11 @@ fn unity_file_extension(language: &str) -> &'static str {
 fn relative_path(from_dir: &str, to: &str) -> String {
     let from: Vec<&str> = from_dir.split('/').filter(|p| !p.is_empty()).collect();
     let to_parts: Vec<&str> = to.split('/').filter(|p| !p.is_empty()).collect();
-    let common = from.iter().zip(&to_parts).take_while(|(a, b)| a == b).count();
+    let common = from
+        .iter()
+        .zip(&to_parts)
+        .take_while(|(a, b)| a == b)
+        .count();
     let mut parts: Vec<&str> = std::iter::repeat_n("..", from.len() - common).collect();
     parts.extend(&to_parts[common..]);
     parts.join("/")
@@ -406,7 +430,11 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
     let batch_size: usize = prop("UNITY_BUILD_BATCH_SIZE")
         .map(|value| {
             // std::atoi
-            let digits: String = value.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = value
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             digits.parse().unwrap_or(0)
         })
         .unwrap_or(0);
@@ -433,7 +461,11 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
         let mut files: Vec<(String, Vec<&UnityBatchedSource>)> = Vec::new();
         match mode.as_deref() {
             None | Some("BATCH") => {
-                let size = if batch_size == 0 { filtered.len() } else { batch_size };
+                let size = if batch_size == 0 {
+                    filtered.len()
+                } else {
+                    batch_size
+                };
                 for (batch, chunk) in filtered.chunks(size.max(1)).enumerate() {
                     let name = format!("{base}unity_{batch}{}", unity_file_extension(language));
                     files.push((name, chunk.to_vec()));
@@ -454,8 +486,10 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
                 let order = unordered_map_order(groups.iter().map(|(name, _)| name.as_str()));
                 let mut groups: Vec<Option<(String, Vec<&UnityBatchedSource>)>> =
                     groups.into_iter().map(Some).collect();
-                let groups: Vec<(String, Vec<&UnityBatchedSource>)> =
-                    order.into_iter().filter_map(|index| groups[index].take()).collect();
+                let groups: Vec<(String, Vec<&UnityBatchedSource>)> = order
+                    .into_iter()
+                    .filter_map(|index| groups[index].take())
+                    .collect();
                 for (group, list) in groups {
                     let name = format!("{base}unity_{group}{}", unity_file_extension(language));
                     files.push((name, list));
@@ -477,9 +511,12 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
             let mut text = String::from("/* generated by CMake */\n\n");
             for ubs in batched {
                 changes.unity_batched.push(ubs.path.clone());
-                changes
-                    .source_props
-                    .push((ubs.path.clone(), "UNITY_SOURCE_FILE".into(), name.clone(), false));
+                changes.source_props.push((
+                    ubs.path.clone(),
+                    "UNITY_SOURCE_FILE".into(),
+                    name.clone(),
+                    false,
+                ));
                 write_unity_include(
                     ctx,
                     dir,
@@ -505,9 +542,12 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
             }
             if relocatable {
                 let source_dir = ctx.interp.makefiles[dir].source_dir.clone();
-                changes
-                    .source_props
-                    .push((name.clone(), "INCLUDE_DIRECTORIES".into(), source_dir, true));
+                changes.source_props.push((
+                    name.clone(),
+                    "INCLUDE_DIRECTORIES".into(),
+                    source_dir,
+                    true,
+                ));
             }
         }
     }
@@ -665,6 +705,15 @@ mod tests {
             .into_iter()
             .map(|i| keys[i].as_str())
             .collect();
-        assert_eq!(order, ["grp231", "grp224", "grp252", "grp203", "grp84", "grp77", "grp42", "grp35", "grp28", "grp119", "grp245", "grp140", "grp259", "grp14", "grp175", "grp56", "grp7", "grp133", "grp273", "grp70", "grp21", "grp49", "grp91", "grp105", "grp217", "grp0", "grp98", "grp168", "grp63", "grp112", "grp182", "grp126", "grp210", "grp154", "grp266", "grp147", "grp238", "grp189", "grp161", "grp196"]);
+        assert_eq!(
+            order,
+            [
+                "grp231", "grp224", "grp252", "grp203", "grp84", "grp77", "grp42", "grp35",
+                "grp28", "grp119", "grp245", "grp140", "grp259", "grp14", "grp175", "grp56",
+                "grp7", "grp133", "grp273", "grp70", "grp21", "grp49", "grp91", "grp105", "grp217",
+                "grp0", "grp98", "grp168", "grp63", "grp112", "grp182", "grp126", "grp210",
+                "grp154", "grp266", "grp147", "grp238", "grp189", "grp161", "grp196"
+            ]
+        );
     }
 }

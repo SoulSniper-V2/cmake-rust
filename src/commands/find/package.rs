@@ -713,9 +713,11 @@ impl Package {
             }
             interp.unset_def(&message_var);
             let version_var = format!("{name}_VERSION");
-            for (key, value) in
-                version_vars(&version_var, &self.selected_version, self.found_version_parts.as_deref())
-            {
+            for (key, value) in version_vars(
+                &version_var,
+                &self.selected_version,
+                self.found_version_parts.as_deref(),
+            ) {
                 interp.set_def(key, value);
             }
             if self.selected_version.is_empty() {
@@ -802,7 +804,10 @@ impl Package {
                 || (self.use_config && !self.use_module && self.considered.is_empty()))
         {
             if !self.quiet {
-                crate::commands::message::status_line(interp, &format!("Could NOT find {name} (missing: {name}_DIR)"));
+                crate::commands::message::status_line(
+                    interp,
+                    &format!("Could NOT find {name} (missing: {name}_DIR)"),
+                );
             }
             return;
         }
@@ -998,11 +1003,7 @@ fn restore(interp: &mut Interp, key: &str, value: Option<String>) {
     }
 }
 
-fn version_vars(
-    prefix: &str,
-    version: &str,
-    parts: Option<&[u32]>,
-) -> Vec<(String, String)> {
+fn version_vars(prefix: &str, version: &str, parts: Option<&[u32]>) -> Vec<(String, String)> {
     let mut vars = vec![(prefix.to_owned(), version.to_owned())];
     let [mut major, mut minor, mut patch, mut tweak] = [0u32; 4];
     let count = if let Some(parts) = parts {

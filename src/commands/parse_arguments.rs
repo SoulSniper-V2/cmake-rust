@@ -175,7 +175,11 @@ fn str_to_ulong(s: &str) -> Option<u64> {
     if i == start || i != b.len() || overflow {
         return None;
     }
-    Some(if negative { value.wrapping_neg() } else { value })
+    Some(if negative {
+        value.wrapping_neg()
+    } else {
+        value
+    })
 }
 
 fn escape_arg(arg: &str) -> String {
@@ -184,12 +188,7 @@ fn escape_arg(arg: &str) -> String {
 
 fn join_list(items: &[String], escape: bool) -> String {
     if escape {
-        util::join_list(
-            &items
-                .iter()
-                .map(|a| escape_arg(a))
-                .collect::<Vec<String>>(),
-        )
+        util::join_list(&items.iter().map(|a| escape_arg(a)).collect::<Vec<String>>())
     } else {
         util::join_list(items)
     }
@@ -222,7 +221,10 @@ fn parse_arguments_command(interp: &mut Interp, args: &[String]) -> CmdResult {
             None => {
                 interp.issue(
                     MessageType::FatalError,
-                    &format!("PARSE_ARGV index '{}' is not an unsigned integer", args[iter]),
+                    &format!(
+                        "PARSE_ARGV index '{}' is not an unsigned integer",
+                        args[iter]
+                    ),
                 );
                 interp.set_fatal();
                 return Ok(());

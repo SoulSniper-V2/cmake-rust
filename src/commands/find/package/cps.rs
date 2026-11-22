@@ -12,9 +12,7 @@ use crate::cache::convert_to_unix_slashes;
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::{Frame, MessageType};
 use crate::state::TargetKind;
-use crate::util::{
-    CompareOp, filename_name, filename_path, is_full_path, version_compare,
-};
+use crate::util::{CompareOp, filename_name, filename_path, is_full_path, version_compare};
 
 use super::*;
 
@@ -39,7 +37,9 @@ pub(super) fn import_package_info_enabled(interp: &mut Interp) -> bool {
         let warning = if enabled {
             IMPORT_PACKAGE_INFO_DESCRIPTION.to_owned()
         } else {
-            format!("{IMPORT_PACKAGE_INFO_VARIABLE} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
+            format!(
+                "{IMPORT_PACKAGE_INFO_VARIABLE} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature."
+            )
         };
         interp.issue(MessageType::AuthorWarning, &warning);
     }
@@ -233,7 +233,9 @@ fn append_language_properties(
                 let Some(lang) = map_language(original, true) else {
                     interp.issue(
                         MessageType::Warning,
-                        &format!("ignoring unknown language \"{original}\" in {key} for {target_name}"),
+                        &format!(
+                            "ignoring unknown language \"{original}\" in {key} for {target_name}"
+                        ),
                     );
                     continue;
                 };
@@ -260,12 +262,7 @@ fn append_language_properties(
 }
 
 /// `AddCompileFeature`: `cNN`/`cxxNN` standards, `gnu`, and `threads`.
-fn add_compile_feature(
-    interp: &mut Interp,
-    target: &str,
-    configuration: &str,
-    value: &str,
-) {
+fn add_compile_feature(interp: &mut Interp, target: &str, configuration: &str, value: &str) {
     // "^[Cc]([+][+])?([0-9][0-9])$"
     let bytes = value.as_bytes();
     let feature = match bytes {
@@ -287,14 +284,26 @@ fn add_compile_feature(
     } else if value.eq_ignore_ascii_case("gnu") {
         // Not implemented in CMake at this time
     } else if value.eq_ignore_ascii_case("threads") {
-        append_property(interp, target, "LINK_LIBRARIES", configuration, "Threads::Threads");
+        append_property(
+            interp,
+            target,
+            "LINK_LIBRARIES",
+            configuration,
+            "Threads::Threads",
+        );
     }
 }
 
 /// `AddLinkFeature`.
 fn add_link_feature(interp: &mut Interp, target: &str, configuration: &str, value: &str) {
     if value.eq_ignore_ascii_case("thread") {
-        append_property(interp, target, "LINK_LIBRARIES", configuration, "Threads::Threads");
+        append_property(
+            interp,
+            target,
+            "LINK_LIBRARIES",
+            configuration,
+            "Threads::Threads",
+        );
     }
 }
 
@@ -357,7 +366,13 @@ fn add_definitions(
                     "$<$<COMPILE_LANGUAGE:{lang}>:{}>",
                     build_definition(name, value)
                 );
-                append_property(interp, target, "COMPILE_DEFINITIONS", configuration, &definition);
+                append_property(
+                    interp,
+                    target,
+                    "COMPILE_DEFINITIONS",
+                    configuration,
+                    &definition,
+                );
             }
         }
     }
@@ -556,10 +571,7 @@ impl Reader {
             let full = if configuration.is_empty() {
                 format!("IMPORTED_{property}")
             } else {
-                format!(
-                    "IMPORTED_{property}_{}",
-                    configuration.to_ascii_uppercase()
-                )
+                format!("IMPORTED_{property}_{}", configuration.to_ascii_uppercase())
             };
             let resolved = self.resolve_path(&json_string(value));
             if let Some(target) = interp.ext.targets.get_mut(target) {
@@ -581,9 +593,11 @@ impl Reader {
         // Add configuration (if applicable).
         if !configuration.is_empty() {
             if let Some(target) = interp.ext.targets.get_mut(target) {
-                target
-                    .props
-                    .append("IMPORTED_CONFIGURATIONS", &configuration.to_ascii_uppercase(), false);
+                target.props.append(
+                    "IMPORTED_CONFIGURATIONS",
+                    &configuration.to_ascii_uppercase(),
+                    false,
+                );
             }
         }
 
@@ -636,7 +650,13 @@ impl Reader {
 
         // Add link name/location(s).
         self.set_import_property(interp, target, "LOCATION", configuration, &data["location"]);
-        self.set_import_property(interp, target, "IMPLIB", configuration, &data["link_location"]);
+        self.set_import_property(
+            interp,
+            target,
+            "IMPLIB",
+            configuration,
+            &data["link_location"],
+        );
         self.set_import_property(interp, target, "SONAME", configuration, &data["link_name"]);
 
         // Add link languages.
@@ -687,9 +707,10 @@ impl Reader {
         if !self.default_configurations.is_empty()
             && let Some(target) = interp.ext.targets.get_mut(&key)
         {
-            target
-                .props
-                .set("IMPORTED_CONFIGURATIONS", self.default_configurations.join(";"));
+            target.props.set(
+                "IMPORTED_CONFIGURATIONS",
+                self.default_configurations.join(";"),
+            );
         }
         // Set target properties.
         self.set_target_properties(interp, &key, name, data, package, "");
@@ -770,7 +791,10 @@ impl Reader {
         if configuration.is_empty() {
             interp.issue(
                 MessageType::Warning,
-                &format!("supplemental file {} does not specify a configuration", self.path),
+                &format!(
+                    "supplemental file {} does not specify a configuration",
+                    self.path
+                ),
             );
             return Ok(());
         }
@@ -852,11 +876,9 @@ fn find_supplementals(base: &str) -> Vec<String> {
     entries
         .into_iter()
         .filter(|entry| {
-            entry
-                .strip_prefix(stem)
-                .is_some_and(|rest| {
-                    rest.starts_with('@') && rest[1..].to_ascii_lowercase().ends_with(".cps")
-                })
+            entry.strip_prefix(stem).is_some_and(|rest| {
+                rest.starts_with('@') && rest[1..].to_ascii_lowercase().ends_with(".cps")
+            })
         })
         .map(|entry| format!("{dir}/{entry}"))
         .collect()
@@ -891,12 +913,8 @@ pub(super) fn check_version(pkg: &mut Package, config: &str) -> bool {
                 } else if pkg.version.exact {
                     // If EXACT is specified, the version must be exactly the
                     // requested version.
-                    result =
-                        version_compare(CompareOp::Equal, &pkg.version.min, &version);
-                } else if reader
-                    .parse_version(reader.compat_version())
-                    .is_some()
-                {
+                    result = version_compare(CompareOp::Equal, &pkg.version.min, &version);
+                } else if reader.parse_version(reader.compat_version()).is_some() {
                     // If yes, the initial result is whether the requested
                     // version is between the actual version and the compat
                     // version, inclusive.
@@ -909,11 +927,7 @@ pub(super) fn check_version(pkg: &mut Package, config: &str) -> bool {
                         result = if pkg.version.max_excluded {
                             version_compare(CompareOp::Greater, &pkg.version.max, &version)
                         } else {
-                            version_compare(
-                                CompareOp::GreaterEqual,
-                                &pkg.version.max,
-                                &version,
-                            )
+                            version_compare(CompareOp::GreaterEqual, &pkg.version.max, &version)
                         };
                     }
                 } else {
@@ -938,16 +952,9 @@ pub(super) fn check_version(pkg: &mut Package, config: &str) -> bool {
             }
 
             // Verify that all required components are available.
-            let required: BTreeSet<String> = pkg
-                .required
-                .union(&pkg.required_targets)
-                .cloned()
-                .collect();
-            if required
-                .difference(&all_components)
-                .next()
-                .is_some()
-            {
+            let required: BTreeSet<String> =
+                pkg.required.union(&pkg.required_targets).cloned().collect();
+            if required.difference(&all_components).next().is_some() {
                 result = false;
             }
 

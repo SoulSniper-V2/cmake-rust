@@ -97,7 +97,10 @@ fn set(interp: &mut Interp, args: &[String]) -> CmdResult {
         match CacheType::parse_strict(&args[start + 1]) {
             Some(parsed) => kind = parsed,
             None => {
-                let text = format!("implicitly converting '{}' to 'STRING' type.", args[start + 1]);
+                let text = format!(
+                    "implicitly converting '{}' to 'STRING' type.",
+                    args[start + 1]
+                );
                 interp.issue(MessageType::AuthorWarning, &text);
             }
         }
@@ -176,7 +179,11 @@ fn option(interp: &mut Interp, args: &[String]) -> CmdResult {
             PolicyStatus::Old => {}
         }
     }
-    let initial = if args.len() == 3 { args[2].clone() } else { "OFF".to_owned() };
+    let initial = if args.len() == 3 {
+        args[2].clone()
+    } else {
+        "OFF".to_owned()
+    };
     if let Some(existing) = interp.cache.get(name)
         && existing.kind != CacheType::Uninitialized
     {
@@ -310,7 +317,10 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let mut file = args[0].clone();
     if file.is_empty() {
-        interp.issue(MessageType::AuthorWarning, "include() given empty file name (ignored).");
+        interp.issue(
+            MessageType::AuthorWarning,
+            "include() given empty file name (ignored).",
+        );
         return Ok(());
     }
     if !util::is_full_path(&file) {
@@ -363,7 +373,14 @@ fn include(interp: &mut Interp, args: &[String]) -> CmdResult {
     // left open even when NO_POLICY_SCOPE skipped the include's own push.
     interp.include_policy_scope_cleanup(&full, policy_depth);
     if !result_var.is_empty() {
-        interp.set_def(result_var.clone(), if ok { full.clone() } else { "NOTFOUND".to_owned() });
+        interp.set_def(
+            result_var.clone(),
+            if ok {
+                full.clone()
+            } else {
+                "NOTFOUND".to_owned()
+            },
+        );
     }
     if !optional && !ok && !interp.fatal {
         return err(format!("could not load requested file:\n  {file}"));
@@ -591,7 +608,12 @@ pub fn apply_policy_version(interp: &mut Interp, min: &str, max: &str) -> bool {
     apply_policy_version_ex(interp, min, max, true)
 }
 
-pub fn apply_policy_version_ex(interp: &mut Interp, min: &str, max: &str, warn_compat: bool) -> bool {
+pub fn apply_policy_version_ex(
+    interp: &mut Interp,
+    min: &str,
+    max: &str,
+    warn_compat: bool,
+) -> bool {
     let (parts, count) = scan_version(min);
     if count < 2 {
         let text = format!(
@@ -640,7 +662,9 @@ pub fn apply_policy_version_ex(interp: &mut Interp, min: &str, max: &str, warn_c
         patch = max_parts[2];
     }
     // CMAKE_POLICY_VERSION_MINIMUM
-    if let Some(minimum) = interp.get_def("CMAKE_POLICY_VERSION_MINIMUM").map(str::to_owned)
+    if let Some(minimum) = interp
+        .get_def("CMAKE_POLICY_VERSION_MINIMUM")
+        .map(str::to_owned)
         && !minimum.is_empty()
     {
         let (var_parts, var_count) = scan_version(&minimum);

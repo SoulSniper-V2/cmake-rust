@@ -43,7 +43,11 @@ fn read(interp: &mut Interp, path: &str) -> bool {
 fn set_language_enabled_flag(interp: &mut Interp, lang: &str) {
     // cmState::EnableLanguage keeps EnabledLanguages sorted; the
     // ENABLED_LANGUAGES global property is computed from it on read.
-    if let Err(position) = interp.langs.enabled.binary_search_by(|existing| existing.as_str().cmp(lang)) {
+    if let Err(position) = interp
+        .langs
+        .enabled
+        .binary_search_by(|existing| existing.as_str().cmp(lang))
+    {
         interp.langs.enabled.insert(position, lang.to_owned());
     }
 }
@@ -57,14 +61,29 @@ fn set_language_enabled_maps(interp: &mut Interp, lang: &str) {
         .get_def(&format!("CMAKE_{lang}_LINKER_PREFERENCE"))
         .map(|value| util::strtol(value, 10).0 as i32)
         .unwrap_or(0);
-    interp.langs.linker_preference.insert(lang.to_owned(), preference);
-    if let Some(output) = interp.get_def(&format!("CMAKE_{lang}_OUTPUT_EXTENSION")).map(str::to_owned) {
-        interp.langs.output_extension.insert(lang.to_owned(), output.clone());
+    interp
+        .langs
+        .linker_preference
+        .insert(lang.to_owned(), preference);
+    if let Some(output) = interp
+        .get_def(&format!("CMAKE_{lang}_OUTPUT_EXTENSION"))
+        .map(str::to_owned)
+    {
+        interp
+            .langs
+            .output_extension
+            .insert(lang.to_owned(), output.clone());
         if let Some(stripped) = output.strip_prefix('.') {
-            interp.langs.output_extension.insert(format!("{lang}:nodot"), stripped.to_owned());
+            interp
+                .langs
+                .output_extension
+                .insert(format!("{lang}:nodot"), stripped.to_owned());
         }
     }
-    if let Some(extensions) = interp.get_def(&format!("CMAKE_{lang}_SOURCE_FILE_EXTENSIONS")).map(str::to_owned) {
+    if let Some(extensions) = interp
+        .get_def(&format!("CMAKE_{lang}_SOURCE_FILE_EXTENSIONS"))
+        .map(str::to_owned)
+    {
         for extension in util::expand_list(&extensions, false) {
             interp
                 .langs
@@ -73,7 +92,10 @@ fn set_language_enabled_maps(interp: &mut Interp, lang: &str) {
                 .or_insert_with(|| lang.to_owned());
         }
     }
-    if let Some(ignores) = interp.get_def(&format!("CMAKE_{lang}_IGNORE_EXTENSIONS")).map(str::to_owned) {
+    if let Some(ignores) = interp
+        .get_def(&format!("CMAKE_{lang}_IGNORE_EXTENSIONS"))
+        .map(str::to_owned)
+    {
         for extension in util::expand_list(&ignores, false) {
             interp.langs.ignore_extensions.insert(extension);
         }
@@ -99,7 +121,10 @@ fn find_make_program(interp: &mut Interp) -> bool {
     }
     let program = program.unwrap_or_default();
     if interp.langs.ninja_version.is_none() {
-        match std::process::Command::new(&program).arg("--version").output() {
+        match std::process::Command::new(&program)
+            .arg("--version")
+            .output()
+        {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
                 interp.langs.ninja_version = Some(version);
@@ -142,7 +167,9 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
     let unique: BTreeSet<String> = languages.iter().cloned().collect();
     for lang in &unique {
         if !interp.langs.in_progress.insert(lang.clone()) {
-            let text = format!("Language '{lang}' is currently being enabled.  Recursive call not allowed.");
+            let text = format!(
+                "Language '{lang}' is currently being enabled.  Recursive call not allowed."
+            );
             interp.issue(MessageType::FatalError, &text);
             interp.set_fatal();
             return;
@@ -170,7 +197,9 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
     root_bin.push_str(crate::interp::VERSION_STRING);
     interp.set_def("CMAKE_PLATFORM_INFO_DIR", root_bin.clone());
     if !interp.in_try_compile {
-        if std::path::Path::new(&root_bin).is_dir() && !interp.is_on("CMAKE_PLATFORM_INFO_INITIALIZED") {
+        if std::path::Path::new(&root_bin).is_dir()
+            && !interp.is_on("CMAKE_PLATFORM_INFO_INITIALIZED")
+        {
             let _ = std::fs::remove_dir_all(&root_bin);
         }
         interp.cache.add(
@@ -266,7 +295,10 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
         interp.ext.in_top_level_includes = false;
     }
     // Ninja supports every language the Modules provide except a few.
-    if interp.get_def("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED").is_none() {
+    if interp
+        .get_def("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED")
+        .is_none()
+    {
         match modules_file(interp, "CMakeSystemSpecificInitialize.cmake") {
             Some(path) => {
                 read(interp, &path);
@@ -312,13 +344,19 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
             need_test.insert(lang.clone(), true);
             let path = format!("{root_bin}/CMake{lang}Compiler.cmake");
             if !read(interp, &path) {
-                crate::configure::system_error(Some(interp), &format!("Could not find cmake module file: {path}"));
+                crate::configure::system_error(
+                    Some(interp),
+                    &format!("Could not find cmake module file: {path}"),
+                );
             }
             set_language_enabled_flag(interp, lang);
             need_maps.insert(lang.clone(), true);
         }
     }
-    if interp.get_def("CMAKE_SYSTEM_SPECIFIC_INFORMATION_LOADED").is_none() {
+    if interp
+        .get_def("CMAKE_SYSTEM_SPECIFIC_INFORMATION_LOADED")
+        .is_none()
+    {
         match modules_file(interp, "CMakeSystemSpecificInformation.cmake") {
             Some(path) => {
                 read(interp, &path);

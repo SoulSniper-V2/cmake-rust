@@ -23,16 +23,16 @@
 pub mod automatic;
 pub mod ctx;
 pub mod custom;
-pub mod export;
 pub mod evaluation_files;
+pub mod export;
 pub mod flags;
 pub mod genex_host;
 pub mod graphviz;
 pub mod install;
 pub mod link;
-pub mod pch;
 pub mod ninja;
 pub mod package_info;
+pub mod pch;
 pub mod target;
 pub mod tests;
 pub mod trace;
@@ -62,7 +62,11 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     };
     if let Err(errors) = result {
         for (backtrace, message) in errors {
-            interp.issue_at(crate::messages::MessageType::FatalError, &message, &backtrace);
+            interp.issue_at(
+                crate::messages::MessageType::FatalError,
+                &message,
+                &backtrace,
+            );
         }
         if !options.in_try_compile {
             let elapsed = start.elapsed().as_secs_f64();
@@ -78,10 +82,17 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         let dirs: Vec<(String, String)> = interp
             .makefiles
             .iter()
-            .map(|mf| (mf.binary_dir.clone(), format!("{}/CMakeLists.txt", mf.source_dir)))
+            .map(|mf| {
+                (
+                    mf.binary_dir.clone(),
+                    format!("{}/CMakeLists.txt", mf.source_dir),
+                )
+            })
             .collect();
         for (binary, list) in dirs {
-            interp.stdout_line(&format!("-- Generating {binary}\n   Called from: [1]\t{list}"));
+            interp.stdout_line(&format!(
+                "-- Generating {binary}\n   Called from: [1]\t{list}"
+            ));
         }
     }
     if !options.in_try_compile {
@@ -106,7 +117,8 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
 /// The end of `cmMakefile::DoGenerate`: list files that no longer exist
 /// (or live under CMakeTmp) are transient and cannot trigger a re-run.
 fn drop_transient_list_files(interp: &mut Interp) {
-    let not_persistent = |path: &str| path.contains("CMakeTmp") || !std::path::Path::new(path).exists();
+    let not_persistent =
+        |path: &str| path.contains("CMakeTmp") || !std::path::Path::new(path).exists();
     for makefile in &mut interp.makefiles {
         makefile.list_files.retain(|path| !not_persistent(path));
     }
@@ -115,7 +127,10 @@ fn drop_transient_list_files(interp: &mut Interp) {
             .into_iter()
             .filter(|path| !not_persistent(path))
             .collect();
-        interp.ext.misc.insert("cmake-depend-files".to_owned(), kept.join(";"));
+        interp
+            .ext
+            .misc
+            .insert("cmake-depend-files".to_owned(), kept.join(";"));
     }
 }
 
@@ -135,18 +150,29 @@ fn finalize_target_configuration(interp: &mut Interp) {
         }
         let dir = target.makefile;
         let kind = target.kind;
-        let exports = target.props.get("ENABLE_EXPORTS").is_some_and(crate::util::is_on);
+        let exports = target
+            .props
+            .get("ENABLE_EXPORTS")
+            .is_some_and(crate::util::is_on);
         // AppendBuildInterfaceIncludes
         let interface_includes = matches!(
             kind,
-            TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::ModuleLibrary | TargetKind::InterfaceLibrary
+            TargetKind::SharedLibrary
+                | TargetKind::StaticLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::InterfaceLibrary
         ) || (kind == TargetKind::Executable && exports);
         let include_current = interp
             .dir_final_vars
             .get(dir)
-            .and_then(|vars| vars.get("CMAKE_INCLUDE_CURRENT_DIR_IN_INTERFACE").cloned().flatten())
+            .and_then(|vars| {
+                vars.get("CMAKE_INCLUDE_CURRENT_DIR_IN_INTERFACE")
+                    .cloned()
+                    .flatten()
+            })
             .is_some_and(|value| crate::util::is_on(&value));
-        let definitions = crate::commands::target::directory_entries(interp, dir, "COMPILE_DEFINITIONS");
+        let definitions =
+            crate::commands::target::directory_entries(interp, dir, "COMPILE_DEFINITIONS");
         let binary = interp.makefiles[dir].binary_dir.clone();
         let source = interp.makefiles[dir].source_dir.clone();
         let Some(target) = interp.ext.targets.get_mut(&key) else {
@@ -154,7 +180,9 @@ fn finalize_target_configuration(interp: &mut Interp) {
         };
         if interface_includes && include_current {
             let value = format!("$<BUILD_INTERFACE:{binary};{source}>");
-            target.props.append("INTERFACE_INCLUDE_DIRECTORIES", &value, false);
+            target
+                .props
+                .append("INTERFACE_INCLUDE_DIRECTORIES", &value, false);
             target
                 .provenance
                 .entry("INTERFACE_INCLUDE_DIRECTORIES".into())

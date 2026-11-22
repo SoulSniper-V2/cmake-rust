@@ -16,7 +16,12 @@ fn supported(language: &str) -> bool {
 }
 
 /// `cmGeneratorTarget::GetPrecompileHeaders` (values only).
-pub fn precompile_headers(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> Vec<String> {
+pub fn precompile_headers(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> Vec<String> {
     let key = ctx.target_key(target);
     let mut host = super::genex_host::CtxHost::new(ctx, target.makefile);
     match crate::genex::target_usage(&mut host, &key, "PRECOMPILE_HEADERS", config, language) {
@@ -102,7 +107,11 @@ pub fn pch_file_object(ctx: &GenCtx, target: &Target, config: &str, language: &s
     let sources = gt::sources(ctx, target, config);
     match sources.iter().find(|info| info.path == source) {
         Some(info) if !info.object_name.is_empty() => {
-            format!("{}{}", gt::object_directory(ctx, target, config), info.object_name)
+            format!(
+                "{}{}",
+                gt::object_directory(ctx, target, config),
+                info.object_name
+            )
         }
         _ => String::new(),
     }
@@ -125,7 +134,9 @@ pub fn pch_file(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> 
 }
 
 fn substitute(options: String, header: &str, file: &str) -> String {
-    options.replace("<PCH_HEADER>", header).replace("<PCH_FILE>", file)
+    options
+        .replace("<PCH_HEADER>", header)
+        .replace("<PCH_FILE>", file)
 }
 
 /// `GetPchCreateCompileOptions`.
@@ -133,7 +144,10 @@ pub fn pch_create_options(ctx: &GenCtx, target: &Target, config: &str, language:
     let dir = target.makefile;
     let mut options = String::new();
     if is_on_opt(target.props.get("PCH_WARN_INVALID")) {
-        options = ctx.var_safe(dir, &format!("CMAKE_{language}_COMPILE_OPTIONS_INVALID_PCH"));
+        options = ctx.var_safe(
+            dir,
+            &format!("CMAKE_{language}_COMPILE_OPTIONS_INVALID_PCH"),
+        );
     }
     if is_on_opt(target.props.get("PCH_INSTANTIATE_TEMPLATES")) {
         let instantiate = ctx.var_safe(
@@ -156,7 +170,10 @@ pub fn pch_use_options(ctx: &GenCtx, target: &Target, config: &str, language: &s
     let dir = target.makefile;
     let mut options = String::new();
     if is_on_opt(target.props.get("PCH_WARN_INVALID")) {
-        options = ctx.var_safe(dir, &format!("CMAKE_{language}_COMPILE_OPTIONS_INVALID_PCH"));
+        options = ctx.var_safe(
+            dir,
+            &format!("CMAKE_{language}_COMPILE_OPTIONS_INVALID_PCH"),
+        );
     }
     let property = format!("{language}_COMPILE_OPTIONS_USE_PCH");
     let value = target.props.get(&property).unwrap_or_default();

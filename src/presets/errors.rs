@@ -25,7 +25,10 @@ fn get_preset_name(state: &State) -> String {
 
 fn get_variable_name(state: &State) -> String {
     let var = state.key_after("cacheVariables");
-    format!("variable \"{var}\" for preset \"{}\"", get_preset_name(state))
+    format!(
+        "variable \"{var}\" for preset \"{}\"",
+        get_preset_name(state)
+    )
 }
 
 pub fn file_not_found(filename: &str, state: &mut State) {
@@ -133,9 +136,7 @@ pub fn cyclic_include(file: &str, state: &mut State) {
 }
 
 pub fn test_output_truncation_unsupported(state: &mut State) {
-    state.add_error(
-        "File version must be 5 or higher for testOutputTruncation preset support",
-    );
+    state.add_error("File version must be 5 or higher for testOutputTruncation preset support");
 }
 
 pub fn invalid_workflow_steps(step: &str, state: &mut State) {
@@ -185,7 +186,13 @@ pub fn unrecognized_version_range(min: i32, max: i32) -> ErrorGen {
     })
 }
 
-pub fn unrecognized_cmake_version(version: &str, current: u32, required: u32, value: Option<&V>, state: &mut State) {
+pub fn unrecognized_cmake_version(
+    version: &str,
+    current: u32,
+    required: u32,
+    value: Option<&V>,
+    state: &mut State,
+) {
     state.add_error_at_value(
         format!(
             "\"cmakeMinimumRequired\" {version} version {required} must be less than {current}"

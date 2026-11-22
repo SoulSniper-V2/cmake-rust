@@ -502,8 +502,13 @@ fn validate_target(interp: &mut Interp, name: &str, property: &str, change: Chan
     if reuse_set || pch_append {
         let (value, how) = match change {
             Change::Set(value) => (value, crate::commands::target::PropertyWrite::Set),
-            Change::Append(value, true) => (Some(value), crate::commands::target::PropertyWrite::AppendString),
-            Change::Append(value, false) => (Some(value), crate::commands::target::PropertyWrite::Append),
+            Change::Append(value, true) => (
+                Some(value),
+                crate::commands::target::PropertyWrite::AppendString,
+            ),
+            Change::Append(value, false) => {
+                (Some(value), crate::commands::target::PropertyWrite::Append)
+            }
         };
         if let Err(crate::interp::CmdErr::Error(message)) =
             crate::commands::target::write_target_property(interp, name, property, value, how)
@@ -924,7 +929,8 @@ fn get_target_property(interp: &mut Interp, args: &[String]) -> CmdResult {
         );
         return Err(CmdErr::Reported);
     }
-    let value = target_value(interp, target, property).unwrap_or_else(|| format!("{output}-NOTFOUND"));
+    let value =
+        target_value(interp, target, property).unwrap_or_else(|| format!("{output}-NOTFOUND"));
     interp.set_def(output, value);
     Ok(())
 }

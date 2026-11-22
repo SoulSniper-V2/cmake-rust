@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use md5::Digest as Md5Digest;
 use sha3::Digest;
 
-use super::{FileApi, jarr, jobj, jstr, juint, JsonExt};
+use super::{FileApi, JsonExt, jarr, jobj, jstr, juint};
 use crate::commands::string::json::Json;
 use crate::generator::ctx::GenCtx;
 use crate::generator::{flags, link, pch, target as gt};
@@ -94,7 +94,10 @@ impl BtGraph {
             "commands",
             Json::Array(self.commands.into_iter().map(jstr).collect()),
         );
-        graph.set("files", Json::Array(self.files.into_iter().map(jstr).collect()));
+        graph.set(
+            "files",
+            Json::Array(self.files.into_iter().map(jstr).collect()),
+        );
         graph.set("nodes", Json::Array(self.nodes));
         graph
     }
@@ -217,7 +220,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             if let Some(p) = parent {
                 self.dirs[p as usize].children.push(di);
             }
-            self.projects[project_index as usize].directory_indexes.push(di);
+            self.projects[project_index as usize]
+                .directory_indexes
+                .push(di);
             self.dirs.push(DirData {
                 makefile: index,
                 parent,
@@ -240,7 +245,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 .is_some_and(|rules| !rules.is_empty());
             if !has {
                 let children = self.dirs[di].children.clone();
-                has = children.iter().any(|c| self.dirs[*c as usize].has_install_rule);
+                has = children
+                    .iter()
+                    .any(|c| self.dirs[*c as usize].has_install_rule);
             }
             self.dirs[di].has_install_rule = has;
         }
@@ -278,8 +285,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         for target in targets {
             let ti = result_index(&result);
             self.target_index.insert(target as *const _ as usize, ti);
-            self.target_ids
-                .insert(target as *const _ as usize, target_id(&self.top_build, self.ctx.interp, target));
+            self.target_ids.insert(
+                target as *const _ as usize,
+                target_id(&self.top_build, self.ctx.interp, target),
+            );
             let entry = self.dump_target_index(target, ti);
             result.push(entry);
         }
@@ -378,8 +387,14 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         };
         let m = &self.ctx.interp.makefiles[mf];
         let mut paths = jobj();
-        paths.set("source", jstr(relative_if_under(&self.top_source, &m.source_dir)));
-        paths.set("build", jstr(relative_if_under(&self.top_build, &m.binary_dir)));
+        paths.set(
+            "source",
+            jstr(relative_if_under(&self.top_source, &m.source_dir)),
+        );
+        paths.set(
+            "build",
+            jstr(relative_if_under(&self.top_build, &m.binary_dir)),
+        );
         let mut installers = jarr();
         if let Some(rules) = self.ctx.interp.ext.install.rules.get(&mf) {
             for rule in rules {
@@ -393,18 +408,27 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         object
     }
 
-    fn dump_installer(&mut self, mf: usize, graph: &mut BtGraph, installers: &mut Json, rule: &crate::install_model::InstallRule) {
+    fn dump_installer(
+        &mut self,
+        mf: usize,
+        graph: &mut BtGraph,
+        installers: &mut Json,
+        rule: &crate::install_model::InstallRule,
+    ) {
         // InstallsForConfig: single-config generates for the empty config.
         let opts = &rule.options;
-        if !opts.configurations.is_empty()
-            && !opts.configurations.iter().any(|c| c == &self.config)
+        if !opts.configurations.is_empty() && !opts.configurations.iter().any(|c| c == &self.config)
         {
             return;
         }
         let mut installer = jobj();
         let dest = || self.ctx.genex(&opts.destination, None, None);
         match &rule.action {
-            InstallAction::Target { name, namelink, imported } => {
+            InstallAction::Target {
+                name,
+                namelink,
+                imported,
+            } => {
                 installer.set("destination", jstr(dest()));
                 if *imported {
                     // `cmInstallImportedRuntimeArtifactsGenerator`.
@@ -421,7 +445,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     return;
                 }
                 installer.set("type", jstr("target"));
-                let Some(target) = self.find_target(name) else { return };
+                let Some(target) = self.find_target(name) else {
+                    return;
+                };
                 installer.set("targetId", jstr(self.id_of(target)));
                 installer.set("targetIndex", juint(self.index_of(target) as u64));
                 let mut paths = jarr();
@@ -542,7 +568,11 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     installer.set("isOptional", Json::Bool(true));
                 }
             }
-            InstallAction::Script { text, is_code, all_components } => {
+            InstallAction::Script {
+                text,
+                is_code,
+                all_components,
+            } => {
                 if *is_code {
                     installer.set("type", jstr("code"));
                 } else {
@@ -583,15 +613,23 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 installer.set("paths", paths);
             }
             InstallAction::FileSet { name, set } => {
-                let Some(target) = self.find_target(name) else { return };
-                let Some(file_set) = target.file_sets.get(set) else { return };
+                let Some(target) = self.find_target(name) else {
+                    return;
+                };
+                let Some(file_set) = target.file_sets.get(set) else {
+                    return;
+                };
                 installer.set("type", jstr("fileSet"));
                 installer.set("destination", jstr(dest()));
                 let dirs = self.eval_file_set_dirs(target, file_set);
                 let files = self.eval_file_set_files(target, file_set, &dirs);
                 let mut out_paths = jarr();
                 for (dir, file) in &files {
-                    let d = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+                    let d = if dir.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{dir}/")
+                    };
                     out_paths.push(installer_path(
                         &relative_if_under(&self.top_source, file),
                         &format!("{}{}", d, crate::util::filename_name(file)),
@@ -652,7 +690,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 if let Some(fw) = framework.as_deref().filter(|_| apple) {
                     let mut fw_installer = jobj();
                     fw_installer.set("type", jstr("runtimeDependencySet"));
-                    fw_installer.set("destination", jstr(self.ctx.genex(&fw.destination, None, None)));
+                    fw_installer.set(
+                        "destination",
+                        jstr(self.ctx.genex(&fw.destination, None, None)),
+                    );
                     if !name.is_empty() {
                         fw_installer.set("runtimeDependencySetName", jstr(name));
                     }
@@ -674,7 +715,13 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             InstallAction::LegacyTarget(_) => return,
         }
         installer.set("component", jstr(&opts.component));
-        if matches!(&rule.action, InstallAction::Script { all_components: true, .. }) {
+        if matches!(
+            &rule.action,
+            InstallAction::Script {
+                all_components: true,
+                ..
+            }
+        ) {
             installer.set("isForAllComponents", Json::Bool(true));
         }
         if opts.exclude {
@@ -715,7 +762,12 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             }
             project.set(
                 "directoryIndexes",
-                Json::Array(p.directory_indexes.iter().map(|d| juint(*d as u64)).collect()),
+                Json::Array(
+                    p.directory_indexes
+                        .iter()
+                        .map(|d| juint(*d as u64))
+                        .collect(),
+                ),
             );
             if !p.target_indexes.is_empty() {
                 project.set(
@@ -742,8 +794,14 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         t.set("id", jstr(self.id_of(target)));
         let m = &self.ctx.interp.makefiles[target.makefile];
         let mut paths = jobj();
-        paths.set("source", jstr(relative_if_under(&self.top_source, &m.source_dir)));
-        paths.set("build", jstr(relative_if_under(&self.top_build, &m.binary_dir)));
+        paths.set(
+            "source",
+            jstr(relative_if_under(&self.top_source, &m.source_dir)),
+        );
+        paths.set(
+            "build",
+            jstr(relative_if_under(&self.top_build, &m.binary_dir)),
+        );
         t.set("paths", paths);
         jbt(&mut graph, &mut t, &target.backtrace);
         if target.have_install_rule {
@@ -756,27 +814,34 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 | TargetKind::ModuleLibrary
                 | TargetKind::StaticLibrary
                 | TargetKind::ObjectLibrary
-        )
-        {
+        ) {
             let artifacts = self.dump_artifacts(target);
             if !artifacts.is_empty_container() {
                 t.set("artifacts", artifacts);
             }
         }
         match target.kind {
-            TargetKind::Executable
-            | TargetKind::SharedLibrary
-            | TargetKind::ModuleLibrary => {
+            TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary => {
                 t.set(
                     "nameOnDisk",
-                    jstr(gt::full_name(self.ctx, target, &self.config, gt::ArtifactType::Runtime)),
+                    jstr(gt::full_name(
+                        self.ctx,
+                        target,
+                        &self.config,
+                        gt::ArtifactType::Runtime,
+                    )),
                 );
                 t.set("link", self.dump_link(&mut graph, target));
             }
             TargetKind::StaticLibrary => {
                 t.set(
                     "nameOnDisk",
-                    jstr(gt::full_name(self.ctx, target, &self.config, gt::ArtifactType::Runtime)),
+                    jstr(gt::full_name(
+                        self.ctx,
+                        target,
+                        &self.config,
+                        gt::ArtifactType::Runtime,
+                    )),
                 );
                 t.set("archive", self.dump_archive(&mut graph, target));
             }
@@ -820,8 +885,14 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         let mut out_sources = jarr();
         for (si, source) in sources.iter().enumerate() {
             out_sources.push(self.dump_source(
-                &mut graph, target, source, si as u32, &fsdb,
-                &mut groups, &mut compile_groups, &lang_data,
+                &mut graph,
+                target,
+                source,
+                si as u32,
+                &fsdb,
+                &mut groups,
+                &mut compile_groups,
+                &lang_data,
             ));
         }
         t.set("sources", out_sources);
@@ -835,7 +906,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             for (name, indexes) in groups {
                 let mut g = jobj();
                 g.set("name", jstr(name));
-                g.set("sourceIndexes", Json::Array(indexes.into_iter().map(|i| juint(i as u64)).collect()));
+                g.set(
+                    "sourceIndexes",
+                    Json::Array(indexes.into_iter().map(|i| juint(i as u64)).collect()),
+                );
                 sg.push(g);
             }
             t.set("sourceGroups", sg);
@@ -845,7 +919,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             for (data, indexes) in compile_groups {
                 let merged = merge_compile_data(&data, &lang_data);
                 let mut g = self.dump_compile_data(&mut graph, &merged);
-                g.set("sourceIndexes", Json::Array(indexes.into_iter().map(|i| juint(i as u64)).collect()));
+                g.set(
+                    "sourceIndexes",
+                    Json::Array(indexes.into_iter().map(|i| juint(i as u64)).collect()),
+                );
                 cg.push(g);
             }
             t.set("compileGroups", cg);
@@ -896,7 +973,8 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             }
         }
         // cmSourceFile::GetCompileOptions: one fragment per backtraced entry.
-        for (options, bt) in gt::source_prop_entries(self.ctx, mf, &source.path, "COMPILE_OPTIONS") {
+        for (options, bt) in gt::source_prop_entries(self.ctx, mf, &source.path, "COMPILE_OPTIONS")
+        {
             let mut tmp = String::new();
             for option in expand_list(&self.ctx.genex(&options, Some(target), Some(lang)), false) {
                 for o in target_options_split(&option) {
@@ -928,7 +1006,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         }
         // cmSourceFile::GetIncludeDirectories: each backtraced entry
         // expands to a list whose items share the entry backtrace.
-        for (includes, bt) in gt::source_prop_entries(self.ctx, mf, &source.path, "INCLUDE_DIRECTORIES") {
+        for (includes, bt) in
+            gt::source_prop_entries(self.ctx, mf, &source.path, "INCLUDE_DIRECTORIES")
+        {
             for dir in expand_list(&self.ctx.genex(&includes, Some(target), Some(lang)), false) {
                 let system = target
                     .system_include_directories
@@ -937,7 +1017,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             }
         }
         // cmSourceFile::GetCompileDefinitions likewise.
-        for (defines, bt) in gt::source_prop_entries(self.ctx, mf, &source.path, "COMPILE_DEFINITIONS") {
+        for (defines, bt) in
+            gt::source_prop_entries(self.ctx, mf, &source.path, "COMPILE_DEFINITIONS")
+        {
             for define in expand_list(&self.ctx.genex(&defines, Some(target), Some(lang)), false) {
                 let d = define.strip_prefix("-D").unwrap_or(&define).to_owned();
                 data.defines.push((d, bt.clone()));
@@ -994,10 +1076,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     fn eval_file_set_dirs(&self, target: &Target, set: &FileSet) -> Vec<String> {
         let mut dirs = Vec::new();
         for entry in &set.base_dirs {
-            for dir in expand_list(
-                &self.ctx.genex(&entry.0, Some(target), None),
-                false,
-            ) {
+            for dir in expand_list(&self.ctx.genex(&entry.0, Some(target), None), false) {
                 if !dir.is_empty() {
                     dirs.push(dir);
                 }
@@ -1016,10 +1095,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     ) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for entry in &set.files {
-            for file in expand_list(
-                &self.ctx.genex(&entry.0, Some(target), None),
-                false,
-            ) {
+            for file in expand_list(&self.ctx.genex(&entry.0, Some(target), None), false) {
                 if file.is_empty() {
                     continue;
                 }
@@ -1048,7 +1124,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         lang_data: &BTreeMap<String, CompileData>,
     ) -> Json {
         let mut s = jobj();
-        s.set("path", jstr(relative_if_under(&self.top_source, &source.path)));
+        s.set(
+            "path",
+            jstr(relative_if_under(&self.top_source, &source.path)),
+        );
         if source.generated {
             s.set("isGenerated", Json::Bool(true));
         }
@@ -1105,15 +1184,11 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     /// (`MatchChildrenFiles`): a `source_group()`-assigned group for `path`.
     fn explicit_source_group(&self, target: &Target, path: &str) -> Option<String> {
         let groups = self.ctx.interp.ext.source_groups.get(&target.makefile);
-        let named: Vec<(&String, &crate::state::SourceGroup)> = groups
-            .map(|g| g.iter().collect())
-            .unwrap_or_default();
+        let named: Vec<(&String, &crate::state::SourceGroup)> =
+            groups.map(|g| g.iter().collect()).unwrap_or_default();
         for (name, group) in named.iter().rev() {
             if group.files.contains(path)
-                || group
-                    .files
-                    .iter()
-                    .any(|f| path.ends_with(&format!("/{f}")))
+                || group.files.iter().any(|f| path.ends_with(&format!("/{f}")))
             {
                 return Some((*name).clone());
             }
@@ -1124,9 +1199,8 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     /// `cmMakefile::FindSourceGroup`.
     fn source_group(&self, target: &Target, path: &str) -> Option<String> {
         let groups = self.ctx.interp.ext.source_groups.get(&target.makefile);
-        let mut named: Vec<(&String, &crate::state::SourceGroup)> = groups
-            .map(|g| g.iter().collect())
-            .unwrap_or_default();
+        let mut named: Vec<(&String, &crate::state::SourceGroup)> =
+            groups.map(|g| g.iter().collect()).unwrap_or_default();
         // Check explicit file lists first (reverse order), then regexes.
         if let Some(name) = self.explicit_source_group(target, path) {
             return Some(name);
@@ -1149,7 +1223,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         const DEFAULTS: &[(&str, &str)] = &[
             ("Object Libraries", "^MATCH_NO_SOURCES$"),
             ("Object Files", "\\.(lo|o|obj)$"),
-            ("Resources", "\\.(pdf|plist|png|jpeg|jpg|storyboard|xcassets)$"),
+            (
+                "Resources",
+                "\\.(pdf|plist|png|jpeg|jpg|storyboard|xcassets)$",
+            ),
             ("CMake Rules", "\\.rule$"),
             ("Precompile Header File", "cmake_pch(_[^.]+)?\\.(h|hxx)$"),
             ("Header Files", "\\.(h|hh|h\\+\\+|hm|hpp|hxx|in|txx|inl)$"),
@@ -1266,7 +1343,10 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 let mut artifact = jobj();
                 artifact.set(
                     "path",
-                    jstr(relative_if_under(&self.top_build, &format!("{obj_dir}/{name}"))),
+                    jstr(relative_if_under(
+                        &self.top_build,
+                        &format!("{obj_dir}/{name}"),
+                    )),
                 );
                 out.push(artifact);
             }
@@ -1277,7 +1357,13 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             "path",
             jstr(relative_if_under(
                 &self.top_build,
-                &gt::full_path(self.ctx, target, &self.config, gt::ArtifactType::Runtime, false),
+                &gt::full_path(
+                    self.ctx,
+                    target,
+                    &self.config,
+                    gt::ArtifactType::Runtime,
+                    false,
+                ),
             )),
         );
         out.push(artifact);
@@ -1335,13 +1421,22 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             let line = link::link_line(self.ctx, target, &self.config, language);
             let path_flag = self
                 .ctx
-                .var(target.makefile, &format!("CMAKE_{language}_LIBRARY_PATH_FLAG"))
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_{language}_LIBRARY_PATH_FLAG"),
+                )
                 .or_else(|| self.ctx.var(target.makefile, "CMAKE_LIBRARY_PATH_FLAG"))
                 .unwrap_or_else(|| "-L".to_owned());
             let path_end = self
                 .ctx
-                .var(target.makefile, &format!("CMAKE_{language}_LIBRARY_PATH_TERMINATOR"))
-                .or_else(|| self.ctx.var(target.makefile, "CMAKE_LIBRARY_PATH_TERMINATOR"))
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_{language}_LIBRARY_PATH_TERMINATOR"),
+                )
+                .or_else(|| {
+                    self.ctx
+                        .var(target.makefile, "CMAKE_LIBRARY_PATH_TERMINATOR")
+                })
                 .unwrap_or_default();
             let dir_bts = link_dir_backtraces(self.ctx, target, &self.config, language);
             for dir in &line.link_dirs {
@@ -1381,18 +1476,29 @@ impl<'a, 'i> Codemodel<'a, 'i> {
 
     fn dump_launchers(&self, target: &Target) -> Json {
         let mut out = jarr();
-        for (prop, kind) in [("TEST_LAUNCHER", "test"), ("CROSSCOMPILING_EMULATOR", "emulator")] {
+        for (prop, kind) in [
+            ("TEST_LAUNCHER", "test"),
+            ("CROSSCOMPILING_EMULATOR", "emulator"),
+        ] {
             // DumpLaunchers gates the emulator on the directory's
             // CMAKE_CROSSCOMPILING variable, not the toolchain flag.
             if kind == "emulator"
-                && !is_on_opt(self.ctx.var(target.makefile, "CMAKE_CROSSCOMPILING").as_deref())
+                && !is_on_opt(
+                    self.ctx
+                        .var(target.makefile, "CMAKE_CROSSCOMPILING")
+                        .as_deref(),
+                )
             {
                 continue;
             }
-            let Some(raw) = target.props.get(prop) else { continue };
+            let Some(raw) = target.props.get(prop) else {
+                continue;
+            };
             let evaluated = self.ctx.genex(raw, Some(target), None);
             let mut parts = expand_list(&evaluated, false).into_iter();
-            let Some(command) = parts.next() else { continue };
+            let Some(command) = parts.next() else {
+                continue;
+            };
             if command.is_empty() {
                 continue;
             }
@@ -1422,15 +1528,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         let _ = &mut path;
         install.set("prefix", prefix);
         let mut destinations = jarr();
-        for rule in self
-            .ctx
-            .interp
-            .ext
-            .install
-            .rules
-            .values()
-            .flatten()
-        {
+        for rule in self.ctx.interp.ext.install.rules.values().flatten() {
             if let InstallAction::Target { name, .. } = &rule.action
                 && name == &target.name
             {
@@ -1530,9 +1628,15 @@ fn language_standard(
             let mut feature_level = None;
             for (i, std) in standards.iter().enumerate() {
                 let items = ctx
-                    .var(target.makefile, &format!("CMAKE_{lang}{std}_COMPILE_FEATURES"))
+                    .var(
+                        target.makefile,
+                        &format!("CMAKE_{lang}{std}_COMPILE_FEATURES"),
+                    )
                     .unwrap_or_default();
-                if expand_list(&items, false).iter().any(|item| item == &feature) {
+                if expand_list(&items, false)
+                    .iter()
+                    .any(|item| item == &feature)
+                {
                     feature_level = Some(i);
                 }
             }
@@ -1602,8 +1706,7 @@ fn result_index(arr: &Json) -> u32 {
 fn installer_path(from: &str, to: &str) -> Json {
     if !to.contains('/')
         && from.ends_with(to)
-        && (from.len() == to.len()
-            || from.as_bytes()[from.len() - to.len() - 1] == b'/')
+        && (from.len() == to.len() || from.as_bytes()[from.len() - to.len() - 1] == b'/')
     {
         jstr(from)
     } else {
