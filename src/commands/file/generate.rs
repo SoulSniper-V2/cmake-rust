@@ -58,8 +58,11 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         missing.push(previous);
     }
     if !missing.is_empty() {
+        // cmArgumentParser's keyword error retains its trailing newline,
+        // which the documentation formatter turns into a blank line before
+        // the call stack.
         let text = format!(
-            "Error after keyword \"{}\":\n  missing required value",
+            "Error after keyword \"{}\":\n  missing required value\n",
             missing[0]
         );
         interp.issue(crate::messages::MessageType::FatalError, &text);
@@ -100,10 +103,9 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         None => String::new(),
         Some("LF" | "UNIX") => "\n".to_owned(),
         Some("CRLF" | "WIN32" | "DOS") => "\r\n".to_owned(),
-        Some(other) => {
-            return err(format!(
-                "GENERATE NEWLINE_STYLE sets an unknown style, only LF, CRLF, UNIX, DOS, and WIN32 are supported: {other}"
-            ));
+        Some(_) => {
+            // cmNewLineStyle::ReadFromArguments.
+            return err("GENERATE NEWLINE_STYLE sets an unknown style, only LF, CRLF, UNIX, DOS, and WIN32 are supported".to_owned());
         }
     };
     if no_source && use_source {
@@ -159,7 +161,7 @@ pub fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
         newline,
         permissions: mode,
         backtrace,
-        cmp0070_new: cmp0070 == crate::policy::PolicyStatus::New,
+        cmp0070,
     });
     Ok(())
 }

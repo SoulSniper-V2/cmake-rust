@@ -1027,8 +1027,17 @@ fn resolve_source(
     if source == "FILE_SET" {
         error.push_str("\nHint: the FILE_SET keyword may only appear after a visibility specifier or another FILE_SET within the target_sources() command.");
     }
-    let key = format!("target:missing-source:{makefile}:{source}");
-    if ctx.memo.borrow_mut().insert(key, String::new()).is_none() {
+    // cmSourceFile::FindFullPathFailed: the failure is reported only once
+    // per source for the whole generation, even though resolution runs in
+    // several passes (trace, missing-sources check, ninja write).
+    let key = format!("{makefile}:{source}");
+    if ctx
+        .interp
+        .ext
+        .reported_missing_sources
+        .borrow_mut()
+        .insert(key)
+    {
         ctx.error(backtrace.to_vec(), error);
     }
     None
@@ -1784,12 +1793,25 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
         );
         return std::rc::Rc::new(Vec::new());
     }
+    // cmGeneratorTarget::KindedSourcesMap memoizes (target, config) sources
+    // globally, so diagnostics from this computation are reported only on
+    // its first evaluation of the generation.
+    let first = ctx
+        .interp
+        .ext
+        .computed_sources
+        .borrow_mut()
+        .insert(key.clone());
+    let diagnostics = ctx.errors.borrow().len();
     let computed = std::rc::Rc::new(sources_with_link_closure(
         ctx,
         target,
         config,
         &link_closure(ctx, target, config),
     ));
+    if !first {
+        ctx.errors.borrow_mut().truncate(diagnostics);
+    }
     ctx.sources.borrow_mut().insert(key, computed.clone());
     computed
 }
@@ -2581,8 +2603,13 @@ mod corpus_tests {
                     .errors
                     .borrow()
                     .iter()
-                    .map(|(_, message)| {
-                        crate::messages::render(MessageType::FatalError, message, &[], None)
+                    .map(|diagnostic| {
+                        crate::messages::render(
+                            MessageType::FatalError,
+                            diagnostic.text(),
+                            &[],
+                            None,
+                        )
                     })
                     .collect::<String>();
             let want = error_bodies(&subst(expected["stderr"].as_str().unwrap()));
@@ -2930,7 +2957,7 @@ pub(super) mod tests {
                 format!("{name}-NOTFOUND")
             );
             assert_eq!(
-                ctx.errors.borrow().last().unwrap().1,
+                ctx.errors.borrow().last().unwrap().text(),
                 fixture[name].as_str().unwrap()
             );
         }

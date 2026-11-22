@@ -277,7 +277,21 @@ pub struct EvalContext<'a> {
     pub referenced_targets: BTreeSet<String>,
     pub dependency_targets: BTreeSet<String>,
     pub max_language_standard: BTreeMap<(String, String), String>,
-    pub warnings: Vec<String>,
+    /// Diagnostics raised via `IssueMessage` during evaluation
+    /// (cmGeneratorExpressionNode WARNING/AUTHOR_WARNING paths), carrying
+    /// the context backtrace in effect when they were raised.
+    pub warnings: Vec<GenexWarning>,
+}
+
+/// A diagnostic issued during generator-expression evaluation, as by the
+/// `$<IN_LIST>` CMP0085 warning or the `$<CONFIG>` invalid-name warning.
+#[derive(Clone, Debug)]
+pub struct GenexWarning {
+    /// `context->Backtrace` when the diagnostic was raised.
+    pub backtrace: Option<Backtrace>,
+    /// true for AUTHOR_WARNING (`CMake Warning (dev)`), false for WARNING.
+    pub dev: bool,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -685,9 +699,11 @@ impl Evaluator<'_, '_> {
 
     fn policy_warning(&mut self, policy: &str, detail: &str) {
         if let Ok(index) = policy[3..].parse() {
-            self.ctx
-                .warnings
-                .push(format!("{}{detail}", policy_warning(index)));
+            self.ctx.warnings.push(GenexWarning {
+                backtrace: self.ctx.backtrace,
+                dev: true,
+                text: format!("{}{detail}", policy_warning(index)),
+            });
         }
     }
 }

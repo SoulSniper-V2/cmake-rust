@@ -47,14 +47,39 @@ pub fn trace_dependencies(interp: &mut Interp) {
                 {
                     continue;
                 }
-                // Diagnostics from source resolution are reported again by
-                // the generation context.
                 let ctx = GenCtx::new(interp);
-                Tracer::new(&ctx, &key).run()
+                let traced = Tracer::new(&ctx, &key).run();
+                // Compute-phase diagnostics (cmLocalGenerator::IssueMessage,
+                // genex eval errors) are reported as they happen — here, at
+                // the end of this target's trace.
+                let diagnostics = ctx.errors.take();
+                (traced, diagnostics)
             };
+            let (traced, diagnostics) = traced;
+            for diagnostic in diagnostics {
+                match diagnostic {
+                    super::ctx::Diagnostic::Message(kind, backtrace, message) => {
+                        interp.issue_at(kind, &message, &backtrace);
+                    }
+                    super::ctx::Diagnostic::Bare(message) => {
+                        interp.error = true;
+                        interp.stderr_line(&format!("CMake Error: {message}"));
+                    }
+                }
+            }
             apply(interp, &key, traced);
         }
     }
+}
+
+/// `cmGlobalGenerator::GetFilenameTargetDepends`: the targets whose
+/// file(GENERATE) OUTPUT expressions depended on the source `path`.
+fn interp_filename_depends_contains(ctx: &GenCtx, path: &str, key: &str) -> bool {
+    ctx.interp
+        .ext
+        .filename_target_depends
+        .get(path)
+        .is_some_and(|targets| targets.contains(key))
 }
 
 fn apply(interp: &mut Interp, key: &str, traced: Traced) {
@@ -111,6 +136,19 @@ impl<'c, 'a> Tracer<'c, 'a> {
         // Queue all the source files already specified for the target.
         let mut emitted = HashSet::new();
         for source in gt::sources(ctx, target, &ctx.config).iter() {
+            // cmTargetTraceDependencies: a file(GENERATE) output whose
+            // OUTPUT expression depends on this target's sources must not
+            // also be a source of the target.
+            if interp_filename_depends_contains(ctx, &source.path, key) {
+                ctx.error(
+                    ctx.dir_backtrace(target.makefile),
+                    format!(
+                        "Evaluation output file\n  \"{}\"\ndepends on the sources of a target it is used in.  This is a dependency loop and is not allowed.",
+                        source.path
+                    ),
+                );
+                return tracer;
+            }
             if emitted.insert(source.path.clone()) && tracer.queued.insert(source.path.clone()) {
                 tracer.queue.push_back(source.path.clone());
             }

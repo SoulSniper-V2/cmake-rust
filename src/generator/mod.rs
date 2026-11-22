@@ -48,6 +48,9 @@ use crate::interp::Interp;
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let start = std::time::Instant::now();
     finalize_target_configuration(interp);
+    // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
+    // become generated sources before any target computation sees them.
+    evaluation_files::create_outputs(interp);
     // cmGlobalGenerator::Compute -> cmMakefile::Generate: deferred custom
     // command actions attach to sources/targets before anything is computed.
     crate::commands::custom_actions::run_generator_actions(interp, &mut expand_output_genex);
@@ -59,23 +62,22 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
-    let result = {
+    let diagnostics = {
         let ctx = ctx::GenCtx::new(interp);
         ctx.check_and_generate()
     };
-    if let Err(errors) = result {
-        for (backtrace, message) in errors {
-            interp.issue_at(
-                crate::messages::MessageType::FatalError,
-                &message,
-                &backtrace,
-            );
+    for diagnostic in diagnostics {
+        match diagnostic {
+            ctx::Diagnostic::Message(kind, backtrace, message) => {
+                interp.issue_at(kind, &message, &backtrace);
+            }
+            // `cmSystemTools::Error`: printed without any location or
+            // reflow, and marks the generation failed.
+            ctx::Diagnostic::Bare(message) => {
+                interp.error = true;
+                interp.stderr_line(&format!("CMake Error: {message}"));
+            }
         }
-        if !options.in_try_compile {
-            let elapsed = start.elapsed().as_secs_f64();
-            crate::commands::core::status_line(interp, &format!("Generating done ({elapsed:.1}s)"));
-        }
-        return -1;
     }
     if interp.debug.output && !options.in_try_compile {
         // cmGlobalGenerator::Generate reports progress after each local
@@ -221,8 +223,8 @@ fn expand_output_genex(
     // cmLocalGenerator::ExpandCustomCommandOutputPaths evaluates the whole
     // output as one generator expression (no OUTPUT_CONFIG stripping).
     let value = ctx.genex_output(output, dir, backtrace);
-    if let Some((_, message)) = ctx.errors.borrow().first() {
-        return Err(message.clone());
+    if let Some(message) = ctx.errors.borrow().first().map(|d| d.text().to_owned()) {
+        return Err(message);
     }
     let binary = &interp.makefiles[dir].binary_dir;
     let mut paths: Vec<String> = Vec::new();

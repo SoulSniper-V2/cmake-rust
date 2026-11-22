@@ -1361,8 +1361,9 @@ fn matching_source(interp: &Interp, dir: usize, location: &SourceFileLocation) -
 pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bool) -> usize {
     let mut location = SourceFileLocation::new(interp, dir_index, path);
     if known {
-        // cmSourceFileLocationKind::Known: DirectoryUseSource +
-        // AmbiguousExtension = false.
+        // cmSourceFileLocationKind::Known: the given extension is trusted,
+        // and a relative directory anchors in the source tree
+        // (DirectoryUseSource).
         location.ambiguous_extension = false;
         if location.ambiguous_directory {
             location.directory =

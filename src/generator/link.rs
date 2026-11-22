@@ -276,7 +276,7 @@ impl<'a, 'i> Query<'a, 'i> {
             .errors
             .borrow()
             .iter()
-            .any(|(_, existing)| existing == &message)
+            .any(|existing| existing.text() == message)
         {
             self.ctx.error(Vec::new(), message);
         }

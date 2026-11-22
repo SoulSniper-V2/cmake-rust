@@ -115,7 +115,7 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
         let mut args = Vec::new();
         for arg in &test.command {
             // cmGeneratorExpression::Evaluate(LG, config) in the test's directory.
-            let value = ctx.genex_full(arg, test.makefile, None, None, false);
+            let value = ctx.genex_full(arg, test.makefile, None, None, false, &test.backtrace);
             if expand {
                 args.extend(expand_list(&value, true));
             } else {

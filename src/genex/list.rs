@@ -352,7 +352,10 @@ fn select(values: &[String], args: &[String]) -> Result<Vec<usize>, String> {
         Ok(pos as usize)
     };
     let mut rest = &tail[tail.len()..];
-    let indexes = match selector.as_str() {
+    // TransformSelectorFor: range validation happens in Validate, after the
+    // parser has consumed the selector arguments and rejected leftovers.
+    let mut for_selector: Option<(i64, i64, i64)> = None;
+    let mut indexes = match selector.as_str() {
         "REGEX" => {
             let Some((pattern, remaining)) = tail.split_first() else {
                 return Err(
@@ -408,21 +411,15 @@ fn select(values: &[String], args: &[String]) -> Result<Vec<usize>, String> {
             };
             let start = required(&tail[0])?;
             let stop = required(&tail[1])?;
+            // Try to read a third numeric value for step; a non-numeric
+            // value sets step = -1 (cmGeneratorExpressionNode TRANSFORM).
             let step = tail.get(2).map_or(1, |arg| number(arg).unwrap_or(-1));
             if step <= 0 {
                 return Err("sub-command TRANSFORM, selector FOR expects positive numeric value for <step>.".to_owned());
             }
-            if tail.len() > 3 {
-                rest = &tail[3..];
-            }
-            let start = normalize(start)?;
-            let stop = normalize(stop)?;
-            if start > stop {
-                return Err(format!(
-                    "sub-command TRANSFORM, selector FOR expects <start> to be no greater than <stop> ({start} > {stop})"
-                ));
-            }
-            (start..=stop).step_by(step as usize).collect()
+            rest = &tail[tail.len().min(3)..];
+            for_selector = Some((start, stop, step));
+            Vec::new()
         }
         _ => return Err(unexpected(args)),
     };
@@ -433,6 +430,16 @@ fn select(values: &[String], args: &[String]) -> Result<Vec<usize>, String> {
             ));
         }
         return Err(unexpected(rest));
+    }
+    if let Some((start, stop, step)) = for_selector {
+        let start = normalize(start)?;
+        let stop = normalize(stop)?;
+        if start > stop {
+            return Err(format!(
+                "sub-command TRANSFORM, selector FOR expects <start> to be no greater than <stop> ({start} > {stop})"
+            ));
+        }
+        indexes = (start..=stop).step_by(step as usize).collect();
     }
     Ok(indexes)
 }

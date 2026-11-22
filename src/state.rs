@@ -285,7 +285,8 @@ pub struct EvaluationFile {
     pub newline: String,
     pub permissions: u32,
     pub backtrace: Vec<Frame>,
-    pub cmp0070_new: bool,
+    /// `cmPolicies::PolicyStatus` of CMP0070 at the file(GENERATE) call.
+    pub cmp0070: crate::policy::PolicyStatus,
 }
 
 /// Extension state for command implementations.
@@ -350,6 +351,19 @@ pub struct Ext {
     pub file_api_queries: BTreeMap<String, (u32, u32)>,
     /// file(GENERATE) requests, evaluated at generate time.
     pub evaluation_files: Vec<EvaluationFile>,
+    /// `cmGlobalGenerator::FilenameTargetDepends`: resolved file(GENERATE)
+    /// output paths -> names of targets the output expression depends on
+    /// (its source-sensitive targets). Filled during
+    /// `CreateFileGenerateOutputs` and read by `TraceDependencies` to
+    /// reject dependency loops.
+    pub filename_target_depends: BTreeMap<String, BTreeSet<String>>,
+    /// `cmSourceFile::FindFullPathFailed`: full path resolution failures
+    /// are reported only once per source across the whole generation.
+    pub reported_missing_sources: std::cell::RefCell<BTreeSet<String>>,
+    /// `cmGeneratorTarget::KindedSourcesMap`: (target,config) kinded-source
+    /// computations that already ran. Diagnostics they raise are reported
+    /// only on the first evaluation of the generation.
+    pub computed_sources: std::cell::RefCell<BTreeSet<String>>,
     /// Free-form registry for command modules that need global state.
     pub misc: HashMap<String, String>,
     pub configure_dependencies: std::collections::BTreeSet<String>,

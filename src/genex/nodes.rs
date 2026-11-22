@@ -247,7 +247,11 @@ impl Evaluator<'_, '_> {
                 if index == 0 {
                     return Err(self.error(expr, "Expression syntax not recognized."));
                 }
-                self.ctx.warnings.push(format!("Warning evaluating generator expression:\n  {expr}\nThe config name of \"{arg}\" is invalid"));
+                self.ctx.warnings.push(super::GenexWarning {
+                    backtrace: self.ctx.backtrace,
+                    dev: false,
+                    text: format!("Warning evaluating generator expression:\n  {expr}\nThe config name of \"{arg}\" is invalid"),
+                });
             }
             if config.eq_ignore_ascii_case(arg) {
                 return Ok(boolean(true));

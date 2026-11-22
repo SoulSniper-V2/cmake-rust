@@ -290,8 +290,8 @@ fn cmake_4_1_ninja_edges() {
             }
             let diagnostics = ctx.errors.borrow();
             assert!(
-                diagnostics.iter().any(|(_, message)| {
-                    message
+                diagnostics.iter().any(|d| {
+                    d.text()
                         .split_whitespace()
                         .collect::<Vec<_>>()
                         .join(" ")

@@ -3,13 +3,50 @@
 //! queries. Diagnostics are collected and reported by `gen::generate`.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::interp::Interp;
-use crate::messages::Frame;
+use crate::messages::{Frame, MessageType};
 use crate::state::Target;
 
-pub type Diagnostic = (Vec<Frame>, String);
+/// One diagnostic produced during generation, in the order it was raised.
+#[derive(Clone, Debug)]
+pub enum Diagnostic {
+    /// `cmake::IssueMessage`: rendered with location and call stack.
+    Message(MessageType, Vec<Frame>, String),
+    /// `cmSystemTools::Error`: a bare `CMake Error: <text>` line.
+    Bare(String),
+}
+
+/// What an expression evaluation collected besides its value.
+#[derive(Default)]
+pub struct GenexOutcome {
+    pub value: String,
+    /// `cmGeneratorExpression::GetSourceSensitiveTargets` of the evaluated
+    /// expression (target names as `ext.targets` keys).
+    pub source_sensitive_targets: BTreeSet<String>,
+}
+
+impl Diagnostic {
+    pub fn text(&self) -> &str {
+        match self {
+            Diagnostic::Message(_, _, text) | Diagnostic::Bare(text) => text,
+        }
+    }
+
+    /// Whether the diagnostic sets the error flag at this generation run
+    /// (dev warnings become errors under --Werror=dev).
+    pub fn is_error(&self, dev_warnings_as_errors: bool) -> bool {
+        match self {
+            Diagnostic::Bare(_) => true,
+            Diagnostic::Message(kind, _, _) => {
+                crate::messages::is_error(*kind)
+                    || (dev_warnings_as_errors
+                        && matches!(*kind, MessageType::AuthorWarning | MessageType::AuthorError))
+            }
+        }
+    }
+}
 
 pub struct GenCtx<'a> {
     pub interp: &'a Interp,
@@ -80,7 +117,44 @@ impl<'a> GenCtx<'a> {
     }
 
     pub fn error(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
-        self.errors.borrow_mut().push((backtrace, message.into()));
+        self.errors.borrow_mut().push(Diagnostic::Message(
+            MessageType::FatalError,
+            backtrace,
+            message.into(),
+        ));
+    }
+
+    /// A WARNING or AUTHOR_WARNING issued during generation
+    /// (`cmake::IssueMessage`), e.g. a generator-expression eval warning.
+    pub fn message(&self, kind: MessageType, backtrace: Vec<Frame>, message: impl Into<String>) {
+        self.errors
+            .borrow_mut()
+            .push(Diagnostic::Message(kind, backtrace, message.into()));
+    }
+
+    /// `cmSystemTools::Error`: a bare `CMake Error:` diagnostic.
+    pub fn system_error(&self, message: impl Into<String>) {
+        self.errors
+            .borrow_mut()
+            .push(Diagnostic::Bare(message.into()));
+    }
+
+    /// `cmLocalGenerator::IssueMessage`'s backtrace: the directory scope of
+    /// `dir`'s list file, rendered as `in <dir>/CMakeLists.txt`.
+    pub fn dir_backtrace(&self, dir: usize) -> Vec<Frame> {
+        let source = &self.interp.makefiles[dir].source_dir;
+        vec![Frame {
+            file: format!("{source}/CMakeLists.txt").into(),
+            line: 0,
+            name: None,
+            deferred: false,
+        }]
+    }
+
+    /// True when any collected diagnostic sets the error flag.
+    pub fn has_error(&self) -> bool {
+        let dev = self.interp.dev_warnings_as_errors;
+        self.errors.borrow().iter().any(|d| d.is_error(dev))
     }
 
     /// Variable lookup in the context of directory `makefile`'s final
@@ -155,7 +229,7 @@ impl<'a> GenCtx<'a> {
     pub fn genex(&self, text: &str, target: Option<&Target>, language: Option<&str>) -> String {
         let dir = target.map_or(0, |target| target.makefile);
         let key = target.map(|target| self.target_key(target));
-        self.genex_full(text, dir, key.as_deref(), language, true)
+        self.genex_full(text, dir, key.as_deref(), language, true, &[])
     }
 
     /// The `ext.targets` key of `target`.
@@ -178,16 +252,25 @@ impl<'a> GenCtx<'a> {
             .unwrap_or_else(|| target.name.clone())
     }
 
-    pub fn genex_full(
+    /// `cmCompiledGeneratorExpression::Evaluate`: evaluates `text` in `dir`
+    /// for `target`, `config` and `language`. `backtrace` is the list-file
+    /// backtrace of the command the expression came from — the equivalent
+    /// of the backtrace a compiled generator expression carries — and is
+    /// used by `context->Backtrace` for every diagnostic it raises.
+    pub fn genex_eval(
         &self,
         text: &str,
         dir: usize,
         target: Option<&str>,
         language: Option<&str>,
         for_buildsystem: bool,
-    ) -> String {
+        backtrace: &[Frame],
+    ) -> GenexOutcome {
         if !text.contains("$<") {
-            return text.to_owned();
+            return GenexOutcome {
+                value: text.to_owned(),
+                ..GenexOutcome::default()
+            };
         }
         let compiled = crate::genex::parse(text);
         let mut ectx = crate::genex::EvalContext {
@@ -196,19 +279,64 @@ impl<'a> GenCtx<'a> {
             current_target: target,
             language,
             evaluate_for_buildsystem: for_buildsystem,
+            backtrace: (!backtrace.is_empty()).then(|| self.intern_backtrace(backtrace.to_vec())),
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, dir);
-        match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
-            Ok(value) => value,
-            Err(error) => {
-                if !error.quiet {
-                    let backtrace = self.backtrace(error.backtrace);
-                    self.error(backtrace, error.to_string());
+        let result = crate::genex::evaluate(&compiled, &mut ectx, &mut host);
+        let outcome = GenexOutcome {
+            value: match result {
+                Ok(value) => value,
+                Err(error) => {
+                    if !error.quiet {
+                        let frames = self.backtrace(error.backtrace);
+                        self.error(
+                            if frames.is_empty() {
+                                backtrace.to_vec()
+                            } else {
+                                frames
+                            },
+                            error.to_string(),
+                        );
+                    }
+                    String::new()
                 }
-                String::new()
-            }
+            },
+            source_sensitive_targets: ectx.source_sensitive_targets.clone(),
+        };
+        self.report_warnings(&ectx);
+        outcome
+    }
+
+    /// `IssueMessage` for diagnostics raised during an evaluation — like
+    /// `cmGeneratorExpressionContext`'s WARNING/AUTHOR_WARNING paths — with
+    /// `context->Backtrace` as captured when each was raised.
+    fn report_warnings(&self, ectx: &crate::genex::EvalContext) {
+        for warning in &ectx.warnings {
+            let kind = if warning.dev {
+                MessageType::AuthorWarning
+            } else {
+                MessageType::Warning
+            };
+            self.message(
+                kind,
+                self.backtrace(warning.backtrace),
+                warning.text.clone(),
+            );
         }
+    }
+
+    pub fn genex_full(
+        &self,
+        text: &str,
+        dir: usize,
+        target: Option<&str>,
+        language: Option<&str>,
+        for_buildsystem: bool,
+        backtrace: &[Frame],
+    ) -> String {
+        self.genex_eval(text, dir, target, language, for_buildsystem, backtrace)
+            .value
     }
 
     /// Evaluates `text` from `owner`'s `property` for consumer `head` under
@@ -280,7 +408,9 @@ impl<'a> GenCtx<'a> {
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, owner.makefile);
-        match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
+        let result = crate::genex::evaluate(&compiled, &mut ectx, &mut host);
+        self.report_warnings(&ectx);
+        match result {
             Ok(value) => value,
             Err(error) => {
                 if !error.quiet {
@@ -342,6 +472,11 @@ impl<'a> GenCtx<'a> {
             config: &self.config,
             head_target: target,
             current_target: target,
+            // cmCompiledGeneratorExpression: the backtrace of the command
+            // that created the expression travels with it, so diagnostics
+            // at generate time cite the originating add_custom_command,
+            // add_custom_target, or test.
+            backtrace: (!backtrace.is_empty()).then(|| self.intern_backtrace(backtrace.to_vec())),
             ..crate::genex::EvalContext::default()
         };
         let mut host = super::genex_host::CtxHost::new(self, dir);
@@ -355,6 +490,7 @@ impl<'a> GenCtx<'a> {
             use_output_config,
             &mut dependencies,
         );
+        self.report_warnings(&ectx);
         if let Some(utilities) = utilities {
             for dependency in dependencies {
                 let name = self
@@ -384,15 +520,17 @@ impl<'a> GenCtx<'a> {
         }
     }
 
-    /// Runs the whole generate step.
-    pub fn check_and_generate(&self) -> Result<(), Vec<Diagnostic>> {
+    /// Runs the whole generate step; returns the diagnostics it raised.
+    /// The caller reports them and decides failure from their severity.
+    pub fn check_and_generate(&self) -> Vec<Diagnostic> {
         // cmGlobalGenerator::Compute: source resolution diagnostics surface
         // during the pre-generation target computations, and
         // CheckTargetsForMissingSources stops generation before any build
         // files are written.
         if super::target::check_targets_for_missing_sources(self) {
-            return Err(std::mem::take(&mut *self.errors.borrow_mut()));
+            return std::mem::take(&mut *self.errors.borrow_mut());
         }
+        // cmGlobalGenerator::Generate: evaluation files first.
         super::evaluation_files::generate(self);
         // cmGlobalGenerator::Generate order: per-directory install rules and
         // test files, then build export sets, and (back in
@@ -406,20 +544,14 @@ impl<'a> GenCtx<'a> {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
         }
-        if !self.errors.borrow().is_empty() {
+        if !self.has_error() {
             // cmGlobalNinjaGenerator::Generate: bail before writing build
             // files when earlier generation raised a fatal error.
-            return Err(self.errors.borrow().clone());
+            let mut ninja = super::ninja::NinjaGenerator::new(self);
+            if let Err(error) = ninja.generate() {
+                self.error(Vec::new(), format!("Unable to write build files: {error}"));
+            }
         }
-        let mut ninja = super::ninja::NinjaGenerator::new(self);
-        if let Err(error) = ninja.generate() {
-            self.error(Vec::new(), format!("Unable to write build files: {error}"));
-        }
-        let errors = self.errors.borrow().clone();
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        std::mem::take(&mut *self.errors.borrow_mut())
     }
 }
