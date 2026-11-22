@@ -50,6 +50,7 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::Compute -> cmMakefile::Generate: deferred custom
     // command actions attach to sources/targets before anything is computed.
     crate::commands::custom_actions::run_generator_actions(interp, &mut expand_output_genex);
+    drop_transient_list_files(interp);
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
@@ -85,6 +86,22 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         return -1;
     }
     0
+}
+
+/// The end of `cmMakefile::DoGenerate`: list files that no longer exist
+/// (or live under CMakeTmp) are transient and cannot trigger a re-run.
+fn drop_transient_list_files(interp: &mut Interp) {
+    let not_persistent = |path: &str| path.contains("CMakeTmp") || !std::path::Path::new(path).exists();
+    for makefile in &mut interp.makefiles {
+        makefile.list_files.retain(|path| !not_persistent(path));
+    }
+    if let Some(deps) = interp.ext.misc.get("cmake-depend-files") {
+        let kept: Vec<String> = crate::util::expand_list(deps, false)
+            .into_iter()
+            .filter(|path| !not_persistent(path))
+            .collect();
+        interp.ext.misc.insert("cmake-depend-files".to_owned(), kept.join(";"));
+    }
 }
 
 /// `cmGlobalGenerator::FinalizeTargetConfiguration` +
