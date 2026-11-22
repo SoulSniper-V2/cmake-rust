@@ -1,5 +1,5 @@
 //! Single-config Ninja install script generation.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -194,13 +194,8 @@ fn include_child(ctx: &GenCtx, out: &mut String, child: usize) {
 
 fn render_rule(ctx: &GenCtx, out: &mut String, index: usize, rule: &InstallRule) -> std::io::Result<()> {
     let opts = &rule.options;
-    if let InstallAction::RuntimeDependencies { set, filters } = &rule.action {
-        if ctx.interp.ext.install.runtime_sets.get(set).is_some_and(|targets| !targets.is_empty()) {
-            ctx.error(rule.backtrace.clone(), format!(
-                "install runtime dependency set \"{set}\" is not supported by cmake-rust ({} filter groups).", filters.len()
-            ));
-        }
-        return Ok(());
+    if let InstallAction::RuntimeDependencies { set, filters, framework } = &rule.action {
+        return render_runtime_dependencies(ctx, out, rule, set, filters, framework.as_deref());
     }
     let all = matches!(rule.action, InstallAction::Script { all_components: true, .. });
     let conditional = !all || opts.exclude;
@@ -552,4 +547,178 @@ fn render_file_set(ctx: &GenCtx, out: &mut String, opts: &InstallOptions, tgt: &
         let dest = if dir.is_empty() { dest.clone() } else { format!("{dest}/{dir}") };
         write_copy(out, indent, opts, CopyRule::new(&dest, CopyKind::File, &files));
     }
+}
+
+// ---------------------------------------------------------------------
+// cmInstallGetRuntimeDependenciesGenerator +
+// cmInstallRuntimeDependencySetGenerator (Unix path; install_name_tool
+// branches are Apple-only and unreachable here).
+
+/// `cmInstallGenerator::CreateComponentTest`.
+fn runtime_dep_component_test(component: &str, exclude_from_all: bool) -> String {
+    let component = if component.is_empty() { "Unspecified" } else { component };
+    if exclude_from_all {
+        format!("CMAKE_INSTALL_COMPONENT STREQUAL \"{component}\"")
+    } else {
+        format!("CMAKE_INSTALL_COMPONENT STREQUAL \"{component}\" OR NOT CMAKE_INSTALL_COMPONENT")
+    }
+}
+
+/// `WriteMultiArgument`/`WriteFilesArgument`/`WriteGenexEvaluatorArgument`.
+fn write_dep_argument(out: &mut String, keyword: &str, items: &[String], quoted: bool) {
+    let mut first = true;
+    for item in items {
+        if item.is_empty() {
+            continue;
+        }
+        if first {
+            out.push_str(&format!("  {keyword}\n"));
+            first = false;
+        }
+        if quoted {
+            out.push_str(&format!("    \"{item}\"\n"));
+        } else {
+            out.push_str(&format!("    {}\n", escape_for_cmake(item)));
+        }
+    }
+}
+
+/// Transitive link dependencies of EXECUTABLE/SHARED_LIBRARY/MODULE_LIBRARY
+/// type (`GetTargetDependsClosure`, `IsLink()` only, non-cross).
+fn runtime_dep_closure(
+    ctx: &GenCtx,
+    config: &str,
+    target: &Target,
+    found: &mut BTreeSet<String>,
+) {
+    for dep in crate::generator::link::target_dependencies(ctx, target, config) {
+        let Some(dep_target) = ctx.interp.ext.targets.get(&dep) else { continue };
+        if !matches!(
+            dep_target.kind,
+            TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
+            continue;
+        }
+        if found.insert(dep) {
+            runtime_dep_closure(ctx, config, dep_target, found);
+        }
+    }
+}
+
+fn render_runtime_dependencies(
+    ctx: &GenCtx,
+    out: &mut String,
+    rule: &InstallRule,
+    set: &str,
+    filters: &BTreeMap<String, Vec<String>>,
+    framework: Option<&InstallOptions>,
+) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    let opts = &rule.options;
+    let config = &ctx.config;
+    let _ = framework; // framework generators exist only on Apple.
+
+    // file(GET_RUNTIME_DEPENDENCIES ...) block.
+    writeln!(out, "if({})", runtime_dep_component_test(&opts.component, opts.exclude)).unwrap();
+    let mut body = String::new();
+    body.push_str("file(GET_RUNTIME_DEPENDENCIES\n  RESOLVED_DEPENDENCIES_VAR _CMAKE_DEPS\n");
+    let names = ctx
+        .interp
+        .ext
+        .install
+        .runtime_sets
+        .get(set)
+        .cloned()
+        .unwrap_or_default();
+    let mut post_exclude: BTreeSet<String> = BTreeSet::new();
+    for (keyword, kinds) in [
+        ("EXECUTABLES", vec![TargetKind::Executable]),
+        ("LIBRARIES", vec![TargetKind::SharedLibrary]),
+        ("MODULES", vec![TargetKind::ModuleLibrary]),
+    ] {
+        let mut paths = Vec::new();
+        for name in &names {
+            let Some(target) = ctx.interp.ext.targets.get(name) else { continue };
+            if !kinds.contains(&target.kind) {
+                continue;
+            }
+            paths.push(crate::generator::target::full_path(
+                ctx, target, config, crate::generator::target::ArtifactType::Runtime, false,
+            ));
+            let mut closure = BTreeSet::new();
+            runtime_dep_closure(ctx, config, target, &mut closure);
+            for dep in &closure {
+                let Some(dep_target) = ctx.interp.ext.targets.get(dep) else { continue };
+                post_exclude.insert(crate::generator::target::full_path(
+                    ctx, dep_target, config,
+                    crate::generator::target::ArtifactType::Runtime, false,
+                ));
+            }
+        }
+        write_dep_argument(&mut body, keyword, &paths, true);
+    }
+    for keyword in [
+        "DIRECTORIES",
+        "PRE_INCLUDE_REGEXES",
+        "PRE_EXCLUDE_REGEXES",
+        "POST_INCLUDE_REGEXES",
+        "POST_EXCLUDE_REGEXES",
+        "POST_INCLUDE_FILES",
+        "POST_EXCLUDE_FILES",
+    ] {
+        let evaluated: Vec<String> = filters
+            .get(keyword)
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|v| ctx.genex(v, None, None))
+                    .filter(|v| !v.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        write_dep_argument(&mut body, keyword, &evaluated, false);
+    }
+    write_dep_argument(
+        &mut body,
+        "POST_EXCLUDE_FILES_STRICT",
+        &post_exclude.into_iter().collect::<Vec<_>>(),
+        true,
+    );
+    body.push_str("  )\n");
+    write_per_config(ctx, out, &body, &opts.configurations);
+    out.push_str("endif()\n\n");
+
+    // foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS) install loop.
+    writeln!(out, "if({})", runtime_dep_component_test(&opts.component, opts.exclude)).unwrap();
+    let destination = absolute_dest(&ctx.genex(&opts.destination, None, None));
+    let mut body = String::new();
+    body.push_str("foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS)\n");
+    body.push_str(&format!(
+        "  file(INSTALL DESTINATION \"{destination}\" TYPE SHARED_LIBRARY FILES ${{_CMAKE_TMP_dep}}\n    FOLLOW_SYMLINK_CHAIN)\n"
+    ));
+    body.push_str("endforeach()\n");
+    write_per_config(ctx, out, &body, &opts.configurations);
+    out.push_str("endif()\n\n");
+    Ok(())
+}
+
+/// `GenerateScriptConfigs`: wraps a script fragment in the per-config test
+/// when the generator has explicit CONFIGURATIONS.
+fn write_per_config(ctx: &GenCtx, out: &mut String, body: &str, configs: &[String]) {
+    if configs.is_empty() {
+        for line in body.lines() {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        return;
+    }
+    out.push_str(&format!("  if({})\n", config_test("CMAKE_INSTALL_CONFIG_NAME", configs)));
+    let _ = ctx;
+    for line in body.lines() {
+        out.push_str("    ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("  endif()\n");
 }

@@ -699,7 +699,9 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
         let set = format!("#{}:{}", interp.mf_index(), interp.ext.install.runtime_sets.len());
         interp.ext.install.runtime_sets.insert(set.clone(), dependencies);
         let opts = with_destination(interp, group("LIBRARY").clone(), "LIB");
-        add(interp, opts, InstallAction::RuntimeDependencies { set, filters });
+        let framework = group("FRAMEWORK").clone();
+        let framework = (!framework.destination.is_empty()).then(|| Box::new(framework));
+        add(interp, opts, InstallAction::RuntimeDependencies { set, filters, framework });
     } else if !explicit.is_empty() {
         interp.ext.install.runtime_sets.entry(explicit.to_owned()).or_default().extend(dependencies);
     }
@@ -717,14 +719,17 @@ fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     let generic = options(interp, &parsed, &defaults(interp));
     validate_permissions(&generic)?;
     let mut library = generic.clone();
+    let mut framework_opts = None;
     for (key, group) in groups {
         let (opts, _) = artifact_options(interp, "RUNTIME_DEPENDENCY_SET", &group, &generic)?;
-        if key == "LIBRARY" { library = opts; }
+        if key == "LIBRARY" { library = opts.clone(); }
+        if key == "FRAMEWORK" { framework_opts = Some(opts); }
     }
     let set = parsed.get("RUNTIME_DEPENDENCY_SET");
     if set.is_empty() { return err("RUNTIME_DEPENDENCY_SET not given a runtime dependency set."); }
     let opts = with_destination(interp, library, "LIB");
-    add(interp, opts, InstallAction::RuntimeDependencies { set: set.to_owned(), filters });
+    let framework = framework_opts.map(Box::new);
+    add(interp, opts, InstallAction::RuntimeDependencies { set: set.to_owned(), filters, framework });
     Ok(())
 }
 

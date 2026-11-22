@@ -59,6 +59,9 @@ pub enum InstallAction {
     RuntimeDependencies {
         set: String,
         filters: BTreeMap<String, Vec<String>>,
+        /// The FRAMEWORK artifact group's options (emitted as a separate
+        /// framework-typed installer on Apple platforms).
+        framework: Option<Box<InstallOptions>>,
     },
     LegacyFiles {
         args: Vec<String>,
