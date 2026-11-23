@@ -474,7 +474,7 @@ impl Interp {
 
     /// `cmMakefile::PolicyOptionalWarningEnabled` for the value of a
     /// `CMAKE_POLICY_WARNING_CMP<NNNN>` variable: unset means enabled under
-    /// --trace/--trace-expand (--debug-output is not implemented).
+    /// --debug-output, --trace or --trace-expand.
     pub fn policy_optional_warning(&self, value: Option<&str>) -> bool {
         match value {
             Some(value) => util::is_on(value),

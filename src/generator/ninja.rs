@@ -3490,6 +3490,9 @@ impl<'a> NinjaGenerator<'a> {
             "TARGET_COMPILE_PDB".into(),
             self.shell(&self.ninja_path(&compile_pdb)),
         );
+        // EnsureParentDirectoryExists for both program databases.
+        self.ensure_directory_exists(&util::filename_path(&pdb));
+        self.ensure_directory_exists(&util::filename_path(&compile_pdb));
         true
     }
 

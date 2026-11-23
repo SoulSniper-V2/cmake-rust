@@ -838,3 +838,18 @@ pub(crate) fn is_system_include_directory(
     .binary_search_by(|probe| probe.as_str().cmp(dir))
     .is_ok()
 }
+
+/// `cmLocalGenerator::GetMSVCDebugFormatName`.
+pub(crate) fn msvc_debug_format_name(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+) -> Option<String> {
+    Flags {
+        ctx,
+        target,
+        config,
+        lang: "",
+    }
+    .msvc_debug_format_name()
+}

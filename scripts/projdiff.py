@@ -90,7 +90,7 @@ def gather(build_dir):
                 # __create_def object lists written at generate time.
                 or name.endswith((".plist", ".def", ".def.objs"))
                 or name.endswith((".cbp", ".workspace", ".project", ".cproject", ".sublime-project"))
-                or name.startswith(("cmake_pch", "unity_", ".kateproject")) or rel.startswith(".settings/")):
+                or name.startswith(("cmake_pch", "unity_", ".kateproject", "copy_idb_pdb_")) or rel.startswith(".settings/")):
             files[rel] = path.read_text(errors="replace")
     return files
 

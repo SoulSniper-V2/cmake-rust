@@ -30,6 +30,9 @@ struct Changes {
     /// `GetPchFile` names the object of the PCH source, so the C++ computes
     /// it after `AddSource`; these are evaluated once the sources are added.
     pch_object_outputs: Vec<(String, String, String, String)>,
+    /// `cmLocalGenerator::CopyPchCompilePdb` calls: (config, language,
+    /// reused target name, extensions).
+    pch_pdb_copies: Vec<(String, String, String, Vec<&'static str>)>,
 }
 
 /// `cmTarget::CanCompileSources`.
@@ -148,6 +151,9 @@ fn apply(interp: &mut Interp, key: &str, changes: Changes) {
             target.insert_entry("SOURCES", &path, &backtrace, before);
         }
     }
+    for (config, language, reuse_name, extensions) in &changes.pch_pdb_copies {
+        copy_pch_compile_pdb(interp, key, config, language, reuse_name, extensions);
+    }
     if changes.pch_object_outputs.is_empty() {
         return;
     }
@@ -265,15 +271,54 @@ fn add_pch_dependencies_for_config(
                         arch.to_owned(),
                     )),
                     Some(reuse_name) => {
-                        if is_on_opt(ctx.var(dir, "CMAKE_PCH_COPY_COMPILE_PDB").as_deref()) {
-                            changes.errors.push((gt::directory_backtrace(ctx, dir), format!(
-                            "PRECOMPILE_HEADERS_REUSE_FROM \"{reuse_name}\" requires copying the compiler program database (CMAKE_PCH_COPY_COMPILE_PDB), which cmake-rust does not support."
-                        )));
-                            continue;
-                        }
                         let Some(reuse) = pch::reuse_target(ctx, target) else {
                             continue;
                         };
+                        if is_on_opt(ctx.var(dir, "CMAKE_PCH_COPY_COMPILE_PDB").as_deref()) {
+                            let compiler_id =
+                                ctx.var_safe(dir, &format!("CMAKE_{language}_COMPILER_ID"));
+                            let compiler_version =
+                                ctx.var_safe(dir, &format!("CMAKE_{language}_COMPILER_VERSION"));
+                            let lang_flags = ctx.var_safe(
+                                dir,
+                                &format!("CMAKE_{language}_FLAGS_{}", config.to_ascii_uppercase()),
+                            );
+                            let (edit_and_continue, program_database) =
+                                match crate::generator::flags::msvc_debug_format_name(
+                                    ctx, target, config,
+                                ) {
+                                    Some(format) if !format.is_empty() => {
+                                        (format == "EditAndContinue", format == "ProgramDatabase")
+                                    }
+                                    _ => (
+                                        lang_flags.contains("/ZI") || lang_flags.contains("-ZI"),
+                                        lang_flags.contains("/Zi") || lang_flags.contains("-Zi"),
+                                    ),
+                                };
+                            // MSVC 2008 is producing both .pdb and .idb files
+                            // with /Zi, but not when used via toolset -Tv90.
+                            let msvc2008_or_less = crate::util::version_compare(
+                                crate::util::CompareOp::Less,
+                                &compiler_version,
+                                "16.0",
+                            ) && compiler_id == "MSVC"
+                                && ctx.var_safe(dir, "CMAKE_VS_PLATFORM_TOOLSET") != "v90";
+                            let extensions = if edit_and_continue || msvc2008_or_less {
+                                vec![".pdb", ".idb"]
+                            } else if program_database {
+                                vec![".pdb"]
+                            } else {
+                                Vec::new()
+                            };
+                            if !extensions.is_empty() {
+                                changes.pch_pdb_copies.push((
+                                    config.to_owned(),
+                                    language.to_owned(),
+                                    reuse_name.to_owned(),
+                                    extensions,
+                                ));
+                            }
+                        }
                         let object = pch::pch_file_object(ctx, reuse, config, language, arch);
                         let config_upper = config.to_ascii_uppercase();
                         if target.kind != TargetKind::ObjectLibrary {
@@ -310,6 +355,147 @@ fn add_pch_dependencies_for_config(
             changes.add_sources.push((pch_header, false));
         }
     }
+}
+
+/// `cmLocalGenerator::CopyPchCompilePdb`: a script copying the reused
+/// target's compiler program database next to this target's objects, run
+/// by a custom command whose output becomes a source of the target.
+fn copy_pch_compile_pdb(
+    interp: &mut Interp,
+    key: &str,
+    config: &str,
+    language: &str,
+    reuse_from: &str,
+    extensions: &[&str],
+) {
+    let multi_config = interp.ext.multi_config;
+    let (target_name, dir, prefix, reuse_dir, pch_file) = {
+        let ctx = GenCtx::new(interp);
+        let target = &ctx.interp.ext.targets[key];
+        let Some(reuse) = pch::reuse_target(&ctx, target) else {
+            return;
+        };
+        let ctx = ctx.for_config(config);
+        (
+            target.name.clone(),
+            target.makefile,
+            target.props.get("PREFIX").unwrap_or_default().to_owned(),
+            ctx.interp.makefiles[reuse.makefile].binary_dir.clone(),
+            pch::pch_file(&ctx, reuse, config, language, ""),
+        )
+    };
+    let current_binary = interp.makefiles[dir].binary_dir.clone();
+    let pdb_prefix = if multi_config {
+        format!("{config}/")
+    } else {
+        String::new()
+    };
+    let target_compile_pdb_dir = format!("{current_binary}/{target_name}.dir/");
+    let copy_script = format!("{target_compile_pdb_dir}copy_idb_pdb_{config}.cmake");
+    let mut file = String::from(
+        "# CMake generated file\n\
+         # The compiler generated pdb file needs to be written to disk\n\
+         # by mspdbsrv. The foreach retry loop is needed to make sure\n\
+         # the pdb file is ready to be copied.\n\n",
+    );
+    for extension in extensions {
+        let from_file =
+            format!("{reuse_dir}/{reuse_from}.dir/${{PDB_PREFIX}}{reuse_from}{extension}");
+        let to_dir = format!("{current_binary}/{target_name}.dir/${{PDB_PREFIX}}");
+        let to_file = format!("{to_dir}{reuse_from}{extension}");
+        let dest_file = if prefix.is_empty() {
+            to_file.clone()
+        } else {
+            format!("{to_dir}{prefix}{reuse_from}{extension}")
+        };
+        file.push_str("foreach(retry RANGE 1 30)\n");
+        file.push_str(&format!(
+            "  if (EXISTS \"{from_file}\" AND (NOT EXISTS \"{dest_file}\" OR NOT \"{dest_file}  \" IS_NEWER_THAN \"{from_file}\"))\n"
+        ));
+        file.push_str(&format!(
+            "    execute_process(COMMAND ${{CMAKE_COMMAND}} -E copy \"{from_file}\" \"{to_dir}\" RESULT_VARIABLE result  ERROR_QUIET)\n"
+        ));
+        file.push_str(
+            "    if (NOT result EQUAL 0)\n      execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 1)\n    else()\n",
+        );
+        if !prefix.is_empty() {
+            file.push_str(&format!("  file(REMOVE \"{dest_file}\")\n"));
+            file.push_str(&format!("  file(RENAME \"{to_file}\" \"{dest_file}\")\n"));
+        }
+        file.push_str("      break()\n    endif()\n");
+        file.push_str(&format!(
+            "  elseif(NOT EXISTS \"{from_file}\")\n    execute_process(COMMAND ${{CMAKE_COMMAND}} -E sleep 1)\n  endif()\n"
+        ));
+        file.push_str("endforeach()\n");
+    }
+    // cmGeneratedFileStream: written only when the content changes.
+    let _ = std::fs::create_dir_all(&target_compile_pdb_dir);
+    let _ = crate::fsutil::write_if_different(std::path::Path::new(&copy_script), file.as_bytes());
+
+    let config_genex = |expr: &str| {
+        if multi_config {
+            format!("$<$<CONFIG:{config}>:{expr}>")
+        } else {
+            expr.to_owned()
+        }
+    };
+    let output = config_genex(&format!(
+        "{target_compile_pdb_dir}{pdb_prefix}{reuse_from}.pdb"
+    ));
+    let command = crate::state::CustomCommand {
+        makefile: dir,
+        command_lines: vec![vec![
+            config_genex(&interp.cmake_command),
+            config_genex(&format!("-DPDB_PREFIX={pdb_prefix}")),
+            config_genex("-P"),
+            config_genex(&copy_script),
+        ]],
+        outputs: vec![output.clone()],
+        depends: vec![pch_file],
+        comment: Some(String::new()),
+        escape_allow_make_vars: true,
+        ..Default::default()
+    };
+    for output in &command.outputs {
+        crate::commands::target::mark_generated(interp, dir, output);
+    }
+    crate::commands::custom_actions::run_action(
+        interp,
+        &mut super::expand_output_genex,
+        crate::state::GeneratorAction::Output {
+            command,
+            replace: false,
+        },
+    );
+    // The copy rule's output: not scanned for modules, and a target source.
+    // A per-configuration output stays a generator expression, which the
+    // target's sources evaluate for each configuration.
+    let rule = if output.contains("$<") {
+        output.clone()
+    } else {
+        crate::util::collapse_full_path(&output, &current_binary)
+    };
+    let source = crate::commands::target::get_or_create_source(interp, dir, &rule);
+    source.props.set("CXX_SCAN_FOR_MODULES", "0".to_owned());
+    // Sources injected at generate time carry the makefile's persistent
+    // file-scope frame (cmLocalGenerator::DirectoryBacktrace).
+    let makefile = &interp.makefiles[dir];
+    let file = makefile
+        .list_files
+        .first()
+        .cloned()
+        .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
+    let backtrace = [crate::messages::Frame {
+        file: std::rc::Rc::from(file.as_str()),
+        line: 0,
+        name: None,
+        deferred: false,
+    }];
+    let target = interp.ext.targets.get_mut(key).expect("target");
+    target.insert_entry("SOURCES", &rule, &backtrace, false);
+    target
+        .props
+        .set("COMPILE_PDB_OUTPUT_DIRECTORY", target_compile_pdb_dir);
 }
 
 // ---------------------------------------------------------------------
