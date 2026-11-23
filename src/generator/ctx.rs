@@ -84,6 +84,11 @@ pub struct GenCtx<'a> {
     /// Keyed by depender target pointer; dependees are stored by key.
     /// Pointer-free so `GenCtx` stays covariant over `'a`.
     pub dep_graph: Rc<RefCell<Option<Rc<DepGraph>>>>,
+    /// `cmGeneratorTarget::GetLinkInformation` by target key and
+    /// configuration.
+    pub(super) link_information: Rc<RefCell<LinkInformationCache>>,
+    /// `cmGlobalGenerator::DirectoryContentMap`, once computed.
+    pub(super) directory_contents: Rc<RefCell<Option<Rc<RefCell<super::link::DirectoryContents>>>>>,
 }
 
 /// The memoized computations of a [`GenCtx`].
@@ -95,6 +100,9 @@ pub struct Caches {
     sources: Rc<RefCell<HashMap<String, Rc<Vec<super::target::SourceInfo>>>>>,
     usage: Rc<RefCell<HashMap<String, Rc<Vec<crate::genex::UsageItem>>>>>,
 }
+
+pub(super) type LinkInformationCache =
+    HashMap<(String, String), Option<Rc<super::link::LinkInformation>>>;
 
 /// Depender target pointer -> its direct dependees.
 pub type DepGraph = HashMap<usize, Rc<Vec<super::link::TargetDepend>>>;
@@ -130,6 +138,8 @@ impl<'a> GenCtx<'a> {
             sources: Rc::new(RefCell::new(HashMap::new())),
             usage: Rc::new(RefCell::new(HashMap::new())),
             dep_graph: Rc::default(),
+            link_information: Rc::default(),
+            directory_contents: Rc::default(),
         }
     }
 

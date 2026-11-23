@@ -2452,6 +2452,84 @@ pub(crate) fn target_languages(
     }
 }
 
+/// The iteration order of a `std::unordered_set<std::string>` with the given
+/// insertions, as libstdc++ implements it: the order that CMake visits the
+/// languages of a link closure in.
+fn unordered_set_order(insertions: &[String]) -> Vec<String> {
+    const MUL: u64 = 0xc6a4_a793_5bd1_e995;
+    fn mix(value: u64) -> u64 {
+        value ^ (value >> 47)
+    }
+    fn hash(text: &str) -> u64 {
+        let load = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .rev()
+                .fold(0u64, |value, byte| (value << 8) | u64::from(*byte))
+        };
+        let mut hash = 0xc70f_6907 ^ (text.len() as u64).wrapping_mul(MUL);
+        let chunks = text.as_bytes().chunks_exact(8);
+        let rest = chunks.remainder();
+        for chunk in chunks {
+            hash ^= mix(load(chunk).wrapping_mul(MUL)).wrapping_mul(MUL);
+            hash = hash.wrapping_mul(MUL);
+        }
+        if !rest.is_empty() {
+            hash ^= load(rest);
+            hash = hash.wrapping_mul(MUL);
+        }
+        mix(mix(hash).wrapping_mul(MUL))
+    }
+    // The first insertion allocates 13 buckets, which hold every language
+    // set. A node goes to the front of its bucket, and a new bucket goes to
+    // the front of the list.
+    let mut order: Vec<(u64, &String)> = Vec::new();
+    for text in insertions {
+        if order.iter().any(|(_, other)| *other == text) {
+            continue;
+        }
+        let bucket = hash(text) % 13;
+        let position = order
+            .iter()
+            .position(|(other, _)| *other == bucket)
+            .unwrap_or(0);
+        order.insert(position, (bucket, text));
+    }
+    order.into_iter().map(|(_, text)| text.clone()).collect()
+}
+
+/// `cmGeneratorTarget::GetLinkClosure(config)->Languages`.
+pub(super) fn closure_languages(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
+    if !can_compile_sources(target) {
+        return Vec::new();
+    }
+    let mut own = BTreeSet::new();
+    target_languages(ctx, target, config, &sources(ctx, target, config), &mut own);
+    let mut languages: Vec<String> = own.into_iter().collect();
+    // cmTargetCollectLinkLanguages: only static libraries propagate.
+    for provider in link_closure(ctx, target, config) {
+        if provider.kind != TargetKind::StaticLibrary {
+            continue;
+        }
+        if provider.imported {
+            if let Some(import) = import_info(provider, config) {
+                languages.extend(expand_list(import.languages, false));
+            }
+        } else {
+            let mut found = BTreeSet::new();
+            target_languages(
+                ctx,
+                provider,
+                config,
+                &sources(ctx, provider, config),
+                &mut found,
+            );
+            languages.extend(found);
+        }
+    }
+    unordered_set_order(&languages)
+}
+
 /// `cmGeneratorTarget::ComputeLinkClosure` + `cmTargetSelectLinker`.
 fn select_linker_language(
     ctx: &GenCtx,

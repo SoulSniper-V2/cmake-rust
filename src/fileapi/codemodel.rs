@@ -1450,36 +1450,17 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         }
         if target.kind != TargetKind::StaticLibrary {
             let line = link::link_line(self.ctx, target, &self.config, language);
-            let path_flag = self
-                .ctx
-                .var(
-                    target.makefile,
-                    &format!("CMAKE_{language}_LIBRARY_PATH_FLAG"),
-                )
-                .or_else(|| self.ctx.var(target.makefile, "CMAKE_LIBRARY_PATH_FLAG"))
-                .unwrap_or_else(|| "-L".to_owned());
-            let path_end = self
-                .ctx
-                .var(
-                    target.makefile,
-                    &format!("CMAKE_{language}_LIBRARY_PATH_TERMINATOR"),
-                )
-                .or_else(|| {
-                    self.ctx
-                        .var(target.makefile, "CMAKE_LIBRARY_PATH_TERMINATOR")
-                })
-                .unwrap_or_default();
+            let framework_path = line.framework_path.trim();
+            if !framework_path.is_empty() {
+                out.push(fragment(graph, framework_path, &[], Some("frameworkPath")));
+            }
             let dir_bts = link_dir_backtraces(self.ctx, target, &self.config, language);
-            for dir in &line.link_dirs {
+            for (text, dir) in &line.path_fragments {
                 let bt = dir_bts
                     .iter()
-                    .find(|(d, _)| d == dir)
+                    .find(|(d, _)| Some(d) == dir.as_ref())
                     .map(|(_, bt)| bt.clone())
                     .unwrap_or_default();
-                let text = format!(
-                    "{path_flag}{}{path_end}",
-                    crate::outconv::escape_for_shell(dir, crate::outconv::NINJA_UNIX)
-                );
                 out.push(fragment(graph, text.trim(), &bt, Some("libraryPath")));
             }
             for (value, bt) in &line.lib_fragments {

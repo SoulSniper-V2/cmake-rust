@@ -58,6 +58,16 @@ pub(super) fn support_level(ctx: &GenCtx, target: &Target, config: &str) -> CxxS
     CxxSupportLevel::Supported
 }
 
+/// Whether link information is computed even for targets that do not link.
+pub(super) fn needs_link_information(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    support_level(ctx, target, config) == CxxSupportLevel::Supported
+        || ctx.configs.iter().any(|config| {
+            super::target::sources(&ctx.for_config(config), target, config)
+                .iter()
+                .any(|source| source.language == "Fortran")
+        })
+}
+
 /// The files of the target's `CXX_MODULES` file sets.
 pub(super) fn file_set_files(ctx: &GenCtx, target: &Target) -> Vec<String> {
     let source_dir = &ctx.interp.makefiles[target.makefile].source_dir;

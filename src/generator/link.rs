@@ -5,14 +5,19 @@ mod directories;
 mod information;
 pub(crate) mod target_graph;
 
+pub(super) use directories::DirectoryContents;
+pub(super) use information::{LinkInformation, link_information};
+
 pub use target_graph::TargetDepend;
 pub(crate) use target_graph::in_build_system;
 
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 
 use super::ctx::GenCtx;
 use super::target::{self, ArtifactType, SourceInfo};
@@ -30,62 +35,48 @@ pub struct LinkLine {
     pub libraries: String,
     /// The formatted `LINK_PATH` value.
     pub link_path: String,
+    /// The formatted framework search flags.
+    pub framework_path: String,
     /// Files the link step depends on (implicit deps `|`).
     pub depends: Vec<String>,
+    /// The LINK_DEPENDS of the target.
+    pub link_depends: Vec<String>,
     /// Extra order-only dependencies, appended after target artifacts.
-    #[allow(dead_code, reason = "The Ninja writer will append version symlinks")]
     pub shared_symlinks: Vec<String>,
     /// ELF rpath substitution for an installed target, before shell escaping.
     pub rpath_change: Option<(String, String)>,
-    /// Linker flag and optional checker for LINK_WHAT_YOU_USE.
-    #[allow(
-        dead_code,
-        reason = "The Ninja writer consumes the linker flag and checker"
-    )]
-    pub link_what_you_use: Option<LinkUsageCheck>,
     /// Codemodel "libraries" fragments: each emitted string paired with the
     /// link item's backtrace (empty for generated fragments such as rpath).
-    #[allow(dead_code, reason = "consumed by the file API codemodel")]
-    pub lib_fragments: Vec<(String, Vec<crate::messages::Frame>)>,
-    /// Codemodel ordered link directories, before flag decoration.
-    #[allow(dead_code, reason = "consumed by the file API codemodel")]
-    pub link_dirs: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(
-    dead_code,
-    reason = "The Ninja writer consumes the linker flag and checker"
-)]
-pub struct LinkUsageCheck {
-    pub flag: String,
-    pub checker: Option<String>,
+    pub lib_fragments: Vec<(String, Vec<Frame>)>,
+    /// Codemodel "libraryPath" fragments: the flag and the search directory
+    /// it names, if that is a link directory.
+    pub path_fragments: Vec<(String, Option<String>)>,
 }
 
 pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> LinkLine {
     let query = Query::new(ctx, config, language);
-    information::compute(&query, target)
+    link_information(ctx, target, config, language)
+        .map(|info| information::line(&query, target, &info))
+        .unwrap_or_default()
 }
 
-/// Link information is also computed for static/object libraries when
-/// collating Fortran modules. Object link items forward their providers.
+/// The targets among the link items of `target`, and the providers of the
+/// object files among them, whose modules are forwarded.
 pub(super) fn module_link_targets<'i>(
     ctx: &GenCtx<'i>,
     target: &Target,
     language: &str,
 ) -> Vec<(&'i Target, bool)> {
-    let query = Query::new(ctx, &ctx.config, language);
-    dependencies::compute(&query, target)
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            if let Some(dep) = entry.item.target {
-                Some((dep, false))
-            } else {
-                target::target_object_library(ctx, target.makefile, &entry.item.text)
-                    .and_then(|name| ctx.target(&name))
-                    .map(|dep| (dep, true))
-            }
+    let Some(info) = link_information(ctx, target, &ctx.config, language) else {
+        return Vec::new();
+    };
+    info.items
+        .iter()
+        .filter_map(|item| match &item.target {
+            Some(key) => ctx.interp.ext.targets.get(key).map(|dep| (dep, false)),
+            None => target::target_object_library(ctx, target.makefile, &item.value)
+                .and_then(|name| ctx.target(&name))
+                .map(|dep| (dep, true)),
         })
         .collect()
 }
@@ -273,25 +264,42 @@ trait GeneratorQueries {
         ctx.genex_with_dag(text, owner, head, property, language)
     }
 
-    fn artifact(&self, ctx: &GenCtx, target: &Target, config: &str, real: bool) -> String {
-        target::full_path(ctx, target, config, ArtifactType::Runtime, real)
+    fn artifact(
+        &self,
+        ctx: &GenCtx,
+        target: &Target,
+        config: &str,
+        artifact: ArtifactType,
+        real: bool,
+    ) -> String {
+        target::full_path(&ctx.for_config(config), target, config, artifact, real)
+    }
+
+    fn has_import_library(&self, ctx: &GenCtx, target: &Target, config: &str) -> bool {
+        target::has_import_library(ctx, target, config)
+    }
+
+    /// `cmGeneratorTarget::GetLinkClosure(config)->Languages`.
+    fn closure_languages(&self, ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
+        target::closure_languages(ctx, target, config)
+    }
+
+    /// The files that the targets' rules create, by directory.
+    fn directory_contents(&self, query: &Query<'_, '_>) -> Rc<RefCell<DirectoryContents>> {
+        query
+            .ctx
+            .directory_contents
+            .borrow_mut()
+            .get_or_insert_with(|| Rc::new(RefCell::new(manifest(query.ctx))))
+            .clone()
     }
 
     fn soname(&self, ctx: &GenCtx, target: &Target, config: &str) -> Option<String> {
-        if target.imported {
-            if is_on_opt(import_property(target, config, "IMPORTED_NO_SONAME")) {
-                return import_property(target, config, "IMPORTED_LOCATION")
-                    .map(crate::util::filename_name);
-            }
-            return import_property(target, config, "IMPORTED_SONAME")
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned);
-        }
-        target::has_soname(ctx, target, config)
-            .then(|| target::names(ctx, target, config).shared_object)
+        Some(target::soname(ctx, target, config, ArtifactType::Runtime))
             .filter(|name| !name.is_empty())
     }
 
+    #[cfg(test)]
     fn sources(&self, ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
         target::sources(ctx, target, config).as_ref().clone()
     }
@@ -308,6 +316,40 @@ trait GeneratorQueries {
 
 struct Generator;
 impl GeneratorQueries for Generator {}
+
+/// `cmGeneratorTarget::ComputeTargetManifest` of every target.
+fn manifest(ctx: &GenCtx) -> DirectoryContents {
+    let mut contents = DirectoryContents::default();
+    for target in ctx.targets_in_order() {
+        if target.imported
+            || !matches!(
+                target.kind,
+                TargetKind::Executable
+                    | TargetKind::StaticLibrary
+                    | TargetKind::SharedLibrary
+                    | TargetKind::ModuleLibrary
+            )
+        {
+            continue;
+        }
+        for config in &ctx.configs {
+            let ctx = ctx.for_config(config);
+            let names = target::names(&ctx, target, config);
+            let dir = target::directory(&ctx, target, config, ArtifactType::Runtime);
+            for name in [names.output, names.shared_object, names.real, names.pdb] {
+                contents.add(&dir, name);
+            }
+            let imports = [names.import_output, names.import_library, names.import_real];
+            if imports.iter().any(|name| !name.is_empty()) {
+                let dir = target::directory(&ctx, target, config, ArtifactType::Import);
+                for name in imports {
+                    contents.add(&dir, name);
+                }
+            }
+        }
+    }
+    contents
+}
 
 pub(crate) struct Query<'a, 'i> {
     ctx: &'a GenCtx<'i>,
@@ -882,35 +924,6 @@ fn config_suffix(config: &str) -> String {
 
 fn on(target: &Target, name: &str) -> bool {
     is_on_opt(target.props.get(name))
-}
-
-fn dependency_languages(target: &Target, query: &Query<'_, '_>) -> Vec<String> {
-    if target.imported {
-        return expand_list(
-            import_property(target, query.config, "IMPORTED_LINK_INTERFACE_LANGUAGES")
-                .unwrap_or_default(),
-            false,
-        );
-    }
-    if !matches!(
-        target.kind,
-        TargetKind::Executable
-            | TargetKind::StaticLibrary
-            | TargetKind::SharedLibrary
-            | TargetKind::ModuleLibrary
-            | TargetKind::ObjectLibrary
-    ) {
-        return Vec::new();
-    }
-    query
-        .generator
-        .sources(query.ctx, target, query.config)
-        .into_iter()
-        .filter(|source| {
-            source.kind == target::SourceKind::ObjectSource && !source.language.is_empty()
-        })
-        .map(|source| source.language)
-        .collect()
 }
 
 fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {

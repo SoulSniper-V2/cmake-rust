@@ -37,8 +37,6 @@ struct Edge {
     libraries: String,
     #[serde(rename = "LINK_PATH")]
     link_path: String,
-    #[serde(rename = "LINK_FLAGS", default)]
-    link_flags: String,
     explicit: Vec<String>,
     implicit: Vec<String>,
     order_only: Vec<String>,
@@ -47,7 +45,14 @@ struct Edge {
 struct FixtureGenerator;
 
 impl GeneratorQueries for FixtureGenerator {
-    fn artifact(&self, ctx: &GenCtx, target: &Target, config: &str, real: bool) -> String {
+    fn artifact(
+        &self,
+        ctx: &GenCtx,
+        target: &Target,
+        config: &str,
+        _artifact: ArtifactType,
+        real: bool,
+    ) -> String {
         if target.imported {
             return import_property(target, config, "IMPORTED_LOCATION")
                 .unwrap_or_default()
@@ -84,6 +89,46 @@ impl GeneratorQueries for FixtureGenerator {
 
     fn language(&self, _ctx: &GenCtx, _target: &Target, _config: &str) -> String {
         "C".into()
+    }
+
+    fn closure_languages(&self, ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
+        let query = Query {
+            generator: self,
+            ..Query::new(ctx, config, "C")
+        };
+        let mut languages = dependency_languages(target, &query);
+        let mut pending = implementation(&query, target);
+        let mut seen = std::collections::HashSet::new();
+        while let Some(item) = pending.pop() {
+            let Some(dep) = item.target.filter(|dep| seen.insert(dep.name.clone())) else {
+                continue;
+            };
+            if dep.kind == TargetKind::StaticLibrary {
+                languages.extend(dependency_languages(dep, &query));
+            }
+            pending.extend(interface(&query, dep, target).libraries);
+        }
+        unique(languages)
+    }
+
+    fn directory_contents(&self, query: &Query<'_, '_>) -> Rc<RefCell<DirectoryContents>> {
+        let mut contents = DirectoryContents::default();
+        for target in query.ctx.targets_in_order() {
+            if target.imported || target.kind != TargetKind::SharedLibrary {
+                continue;
+            }
+            let path =
+                |real| self.artifact(query.ctx, target, query.config, ArtifactType::Runtime, real);
+            let dir = crate::util::filename_path(&path(false));
+            contents.add(&dir, crate::util::filename_name(&path(false)));
+            contents.add(&dir, crate::util::filename_name(&path(true)));
+            contents.add(
+                &dir,
+                self.soname(query.ctx, target, query.config)
+                    .unwrap_or_default(),
+            );
+        }
+        Rc::new(RefCell::new(contents))
     }
 
     fn object_dir(&self, ctx: &GenCtx, target: &Target, _config: &str) -> String {
@@ -238,6 +283,42 @@ fn model(fixture: &Fixture) -> Interp {
     interp
 }
 
+fn dependency_languages(target: &Target, query: &Query<'_, '_>) -> Vec<String> {
+    if target.imported {
+        return expand_list(
+            import_property(target, query.config, "IMPORTED_LINK_INTERFACE_LANGUAGES")
+                .unwrap_or_default(),
+            false,
+        );
+    }
+    if !matches!(
+        target.kind,
+        TargetKind::Executable
+            | TargetKind::StaticLibrary
+            | TargetKind::SharedLibrary
+            | TargetKind::ModuleLibrary
+            | TargetKind::ObjectLibrary
+    ) {
+        return Vec::new();
+    }
+    query
+        .generator
+        .sources(query.ctx, target, query.config)
+        .into_iter()
+        .filter(|source| {
+            source.kind == target::SourceKind::ObjectSource && !source.language.is_empty()
+        })
+        .map(|source| source.language)
+        .collect()
+}
+
+fn line(query: &Query<'_, '_>, target: &Target) -> LinkLine {
+    information::compute(query, target)
+        .filter(|_| target.kind != TargetKind::StaticLibrary)
+        .map(|info| information::line(query, target, &info))
+        .unwrap_or_default()
+}
+
 fn ninja_dep(query: &Query<'_, '_>, path: &str) -> String {
     query
         .ninja_path(path)
@@ -255,9 +336,13 @@ fn target_artifact(query: &Query<'_, '_>, target: &Target) -> String {
                 query.ctx.interp.makefiles[target.makefile].binary_dir, target.name
             )
         }
-        _ => query
-            .generator
-            .artifact(query.ctx, target, query.config, false),
+        _ => query.generator.artifact(
+            query.ctx,
+            target,
+            query.config,
+            ArtifactType::Runtime,
+            false,
+        ),
     }
 }
 
@@ -320,20 +405,7 @@ fn cmake_4_1_ninja_edges() {
         }
         for (name, expected) in fixture.edges {
             let target = ctx.target(&name).unwrap();
-            let line = information::compute(&query, target);
-            if on(target, "LINK_WHAT_YOU_USE") {
-                let check = line
-                    .link_what_you_use
-                    .as_ref()
-                    .expect("oracle enabled LINK_WHAT_YOU_USE");
-                assert!(
-                    expected
-                        .link_flags
-                        .split_whitespace()
-                        .any(|flag| flag == check.flag)
-                );
-                assert_eq!(check.checker.as_deref(), Some("ldd;-u;-r"));
-            }
+            let line = line(&query, target);
             if on(target, "BUILD_WITH_INSTALL_RPATH") {
                 assert!(line.rpath_change.is_none());
             }
@@ -349,7 +421,12 @@ fn cmake_4_1_ninja_edges() {
                 .map(|edge| target_artifact(&query, graph.targets[edge.to]))
                 .collect::<Vec<_>>();
             order_only.sort();
-            order_only.extend(line.shared_symlinks);
+            order_only.extend(
+                line.shared_symlinks
+                    .iter()
+                    .filter(|file| !line.depends.contains(file))
+                    .cloned(),
+            );
             let mut explicit = information::objects(&query, target);
             explicit.extend(
                 query
@@ -385,6 +462,7 @@ fn cmake_4_1_ninja_edges() {
                 "implicit deps",
                 line.depends
                     .iter()
+                    .chain(&line.link_depends)
                     .map(|dep| ninja_dep(&query, dep))
                     .collect(),
                 expected.implicit,

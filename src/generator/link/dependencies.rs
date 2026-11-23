@@ -21,7 +21,6 @@ pub(super) struct Entry<'a> {
 pub(super) struct Ordered<'a> {
     pub entries: Vec<Entry<'a>>,
     pub has_implementation: bool,
-    pub languages: BTreeSet<String>,
 }
 
 struct LinkGraph<'a, 'q, 'i> {
@@ -38,7 +37,6 @@ struct LinkGraph<'a, 'q, 'i> {
     shared_followed: HashSet<usize>,
     inferred: Vec<Option<BTreeSet<usize>>>,
     overrides: HashMap<String, String>,
-    languages: BTreeSet<String>,
 }
 
 pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
@@ -75,20 +73,15 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
         shared_queue: VecDeque::new(),
         shared_followed: HashSet::new(),
         inferred: Vec::new(),
-        languages: dependency_languages(head, query).into_iter().collect(),
     };
     let direct = implementation(query, head);
     let has_implementation = direct.iter().any(|item| !item.object);
     graph.add_list(None, direct);
-    if !query.language.is_empty() {
-        graph.languages.insert(query.language.to_owned());
-    }
     graph.follow();
     let entries = graph.finish();
     Ordered {
         entries,
         has_implementation,
-        languages: graph.languages,
     }
 }
 
@@ -343,13 +336,6 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             let item = self.entries[index].item.clone();
             if let Some(target) = item.target {
                 let iface = interface(self.query, target, self.head);
-                if matches!(
-                    target.kind,
-                    TargetKind::StaticLibrary | TargetKind::ObjectLibrary
-                ) {
-                    self.languages
-                        .extend(dependency_languages(target, self.query));
-                }
                 self.add_list(Some(parent), iface.libraries.clone());
                 if target.kind != TargetKind::InterfaceLibrary {
                     self.queue_shared(parent, target, &iface, false);
@@ -506,13 +492,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                     schedule.emit(index);
                 }
             }
-            strategy => {
-                self.query.error_at(
-                    self.head.backtrace.clone(),
-                    format!("LINK_LIBRARIES_STRATEGY value '{strategy}' is not recognized."),
-                );
-                return Vec::new();
-            }
+            _ => return Vec::new(),
         }
         while let Some((_, pending)) = schedule.pending.first_key_value() {
             schedule.emit(

@@ -14,6 +14,7 @@ pub(crate) use compile::{
 };
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{link_dependency_file, link_flag_vars};
+pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
 
 // API pending the source-property and linked-target integrations below;

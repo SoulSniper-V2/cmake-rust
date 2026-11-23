@@ -948,25 +948,29 @@ impl<'a, 'b> Exporter<'a, 'b> {
             }
         }
         if tgt.kind != TargetKind::InterfaceLibrary && tgt.kind != TargetKind::ObjectLibrary {
-            if target::linker_language(self.ctx, tgt, &self.ctx.config).is_empty() {
-                self.ctx.error(
+            for config in &self.ctx.configs {
+                let ctx = self.ctx.for_config(config);
+                let language = target::linker_language(&ctx, tgt, config);
+                let Some(info) = super::link::link_information(&ctx, tgt, config, &language) else {
+                    self.ctx.error(
                         self.depender_backtrace(tgt),
                         format!(
                             "Exporting the target \"{}\" is not allowed since its linker language cannot be determined",
                             tgt.name
                         ),
                     );
-            }
-            for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
-                let Some(dep) = self.resolve(tgt.makefile, &name) else {
                     continue;
                 };
-                if dep.kind == TargetKind::ObjectLibrary {
-                    continue;
-                }
-                for key in KINDS {
-                    if let Some(value) = dep.props.get(key) {
-                        iface_properties.extend(expand_list(value, false));
+                for dep in info
+                    .items
+                    .iter()
+                    .filter_map(|item| ctx.interp.ext.targets.get(item.target.as_ref()?))
+                    .filter(|dep| dep.kind != TargetKind::ObjectLibrary)
+                {
+                    for key in KINDS {
+                        if let Some(value) = dep.props.get(key) {
+                            iface_properties.extend(expand_list(value, false));
+                        }
                     }
                 }
             }

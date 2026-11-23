@@ -730,7 +730,7 @@ impl<'a> NinjaGenerator<'a> {
                     mark(
                         &mut uses,
                         &lib,
-                        &format!("linked by target \"{name}\" in directory {dir}"),
+                        &format!("    linked by target \"{name}\" in directory {dir}"),
                     );
                 }
             }
@@ -744,7 +744,7 @@ impl<'a> NinjaGenerator<'a> {
                     mark(
                         &mut uses,
                         &dir_item,
-                        &format!("used as include directory in directory {dir}"),
+                        &format!("   used as include directory in directory {dir}"),
                     );
                 }
             }
@@ -752,7 +752,7 @@ impl<'a> NinjaGenerator<'a> {
                 not_found
                     .entry(var)
                     .or_default()
-                    .push_str(&format!("\n   {usage}"));
+                    .push_str(&format!("\n{usage}"));
             }
         }
         if !not_found.is_empty() {
@@ -3467,6 +3467,8 @@ impl<'a> NinjaGenerator<'a> {
         // without cross-config builds).
         let mut clean_outputs = vec![target_real.clone()];
         build.explicit_deps = objects.to_vec();
+        // Static libraries only need the diagnostics of their link items.
+        let _ = link::link_information(&self.ctx, target, &config, language);
         let link_vars = flags::link_flag_vars(&self.ctx, target, &config, language);
         let mut shared_symlinks: Vec<String> = Vec::new();
         let object_dir = self.ninja_path(&self.object_dir(target));
@@ -3475,19 +3477,25 @@ impl<'a> NinjaGenerator<'a> {
             build
                 .variables
                 .insert("LINK_LIBRARIES".into(), line.libraries);
-            build.variables.insert("LINK_PATH".into(), line.link_path);
+            build
+                .variables
+                .insert("LINK_PATH".into(), line.framework_path + &line.link_path);
+            // cmNinjaTargetGenerator::ComputeLinkDeps: the link information,
+            // module definition files, user-specified manifest sources and
+            // LINK_DEPENDS.
             build.implicit_deps = line
                 .depends
                 .iter()
                 .map(|dep| self.ninja_path(dep))
                 .collect();
-            // cmNinjaTargetGenerator::ComputeLinkDeps: user-specified
-            // manifest sources (GetManifests).
             for source in gt::sources(&self.ctx, target, &config).iter() {
                 if source.kind == SourceKind::Manifest {
                     build.implicit_deps.push(self.ninja_path(&source.path));
                 }
             }
+            build
+                .implicit_deps
+                .extend(line.link_depends.iter().map(|dep| self.ninja_path(dep)));
             shared_symlinks = line
                 .shared_symlinks
                 .iter()

@@ -272,27 +272,26 @@ impl GenexHost for CtxHost<'_, '_> {
         let Some(target) = self.find(name) else {
             return Ok(Vec::new());
         };
-        let key = format!("runtime-dlls:{}:{config}", self.ctx.target_key(target));
-        if self
-            .ctx
-            .memo
-            .borrow_mut()
-            .insert(key, String::new())
-            .is_none()
-        {
-            let language = gt::linker_language(self.ctx, target, config);
-            if !language.is_empty() {
-                let _ = super::link::link_line(self.ctx, target, config, &language);
-            }
-        }
-        // cmComputeLinkInformation::AddRuntimeDLL records shared libraries
-        // only on DLL platforms, which cmake-rust does not target.
-        if target.platform.dll {
-            return Err(
-                "TARGET_RUNTIME_DLLS on DLL platforms is not supported by cmake-rust.".to_owned(),
-            );
-        }
-        Ok(Vec::new())
+        let language = gt::linker_language(self.ctx, target, config);
+        let Some(info) = super::link::link_information(self.ctx, target, config, &language) else {
+            return Ok(Vec::new());
+        };
+        Ok(info
+            .runtime_dlls
+            .iter()
+            .filter_map(|key| self.ctx.interp.ext.targets.get(key))
+            .filter_map(|dll| match gt::import_info(dll, config) {
+                // cmGeneratorTarget::MaybeGetLocation.
+                Some(import) => (!import.location.is_empty()).then(|| import.location.to_owned()),
+                None => Some(gt::full_path(
+                    self.ctx,
+                    dll,
+                    config,
+                    ArtifactType::Runtime,
+                    false,
+                )),
+            })
+            .collect())
     }
 
     fn target_objects(&self, name: &str, config: &str) -> Result<Vec<String>, String> {

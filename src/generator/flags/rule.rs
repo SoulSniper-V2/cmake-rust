@@ -323,7 +323,11 @@ fn compiler(inputs: &Flags<'_, '_>, step: RuleStep, current_language: bool) -> S
     command
 }
 
-fn expand_placeholders(template: &str, mut replacement: impl FnMut(&str) -> String) -> String {
+/// `cmPlaceholderExpander::ExpandVariables`.
+pub(in crate::generator) fn expand_placeholders(
+    template: &str,
+    mut replacement: impl FnMut(&str) -> String,
+) -> String {
     let Some(mut start) = template.find('<') else {
         return template.to_owned();
     };

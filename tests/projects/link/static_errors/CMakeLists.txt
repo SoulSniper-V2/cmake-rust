@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 4.1)
+project(static_errors C CXX)
+add_library(x STATIC x.cxx)
+add_library(s1 STATIC x.cxx)
+target_link_libraries(s1 PRIVATE ${CMAKE_SOURCE_DIR} "$<LINK_LIBRARY:bogus,x>" "$<LINK_GROUP:nogroup,x>")
+add_executable(d a.c)
+target_link_libraries(d nf-NOTFOUND x)

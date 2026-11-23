@@ -32,6 +32,7 @@ pub mod flags;
 pub mod genex_host;
 pub mod graphviz;
 pub mod install;
+mod install_name;
 pub mod link;
 mod module_support;
 pub mod ninja;

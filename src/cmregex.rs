@@ -123,6 +123,7 @@ pub struct Match {
 
 /// A compiled regular expression (kwsys `program` plus its precomputed
 /// match hints).
+#[derive(Clone)]
 pub struct Regex {
     program: Vec<u8>,
     regstart: u8,             // byte that must begin a match; 0 = none obvious
