@@ -1,0 +1,209 @@
+[
+ {
+  "name": "mcdb-no-subcommand",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db"
+  ]
+ },
+ {
+  "name": "mcdb-unknown-subcommand",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "bogus",
+   "good1.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-verify-good",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "verify",
+   "good1.json",
+   "good2.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-verify-output",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "verify",
+   "-o",
+   "x.json",
+   "good1.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-verify-bad",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "verify",
+   "bad.json",
+   "v2.json",
+   "noname.json",
+   "badtu.json",
+   "badprov.json",
+   "badwd.json",
+   "missing.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-merge",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "merge",
+   "-o",
+   "out.json",
+   "good1.json",
+   "good2.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  },
+  "inspect": [
+   "out.json"
+  ]
+ },
+ {
+  "name": "mcdb-merge-no-output",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "merge",
+   "good1.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-merge-two-outputs",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "merge",
+   "-o",
+   "a.json",
+   "-o",
+   "b.json",
+   "good1.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  }
+ },
+ {
+  "name": "mcdb-merge-bad-input",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "merge",
+   "-o",
+   "out.json",
+   "good1.json",
+   "bad.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  },
+  "inspect": [
+   "out.json"
+  ]
+ },
+ {
+  "name": "mcdb-merge-none",
+  "argv": [
+   "-E",
+   "cmake_module_compile_db",
+   "merge",
+   "-o",
+   "out.json"
+  ],
+  "files": {
+   "good1.json": "{\n  \"version\": 1,\n  \"revision\": 0,\n  \"sets\": [\n    {\n      \"name\": \"a@Debug\",\n      \"family-name\": \"a\",\n      \"visible-sets\": [],\n      \"translation-units\": [\n        {\n          \"work-directory\": \"/w\",\n          \"source\": \"s.cxx\",\n          \"object\": \"o.o\",\n          \"private\": true,\n          \"requires\": [\n            \"m\"\n          ],\n          \"provides\": {\n            \"p\": \"p.gcm\"\n          },\n          \"baseline-arguments\": [\n            \"-x\"\n          ],\n          \"local-arguments\": [\n            \"-y\"\n          ],\n          \"arguments\": [\n            \"c++\",\n            \"-c\",\n            \"s.cxx\"\n          ]\n        }\n      ]\n    }\n  ]\n}",
+   "good2.json": "{\"version\": 1, \"revision\": 0, \"sets\": [{\"name\": \"b@Debug\", \"family-name\": \"b\", \"visible-sets\": [\"a@Debug\"], \"translation-units\": [{\"source\": \"/abs/t.cxx\", \"private\": false, \"requires\": [], \"provides\": {}, \"baseline-arguments\": [], \"local-arguments\": [], \"arguments\": []}]}]}",
+   "bad.json": "{ not json",
+   "v2.json": "{\"version\": 2, \"sets\": []}",
+   "noname.json": "{\"version\": 1, \"sets\": [{\"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": []}]}",
+   "badtu.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [3]}]}",
+   "badprov.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"source\": \"s\", \"provides\": {\"a\": 1}}]}]}",
+   "badwd.json": "{\"version\": 1, \"sets\": [{\"name\": \"x\", \"family-name\": \"x\", \"visible-sets\": [], \"translation-units\": [{\"work-directory\": 4, \"source\": \"s\"}]}]}"
+  },
+  "inspect": [
+   "out.json"
+  ]
+ }
+]

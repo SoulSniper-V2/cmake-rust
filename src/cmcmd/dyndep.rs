@@ -853,11 +853,13 @@ fn write_dyndep_metadata(
     }
 
     // cmBuildDatabase::Load and GenerateLookupTable.
-    let mut build_db: Option<(
+    // The database, its lookup table, and the output path.
+    type ModuleDatabase = (
         crate::build_database::BuildDatabase,
         BTreeMap<String, (usize, usize)>,
         String,
-    )> = None;
+    );
+    let mut build_db: Option<ModuleDatabase> = None;
     if let Some((tmpl, out)) = export.database_info {
         match crate::build_database::BuildDatabase::load(tmpl) {
             Some(db) => {

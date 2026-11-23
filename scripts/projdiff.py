@@ -82,7 +82,8 @@ def gather(build_dir):
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json", "CXXDependInfo.json",
                      "AutogenInfo.json", "InstallScripts.json", "TargetDirectories.txt")
                 or (name.startswith("AutoRcc_") and name.endswith("_Info.json"))
-                or name.endswith((".mk", ".cps")) or rel.startswith("CMakeFiles/Export/")
+                or name.endswith((".mk", ".cps", "_build_database.json.in"))
+                or rel.startswith("CMakeFiles/Export/")
                 # Extra generator outputs (CodeBlocks, CodeLite, Eclipse CDT4,
                 # Kate, Sublime Text 2).
                 # Bundle Info.plist, generated module definitions and the
@@ -146,11 +147,15 @@ def run_side(binary, case, work):
         produced = sorted(p.relative_to(build).as_posix() for p in build.rglob("*")
                           if p.is_file() and "CMakeFiles" not in p.parts and not p.name.startswith(".ninja"))
         result["build.outputs"] = "\n".join(produced)
+        # The merged build databases at the top of the build tree.
+        for merged in sorted(build.glob("build_database*.json")):
+            result[f"file:{merged.name}"] = merged.read_text()
         # Compare the actual module edges, not just the final binary names.
         for tdi in build.rglob("*DependInfo.json"):
             for path in tdi.parent.rglob("*"):
                 scan_dep = path.suffix == ".d" and ("-pp." in path.name or path.name.endswith(".ddi.d"))
-                if (path.name in ("Fortran.dd", "FortranModules.json", "CXX.dd", "CXXModules.json")
+                if (path.name in ("Fortran.dd", "FortranModules.json", "CXX.dd", "CXXModules.json",
+                                  "CXX_build_database.json")
                         or path.suffix in (".ddi", ".modmap") or scan_dep):
                     result[f"file:{path.relative_to(build)}"] = path.read_text()
     if (case / "ctest.txt").exists() and proc.returncode == 0:

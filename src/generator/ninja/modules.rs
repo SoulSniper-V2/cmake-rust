@@ -811,9 +811,11 @@ impl<'a> NinjaGenerator<'a> {
     fn write_build_database(&mut self, target: &Target, path: &str) {
         let config = self.config.clone();
         let mut db = crate::build_database::BuildDatabase::default();
-        let mut set = crate::build_database::DatabaseSet::default();
-        set.name = format!("{}@{config}", target.name);
-        set.family_name = self.family_name(target);
+        let mut set = crate::build_database::DatabaseSet {
+            name: format!("{}@{config}", target.name),
+            family_name: self.family_name(target),
+            ..Default::default()
+        };
 
         // Linked targets with C++20 module sources are visible sets.
         {
@@ -869,9 +871,11 @@ impl<'a> NinjaGenerator<'a> {
             })
             .unwrap_or_default();
 
-            let mut tu = crate::build_database::TranslationUnit::default();
-            tu.work_directory = work_directory.clone();
-            tu.source = source.path.clone();
+            let mut tu = crate::build_database::TranslationUnit {
+                work_directory: work_directory.clone(),
+                source: source.path.clone(),
+                ..Default::default()
+            };
             if !target.synthetic {
                 tu.object = Some(format!("{object_dir}/{}", source.object_name));
             }

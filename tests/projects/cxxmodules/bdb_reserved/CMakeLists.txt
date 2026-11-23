@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+project(CxxModulesBuildDatabaseReserved NONE)
+set(CMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE "73194a1d-c0b5-41b9-9190-a4512925e192")
+set(CMAKE_EXPORT_BUILD_DATABASE ON)
+add_custom_target(cmake_build_database)
+add_custom_target(cmake_build_database-CXX)
+add_library(iface INTERFACE)
+add_library(cmake_build_database-Debug ALIAS iface)
