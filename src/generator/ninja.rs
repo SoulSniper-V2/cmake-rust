@@ -1791,6 +1791,48 @@ impl<'a> NinjaGenerator<'a> {
         self.add_rule(&rule);
     }
 
+    /// The CMP0154 split in `cmNinjaTargetGenerator::WriteObjectBuildStatements`:
+    /// custom command outputs (in order) into those other targets may need
+    /// (interface file sets, or everything under OLD) and those only this
+    /// target's compilations need. Non-includeable file-set members (C++
+    /// modules) are dropped from both.
+    fn split_private_outputs(
+        &self,
+        target: &Target,
+        outputs: Vec<String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let use_private = !target.file_sets.is_empty()
+            && target
+                .policies
+                .get(crate::policy::index_of("CMP0154").unwrap())
+                == Some(crate::policy::PolicyStatus::New);
+        if !use_private {
+            return (outputs, Vec::new());
+        }
+        // cmGeneratorTarget::BuildFileSetInfoCache; its diagnostics were
+        // already issued when the file sets were first evaluated.
+        let reported = self.ctx.errors.borrow().len();
+        let mut file_set_of: HashMap<String, &crate::state::FileSet> = HashMap::new();
+        for set in target.file_sets.values() {
+            for (file, _, _) in gt::evaluate_file_set(self.ctx, target, set) {
+                file_set_of.insert(file, set);
+            }
+        }
+        self.ctx.errors.borrow_mut().truncate(reported);
+        let mut public = Vec::new();
+        let mut private = Vec::new();
+        for output in outputs {
+            let set = file_set_of.get(&util::collapse_full_path(&output, ""));
+            let includeable = set.is_none_or(|set| set.kind == "HEADERS");
+            if set.is_some_and(|set| set.scope.interface()) && includeable {
+                public.push(output);
+            } else if includeable {
+                private.push(output);
+            }
+        }
+        (public, private)
+    }
+
     /// `cmGeneratorTarget::HaveCxx20ModuleSources`: files of the target's
     /// `CXX_MODULES` file sets, expanded and collapsed to full paths.
     fn cxx_module_file_set_files(&self, target: &Target) -> Vec<String> {
@@ -2150,15 +2192,18 @@ impl<'a> NinjaGenerator<'a> {
         let object_dir = self.object_dir(target);
         let _ = std::fs::create_dir_all(&object_dir);
         let order_target = format!("cmake_object_order_depends_target_{}", target.name);
+        let mut object_order_target = order_target.clone();
         {
             let mut build = Build::new("phony");
             build.comment = format!("Order-only phony target for {}", target.name);
             build.outputs.push(order_target.clone());
             let mut order = Vec::new();
             self.append_target_depends(target, &mut order, DependOn::TargetOrdering);
-            // Order-only dependencies on custom command outputs.
-            // INTEGRATION: CMP0154 private generated sources of file sets.
-            order.extend(custom_outputs.iter().map(|path| self.ninja_path(path)));
+            // Order-only dependencies on custom command outputs; with
+            // CMP0154 NEW, outputs outside the target's interface file sets
+            // are private to its own compilations.
+            let (public, private) = self.split_private_outputs(target, custom_outputs);
+            order.extend(public.iter().map(|path| self.ninja_path(path)));
             order.sort();
             order.dedup();
             if order.is_empty() {
@@ -2166,6 +2211,18 @@ impl<'a> NinjaGenerator<'a> {
             }
             build.order_only_deps = order;
             write_build(&mut out, &build, 0);
+            if !private.is_empty() {
+                let private_target = format!("{order_target}_private");
+                let mut build = Build::new("phony");
+                build.outputs.push(private_target.clone());
+                let mut order = vec![order_target.clone()];
+                order.extend(private.iter().map(|path| self.ninja_path(path)));
+                order.sort();
+                order.dedup();
+                build.order_only_deps = order;
+                write_build(&mut out, &build, 0);
+                object_order_target = private_target;
+            }
         }
         // GetExternalObjects precede the compiled objects.
         let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
@@ -2234,7 +2291,7 @@ impl<'a> NinjaGenerator<'a> {
                     build.implicit_deps.push(self.ninja_path(&dep));
                 }
             }
-            build.order_only_deps.push(order_target.clone());
+            build.order_only_deps.push(object_order_target.clone());
             // A GENERATED source with no custom command (on itself or on
             // any other source) is assumed to be produced by one of the
             // order-only dependencies (cmNinjaTargetGenerator's
