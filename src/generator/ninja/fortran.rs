@@ -223,7 +223,7 @@ impl<'a> NinjaGenerator<'a> {
                 .any(|dep| self.has_fortran_sources(dep))
     }
 
-    fn module_target_order(&mut self) {
+    pub(super) fn module_target_order(&mut self) {
         fn visit<'a>(
             ctx: &GenCtx<'a>,
             t: &'a Target,
@@ -252,7 +252,7 @@ impl<'a> NinjaGenerator<'a> {
 
     /// cmDyndepCollation includes export and installation information in
     /// every language's TDI, even when the build-time writer won't need it.
-    fn fortran_export_info(&self, target: &Target) -> (Vec<Value>, Value) {
+    pub(super) fn fortran_export_info(&self, target: &Target) -> (Vec<Value>, Value) {
         let install = &self.ctx.interp.ext.install;
         let contains = |set: &str| {
             install

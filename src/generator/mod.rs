@@ -173,6 +173,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     let start = std::time::Instant::now();
     finalize_target_configuration(interp);
+    if !check_build_database_targets(interp) {
+        return -1;
+    }
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
     // become generated sources before any target computation sees them.
     evaluation_files::create_outputs(interp);
@@ -190,11 +193,17 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
-    let diagnostics = {
+    let mut diagnostics = {
+        // cmGlobalGenerator::Compute: after TraceDependencies and
+        // ComputeTargetCompileFeatures (lazy in this implementation) come
+        // ApplyCXXStdTargets and DiscoverSyntheticTargets — the last target
+        // mutations before the generation context becomes read-only.
+        let mut diags = ninja::modules::finalize_cxx_module_targets(interp);
         let ctx = ctx::GenCtx::new(interp);
-        ctx.check_and_generate()
+        diags.extend(ctx.check_and_generate());
+        diags
     };
-    for diagnostic in diagnostics {
+    for diagnostic in diagnostics.drain(..) {
         match diagnostic {
             ctx::Diagnostic::Message(kind, backtrace, message) => {
                 interp.issue_at(kind, &message, &backtrace);
@@ -425,4 +434,33 @@ fn expand_output_genex(
         }
     }
     Ok(paths)
+}
+
+/// `cmGlobalGenerator::AddBuildDatabaseTargets`. The `cmake_build_database*`
+/// merge targets are not ported: when the top-level directory enables
+/// `CMAKE_EXPORT_BUILD_DATABASE` with the experimental feature active,
+/// generation stops with an explicit error rather than omitting them.
+/// Without the experimental gate upstream fails generation silently
+/// (`return {};`), which is mirrored.
+fn check_build_database_targets(interp: &mut Interp) -> bool {
+    let (ok, diagnostics) = {
+        let ctx = ctx::GenCtx::new(interp);
+        let requested = ctx
+            .var(0, "CMAKE_EXPORT_BUILD_DATABASE")
+            .is_some_and(|value| crate::util::is_on(&value));
+        if requested && ctx.experimental_enabled(0, "ExportBuildDatabase") {
+            ctx.error(
+                ctx.dir_backtrace(0),
+                "CMAKE_EXPORT_BUILD_DATABASE is not supported by this implementation: the \"cmake_build_database\" merge targets are not implemented.".to_owned(),
+            );
+        }
+        let ok = !requested;
+        (ok, ctx.errors.take())
+    };
+    for diagnostic in diagnostics {
+        if let ctx::Diagnostic::Message(kind, backtrace, message) = diagnostic {
+            interp.issue_at(kind, &message, &backtrace);
+        }
+    }
+    ok
 }

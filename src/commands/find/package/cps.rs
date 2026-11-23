@@ -32,6 +32,7 @@ pub(super) fn import_package_info_enabled(interp: &mut Interp) -> bool {
     if interp
         .ext
         .experimental_warnings
+        .borrow_mut()
         .insert(("ImportPackageInfo".to_owned(), value.clone()))
     {
         let warning = if enabled {

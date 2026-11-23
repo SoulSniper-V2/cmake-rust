@@ -1151,6 +1151,7 @@ pub(super) fn package_dependencies_enabled(interp: &mut Interp) -> bool {
     if interp
         .ext
         .experimental_warnings
+        .borrow_mut()
         .insert(("ExportPackageDependencies".to_owned(), value.clone()))
     {
         let message = if enabled {

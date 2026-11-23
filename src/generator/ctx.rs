@@ -258,6 +258,28 @@ impl<'a> GenCtx<'a> {
         super::target::directory_backtrace(self, dir)
     }
 
+    /// `cmExperimental::HasSupportEnabled(*mf, feature)` during generation,
+    /// issuing the once-per-value author warning in directory `makefile`.
+    pub fn experimental_enabled(&self, makefile: usize, feature: &str) -> bool {
+        let Some(option) = crate::commands::language::experimental_variable(feature) else {
+            return false;
+        };
+        let value = self.var(makefile, option);
+        let Some((enabled, warning)) =
+            crate::commands::language::experimental_check(&self.interp.ext, feature, value)
+        else {
+            return false;
+        };
+        if let Some(warning) = warning {
+            self.message(
+                MessageType::AuthorWarning,
+                self.dir_backtrace(makefile),
+                warning,
+            );
+        }
+        enabled
+    }
+
     /// True when any collected diagnostic sets the error flag.
     pub fn has_error(&self) -> bool {
         let dev = self.interp.dev_warnings_as_errors;

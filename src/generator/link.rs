@@ -739,6 +739,26 @@ fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
         items: Vec::new(),
     };
     for item in original {
+        // cmGeneratorTarget::ComputeLinkImplementationLibraries: each
+        // imported target with discovered synthetic C++ module targets
+        // contributes them as direct link items (before the item itself).
+        if let Some(target) = item.target
+            && let Some(deps) = query
+                .ctx
+                .interp
+                .ext
+                .synthetic_deps
+                .get(&query.ctx.target_key(target))
+        {
+            for dep_key in deps {
+                if let Some(dep) = query.ctx.interp.ext.targets.get(dep_key) {
+                    let mut synth = Item::new(dep.name.clone(), Some(dep), &item.feature);
+                    synth.backtrace = item.backtrace.clone();
+                    direct.follow(item.target);
+                    direct.items.push(synth);
+                }
+            }
+        }
         direct.follow(item.target);
         direct.items.push(item);
     }

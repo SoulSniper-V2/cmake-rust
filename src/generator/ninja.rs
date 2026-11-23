@@ -4,6 +4,7 @@
 //! single-configuration "Ninja" generator on Unix.
 
 mod fortran;
+pub(crate) mod modules;
 
 use crate::messages::MessageType;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -738,21 +739,6 @@ impl<'a> NinjaGenerator<'a> {
     pub fn generate(&mut self) -> std::io::Result<()> {
         let interp = self.ctx.interp;
         self.check_target_properties();
-        // cmGlobalGenerator::ApplyCXXStdTargets: a fatal CXX_MODULE_STD
-        // diagnostic aborts generation before any target is generated.
-        let errors = self.ctx.errors.borrow().len();
-        let targets: Vec<&Target> = self
-            .ctx
-            .targets_in_order()
-            .into_iter()
-            .filter(|target| target.alias_of.is_none())
-            .collect();
-        for target in targets {
-            self.check_cxx_module_std(target);
-            if self.ctx.errors.borrow().len() != errors {
-                return Ok(());
-            }
-        }
         // Default global targets per directory.
         self.create_global_targets();
         // Local generators (directories) in creation order.
@@ -1194,9 +1180,13 @@ impl<'a> NinjaGenerator<'a> {
             | TargetKind::ModuleLibrary
             | TargetKind::ObjectLibrary => self.generate_normal_target(target),
             // cmNinjaTargetGenerator::New: INTERFACE libraries in the
-            // build system use the utility generator.
-            // INTEGRATION: C++20 module sources use the normal generator.
+            // build system use the utility generator; synthetic C++ module
+            // targets use the normal generator (BMI builds + module library
+            // phony, no link statement).
             TargetKind::Utility => self.generate_utility_target(target),
+            TargetKind::InterfaceLibrary if target.synthetic && is_in_build_system(target) => {
+                self.generate_synthetic_target(target)
+            }
             TargetKind::InterfaceLibrary if is_in_build_system(target) => {
                 self.generate_utility_target(target)
             }
@@ -2710,70 +2700,6 @@ impl<'a> NinjaGenerator<'a> {
         self.need_cxx_dyndep(target)
     }
 
-    /// `cmGeneratorTarget::ApplyCXXStdTargets`: diagnose `CXX_MODULE_STD`
-    /// properties. The `__CMAKE::CXX<level>` link injection itself is not
-    /// ported (no synthetic module targets yet); only the fatal-error
-    /// paths are.
-    fn check_cxx_module_std(&mut self, target: &Target) {
-        let Some(std_prop) = target.props.get("CXX_MODULE_STD") else {
-            return;
-        };
-        let compiled = crate::genex::parse(std_prop);
-        let mut ectx = crate::genex::EvalContext {
-            config: "",
-            ..crate::genex::EvalContext::default()
-        };
-        let mut host = super::genex_host::CtxHost::new(&self.ctx, target.makefile);
-        let std_prop_value = match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
-            Ok(value) => value,
-            Err(error) => {
-                self.ctx.genex_error(Vec::new(), &error);
-                return;
-            }
-        };
-        if ectx.context_sensitive {
-            self.ctx.error(
-                self.ctx.dir_backtrace(target.makefile),
-                format!(
-                    "The \"CXX_MODULE_STD\" property on the target \"{}\" contains a context-sensitive condition that is not supported.",
-                    target.name
-                ),
-            );
-            return;
-        }
-        if !util::is_on(&std_prop_value) {
-            return;
-        }
-        if self.cxx_module_support_level(target) != CxxSupportLevel::Supported {
-            return;
-        }
-        let Some(level) = self.explicit_cxx_standard(target) else {
-            return;
-        };
-        if level < 23 {
-            return;
-        }
-        let target_name = format!("__CMAKE::CXX{level}");
-        if !self.ctx.interp.ext.targets.contains_key(&target_name) {
-            let reason = self
-                .ctx
-                .var(
-                    target.makefile,
-                    &format!("CMAKE_CXX{level}_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE"),
-                )
-                .filter(|reason| !reason.is_empty())
-                .map(|reason| format!("  Reason:\n  {reason}"))
-                .unwrap_or_default();
-            self.ctx.error(
-                self.ctx.dir_backtrace(target.makefile),
-                format!(
-                    "The \"CXX_MODULE_STD\" property on the target \"{}\" requires that the \"{target_name}\" target exist, but it was not provided by the toolchain.{reason}",
-                    target.name
-                ),
-            );
-        }
-    }
-
     /// `cmGeneratorTarget::CheckCxxModuleStatus`, plus the per-source
     /// diagnostics from cmNinjaTargetGenerator::WriteObjectBuildStatement
     /// (a `CXX_MODULES` file-set member not classified as CXX) and
@@ -2821,21 +2747,7 @@ impl<'a> NinjaGenerator<'a> {
                     target.name
                 ),
             ),
-            CxxSupportLevel::Supported => {
-                // cmNinjaTargetGenerator's C++ scan/dyndep rules and
-                // cmDyndepCollation are not ported. Sources outside
-                // CXX_MODULES file sets compile identically without
-                // scanning, but module interface units cannot.
-                if !module_files.is_empty() {
-                    self.ctx.error(
-                        self.ctx.dir_backtrace(target.makefile),
-                        format!(
-                            "The target named \"{}\" has C++ module sources in a \"FILE_SET TYPE CXX_MODULES\", but cmake-rust does not implement C++ module dependency scanning and collation for the Ninja generator.",
-                            target.name
-                        ),
-                    );
-                }
-            }
+            CxxSupportLevel::Supported => {}
         }
         for file in &module_files {
             match sources
@@ -2937,6 +2849,15 @@ impl<'a> NinjaGenerator<'a> {
                 self.write_fortran_scan_rules(target);
                 self.write_compile_rule(language, target, true);
             }
+            // `WriteLanguageRules`: the scanned CXX rule exists whenever the
+            // toolchain supports module scanning (`NeedDyndep("CXX")`), even
+            // when no source of this target is scanned.
+            if language == "CXX"
+                && self.cxx_module_support_level(target) == CxxSupportLevel::Supported
+            {
+                self.write_cxx_scan_rules(target);
+                self.write_compile_rule(language, target, true);
+            }
             self.write_compile_rule(language, target, false);
         }
         // WriteObjectBuildStatements for each file config whose cross
@@ -3015,6 +2936,11 @@ impl<'a> NinjaGenerator<'a> {
         // GetCustomCommands: register each attached command with this target.
         let mut custom_outputs: Vec<String> = Vec::new();
         let mut fortran_ddis = Vec::new();
+        // `ScanningInfo["CXX"]`: `.ddi` outputs and module-map files of the
+        // scanned C++ object builds, collated into the `CXX.dd` statement.
+        let mut cxx_ddis = Vec::new();
+        let mut cxx_modmaps = Vec::new();
+        let cxx_module_files = self.cxx_module_file_set_files(target);
         for source in sources.iter() {
             if source.kind != SourceKind::CustomCommandOutput {
                 continue;
@@ -3098,10 +3024,13 @@ impl<'a> NinjaGenerator<'a> {
                 source,
                 &source_props,
             );
-            let scanned = source.language == "Fortran"
-                && !pch_extension
-                    .as_ref()
-                    .is_some_and(|ext| object.ends_with(ext));
+            let is_pch_obj = pch_extension
+                .as_ref()
+                .is_some_and(|ext| object.ends_with(ext));
+            let scanned = !is_pch_obj
+                && (source.language == "Fortran"
+                    || (source.language == "CXX"
+                        && self.need_dyndep_for_source(target, &cxx_module_files, source)));
             let mut build = Build::new(&self.compiler_rule_name(&source.language, target, scanned));
             build.outputs.push(object.clone());
             // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
@@ -3198,9 +3127,18 @@ impl<'a> NinjaGenerator<'a> {
             let mut export_vars = build.variables.clone();
             export_vars.insert("FLAGS".into(), vars.flags_untrimmed.clone());
             if first_for_config {
-                self.export_object_compile_command(target, source, &object, &export_vars);
+                if scanned && source.language == "CXX" {
+                    self.export_object_compile_command_scanned(
+                        target,
+                        source,
+                        &object,
+                        &export_vars,
+                    );
+                } else {
+                    self.export_object_compile_command(target, source, &object, &export_vars);
+                }
             }
-            if scanned {
+            if scanned && source.language == "Fortran" {
                 fortran_ddis.push(self.write_fortran_scan(
                     &mut out,
                     target,
@@ -3208,6 +3146,12 @@ impl<'a> NinjaGenerator<'a> {
                     &source_props,
                     &mut build,
                 ));
+            } else if scanned && source.language == "CXX" {
+                let (ddi, modmap) = self.write_cxx_scan(&mut out, target, &mut build);
+                cxx_ddis.push(ddi);
+                if let Some(mm) = modmap {
+                    cxx_modmaps.push(mm);
+                }
             }
             let force_rsp = source.language == "Fortran" && self.fortran_rsp_flag(target).is_some();
             build.rsp_file = format!("{object}.rsp");
@@ -3220,6 +3164,11 @@ impl<'a> NinjaGenerator<'a> {
             if !is_pch {
                 objects.push(object);
             }
+        }
+        // `Configs[config].ScanningInfo` is a std::map (sorted): "CXX" comes
+        // before "Fortran" in the dyndep build statements.
+        if !cxx_ddis.is_empty() {
+            self.write_cxx_dyndep(&mut out, target, sources, cxx_ddis, cxx_modmaps);
         }
         if !fortran_ddis.is_empty()
             || (self.ctx.interp.langs.enabled.iter().any(|l| l == "Fortran")

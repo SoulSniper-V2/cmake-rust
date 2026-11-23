@@ -73,6 +73,12 @@ pub struct Target {
     pub unity_batched: BTreeSet<String>,
     /// `cmTarget::GetFindPackageStack` (enclosing find_package calls).
     pub find_package_stack: Vec<(String, u32)>,
+    /// `cmTarget::IsSynthetic`: a BMI-only C++ module target synthesized by
+    /// the generator from an IMPORTED target (`Visibility::Generated`).
+    pub synthetic: bool,
+    /// `cmTarget::TemplateName`: the imported target this synthetic target
+    /// was created from (`GetTemplateName` falls back to `Name`).
+    pub template_name: Option<String>,
 }
 
 impl Target {
@@ -101,6 +107,8 @@ impl Target {
             codegen_dependencies: BTreeSet::new(),
             unity_batched: BTreeSet::new(),
             find_package_stack: Vec::new(),
+            synthetic: false,
+            template_name: None,
         }
     }
 }
@@ -307,6 +315,11 @@ pub struct Ext {
     /// (a directory snapshot has no call-stack parent).
     pub execution_file_bases: Vec<usize>,
     pub testing_enabled: BTreeSet<usize>,
+    /// `cmGeneratorTarget::InfoByConfig::SyntheticDeps`: imported target name
+    /// -> synthetic BMI-only C++ module targets created for it at generate
+    /// time. Synthetic link items are appended alongside the imported item
+    /// in the link implementation.
+    pub synthetic_deps: BTreeMap<String, Vec<String>>,
     pub sources: BTreeMap<usize, Vec<SourceFile>>,
     pub generated_sources: BTreeSet<String>,
     pub source_groups: BTreeMap<usize, BTreeMap<String, SourceGroup>>,
@@ -342,7 +355,7 @@ pub struct Ext {
     /// names of the CPS files (base plus appendices) already imported.
     pub cps_imported: HashMap<String, BTreeSet<String>>,
     pub next_defer_id: usize,
-    pub experimental_warnings: std::collections::HashSet<(String, String)>,
+    pub experimental_warnings: std::cell::RefCell<std::collections::HashSet<(String, String)>>,
     pub in_top_level_includes: bool,
     pub message_checks: Vec<String>,
 

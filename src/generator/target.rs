@@ -54,6 +54,9 @@ pub enum SourceKind {
     /// dependencies of the link step.
     Manifest,
     Resource,
+    /// `SourceKindCxxModuleSource`: a `CXX_MODULES` file-set member of a
+    /// synthetic (BMI-only) target; compiled to a BMI instead of an object.
+    CxxModuleSource,
 }
 
 #[derive(Clone, Debug)]
@@ -1646,18 +1649,21 @@ pub(crate) fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
     }]
 }
 
-/// `(full_path, is_header_set, entry_backtrace)` for every file-set member,
+/// `(full_path, set, entry_backtrace)` for every file-set member,
 /// in `cmFileSet` file-entry order so each file keeps the `target_sources`
 /// call-site backtrace of its `FILES` entry.
-pub(crate) fn file_sets(ctx: &GenCtx, target: &Target) -> Vec<(String, bool, Vec<Frame>)> {
+pub(crate) fn file_sets<'t>(
+    ctx: &GenCtx,
+    target: &'t Target,
+) -> Vec<(String, &'t FileSet, Vec<Frame>)> {
     let mut files = Vec::new();
-    for (names, header) in [("HEADER_SETS", true), ("CXX_MODULE_SETS", false)] {
+    for names in ["HEADER_SETS", "CXX_MODULE_SETS"] {
         for name in expand_list(target.props.get(names).unwrap_or_default(), false) {
             if let Some(set) = target.file_sets.get(&name) {
                 files.extend(
                     evaluate_file_set(ctx, target, set)
                         .into_iter()
-                        .map(|(file, _, backtrace)| (file, header, backtrace)),
+                        .map(|(file, _, backtrace)| (file, set, backtrace)),
                 );
             }
         }
@@ -1854,11 +1860,14 @@ fn collect_sources(
         groups.push(entries);
     }
     let mut header_set = HashSet::new();
+    let mut cxx_module_sets = HashSet::new();
     let mut set_files = Vec::new();
-    for (file, header, backtrace) in file_sets(ctx, target) {
-        if header {
+    for (file, set, backtrace) in file_sets(ctx, target) {
+        if set.kind == "HEADERS" {
             // addFileSetEntry marks HEADERS members HEADER_FILE_ONLY.
             header_set.insert(file.clone());
+        } else if set.kind == "CXX_MODULES" {
+            cxx_module_sets.insert(file.clone());
         }
         set_files.push(Listed::Path {
             path: file,
@@ -1942,7 +1951,13 @@ fn collect_sources(
                 }
                 let language = source_language(ctx, &path, property);
                 let set_kind = header_set.contains(&path).then_some(SourceKind::Header);
-                let kind = classify_source(target, &path, &language, set_kind, property);
+                let mut kind = classify_source(target, &path, &language, set_kind, property);
+                // `cmGeneratorTarget::GetKindedSources`: CXX_MODULES members
+                // of a synthetic (non-normal, non-imported) target are
+                // BMI-only C++ module sources.
+                if cxx_module_sets.contains(&path) && target.synthetic && !target.imported {
+                    kind = SourceKind::CxxModuleSource;
+                }
                 if target.kind == TargetKind::ObjectLibrary
                     && (kind == SourceKind::ModuleDefinition
                         || (kind == SourceKind::Resource
@@ -2028,6 +2043,27 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
     }
     ctx.sources.borrow_mut().insert(key, computed.clone());
     computed
+}
+
+/// `cmGeneratorTarget::HaveCxx20ModuleSources`: whether any of the target's
+/// file sets is a `CXX_MODULES` set.  This is a property of the target's
+/// file sets (upstream iterates `GetAllFileSetNames`), not of its compiled
+/// sources, so it holds for IMPORTED and synthetic targets as well.
+pub fn have_cxx20_module_sources(_ctx: &GenCtx, target: &Target, _config: &str) -> bool {
+    target
+        .file_sets
+        .values()
+        .any(|set| set.kind == "CXX_MODULES")
+}
+
+/// `cmGeneratorTarget::GetCxxModuleSources`: BMI-only C++ module sources
+/// (CXX_MODULES members of a synthetic target).
+pub fn cxx_module_sources(ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
+    sources(ctx, target, config)
+        .iter()
+        .filter(|source| source.kind == SourceKind::CxxModuleSource)
+        .cloned()
+        .collect()
 }
 
 /// `cmTarget::CanCompileSources`.

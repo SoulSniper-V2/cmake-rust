@@ -164,21 +164,54 @@ fn dispatch(
 }
 
 pub(crate) fn experimental_enabled(interp: &mut Interp, feature: &str) -> Option<bool> {
+    let option = experimental_variable(feature)?;
+    let value = interp.read_definition(option);
+    let (enabled, warning) = experimental_check(&interp.ext, feature, value)?;
+    if let Some(warning) = warning {
+        interp.issue(MessageType::AuthorWarning, &warning);
+    }
+    Some(enabled)
+}
+
+/// The `CMAKE_EXPERIMENTAL_*` activation variable of `feature`.
+pub(crate) fn experimental_variable(feature: &str) -> Option<&'static str> {
+    EXPERIMENTAL_FEATURES
+        .iter()
+        .find(|(name, ..)| *name == feature)
+        .map(|(_, _, option, _)| *option)
+}
+
+/// `cmExperimental::HasSupportEnabled` given the activation variable's
+/// value: whether the feature is enabled, plus the author warning to issue
+/// when `cmGlobalGenerator::ShouldWarnExperimental` has not yet warned for
+/// this feature-name/value pair.
+pub(crate) fn experimental_check(
+    ext: &crate::state::Ext,
+    feature: &str,
+    value: Option<String>,
+) -> Option<(bool, Option<String>)> {
     let (_, uuid, option, description) = EXPERIMENTAL_FEATURES
         .iter()
         .find(|(name, ..)| *name == feature)?;
-    Some(interp.read_definition(option).is_some_and(|value| {
-        let enabled = value == *uuid;
-        if interp.ext.experimental_warnings.insert((feature.to_owned(), value.clone())) {
-            let warning = if enabled {
-                (*description).to_owned()
-            } else {
-                format!("{option} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature.")
-            };
-            interp.issue(MessageType::AuthorWarning, &warning);
-        }
-        enabled
-    }))
+    let Some(value) = value else {
+        return Some((false, None));
+    };
+    let enabled = value == *uuid;
+    let mut warning = None;
+    if ext
+        .experimental_warnings
+        .borrow_mut()
+        .insert((feature.to_owned(), value.clone()))
+    {
+        warning = Some(if enabled {
+            (*description).to_owned()
+        } else {
+            format!(
+                "{option} is set to incorrect value\n  {value}\nSee 'Help/dev/experimental.rst' in the source tree of this version of CMake for documentation of the experimental feature and the corresponding activation value.  This project's code may require changes to work with this CMake's version of the feature."
+            )
+        });
+    }
+    Some((enabled, warning))
 }
 
 const EXPERIMENTAL_FEATURES: &[(&str, &str, &str, &str)] = &[

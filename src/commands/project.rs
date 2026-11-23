@@ -34,6 +34,7 @@ pub(crate) fn export_package_info_enabled(interp: &mut Interp) -> bool {
     if interp
         .ext
         .experimental_warnings
+        .borrow_mut()
         .insert(("ExportPackageInfo".to_owned(), value.clone()))
     {
         let warning = if enabled {
