@@ -284,6 +284,22 @@ fn cmake_4_1_ninja_edges() {
             generator: &FixtureGenerator,
             compile_usage: false,
         };
+        // The fixtures hold evaluated expressions: record the objects that
+        // $<TARGET_OBJECTS> names.
+        for target in ctx.targets_in_order() {
+            if target.kind != TargetKind::ObjectLibrary {
+                continue;
+            }
+            for source in query.generator.sources(&ctx, target, query.config) {
+                let dir = query.generator.object_dir(&ctx, target, query.config);
+                for directory in 0..ctx.interp.makefiles.len() {
+                    ctx.target_objects.borrow_mut().insert(
+                        (directory, format!("{dir}{}", source.object_name)),
+                        target.name.clone(),
+                    );
+                }
+            }
+        }
         let graph = target_graph::compute(std::slice::from_ref(&query));
         if let Some(failure) = fixture.failure {
             for target in ctx.targets_in_order() {

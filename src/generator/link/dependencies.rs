@@ -78,7 +78,7 @@ pub(super) fn compute<'i>(query: &Query<'_, 'i>, head: &Target) -> Ordered<'i> {
         languages: dependency_languages(head, query).into_iter().collect(),
     };
     let direct = implementation(query, head);
-    let has_implementation = direct.iter().any(|item| !linked_object(query, item));
+    let has_implementation = direct.iter().any(|item| !item.object);
     graph.add_list(None, direct);
     if !query.language.is_empty() {
         graph.languages.insert(query.language.to_owned());
@@ -145,7 +145,7 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 }
                 continue;
             }
-            if linked_object(self.query, &item) {
+            if item.object {
                 objects.push(item);
                 continue;
             }
@@ -841,40 +841,6 @@ fn multiplicity(query: &Query<'_, '_>, target: &Target) -> usize {
                 .ok()
         })
         .unwrap_or(0)
-}
-
-fn linked_object(query: &Query<'_, '_>, item: &Item<'_>) -> bool {
-    item.target.is_none() && linked_object_owner(query, &item.text).is_some()
-}
-
-pub(super) fn linked_object_owner<'i>(query: &Query<'_, 'i>, path: &str) -> Option<&'i Target> {
-    if !Path::new(path).is_absolute() {
-        return None;
-    }
-    // INTEGRATION: Prefer the source record's EXTERNAL_OBJECT and owning
-    // object-library metadata once available to the generator.
-    query
-        .ctx
-        .targets_in_order()
-        .into_iter()
-        .filter(|target| target.kind == TargetKind::ObjectLibrary)
-        .find(|target| {
-            if target.imported {
-                expand_list(
-                    import_property(target, query.config, "IMPORTED_OBJECTS").unwrap_or_default(),
-                    false,
-                )
-                .iter()
-                .any(|object| object == path)
-            } else {
-                (path.ends_with(".o") || path.ends_with(".obj"))
-                    && Path::new(path).starts_with(query.generator.object_dir(
-                        query.ctx,
-                        target,
-                        query.config,
-                    ))
-            }
-        })
 }
 
 /// SCCs indexed by DFS completion order, as in cmComputeComponentGraph.

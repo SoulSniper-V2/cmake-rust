@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
-use super::ctx::GenCtx;
+use super::ctx::{Caches, GenCtx};
 use super::custom::make_generators;
 use super::target as gt;
 use crate::interp::Interp;
@@ -33,6 +33,7 @@ struct SourcesWithOutput {
 /// `cmLocalGenerator::TraceDependencies` for every local generator, in
 /// order. Target sources and utilities are updated in place.
 pub fn trace_dependencies(interp: &mut Interp) {
+    let mut caches = Caches::default();
     for dir in 0..interp.makefiles.len() {
         let keys = interp.makefiles[dir].targets.clone();
         for key in keys {
@@ -47,12 +48,16 @@ pub fn trace_dependencies(interp: &mut Interp) {
                 {
                     continue;
                 }
-                let ctx = GenCtx::new(interp);
+                let ctx = GenCtx::with_caches(interp, std::mem::take(&mut caches));
                 let traced = Tracer::new(&ctx, &key).run();
                 // Compute-phase diagnostics (cmLocalGenerator::IssueMessage,
                 // genex eval errors) are reported as they happen — here, at
                 // the end of this target's trace.
                 let diagnostics = ctx.errors.take();
+                if !traced.sources.is_empty() {
+                    gt::clear_sources_cache(&ctx, target);
+                }
+                caches = ctx.into_caches();
                 (traced, diagnostics)
             };
             let (traced, diagnostics) = traced;

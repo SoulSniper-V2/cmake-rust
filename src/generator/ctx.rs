@@ -86,6 +86,16 @@ pub struct GenCtx<'a> {
     pub dep_graph: Rc<RefCell<Option<Rc<DepGraph>>>>,
 }
 
+/// The memoized computations of a [`GenCtx`].
+#[derive(Default)]
+pub struct Caches {
+    memo: Rc<RefCell<HashMap<String, String>>>,
+    backtraces: Rc<RefCell<Vec<Vec<Frame>>>>,
+    target_objects: Rc<RefCell<HashMap<(usize, String), String>>>,
+    sources: Rc<RefCell<HashMap<String, Rc<Vec<super::target::SourceInfo>>>>>,
+    usage: Rc<RefCell<HashMap<String, Rc<Vec<crate::genex::UsageItem>>>>>,
+}
+
 /// Depender target pointer -> its direct dependees.
 pub type DepGraph = HashMap<usize, Rc<Vec<super::link::TargetDepend>>>;
 
@@ -120,6 +130,29 @@ impl<'a> GenCtx<'a> {
             sources: Rc::new(RefCell::new(HashMap::new())),
             usage: Rc::new(RefCell::new(HashMap::new())),
             dep_graph: Rc::default(),
+        }
+    }
+
+    /// The memoized computations, to continue with after the interpreter
+    /// state changed.
+    pub fn into_caches(self) -> Caches {
+        Caches {
+            memo: self.memo,
+            backtraces: self.backtraces,
+            target_objects: self.target_objects,
+            sources: self.sources,
+            usage: self.usage,
+        }
+    }
+
+    pub fn with_caches(interp: &'a Interp, caches: Caches) -> GenCtx<'a> {
+        GenCtx {
+            memo: caches.memo,
+            backtraces: caches.backtraces,
+            target_objects: caches.target_objects,
+            sources: caches.sources,
+            usage: caches.usage,
+            ..GenCtx::new(interp)
         }
     }
 

@@ -296,6 +296,7 @@ trait GeneratorQueries {
         target::sources(ctx, target, config).as_ref().clone()
     }
 
+    #[cfg(test)]
     fn object_dir(&self, ctx: &GenCtx, target: &Target, config: &str) -> String {
         target::object_directory(ctx, target, config)
     }
@@ -494,6 +495,8 @@ struct Item<'a> {
     text: String,
     target: Option<&'a Target>,
     feature: String,
+    /// `cmLinkItem::ObjectSource`: an explicitly linked object file.
+    object: bool,
     /// `cmLinkItem::Backtrace` (the LINK_LIBRARIES-style entry's backtrace);
     /// consumed by the file API codemodel.
     backtrace: Vec<crate::messages::Frame>,
@@ -512,6 +515,7 @@ impl<'a> Item<'a> {
             text,
             target,
             feature: feature.to_owned(),
+            object: false,
             backtrace: Vec::new(),
         }
     }
@@ -627,6 +631,8 @@ fn plain_items_bt<'i>(
             }
             let mut item = Item::new(name, target, &feature);
             item.backtrace = backtrace.to_vec();
+            item.object =
+                target.is_none() && target::is_external_object(query.ctx, owner.makefile, name);
             items.push(item);
         }
     }

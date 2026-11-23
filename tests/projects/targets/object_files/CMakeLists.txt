@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.30)
+project(object_files C)
+file(WRITE ${CMAKE_BINARY_DIR}/raw.o "")
+add_library(o OBJECT a.c)
+add_library(p OBJECT a.c)
+add_library(imp OBJECT IMPORTED)
+set_property(TARGET imp PROPERTY IMPORTED_OBJECTS ${CMAKE_BINARY_DIR}/raw.o)
+# Conditional object sources.
+add_executable(cond main.c $<$<CONFIG:Debug>:$<TARGET_OBJECTS:o>> $<$<BOOL:1>:$<TARGET_OBJECTS:p>>)
+# Object files as link items come first.
+add_executable(links main.c)
+target_link_libraries(links PRIVATE m $<TARGET_OBJECTS:o> $<TARGET_OBJECTS:imp>)
+# A raw object path is an object item only when it is a known source.
+add_executable(rawlink main.c)
+target_link_libraries(rawlink PRIVATE m ${CMAKE_BINARY_DIR}/raw.o)
+add_executable(rawsrc main.c ${CMAKE_BINARY_DIR}/raw.o)
+target_link_libraries(rawsrc PRIVATE m ${CMAKE_BINARY_DIR}/raw.o)
+# A path into an object library's directory names no object library.
+add_executable(path main.c)
+target_link_libraries(path PRIVATE m ${CMAKE_BINARY_DIR}/CMakeFiles/p.dir/a.c.o)
+add_library(iface INTERFACE)
+target_link_libraries(iface INTERFACE m $<TARGET_OBJECTS:p>)
+add_executable(through main.c)
+target_link_libraries(through PRIVATE iface)
+add_subdirectory(sub)

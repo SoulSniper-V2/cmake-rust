@@ -9,6 +9,7 @@ pub(crate) mod modules;
 use crate::messages::MessageType;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::rc::Rc;
 
 use super::ctx::GenCtx;
 use super::module_support::{self, CxxSupportLevel, ModuleSupport};
@@ -320,7 +321,7 @@ pub struct NinjaGenerator<'a> {
     /// first-use order, with the targets using each (`CustomCommandTargets`).
     local_custom_commands: Vec<(CcRef, Vec<&'a Target>)>,
     /// `TargetDependsClosures` cache.
-    depends_closures: HashMap<String, BTreeSet<String>>,
+    depends_closures: HashMap<String, Rc<BTreeSet<Rc<str>>>>,
     /// `CompileCommandsStream` entries (compile_commands.json).
     compile_commands: Vec<String>,
     tidy_fixes_dirs: BTreeSet<String>,
@@ -4334,7 +4335,7 @@ impl<'a> NinjaGenerator<'a> {
         file_config: &str,
         genex_output: bool,
         omit_self: bool,
-    ) -> BTreeSet<String> {
+    ) -> Rc<BTreeSet<Rc<str>>> {
         let key = format!(
             "{file_config}\0{config}\0{genex_output}\0{}:{}",
             target.makefile, target.name
@@ -4355,14 +4356,11 @@ impl<'a> NinjaGenerator<'a> {
                         continue;
                     }
                     let dep_config = if is_cross { file_config } else { config };
-                    outs.extend(self.depends_closure(
-                        dep,
-                        dep_config,
-                        file_config,
-                        genex_output,
-                        false,
-                    ));
+                    let closure =
+                        self.depends_closure(dep, dep_config, file_config, genex_output, false);
+                    outs.extend(closure.iter().cloned());
                 }
+                let outs = Rc::new(outs);
                 self.depends_closures.insert(key, outs.clone());
                 outs
             }
@@ -4371,7 +4369,7 @@ impl<'a> NinjaGenerator<'a> {
         if !omit_self {
             let mut own = Vec::new();
             self.append_target_outputs_cfg(target, &mut own, config, DependOn::TargetArtifact);
-            result.extend(own);
+            Rc::make_mut(&mut result).extend(own.into_iter().map(Rc::from));
         }
         result
     }
@@ -4415,7 +4413,7 @@ impl<'a> NinjaGenerator<'a> {
             // Generator expressions evaluate to no output for this config.
             return;
         }
-        let mut order_only: BTreeSet<String> = BTreeSet::new();
+        let mut order_only: Rc<BTreeSet<Rc<str>>> = Rc::default();
         if !command.depends_explicit_only {
             // The intersection of the target-depends closures of all
             // targets using the command.
@@ -4427,7 +4425,7 @@ impl<'a> NinjaGenerator<'a> {
             for target in iter {
                 let deps =
                     self.depends_closure(target, output_config, file_config, genex_output, true);
-                order_only.retain(|dep| deps.contains(dep));
+                Rc::make_mut(&mut order_only).retain(|dep| deps.contains(dep));
             }
         }
         let interp = self.ctx.interp;
@@ -4451,7 +4449,7 @@ impl<'a> NinjaGenerator<'a> {
             .map(|dep| self.ninja_path(dep))
             .collect();
         let lines = self.custom_command_lines(&evaluated, makefile);
-        let order_only: Vec<String> = order_only.into_iter().collect();
+        let order_only: Vec<String> = order_only.iter().map(ToString::to_string).collect();
         if lines.is_empty() {
             let mut build = Build::new("phony");
             build.comment = format!("Phony custom command for {main_output}");

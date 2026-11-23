@@ -111,6 +111,16 @@ fn memo_key(query: &str, target: &Target, config: &str) -> String {
     )
 }
 
+/// `cmGeneratorTarget::ClearSourcesCache`.
+pub(super) fn clear_sources_cache(ctx: &GenCtx, target: &Target) {
+    for config in &ctx.configs {
+        let sources = memo_key("sources", target, config);
+        ctx.sources.borrow_mut().remove(&sources);
+        let language = memo_key("linker-language", target, config);
+        ctx.memo.borrow_mut().remove(&language);
+    }
+}
+
 fn cached_string(
     ctx: &GenCtx,
     target: &Target,
@@ -1064,6 +1074,27 @@ pub(crate) fn target_object_library(ctx: &GenCtx, dir: usize, path: &str) -> Opt
         return None;
     }
     objects.get(&(dir, collapse_full_path(path, ""))).cloned()
+}
+
+/// Whether the source known as `path` in `dir` has `EXTERNAL_OBJECT` on
+/// (by `$<TARGET_OBJECTS>`, the property, or its extension).
+pub(super) fn is_external_object(ctx: &GenCtx, dir: usize, path: &str) -> bool {
+    if !is_full_path(path) {
+        return false;
+    }
+    if target_object_library(ctx, dir, path).is_some() {
+        return true;
+    }
+    crate::commands::target::find_known_source(ctx.interp, dir, path).is_some_and(|index| {
+        matches!(
+            crate::util::filename_last_extension(path).as_str(),
+            ".o" | ".obj" | ".lo"
+        ) || is_on_opt(
+            ctx.interp.ext.sources[&dir][index]
+                .props
+                .get("EXTERNAL_OBJECT"),
+        )
+    })
 }
 
 const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
@@ -2039,6 +2070,7 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
         ctx.errors.borrow_mut().truncate(diagnostics);
     }
     ctx.sources.borrow_mut().insert(key, computed.clone());
+    ctx.memo.borrow_mut().remove(&pending);
     computed
 }
 

@@ -166,9 +166,9 @@ pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
             if config == 0 {
                 collector.follow_utilities(target, true);
             }
-            if let Some(sources) = target.props.get("SOURCES") {
-                for source in expand_list(sources, false) {
-                    collector.add_object_source(&source);
+            for source in target::sources(query.ctx, target, query.config).iter() {
+                if source.kind == target::SourceKind::ExternalObject {
+                    collector.add_object_source(&source.path);
                 }
             }
             Collector {
@@ -482,7 +482,6 @@ impl<'i> Collector<'_, '_, 'i> {
     fn follow_interface(&mut self, items: &[Item<'i>], inherited: Option<Rc<Vec<Frame>>>) {
         for item in items {
             let Some(target) = item.target else {
-                self.add_object_source(&item.text);
                 continue;
             };
             if self.emitted.insert(std::ptr::from_ref(target) as usize) {
@@ -503,6 +502,9 @@ impl<'i> Collector<'_, '_, 'i> {
                     );
                 }
             }
+        }
+        for item in items.iter().filter(|item| item.object) {
+            self.add_object_source(&item.text);
         }
     }
 
@@ -580,16 +582,16 @@ impl<'i> Collector<'_, '_, 'i> {
         }
     }
 
-    fn add_object_source(&mut self, value: &str) {
-        let owner = value
-            .strip_prefix("$<TARGET_OBJECTS:")
-            .and_then(|name| name.strip_suffix('>'))
-            .and_then(|name| self.query.resolve(self.head.makefile, name))
-            .or_else(|| super::dependencies::linked_object_owner(self.query, value));
-        if let Some(target) = owner.filter(|target| target.kind == TargetKind::ObjectLibrary) {
+    /// `cmComputeTargetDepends::AddObjectDepends`.
+    fn add_object_source(&mut self, path: &str) {
+        let directory = self.head.makefile;
+        if let Some(library) = target::target_object_library(self.query.ctx, directory, path)
+            .and_then(|name| self.query.resolve(directory, &name))
+            && self.emitted.insert(std::ptr::from_ref(library) as usize)
+        {
             // AddObjectDepends records a utility dependency captured after
             // configure; its backtrace is empty.
-            self.add(target, true, Rc::new(Vec::new()));
+            self.add(library, true, Rc::new(Vec::new()));
         }
     }
 }
