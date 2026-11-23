@@ -6,9 +6,9 @@ use std::path::Path;
 use crate::{messages, util};
 
 #[derive(Default)]
-struct Rule {
-    targets: Vec<String>,
-    dependencies: Vec<String>,
+pub(crate) struct Rule {
+    pub(crate) targets: Vec<String>,
+    pub(crate) dependencies: Vec<String>,
 }
 
 pub(super) fn transform(args: &[String]) -> i32 {
@@ -127,7 +127,7 @@ pub(super) fn transform(args: &[String]) -> i32 {
     }
 }
 
-fn parse(text: &str) -> Option<Vec<Rule>> {
+pub(crate) fn parse(text: &str) -> Option<Vec<Rule>> {
     let mut rules = Vec::new();
     let mut rule = Rule::default();
     let mut token = String::new();
