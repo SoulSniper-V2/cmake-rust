@@ -369,7 +369,8 @@ def run_suite(test, context, directory):
         oracle = [run["cases"].get(key) for run in runs["oracle"]]
         candidate = [run["cases"].get(key) for run in runs["candidate"]]
         outcomes = [case["result"] if case else "missing" for case in oracle]
-        other = sorted({gen for case in oracle if case for gen in case["other_generators"]})
+        other = sorted({gen for case in oracle if case for gen in case["other_generators"]}
+                       - set(context["args"].score_generator or ()))
         tool_case = next((case["standalone_tool"] for case in oracle if case and case["standalone_tool"]), None)
         if key not in expected:
             status, reason = "unexpected_candidate_case", "No corresponding oracle result"
@@ -581,7 +582,8 @@ def prepare(args):
     report = {
         **cache_context,
         "kind": "harness self-test" if args.self_test else "official" if args.official else "development",
-        "generator": "Ninja", "repetitions": args.repeat, "jobs": args.jobs, "audit": not args.no_audit,
+        "generator": "Ninja", "scored_generators": ["Ninja", *sorted(set(args.score_generator or ()))],
+        "repetitions": args.repeat, "jobs": args.jobs, "audit": not args.no_audit,
         "workspace_head": checked(["git", "-C", ROOT, "rev-parse", "HEAD"]),
         "candidate": {"path": str(candidate), "sha256": candidate_digest, "version": version(candidate)},
         "inventory_argv": ctest_argv, "oracle_cache_key": key if args.oracle_cache else None,
@@ -655,6 +657,9 @@ def main():
     parser.add_argument("--timeout", type=int, default=240, help="seconds per suite, per side and repetition")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--no-audit", action="store_true")
+    parser.add_argument("--score-generator", action="append", metavar="NAME",
+                        help="also score cases that select this non-default generator (repeatable), "
+                             "e.g. 'Ninja Multi-Config'")
     parser.add_argument("--oracle-cache", type=Path, help="reusable directory for pinned oracle evidence")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--self-test", action="store_true", help="sanity run with a separately staged oracle")
