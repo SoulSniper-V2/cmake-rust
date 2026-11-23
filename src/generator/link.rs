@@ -47,6 +47,13 @@ pub struct LinkLine {
     pub shared_symlinks: Vec<String>,
     /// ELF rpath substitution for an installed target, before shell escaping.
     pub rpath_change: Option<(String, String)>,
+    /// Build-tree and install-tree runtime directories for
+    /// `install_name_tool -delete_rpath`/`-add_rpath` install rules on
+    /// `CMAKE_PLATFORM_HAS_INSTALLNAME` platforms (`GetRPath` pairs).
+    pub rpath_dirs: Option<(Vec<String>, Vec<String>)>,
+    /// `GetSharedLibrariesLinked`: `ext.targets` keys of linked shared
+    /// library targets, for install-name remaps.
+    pub shared_libraries_linked: Vec<String>,
     /// Codemodel "libraries" fragments: each emitted string paired with the
     /// link item's backtrace (empty for generated fragments such as rpath).
     pub lib_fragments: Vec<(String, Vec<Frame>)>,

@@ -889,7 +889,67 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
     }
     let names = parsed.list(mode);
-    let mut dependencies = Vec::new();
+    // `cmInstallTargetGenerator::NamelinkMode` per the LIBRARY group and the
+    // `ImportlinkMode` per the ARCHIVE group.
+    let namelink_mode = if imported {
+        Namelink::None
+    } else {
+        let group_opts = group("LIBRARY");
+        if group_opts.namelink_only {
+            Namelink::Only
+        } else if group_opts.namelink_skip {
+            Namelink::Skip
+        } else {
+            Namelink::None
+        }
+    };
+    let importlink_mode = if imported {
+        Namelink::None
+    } else {
+        let group_opts = group("ARCHIVE");
+        if group_opts.namelink_only {
+            Namelink::Only
+        } else if group_opts.namelink_skip {
+            Namelink::Skip
+        } else {
+            Namelink::None
+        }
+    };
+    if implicit
+        && interp.get_safe("CMAKE_HOST_SYSTEM_NAME") == "Darwin"
+        && group("FRAMEWORK").destination.is_empty()
+    {
+        return err("TARGETS RUNTIME_DEPENDENCIES given no FRAMEWORK DESTINATION");
+    }
+    // The runtime dependency set items collect into: anonymous for
+    // RUNTIME_DEPENDENCIES, named for RUNTIME_DEPENDENCY_SET.
+    let dep_set = if implicit {
+        let set = format!(
+            "#{}:{}",
+            interp.mf_index(),
+            interp.ext.install.runtime_sets.len()
+        );
+        interp
+            .ext
+            .install
+            .runtime_sets
+            .entry(set.clone())
+            .or_default();
+        Some(set)
+    } else if !explicit.is_empty() {
+        interp
+            .ext
+            .install
+            .runtime_sets
+            .entry(explicit.to_owned())
+            .or_default();
+        Some(explicit.to_owned())
+    } else {
+        None
+    };
+    let export_set = parsed.get("EXPORT");
+    // Upstream validates every target's existence and type before creating
+    // any per-target install generators.
     for name in names {
         if interp.ext.aliases.contains_key(name) {
             return err(format!("{mode} given target \"{name}\" which is an alias."));
@@ -900,15 +960,12 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                 "{mode} given target \"{name}\" which does not exist."
             ));
         };
-        let kind = target.kind;
-        let props = target.props.clone();
-        let makefile = target.makefile;
         let allowed = matches!(
-            kind,
+            target.kind,
             TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
         ) || (!imported
             && matches!(
-                kind,
+                target.kind,
                 TargetKind::StaticLibrary
                     | TargetKind::ObjectLibrary
                     | TargetKind::InterfaceLibrary
@@ -918,29 +975,425 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                 "{mode} given target \"{name}\" which is not an executable, library, or module."
             ));
         }
-
-        let (key, standard) = match kind {
-            TargetKind::Executable => ("RUNTIME", "BIN"),
-            TargetKind::StaticLibrary => ("ARCHIVE", "LIB"),
-            TargetKind::SharedLibrary => ("LIBRARY", "LIB"),
-            TargetKind::ModuleLibrary => ("LIBRARY", if imported { "LIB" } else { "" }),
-            TargetKind::ObjectLibrary => ("OBJECTS", ""),
-            _ => ("", ""),
-        };
-        let artifact_args = group(key);
-        let mut artifact = with_destination(interp, artifact_args.clone(), standard);
-        artifact.rename.clear();
-        let specified = !artifact_args.destination.is_empty();
-        let namelink_only = !imported
-            && matches!(kind, TargetKind::SharedLibrary | TargetKind::ModuleLibrary)
-            && artifact_args.namelink_only;
-        if !imported && kind == TargetKind::ModuleLibrary && !specified {
-            return err(format!(
-                "TARGETS given no LIBRARY DESTINATION for module target \"{name}\"."
+    }
+    let mut dep_items = RuntimeDependencySet::default();
+    for name in names {
+        let target = find_target_to_use(interp, name).unwrap();
+        let kind = target.kind;
+        let props = target.props.clone();
+        let makefile = target.makefile;
+        let platform = target.platform;
+        let framework = target.is_framework_on_apple();
+        let app_bundle = target.is_app_bundle_on_apple();
+        let shared_exports = target.is_shared_library_with_exports();
+        let exe_exports = target.is_executable_with_exports();
+        // `cmMakefile::PlatformSupportsAppleTextStubs` on the target's makefile.
+        let text_stubs = platform.apple && interp.is_def_set("CMAKE_TAPI");
+        // The per-kind generators, added to the script in upstream order.
+        let mut archive = None;
+        let mut library = None;
+        let mut namelink_gen = None;
+        let mut importlink_gen = None;
+        let mut runtime = None;
+        let mut object = None;
+        let mut framework_gen = None;
+        let mut bundle = None;
+        // Avoid default destinations for PUBLIC_HEADER and PRIVATE_HEADER
+        // when any artifact destination is given.
+        let mut artifacts_specified = false;
+        let mut namelink_only = false;
+        // Upstream's `continue` after a namelink-only export record.
+        let mut skip_rest = false;
+        let action =
+            |namelink: Namelink, importlink: Namelink, implib: bool| InstallAction::Target {
+                name: name.clone(),
+                namelink,
+                importlink,
+                implib,
+                imported,
+            };
+        if imported {
+            // `HandleImportedRuntimeArtifactsMode`: the kind picks the
+            // argument group; RUNTIME/LIBRARY fall back to the typed
+            // destinations while FRAMEWORK/BUNDLE require an explicit
+            // DESTINATION.
+            let (key, typed) = match kind {
+                TargetKind::Executable if app_bundle => ("BUNDLE", None),
+                TargetKind::Executable => ("RUNTIME", Some("BIN")),
+                TargetKind::SharedLibrary if platform.dll => ("RUNTIME", Some("BIN")),
+                TargetKind::SharedLibrary if framework => ("FRAMEWORK", None),
+                TargetKind::SharedLibrary | TargetKind::ModuleLibrary => ("LIBRARY", Some("LIB")),
+                _ => ("", None),
+            };
+            let group_opts = group(key);
+            if typed.is_none() && group_opts.destination.is_empty() {
+                let what = if key == "BUNDLE" {
+                    "BUNDLE"
+                } else {
+                    "FRAMEWORK"
+                };
+                let what_target = if key == "BUNDLE" {
+                    "MACOSX_BUNDLE executable"
+                } else {
+                    "shared library FRAMEWORK"
+                };
+                return err(format!(
+                    "IMPORTED_RUNTIME_ARTIFACTS given no {what} DESTINATION for {what_target} target \"{name}\"."
+                ));
+            }
+            if app_bundle
+                && dep_set.is_some()
+                && !add_bundle_executable(interp, &dep_set, &mut dep_items, makefile, name)
+            {
+                return err("A runtime dependency set may only have one bundle executable.");
+            }
+            match kind {
+                TargetKind::Executable if app_bundle => {}
+                TargetKind::Executable if dep_set.is_some() => {
+                    dep_items.executables.push((makefile, name.clone()));
+                }
+                TargetKind::SharedLibrary if dep_set.is_some() => {
+                    dep_items.libraries.push((makefile, name.clone()));
+                }
+                TargetKind::ModuleLibrary if dep_set.is_some() => {
+                    dep_items.modules.push((makefile, name.clone()));
+                }
+                _ => {}
+            }
+            let opts = match typed {
+                Some(kind) => with_destination(interp, group_opts.clone(), kind),
+                None => group_opts.clone(),
+            };
+            runtime = Some((
+                target_opts(opts),
+                action(Namelink::None, Namelink::None, false),
             ));
+        } else {
+            match kind {
+                TargetKind::SharedLibrary => {
+                    if platform.dll {
+                        // When in namelink only mode skip all libraries on
+                        // Windows.
+                        if namelink_mode == Namelink::Only {
+                            namelink_only = true;
+                            skip_rest = true;
+                        } else {
+                            let archive_args = group("ARCHIVE");
+                            let runtime_args = group("RUNTIME");
+                            if !archive_args.destination.is_empty() {
+                                artifacts_specified = true;
+                                archive = Some((
+                                    target_opts(archive_args.clone()),
+                                    action(Namelink::None, Namelink::None, true),
+                                ));
+                            }
+                            if !runtime_args.destination.is_empty() {
+                                artifacts_specified = true;
+                                runtime = Some((
+                                    target_opts(runtime_args.clone()),
+                                    action(Namelink::None, Namelink::None, false),
+                                ));
+                            }
+                            if archive.is_none() && runtime.is_none() {
+                                archive = Some((
+                                    target_opts(with_destination(
+                                        interp,
+                                        archive_args.clone(),
+                                        "LIB",
+                                    )),
+                                    action(Namelink::None, Namelink::None, true),
+                                ));
+                                runtime = Some((
+                                    target_opts(with_destination(
+                                        interp,
+                                        runtime_args.clone(),
+                                        "BIN",
+                                    )),
+                                    action(Namelink::None, Namelink::None, false),
+                                ));
+                            }
+                            if dep_set.is_some() && runtime.is_some() {
+                                dep_items.libraries.push((makefile, name.clone()));
+                            }
+                        }
+                    } else if framework {
+                        // When in namelink only mode skip frameworks.
+                        if namelink_mode == Namelink::Only {
+                            namelink_only = true;
+                            skip_rest = true;
+                        } else {
+                            let framework_args = group("FRAMEWORK");
+                            if framework_args.destination.is_empty() {
+                                return err(format!(
+                                    "TARGETS given no FRAMEWORK DESTINATION for shared library FRAMEWORK target \"{name}\"."
+                                ));
+                            }
+                            framework_gen = Some((
+                                target_opts(framework_args.clone()),
+                                action(Namelink::None, Namelink::None, false),
+                            ));
+                        }
+                    } else {
+                        // The shared library uses the LIBRARY properties.
+                        let library_args = group("LIBRARY");
+                        if !library_args.destination.is_empty() {
+                            artifacts_specified = true;
+                        }
+                        if namelink_mode != Namelink::Only {
+                            library = Some((
+                                target_opts(with_destination(interp, library_args.clone(), "LIB")),
+                                action(Namelink::Skip, Namelink::None, false),
+                            ));
+                        }
+                        if namelink_mode != Namelink::Skip {
+                            let mut opts = with_destination(interp, library_args.clone(), "LIB");
+                            opts.component =
+                                nonempty(&opts.namelink_component, &opts.component).to_owned();
+                            namelink_gen = Some((
+                                target_opts(opts),
+                                action(Namelink::Only, Namelink::None, false),
+                            ));
+                        }
+                        namelink_only = namelink_mode == Namelink::Only;
+                        if text_stubs && shared_exports {
+                            // Apple .tbd files use the ARCHIVE properties.
+                            let archive_args = group("ARCHIVE");
+                            if !archive_args.destination.is_empty() {
+                                artifacts_specified = true;
+                            }
+                            if importlink_mode != Namelink::Only {
+                                archive = Some((
+                                    target_opts(with_destination(
+                                        interp,
+                                        archive_args.clone(),
+                                        "LIB",
+                                    )),
+                                    action(Namelink::None, Namelink::Skip, true),
+                                ));
+                            }
+                            if importlink_mode != Namelink::Skip {
+                                let mut opts =
+                                    with_destination(interp, archive_args.clone(), "LIB");
+                                opts.component =
+                                    nonempty(&opts.namelink_component, &opts.component).to_owned();
+                                importlink_gen = Some((
+                                    target_opts(opts),
+                                    action(Namelink::None, Namelink::Only, true),
+                                ));
+                            }
+                            namelink_only = importlink_mode == Namelink::Only;
+                        }
+                        if dep_set.is_some() && library.is_some() {
+                            dep_items.libraries.push((makefile, name.clone()));
+                        }
+                    }
+                }
+                TargetKind::StaticLibrary => {
+                    if framework {
+                        if namelink_mode == Namelink::Only {
+                            namelink_only = true;
+                            skip_rest = true;
+                        } else {
+                            let framework_args = group("FRAMEWORK");
+                            if framework_args.destination.is_empty() {
+                                return err(format!(
+                                    "TARGETS given no FRAMEWORK DESTINATION for static library FRAMEWORK target \"{name}\"."
+                                ));
+                            }
+                            framework_gen = Some((
+                                target_opts(framework_args.clone()),
+                                action(Namelink::None, Namelink::None, false),
+                            ));
+                        }
+                    } else {
+                        // Static libraries use ARCHIVE properties.
+                        let archive_args = group("ARCHIVE");
+                        if !archive_args.destination.is_empty() {
+                            artifacts_specified = true;
+                        }
+                        archive = Some((
+                            target_opts(with_destination(interp, archive_args.clone(), "LIB")),
+                            action(Namelink::None, Namelink::None, false),
+                        ));
+                    }
+                }
+                TargetKind::ModuleLibrary => {
+                    // Modules use LIBRARY properties.
+                    let library_args = group("LIBRARY");
+                    if !library_args.destination.is_empty() {
+                        library = Some((
+                            target_opts(library_args.clone()),
+                            action(namelink_mode, Namelink::None, false),
+                        ));
+                        namelink_only = namelink_mode == Namelink::Only;
+                        if dep_set.is_some() {
+                            dep_items.modules.push((makefile, name.clone()));
+                        }
+                    } else {
+                        return err(format!(
+                            "TARGETS given no LIBRARY DESTINATION for module target \"{name}\"."
+                        ));
+                    }
+                }
+                TargetKind::ObjectLibrary => {
+                    // Objects use OBJECT properties.
+                    let object_args = group("OBJECTS");
+                    if !object_args.destination.is_empty() {
+                        object = Some((
+                            target_opts(object_args.clone()),
+                            action(Namelink::None, Namelink::None, false),
+                        ));
+                    }
+                    // Without a destination an OBJECT library transforms to an
+                    // INTERFACE library: it installs no files but exports.
+                }
+                TargetKind::Executable => {
+                    if app_bundle {
+                        let bundle_args = group("BUNDLE");
+                        if bundle_args.destination.is_empty() {
+                            return err(format!(
+                                "TARGETS given no BUNDLE DESTINATION for MACOSX_BUNDLE executable target \"{name}\"."
+                            ));
+                        }
+                        bundle = Some((
+                            target_opts(bundle_args.clone()),
+                            action(Namelink::None, Namelink::None, false),
+                        ));
+                        if dep_set.is_some()
+                            && !add_bundle_executable(
+                                interp,
+                                &dep_set,
+                                &mut dep_items,
+                                makefile,
+                                name,
+                            )
+                        {
+                            return err(
+                                "A runtime dependency set may only have one bundle executable.",
+                            );
+                        }
+                    } else {
+                        // Executables use the RUNTIME properties.
+                        let runtime_args = group("RUNTIME");
+                        if !runtime_args.destination.is_empty() {
+                            artifacts_specified = true;
+                        }
+                        runtime = Some((
+                            target_opts(with_destination(interp, runtime_args.clone(), "BIN")),
+                            action(Namelink::None, Namelink::None, false),
+                        ));
+                        if dep_set.is_some() {
+                            dep_items.executables.push((makefile, name.clone()));
+                        }
+                    }
+                    // On DLL platforms and AIX an executable may also have an
+                    // import library installed to the archive destination.
+                    let archive_args = group("ARCHIVE");
+                    if (platform.dll || platform.aix)
+                        && !archive_args.destination.is_empty()
+                        && exe_exports
+                    {
+                        artifacts_specified = true;
+                        let mut opts = target_opts(archive_args.clone());
+                        opts.optional = true;
+                        archive = Some((opts, action(Namelink::None, Namelink::None, true)));
+                    }
+                }
+                // INTERFACE_LIBRARY installs no files; it is only exportable.
+                _ => {}
+            }
         }
-        let export_set = parsed.get("EXPORT");
+        // `cmTargetExport` stores each generator's options; extract them
+        // before the rules consume the slots.
+        let export_slots = [
+            archive.as_ref().map(|(opts, _)| opts.clone()),
+            library.as_ref().map(|(opts, _)| opts.clone()),
+            runtime.as_ref().map(|(opts, _)| opts.clone()),
+            object.as_ref().map(|(opts, _)| opts.clone()),
+            framework_gen.as_ref().map(|(opts, _)| opts.clone()),
+            bundle.as_ref().map(|(opts, _)| opts.clone()),
+        ];
+        let mut rules: Vec<(InstallOptions, InstallAction)> = [
+            archive,
+            library,
+            namelink_gen,
+            importlink_gen,
+            runtime,
+            object,
+            framework_gen,
+            bundle,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let mut bmi = group("CXX_MODULES_BMI").clone();
+        // `HandleImportedRuntimeArtifactsMode` installs only the runtime
+        // artifacts: no headers, file sets or BMI generators.
+        if !skip_rest && !imported {
+            // PRIVATE/PUBLIC_HEADER and RESOURCE files install automatically
+            // for Apple FRAMEWORK targets; otherwise they get file generators.
+            if !framework && !namelink_only {
+                for (property, key) in [
+                    ("PRIVATE_HEADER", "PRIVATE_HEADER"),
+                    ("PUBLIC_HEADER", "PUBLIC_HEADER"),
+                    ("RESOURCE", "RESOURCE"),
+                ] {
+                    let files = expand_list(props.get(property).unwrap_or(""), false);
+                    if files.is_empty() {
+                        continue;
+                    }
+                    let opts = group(key);
+                    if property == "RESOURCE" {
+                        if opts.destination.is_empty() {
+                            if !app_bundle {
+                                interp.issue(
+                                    MessageType::AuthorWarning,
+                                    &format!(
+                                        "Target {name} has RESOURCE files but no RESOURCE DESTINATION."
+                                    ),
+                                );
+                            }
+                            continue;
+                        }
+                    } else if artifacts_specified && opts.destination.is_empty() {
+                        interp.issue(
+                            MessageType::AuthorWarning,
+                            &format!(
+                                "Target {name} has {property} files but no {property} DESTINATION."
+                            ),
+                        );
+                        continue;
+                    }
+                    let paths = source_files(interp, mode, &files)?;
+                    rules.push((
+                        with_destination(interp, opts.clone(), "INCLUDE"),
+                        copy(CopyKind::File, paths),
+                    ));
+                }
+            }
+            if !namelink_only {
+                for (set, opts) in &sets {
+                    rules.push((
+                        with_destination(interp, opts.clone(), "INCLUDE"),
+                        InstallAction::FileSet {
+                            name: name.clone(),
+                            set: set.clone(),
+                        },
+                    ));
+                }
+            }
+            if !bmi.destination.is_empty() {
+                if makefile != interp.mf_index() {
+                    bmi.message.clear();
+                }
+                rules.push((bmi.clone(), InstallAction::Bmi(name.clone())));
+            }
+        }
+        for (opts, act) in rules {
+            add(interp, opts, act);
+        }
         if !export_set.is_empty() {
+            // `addTargetExport`: every interface file set needs a group.
             for property in ["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"] {
                 for set in expand_list(props.get(property).unwrap_or(""), false) {
                     if !sets.iter().any(|(name, _)| *name == set) {
@@ -950,96 +1403,6 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                     }
                 }
             }
-        }
-        let mut export_artifact = None;
-        let mut export_namelink = None;
-        if !artifact.destination.is_empty() {
-            if !namelink_only {
-                let namelink = if !imported
-                    && (kind == TargetKind::SharedLibrary || artifact_args.namelink_skip)
-                {
-                    Namelink::Skip
-                } else {
-                    Namelink::None
-                };
-                add(
-                    interp,
-                    artifact.clone(),
-                    InstallAction::Target {
-                        name: name.clone(),
-                        namelink,
-                        imported,
-                    },
-                );
-                export_artifact = Some(artifact.clone());
-                if matches!(
-                    kind,
-                    TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-                ) {
-                    dependencies.push((interp.mf_index(), name.clone()));
-                }
-            }
-            if !imported
-                && !artifact_args.namelink_skip
-                && (kind == TargetKind::SharedLibrary || namelink_only)
-            {
-                artifact.component =
-                    nonempty(&artifact.namelink_component, &artifact.component).to_owned();
-                add(
-                    interp,
-                    artifact.clone(),
-                    InstallAction::Target {
-                        name: name.clone(),
-                        namelink: Namelink::Only,
-                        imported,
-                    },
-                );
-                export_namelink = Some(artifact);
-            }
-        }
-        if imported {
-            continue;
-        }
-        if !namelink_only {
-            for property in ["PRIVATE_HEADER", "PUBLIC_HEADER", "RESOURCE"] {
-                let files = expand_list(props.get(property).unwrap_or(""), false);
-                if files.is_empty() {
-                    continue;
-                }
-                let opts = group(property);
-                if opts.destination.is_empty() && (specified || property == "RESOURCE") {
-                    interp.issue(
-                        MessageType::AuthorWarning,
-                        &format!(
-                            "Target {name} has {property} files but no {property} DESTINATION."
-                        ),
-                    );
-                    continue;
-                }
-                let paths = source_files(interp, mode, &files)?;
-                let opts = with_destination(interp, opts.clone(), "INCLUDE");
-                add(interp, opts, copy(CopyKind::File, paths));
-            }
-            for (set, opts) in &sets {
-                let opts = with_destination(interp, opts.clone(), "INCLUDE");
-                add(
-                    interp,
-                    opts,
-                    InstallAction::FileSet {
-                        name: name.clone(),
-                        set: set.clone(),
-                    },
-                );
-            }
-        }
-        let mut bmi = group("CXX_MODULES_BMI").clone();
-        if !bmi.destination.is_empty() {
-            if makefile != interp.mf_index() {
-                bmi.message.clear();
-            }
-            add(interp, bmi, InstallAction::Bmi(name.clone()));
-        }
-        if !export_set.is_empty() {
             let file_sets = sets
                 .iter()
                 .map(|(name, opts)| {
@@ -1058,57 +1421,151 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                 .targets
                 .push(ExportTarget {
                     name: name.clone(),
-                    artifact: export_artifact,
+                    archive: export_slots[0].clone(),
+                    library: export_slots[1].clone(),
+                    runtime: export_slots[2].clone(),
+                    objects: export_slots[3].clone(),
+                    framework: export_slots[4].clone(),
+                    bundle: export_slots[5].clone(),
+                    namelink_only,
+                    cxx_module_dir: if !skip_rest && !bmi.destination.is_empty() {
+                        bmi.destination.clone()
+                    } else {
+                        String::new()
+                    },
                     includes: includes.clone(),
                     file_sets,
-                    namelink: export_namelink,
-                    namelink_only,
                 });
         }
     }
-    if implicit && !dependencies.is_empty() {
-        let set = format!(
-            "#{}:{}",
-            interp.mf_index(),
-            interp.ext.install.runtime_sets.len()
-        );
-        interp
-            .ext
-            .install
-            .runtime_sets
-            .insert(set.clone(), dependencies);
-        let (key, standard) = runtime_dependency_group(interp);
-        let opts = with_destination(interp, group(key).clone(), standard);
-        let framework = group("FRAMEWORK").clone();
-        let framework = (!framework.destination.is_empty()).then(|| Box::new(framework));
-        add(
-            interp,
-            opts,
-            InstallAction::RuntimeDependencies {
-                set,
+    if let Some(set) = dep_set {
+        let empty = {
+            let items = interp.ext.install.runtime_sets.get_mut(&set).unwrap();
+            items.executables.extend(dep_items.executables);
+            items.libraries.extend(dep_items.libraries);
+            items.modules.extend(dep_items.modules);
+            if dep_items.bundle_executable.is_some() {
+                items.bundle_executable = dep_items.bundle_executable;
+            }
+            items.executables.is_empty() && items.libraries.is_empty() && items.modules.is_empty()
+        };
+        if implicit && !empty {
+            runtime_dependency_rules(
+                interp,
+                group("RUNTIME"),
+                group("LIBRARY"),
+                group("FRAMEWORK"),
                 filters,
-                framework,
-            },
-        );
-    } else if !explicit.is_empty() {
-        interp
-            .ext
-            .install
-            .runtime_sets
-            .entry(explicit.to_owned())
-            .or_default()
-            .extend(dependencies);
+                set,
+            );
+        }
     }
     Ok(())
 }
 
-/// The artifact group (and its default destination type) that runtime
-/// dependencies belong to: RUNTIME on DLL platforms.
-fn runtime_dependency_group(interp: &Interp) -> (&'static str, &'static str) {
-    if interp.get_safe("CMAKE_IMPORT_LIBRARY_SUFFIX").is_empty() {
-        ("LIBRARY", "LIB")
+/// `cmInstallTargetGenerator`s never take a RENAME.
+fn target_opts(mut opts: InstallOptions) -> InstallOptions {
+    opts.rename.clear();
+    opts
+}
+
+/// `cmInstallRuntimeDependencySet::AddBundleExecutable`: the set holds at
+/// most one bundle executable.
+fn add_bundle_executable(
+    interp: &Interp,
+    set: &Option<String>,
+    items: &mut RuntimeDependencySet,
+    makefile: usize,
+    name: &str,
+) -> bool {
+    let exists = items.bundle_executable.is_some()
+        || set.as_ref().is_some_and(|set| {
+            interp.ext.install.runtime_sets[set]
+                .bundle_executable
+                .is_some()
+        });
+    if exists {
+        return false;
+    }
+    items.executables.push((makefile, name.to_owned()));
+    items.bundle_executable = Some((makefile, name.to_owned()));
+    true
+}
+
+/// `AddInstallRuntimeDependenciesGenerator`: the
+/// `file(GET_RUNTIME_DEPENDENCIES)` generator, the library/runtime copy
+/// generator, and the framework copy generator on a Darwin host.
+fn runtime_dependency_rules(
+    interp: &mut Interp,
+    runtime: &InstallOptions,
+    library: &InstallOptions,
+    framework: &InstallOptions,
+    filters: BTreeMap<String, Vec<String>>,
+    set: String,
+) {
+    let dll = !interp.get_safe("CMAKE_IMPORT_LIBRARY_SUFFIX").is_empty();
+    let apple = interp.get_safe("CMAKE_HOST_SYSTEM_NAME") == "Darwin";
+    let group_args = if dll { runtime } else { library };
+    let mut configurations = group_args.configurations.clone();
+    if apple {
+        configurations.extend(framework.configurations.iter().cloned());
+    }
+    let mut get_opts = group_args.clone();
+    get_opts.destination.clear();
+    get_opts.configurations = configurations.clone();
+    get_opts.optional = true;
+    get_opts.exclude = group_args.exclude && (!apple || framework.exclude);
+    add(
+        interp,
+        get_opts,
+        InstallAction::RuntimeDependencies {
+            set: set.clone(),
+            filters,
+            library_component: group_args.component.clone(),
+            framework_component: if apple {
+                framework.component.clone()
+            } else {
+                String::new()
+            },
+            configurations,
+            exclude_from_all: group_args.exclude && (!apple || framework.exclude),
+            framework_exclude: apple && framework.exclude,
+        },
+    );
+    let lib_dest = if dll {
+        with_destination(interp, runtime.clone(), "BIN").destination
     } else {
-        ("RUNTIME", "BIN")
+        with_destination(interp, library.clone(), "LIB").destination
+    };
+    let mut copy_opts = group_args.clone();
+    copy_opts.destination = lib_dest.clone();
+    add(
+        interp,
+        copy_opts,
+        InstallAction::RuntimeDepSet {
+            set: set.clone(),
+            kind: DepSetKind::Library,
+            destination: lib_dest,
+            component: group_args.component.clone(),
+            configurations: group_args.configurations.clone(),
+            permissions: group_args.permissions.clone(),
+            exclude_from_all: group_args.exclude,
+        },
+    );
+    if apple {
+        add(
+            interp,
+            framework.clone(),
+            InstallAction::RuntimeDepSet {
+                set,
+                kind: DepSetKind::Framework,
+                destination: framework.destination.clone(),
+                component: framework.component.clone(),
+                configurations: framework.configurations.clone(),
+                permissions: framework.permissions.clone(),
+                exclude_from_all: framework.exclude,
+            },
+        );
     }
 }
 
@@ -1124,32 +1581,29 @@ fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     let filters = dependency_filters(&parsed.unknown, "RUNTIME_DEPENDENCY_SET")?;
     let generic = options(interp, &parsed, &defaults(interp));
     validate_permissions(&generic)?;
-    let (group_key, standard) = runtime_dependency_group(interp);
     let mut library = generic.clone();
-    let mut framework_opts = None;
+    let mut runtime = generic.clone();
+    let mut framework = generic.clone();
     for (key, group) in groups {
         let (opts, _) = artifact_options(interp, "RUNTIME_DEPENDENCY_SET", &group, &generic)?;
-        if key == group_key {
-            library = opts.clone();
-        }
-        if key == "FRAMEWORK" {
-            framework_opts = Some(opts);
+        match key {
+            "LIBRARY" => library = opts,
+            "RUNTIME" => runtime = opts,
+            "FRAMEWORK" => framework = opts,
+            _ => {}
         }
     }
     let set = parsed.get("RUNTIME_DEPENDENCY_SET");
     if set.is_empty() {
         return err("RUNTIME_DEPENDENCY_SET not given a runtime dependency set.");
     }
-    let opts = with_destination(interp, library, standard);
-    let framework = framework_opts.map(Box::new);
-    add(
+    runtime_dependency_rules(
         interp,
-        opts,
-        InstallAction::RuntimeDependencies {
-            set: set.to_owned(),
-            filters,
-            framework,
-        },
+        &runtime,
+        &library,
+        &framework,
+        filters,
+        set.to_owned(),
     );
     Ok(())
 }

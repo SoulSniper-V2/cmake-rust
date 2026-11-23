@@ -3,12 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
-use super::{ctx::GenCtx, export, link, package_info, target};
+use super::{ctx::GenCtx, export, install_name, link, package_info, target};
 use crate::commands::install::{legacy_source, unix_slashes};
 use crate::install_model::*;
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
-use crate::util::{escape_for_cmake, expand_list, is_full_path, is_on_opt};
+use crate::util::{
+    CompareOp, escape_for_cmake, expand_list, is_full_path, is_on_opt, version_compare,
+};
 
 pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
     if ctx.interp.ext.install.enabled
@@ -158,7 +160,8 @@ fn actions_per_config(rule: &InstallRule) -> bool {
         | InstallAction::LegacyTarget(_)
         | InstallAction::Bmi(_)
         | InstallAction::FileSet { .. }
-        | InstallAction::RuntimeDependencies { .. } => true,
+        | InstallAction::RuntimeDependencies { .. }
+        | InstallAction::RuntimeDepSet { .. } => true,
         InstallAction::Export(_)
         | InstallAction::PackageInfo { .. }
         | InstallAction::LegacyFiles { .. } => false,
@@ -415,6 +418,15 @@ fn include_child(ctx: &GenCtx, out: &mut String, child: usize) {
     }
 }
 
+/// `cmInstallGenerator::CreateComponentTest` (never `AllComponents` here).
+fn component_test(component: &str, exclude_from_all: bool) -> String {
+    let mut test = format!("CMAKE_INSTALL_COMPONENT STREQUAL \"{component}\"");
+    if !exclude_from_all {
+        test.push_str(" OR NOT CMAKE_INSTALL_COMPONENT");
+    }
+    test
+}
+
 fn render_rule(
     ctx: &GenCtx,
     out: &mut String,
@@ -422,7 +434,33 @@ fn render_rule(
     rule: &InstallRule,
 ) -> std::io::Result<()> {
     let opts = &rule.options;
-    let header = out.len();
+    if let InstallAction::RuntimeDependencies {
+        set,
+        filters,
+        library_component,
+        framework_component,
+        ..
+    } = &rule.action
+    {
+        // cmInstallGetRuntimeDependenciesGenerator::GenerateScript wraps
+        // unconditionally, testing the library and framework components.
+        let test = if framework_component.is_empty() || framework_component == library_component {
+            component_test(library_component, opts.exclude)
+        } else {
+            format!(
+                "{} OR {}",
+                component_test(library_component, true),
+                component_test(framework_component, opts.exclude)
+            )
+        };
+        writeln!(out, "if({test})").unwrap();
+        render_configs(ctx, out, rule, "  ", &mut |ctx, out, indent| {
+            render_get_runtime_dependencies(ctx, out, index, set, filters, indent);
+            Ok(())
+        })?;
+        out.push_str("endif()\n\n");
+        return Ok(());
+    }
     let all = matches!(
         rule.action,
         InstallAction::Script {
@@ -449,21 +487,7 @@ fn render_rule(
         .unwrap();
     }
     let base_indent = if all { "" } else { "  " };
-    if let InstallAction::RuntimeDependencies { set, filters, .. } = &rule.action {
-        // cmInstallGetRuntimeDependenciesGenerator followed by
-        // cmInstallRuntimeDependencySetGenerator.
-        let header = out[header..].to_owned();
-        render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
-            render_get_runtime_dependencies(ctx, out, index, set, filters, indent);
-            Ok(())
-        })?;
-        out.push_str("endif()\n\n");
-        out.push_str(&header);
-        render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
-            render_runtime_dependency_set(ctx, out, index, rule, indent);
-            Ok(())
-        })?;
-    } else {
+    {
         let mut config_rules = String::new();
         render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
             render_action(
@@ -630,10 +654,22 @@ fn render_action(
         InstallAction::Target {
             name,
             namelink,
+            importlink,
+            implib,
             imported,
         } => {
             if let Some(tgt) = ctx.target_at(index, name) {
-                render_target(ctx, out, rule, tgt, *namelink, *imported, indent);
+                render_target(
+                    ctx,
+                    out,
+                    rule,
+                    tgt,
+                    *namelink,
+                    *importlink,
+                    *implib,
+                    *imported,
+                    indent,
+                );
             }
         }
         InstallAction::Bmi(name) => {
@@ -689,8 +725,21 @@ fn render_action(
                         | TargetKind::ModuleLibrary
                 )
             }) {
-                render_target(ctx, out, rule, tgt, Namelink::None, false, indent);
+                render_target(
+                    ctx,
+                    out,
+                    rule,
+                    tgt,
+                    Namelink::None,
+                    Namelink::None,
+                    false,
+                    false,
+                    indent,
+                );
             }
+        }
+        InstallAction::RuntimeDepSet { .. } => {
+            render_runtime_dependency_set(ctx, out, index, rule, indent);
         }
         InstallAction::RuntimeDependencies { .. } => unreachable!(),
     }
@@ -861,17 +910,153 @@ pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
         .collect()
 }
 
+/// `cmInstallTargetGenerator::GetFiles`: the `file(INSTALL)` type, extra
+/// literal arguments, the effective `files.NamelinkMode`, and the
+/// `(from, to)` pairs for one artifact kind.  `from` paths join the
+/// artifact directory; `to` paths are relative to the install destination
+/// and receive the tweak rules.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn target_files(
+    ctx: &GenCtx,
+    tgt: &Target,
+    names: &target::Names,
+    namelink: Namelink,
+    importlink: Namelink,
+    implib: bool,
+    backtrace: &[crate::messages::Frame],
+) -> (CopyKind, String, Namelink, Vec<(String, String)>) {
+    let mut kind = match tgt.kind {
+        TargetKind::Executable => CopyKind::Executable,
+        TargetKind::StaticLibrary => CopyKind::Static,
+        TargetKind::SharedLibrary => CopyKind::Shared,
+        TargetKind::ModuleLibrary => CopyKind::Module,
+        TargetKind::ObjectLibrary => CopyKind::File,
+        _ => return (CopyKind::File, String::new(), Namelink::None, Vec::new()),
+    };
+    let mut arguments = String::new();
+    let mut mode = Namelink::None;
+    let mut from_names: Vec<String> = Vec::new();
+    let mut to_names: Vec<String> = Vec::new();
+    if implib {
+        // An import library looks like a static library.
+        kind = CopyKind::Static;
+        if tgt.kind == TargetKind::Executable {
+            to_names.push(names.import_library.clone());
+        } else {
+            if compute_install_names(
+                &mut to_names,
+                importlink,
+                &names.import_output,
+                &names.import_library,
+                &names.import_real,
+            ) {
+                mode = importlink;
+            }
+        }
+        // `GetImplibGNUtoMS` appends the Microsoft-style names.
+        if install_name::has_implib_gnu_to_ms(ctx, tgt, &ctx.config) {
+            for name in to_names.clone() {
+                if let Some(ms) = install_name::implib_gnu_to_ms(ctx, tgt, &ctx.config, &name, None)
+                {
+                    to_names.push(ms);
+                }
+            }
+        }
+        from_names.clone_from(&to_names);
+    } else if tgt.is_app_bundle_on_apple() {
+        // Install the whole app bundle directory; tweaks apply to the
+        // binary inside.
+        kind = CopyKind::Directory;
+        arguments.push_str(" USE_SOURCE_PERMISSIONS");
+        from_names.push(target::app_bundle_directory(
+            ctx,
+            tgt,
+            &ctx.config,
+            target::BundleLevel::BundleDir,
+        ));
+        to_names.push(format!(
+            "{}/{}",
+            target::app_bundle_directory(ctx, tgt, &ctx.config, target::BundleLevel::Full),
+            names.output
+        ));
+    } else if tgt.is_framework_on_apple() {
+        match namelink {
+            Namelink::Only => return (kind, arguments, mode, Vec::new()),
+            Namelink::Skip => {
+                ctx.message(
+                    crate::messages::MessageType::AuthorWarning,
+                    backtrace.to_vec(),
+                    format!(
+                        "Target '{}' was changed to a FRAMEWORK sometime after install().  This may result in the wrong install DESTINATION.  Set the FRAMEWORK property earlier.",
+                        tgt.name
+                    ),
+                );
+            }
+            Namelink::None => {}
+        }
+        kind = CopyKind::Directory;
+        arguments.push_str(" USE_SOURCE_PERMISSIONS");
+        // `names.output` is `<name>.framework/<binary>`; the from is the
+        // whole framework directory.
+        from_names.push(crate::util::filename_path(&names.output));
+        to_names.push(names.real.clone());
+    } else if tgt.is_cf_bundle_on_apple() {
+        kind = CopyKind::Directory;
+        arguments.push_str(" USE_SOURCE_PERMISSIONS");
+        from_names.push(
+            names
+                .output
+                .split('/')
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        to_names.push(names.output.clone());
+    } else {
+        let archived_aix = tgt.is_archived_aix_shared_library();
+        let soname = if tgt.kind == TargetKind::Executable || archived_aix {
+            ""
+        } else {
+            names.shared_object.as_str()
+        };
+        if compute_install_names(&mut to_names, namelink, &names.output, soname, &names.real)
+            && tgt.kind != TargetKind::Executable
+        {
+            mode = namelink;
+        }
+        from_names.clone_from(&to_names);
+    }
+    if to_names.is_empty() {
+        return (kind, arguments, mode, Vec::new());
+    }
+    let from_artifact = if implib {
+        target::ArtifactType::Import
+    } else {
+        target::ArtifactType::Runtime
+    };
+    let from = target::directory(ctx, tgt, &ctx.config, from_artifact);
+    let pairs = from_names
+        .iter()
+        .zip(to_names.iter())
+        .map(|(from_name, to_name)| (format!("{from}/{from_name}"), to_name.clone()))
+        .collect();
+    (kind, arguments, mode, pairs)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_target(
     ctx: &GenCtx,
     out: &mut String,
     rule: &InstallRule,
     tgt: &Target,
     namelink: Namelink,
+    importlink: Namelink,
+    implib: bool,
     imported: bool,
     indent: &str,
 ) {
     let opts = &rule.options;
-    let kind = match tgt.kind {
+    let mut kind = match tgt.kind {
         TargetKind::Executable => CopyKind::Executable,
         TargetKind::StaticLibrary => CopyKind::Static,
         TargetKind::SharedLibrary => CopyKind::Shared,
@@ -899,61 +1084,136 @@ fn render_target(
         return;
     }
     if imported {
+        // `cmInstallImportedRuntimeArtifactsGenerator::GenerateScriptForConfig`.
         let location =
             target::full_path(ctx, tgt, &ctx.config, target::ArtifactType::Runtime, false);
-        let mut files = vec![location];
-        if tgt.kind == TargetKind::SharedLibrary
-            && let Some(info) = target::import_info(tgt, &ctx.config)
-            && !info.soname.is_empty()
-        {
-            let soname = format!("{}/{}", crate::util::filename_path(&files[0]), info.soname);
-            if soname != files[0] {
-                files.push(soname);
+        let dir_install = |ext: &str| {
+            // `(dir)(name).ext` out of the location path.
+            let re = crate::cmregex::Regex::new(&format!("^(.*/)?([^/]*)\\.{ext}/(.*)$")).unwrap();
+            let found = re.find(&location)?;
+            let group = |index: usize| {
+                found.groups[index]
+                    .map(|(start, end)| location[start..end].to_owned())
+                    .unwrap_or_default()
+            };
+            Some(format!(
+                "{}{}.{}",
+                group(1),
+                group(2),
+                ext.trim_start_matches('.')
+            ))
+        };
+        let mut bundle_install = |kind: CopyKind, ext: &str| {
+            if let Some(bundle) = dir_install(ext) {
+                let dir_permissions: Vec<String> = opts.permissions.clone();
+                let copy_opts = InstallOptions {
+                    permissions: Vec::new(),
+                    ..opts.clone()
+                };
+                write_copy(
+                    out,
+                    indent,
+                    &copy_opts,
+                    CopyRule {
+                        dest: &dest,
+                        kind,
+                        files: std::slice::from_ref(&bundle),
+                        dir_permissions: &dir_permissions,
+                        rename: "",
+                        arguments: " USE_SOURCE_PERMISSIONS",
+                        files_var: "",
+                    },
+                );
+                return true;
             }
+            false
+        };
+        match tgt.kind {
+            TargetKind::Executable => {
+                if tgt.is_bundle_on_apple() {
+                    bundle_install(CopyKind::Directory, "app");
+                } else {
+                    write_copy(
+                        out,
+                        indent,
+                        opts,
+                        CopyRule::new(&dest, CopyKind::Executable, &[location]),
+                    );
+                }
+            }
+            TargetKind::SharedLibrary => {
+                if tgt.is_framework_on_apple() {
+                    bundle_install(CopyKind::Directory, "framework");
+                } else {
+                    let mut files = vec![location];
+                    if !tgt.is_archived_aix_shared_library()
+                        && let Some(info) = target::import_info(tgt, &ctx.config)
+                        && !info.soname.is_empty()
+                    {
+                        let so_name_file = format!(
+                            "{}/{}",
+                            target::directory(ctx, tgt, &ctx.config, target::ArtifactType::Runtime),
+                            info.soname
+                        );
+                        if so_name_file != files[0] {
+                            files.push(so_name_file);
+                        }
+                    }
+                    write_copy(
+                        out,
+                        indent,
+                        opts,
+                        CopyRule::new(&dest, CopyKind::Shared, &files),
+                    );
+                }
+            }
+            TargetKind::ModuleLibrary => {
+                if tgt.is_cf_bundle_on_apple() {
+                    bundle_install(CopyKind::Directory, "bundle");
+                } else {
+                    write_copy(
+                        out,
+                        indent,
+                        opts,
+                        CopyRule::new(&dest, CopyKind::Module, &[location]),
+                    );
+                }
+            }
+            _ => {}
         }
-        write_copy(out, indent, opts, CopyRule::new(&dest, kind, &files));
         return;
     }
     let names = target::names(ctx, tgt, &ctx.config);
-    let soname = if tgt.kind == TargetKind::Executable {
-        ""
-    } else {
-        &names.shared_object
-    };
-    let have_soname = !soname.is_empty() && soname != names.output;
-    let have_real = !names.real.is_empty() && names.real != names.output && names.real != soname;
-    let mut install_names = Vec::new();
-    if namelink != Namelink::Only {
-        if have_real {
-            install_names.push(&names.real);
-        }
-        if have_soname {
-            install_names.push(&names.shared_object);
-        }
-    }
-    let add_link = match namelink {
-        Namelink::Only => have_real || have_soname,
-        Namelink::Skip => !have_real && !have_soname,
-        Namelink::None => true,
-    };
-    if add_link {
-        install_names.push(&names.output);
-    }
-    if install_names.is_empty() {
+    let (pair_kind, arguments, _mode, pairs) = target_files(
+        ctx,
+        tgt,
+        &names,
+        namelink,
+        importlink,
+        implib,
+        &rule.backtrace,
+    );
+    kind = pair_kind;
+    if pairs.is_empty() {
         return;
     }
-    let from = target::directory(ctx, tgt, &ctx.config, target::ArtifactType::Runtime);
-    let files: Vec<_> = install_names
-        .iter()
-        .map(|name| format!("{from}/{name}"))
-        .collect();
-    let dynamic = tgt.kind != TargetKind::StaticLibrary && namelink != Namelink::Only;
-    let rpaths = if dynamic {
+    let files: Vec<String> = pairs.iter().map(|(from, _)| from.clone()).collect();
+    let to_names: Vec<String> = pairs.iter().map(|(_, to)| to.clone()).collect();
+    let installname = is_on_opt(
+        ctx.var(tgt.makefile, "CMAKE_PLATFORM_HAS_INSTALLNAME")
+            .as_deref(),
+    );
+    let dynamic = !implib && namelink != Namelink::Only && tgt.kind != TargetKind::StaticLibrary;
+    let line = dynamic.then(|| {
         let language = target::linker_language(ctx, tgt, &ctx.config);
-        link::link_line(ctx, tgt, &ctx.config, &language).rpath_change
-    } else {
-        None
-    };
+        link::link_line(ctx, tgt, &ctx.config, &language)
+    });
+    // `AddRPathCheckRule`/`AddChrpathPatchRule` skip install-name platforms.
+    let rpaths = line
+        .as_ref()
+        .and_then(|line| line.rpath_change.clone())
+        .filter(|_| !installname);
+    let rpath_dirs = line.as_ref().and_then(|line| line.rpath_dirs.clone());
     let cmp0095 = index_of("CMP0095").unwrap();
     let policy = tgt.policies.get(cmp0095).unwrap_or(PolicyStatus::Warn);
     let format_install_rpath = |value: &str| {
@@ -964,24 +1224,32 @@ fn render_target(
         }
     };
     let tweak_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(&dest));
+    let to_refs: Vec<&String> = to_names.iter().collect();
     if let Some((_, new)) = &rpaths {
         let new = format_install_rpath(new);
-        tweak(
-            out,
-            indent,
-            &tweak_dir,
-            &install_names,
-            |out, indent, file| {
-                write!(out, "{indent}file(RPATH_CHECK\n{indent}     FILE \"{file}\"\n{indent}     RPATH {new})\n").unwrap();
-            },
-        );
+        tweak(out, indent, &tweak_dir, &to_refs, |out, indent, file| {
+            write!(out, "{indent}file(RPATH_CHECK\n{indent}     FILE \"{file}\"\n{indent}     RPATH {new})\n").unwrap();
+        });
     }
-    write_copy(out, indent, opts, CopyRule::new(&dest, kind, &files));
-    let strip = if dynamic {
-        ctx.var_safe(tgt.makefile, "CMAKE_STRIP")
-    } else {
-        String::new()
+    // `optional = Optional || ImportLibrary`.
+    let copy_opts = InstallOptions {
+        optional: opts.optional || implib,
+        ..opts.clone()
     };
+    write_copy(
+        out,
+        indent,
+        &copy_opts,
+        CopyRule {
+            dest: &dest,
+            kind,
+            files: &files,
+            dir_permissions: &[],
+            rename: "",
+            arguments: &arguments,
+            files_var: "",
+        },
+    );
     let rpaths = rpaths.filter(|(old, new)| old != new);
     if let Some((_, new)) = &rpaths
         && policy == PolicyStatus::Warn
@@ -997,27 +1265,227 @@ fn render_target(
             ),
         );
     }
-    if !strip.is_empty() || rpaths.is_some() {
-        tweak(
-            out,
-            indent,
-            &tweak_dir,
-            &install_names,
-            |out, indent, file| {
-                if let Some((old, new)) = &rpaths {
-                    let old = escape_for_cmake(old);
-                    let new = format_install_rpath(new);
-                    write!(out, "{indent}file(RPATH_CHANGE\n{indent}     FILE \"{file}\"\n{indent}     OLD_RPATH {old}\n{indent}     NEW_RPATH {new}").unwrap();
-                    if is_on_opt(tgt.props.get("INSTALL_REMOVE_ENVIRONMENT_RPATH")) {
-                        write!(out, "\n{indent}     INSTALL_REMOVE_ENVIRONMENT_RPATH").unwrap();
-                    }
-                    out.push_str(")\n");
+    // `AddInstallNamePatchRule`: the -id and -change arguments for the
+    // installed file.
+    let tool = ctx.var_safe(tgt.makefile, "CMAKE_INSTALL_NAME_TOOL");
+    let mut new_id = String::new();
+    let mut remap = BTreeMap::new();
+    if dynamic
+        && !tool.is_empty()
+        && matches!(
+            tgt.kind,
+            TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        )
+    {
+        if tgt.kind == TargetKind::SharedLibrary {
+            let for_build = install_name::install_name_dir_for_build_tree(ctx, tgt, &ctx.config);
+            let for_install = install_name::install_name_dir_for_install_tree(
+                ctx,
+                tgt,
+                &ctx.config,
+                "${CMAKE_INSTALL_PREFIX}",
+            );
+            if for_build != for_install {
+                new_id = format!("{for_install}{}", names.shared_object);
+            }
+        }
+        if let Some(line) = &line {
+            for key in &line.shared_libraries_linked {
+                let Some(dep) = ctx.interp.ext.targets.get(key) else {
+                    continue;
+                };
+                // The install_name of an imported target does not change.
+                if dep.imported {
+                    continue;
                 }
-                if !strip.is_empty() {
-                    write!(out, "{indent}if(CMAKE_INSTALL_DO_STRIP)\n{indent}  execute_process(COMMAND \"{strip}\" \"{file}\")\n{indent}endif()\n").unwrap();
+                let for_build =
+                    install_name::install_name_dir_for_build_tree(ctx, dep, &ctx.config);
+                let for_install = install_name::install_name_dir_for_install_tree(
+                    ctx,
+                    dep,
+                    &ctx.config,
+                    "${CMAKE_INSTALL_PREFIX}",
+                );
+                if for_build != for_install {
+                    let fname = target::names(ctx, dep, &ctx.config).shared_object;
+                    remap.insert(
+                        format!("{for_build}{fname}"),
+                        format!("{for_install}{fname}"),
+                    );
                 }
-            },
-        );
+            }
+        }
+    }
+    // `AddChrpathPatchRule` for install_name_tool: ordered -delete_rpath
+    // then -add_rpath entries, each path appearing once.
+    let mut runpaths: Vec<(String, &'static str)> = Vec::new();
+    if dynamic
+        && installname
+        && !tool.is_empty()
+        && let Some((old_dirs, new_dirs)) = &rpath_dirs
+    {
+        let mut change: BTreeMap<String, Option<&'static str>> = BTreeMap::new();
+        let mut ordered = Vec::new();
+        for dir in old_dirs {
+            if change.insert(dir.clone(), Some("delete")).is_none() {
+                ordered.push(dir.clone());
+            }
+        }
+        for dir in new_dirs {
+            match change.get_mut(dir) {
+                None => {
+                    change.insert(dir.clone(), Some("add"));
+                    ordered.push(dir.clone());
+                }
+                Some(slot) => *slot = None,
+            }
+        }
+        let major = ctx
+            .var_safe(tgt.makefile, "DARWIN_MAJOR_VERSION")
+            .parse::<i64>();
+        if major.is_ok_and(|major| major <= 9) && (!old_dirs.is_empty() || !new_dirs.is_empty()) {
+            ctx.message(
+                crate::messages::MessageType::Warning,
+                rule.backtrace.clone(),
+                format!(
+                    "WARNING: Target \"{}\" has runtime paths which cannot be changed during install.  To change runtime paths, OS X version 10.6 or newer is required.  Therefore, runtime paths will not be changed when installing.  CMAKE_BUILD_WITH_INSTALL_RPATH may be used to work around this limitation.",
+                    tgt.name
+                ),
+            );
+        } else {
+            for dir in ordered {
+                if let Some(op) = change[&dir] {
+                    runpaths.push((dir, op));
+                }
+            }
+        }
+    }
+    let universal = target::apple_embedded(ctx, tgt)
+        && is_on_opt(ctx.var(tgt.makefile, "XCODE").as_deref())
+        && ctx
+            .var(tgt.makefile, "XCODE_VERSION")
+            .is_some_and(|version| !version_compare(CompareOp::Greater, "6", &version))
+        && matches!(
+            tgt.kind,
+            TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+        )
+        && is_on_opt(tgt.props.get("IOS_INSTALL_COMBINED"));
+    let ranlib = if tgt.kind == TargetKind::StaticLibrary && tgt.platform.apple {
+        ctx.var_safe(tgt.makefile, "CMAKE_RANLIB")
+    } else {
+        String::new()
+    };
+    let strip = if dynamic && !(tgt.platform.apple && is_on_opt(tgt.props.get("MACOSX_BUNDLE"))) {
+        ctx.var_safe(tgt.makefile, "CMAKE_STRIP")
+    } else {
+        String::new()
+    };
+    let strip_args = if strip.is_empty() || !tgt.platform.apple {
+        ""
+    } else if matches!(
+        tgt.kind,
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) {
+        "-x "
+    } else if tgt.kind == TargetKind::Executable && crate::util::filename_name(&strip) == "strip" {
+        // `cmGlobalGenerator::GetStripCommandStyle` probe approximation.
+        "-u -r "
+    } else {
+        ""
+    };
+    if !new_id.is_empty()
+        || !remap.is_empty()
+        || !runpaths.is_empty()
+        || rpaths.is_some()
+        || universal
+        || !ranlib.is_empty()
+        || !strip.is_empty()
+    {
+        tweak(out, indent, &tweak_dir, &to_refs, |out, indent, file| {
+            if !new_id.is_empty() || !remap.is_empty() {
+                write!(out, "{indent}execute_process(COMMAND \"{tool}\"").unwrap();
+                if !new_id.is_empty() {
+                    write!(out, "\n{indent}  -id \"{new_id}\"").unwrap();
+                }
+                for (old, new) in &remap {
+                    write!(out, "\n{indent}  -change \"{old}\" \"{new}\"").unwrap();
+                }
+                writeln!(out, "\n{indent}  \"{file}\")").unwrap();
+            }
+            if let Some((old, new)) = &rpaths {
+                let old = escape_for_cmake(old);
+                let new = format_install_rpath(new);
+                write!(out, "{indent}file(RPATH_CHANGE\n{indent}     FILE \"{file}\"\n{indent}     OLD_RPATH {old}\n{indent}     NEW_RPATH {new}").unwrap();
+                if is_on_opt(tgt.props.get("INSTALL_REMOVE_ENVIRONMENT_RPATH")) {
+                    write!(out, "\n{indent}     INSTALL_REMOVE_ENVIRONMENT_RPATH").unwrap();
+                }
+                out.push_str(")\n");
+            }
+            if !runpaths.is_empty() {
+                writeln!(out, "{indent}execute_process(COMMAND {tool}").unwrap();
+                for (dir, op) in &runpaths {
+                    writeln!(out, "{indent}  -{op}_rpath \"{dir}\"").unwrap();
+                }
+                writeln!(out, "{indent}  \"{file}\")").unwrap();
+            }
+            if universal {
+                write!(
+                        out,
+                        "{indent}include(CMakeIOSInstallCombined)\n{indent}ios_install_combined(\"{}\" \"{file}\")\n",
+                        tgt.name
+                    )
+                    .unwrap();
+            }
+            if !ranlib.is_empty() {
+                writeln!(
+                    out,
+                    "{indent}execute_process(COMMAND \"{ranlib}\" \"{file}\")"
+                )
+                .unwrap();
+            }
+            if !strip.is_empty() {
+                write!(out, "{indent}if(CMAKE_INSTALL_DO_STRIP)\n{indent}  execute_process(COMMAND \"{strip}\" {strip_args}\"{file}\")\n{indent}endif()\n").unwrap();
+            }
+        });
+    }
+}
+
+/// `computeFilesToInstall`: the artifact/interface/implementation names a
+/// namelink mode selects.  `output` is the link name, `library` the
+/// interface (soname) name, and `real` the implementation name.  Returns
+/// whether the artifact has a namelink (`files.NamelinkMode` is then set).
+fn compute_install_names(
+    to: &mut Vec<String>,
+    mode: Namelink,
+    output: &str,
+    library: &str,
+    real: &str,
+) -> bool {
+    let have_soname = !library.is_empty() && library != output;
+    let have_real = real != output && real != library;
+    if have_soname || have_real {
+        if mode == Namelink::Only {
+            to.push(output.to_owned());
+        } else {
+            if have_real {
+                to.push(real.to_owned());
+            }
+            if have_soname {
+                to.push(library.to_owned());
+            }
+            if mode != Namelink::Skip {
+                to.push(output.to_owned());
+            }
+        }
+        true
+    } else {
+        if mode != Namelink::Only {
+            to.push(output.to_owned());
+        }
+        false
     }
 }
 
@@ -1191,35 +1659,41 @@ fn render_get_runtime_dependencies(
             false,
         )
     };
-    let targets: Vec<&Target> = ctx
-        .interp
-        .ext
-        .install
-        .runtime_sets
-        .get(set)
-        .into_iter()
-        .flatten()
-        .filter_map(|(dir, name)| ctx.target_at(*dir, name))
-        .collect();
+    let dep_set = ctx.interp.ext.install.runtime_sets.get(set);
+    let empty = Vec::new();
+    let lookup = |items: &Vec<(usize, String)>| {
+        items
+            .iter()
+            .filter_map(|(dir, name)| ctx.target_at(*dir, name))
+            .collect::<Vec<&Target>>()
+    };
     writeln!(
         out,
         "{indent}file(GET_RUNTIME_DEPENDENCIES\n{indent}  RESOLVED_DEPENDENCIES_VAR _CMAKE_DEPS"
     )
     .unwrap();
     let mut closure = BTreeSet::new();
-    for (keyword, kind) in [
-        ("EXECUTABLES", TargetKind::Executable),
-        ("LIBRARIES", TargetKind::SharedLibrary),
-        ("MODULES", TargetKind::ModuleLibrary),
+    for (keyword, items) in [
+        (
+            "EXECUTABLES",
+            dep_set.map_or(&empty, |set| &set.executables),
+        ),
+        ("LIBRARIES", dep_set.map_or(&empty, |set| &set.libraries)),
+        ("MODULES", dep_set.map_or(&empty, |set| &set.modules)),
     ] {
         let mut paths = Vec::new();
-        for target in targets.iter().filter(|target| target.kind == kind) {
+        for target in lookup(items) {
             paths.push(format!("\"{}\"", full_path(target)));
             if !target.imported {
                 runtime_dep_closure(ctx, target, &mut BTreeSet::new(), &mut closure);
             }
         }
         write_dep_argument(out, indent, keyword, &paths);
+    }
+    if let Some((dir, name)) = dep_set.and_then(|set| set.bundle_executable.as_ref())
+        && let Some(target) = ctx.target_at(*dir, name)
+    {
+        writeln!(out, "{indent}  BUNDLE_EXECUTABLE \"{}\"", full_path(target)).unwrap();
     }
     for keyword in [
         "DIRECTORIES",
@@ -1253,8 +1727,10 @@ fn render_get_runtime_dependencies(
     writeln!(out, "{indent}  )").unwrap();
 }
 
-/// `cmInstallRuntimeDependencySetGenerator::GenerateScriptForConfig` without
-/// install_name_tool, for which install() leaves the RPATH alone.
+/// `cmInstallRuntimeDependencySetGenerator::GenerateScriptForConfig`.
+/// `install()` creates these with `NoInstallName` and `NoInstallRPath`,
+/// so with an install_name_tool only the library/framework split and the
+/// `get_filename_component` line appear; there are no rpath or `-id` edits.
 fn render_runtime_dependency_set(
     ctx: &GenCtx,
     out: &mut String,
@@ -1262,24 +1738,90 @@ fn render_runtime_dependency_set(
     rule: &InstallRule,
     indent: &str,
 ) {
-    let opts = InstallOptions {
-        optional: false,
-        ..rule.options.clone()
+    let InstallAction::RuntimeDepSet {
+        kind,
+        destination,
+        permissions,
+        ..
+    } = &rule.action
+    else {
+        return;
     };
+    let dest = genex_at(ctx, index, destination);
+    let opts = InstallOptions {
+        permissions: permissions.clone(),
+        ..InstallOptions::default()
+    };
+    let copy = |out: &mut String, indent: &str, kind: CopyKind, var: &str, args: &str| {
+        write_copy(
+            out,
+            indent,
+            &opts,
+            CopyRule {
+                files_var: var,
+                arguments: args,
+                ..CopyRule::new(&dest, kind, &[])
+            },
+        );
+    };
+    let tool = ctx.var_safe(index, "CMAKE_INSTALL_NAME_TOOL");
     writeln!(out, "{indent}foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS)").unwrap();
-    write_copy(
-        out,
-        &format!("{indent}  "),
-        &opts,
-        CopyRule {
-            files_var: "_CMAKE_TMP_dep",
-            arguments: " FOLLOW_SYMLINK_CHAIN",
-            ..CopyRule::new(
-                &genex_at(ctx, index, &opts.destination),
-                CopyKind::Shared,
-                &[],
-            )
-        },
-    );
+    let inner = format!("{indent}  ");
+    let body = format!("{inner}  ");
+    if !tool.is_empty() {
+        match kind {
+            DepSetKind::Library => {
+                writeln!(
+                    out,
+                    "{inner}if(NOT _CMAKE_TMP_dep MATCHES \"\\\\.framework/\")"
+                )
+                .unwrap();
+                copy(
+                    out,
+                    &body,
+                    CopyKind::Shared,
+                    "_CMAKE_TMP_dep",
+                    " FOLLOW_SYMLINK_CHAIN",
+                );
+                writeln!(
+                    out,
+                    "{body}get_filename_component(_CMAKE_TMP_dep_name \"${{_CMAKE_TMP_dep}}\" NAME)"
+                )
+                .unwrap();
+                writeln!(out, "{inner}endif()").unwrap();
+            }
+            DepSetKind::Framework => {
+                writeln!(
+                    out,
+                    "{inner}if(_CMAKE_TMP_dep MATCHES \"^(.*/)?([^/]*\\\\.framework)/(.*)$\")"
+                )
+                .unwrap();
+                writeln!(out, "{body}set(_CMAKE_TMP_dir \"${{CMAKE_MATCH_1}}\")").unwrap();
+                writeln!(out, "{body}set(_CMAKE_TMP_name \"${{CMAKE_MATCH_2}}\")").unwrap();
+                writeln!(out, "{body}set(_CMAKE_TMP_file \"${{CMAKE_MATCH_3}}\")").unwrap();
+                writeln!(
+                    out,
+                    "{body}set(_CMAKE_TMP_path \"${{_CMAKE_TMP_dir}}${{_CMAKE_TMP_name}}\")"
+                )
+                .unwrap();
+                copy(
+                    out,
+                    &body,
+                    CopyKind::Directory,
+                    "_CMAKE_TMP_path",
+                    " USE_SOURCE_PERMISSIONS",
+                );
+                writeln!(out, "{inner}endif()").unwrap();
+            }
+        }
+    } else {
+        copy(
+            out,
+            &inner,
+            CopyKind::Shared,
+            "_CMAKE_TMP_dep",
+            " FOLLOW_SYMLINK_CHAIN",
+        );
+    }
     writeln!(out, "{indent}endforeach()").unwrap();
 }

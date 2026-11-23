@@ -320,6 +320,20 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
         path_fragments: link_path,
         shared_symlinks,
         rpath_change: info.rpath_change(&reporter),
+        rpath_dirs: (info.runtime_use_chrpath
+            && is_on_opt(
+                query
+                    .ctx
+                    .var(head.makefile, "CMAKE_PLATFORM_HAS_INSTALLNAME")
+                    .as_deref(),
+            ))
+        .then(|| {
+            (
+                info.runtime_paths(query.ctx, head, query.config, false),
+                info.runtime_paths(query.ctx, head, query.config, true),
+            )
+        }),
+        shared_libraries_linked: info.shared_libraries_linked.clone(),
     }
 }
 
@@ -1515,11 +1529,6 @@ impl<'a, 'q, 'i> Builder<'a, 'q, 'i> {
 }
 
 impl LinkInformation {
-    /// `GetRuntimeSep`.
-    pub fn runtime_sep(&self) -> &str {
-        &self.runtime_sep
-    }
-
     /// `GetRPath`.
     fn rpath(&self, reporter: &Reporter<'_, '_, '_>, for_install: bool) -> Vec<String> {
         let (query, head) = (reporter.query, reporter.target);
