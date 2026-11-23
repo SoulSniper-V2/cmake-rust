@@ -215,15 +215,22 @@ pub enum GeneratorAction {
         target: String,
         command: CustomCommand,
     },
+    /// The target check of fltk_wrap_ui.
+    FltkTarget {
+        makefile: usize,
+        target: String,
+        backtrace: Vec<Frame>,
+    },
 }
 
 impl GeneratorAction {
-    pub fn command(&self) -> &CustomCommand {
+    pub fn makefile(&self) -> usize {
         match self {
             Self::Output { command, .. }
             | Self::Append(command)
             | Self::Target { command, .. }
-            | Self::Utility { command, .. } => command,
+            | Self::Utility { command, .. } => command.makefile,
+            Self::FltkTarget { makefile, .. } => *makefile,
         }
     }
 }
@@ -251,6 +258,8 @@ pub struct SourceFile {
     /// makefile backtrace at write time.
     pub provenance: BTreeMap<String, Vec<PropertyEntry>>,
     pub location: SourceFileLocation,
+    /// `cmSourceFile::GetDepends`.
+    pub depends: Vec<String>,
     pub generated: bool,
     pub custom_command: Option<CustomCommand>,
 }

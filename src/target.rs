@@ -1430,6 +1430,7 @@ pub fn source_index(interp: &mut Interp, dir_index: usize, path: &str, known: bo
         props: Default::default(),
         provenance: Default::default(),
         location,
+        depends: Vec::new(),
         generated: false,
         custom_command: None,
     });

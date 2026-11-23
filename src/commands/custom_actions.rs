@@ -84,7 +84,7 @@ pub fn run_generator_actions(interp: &mut Interp, expand: &mut ExpandOutputGenex
     interp.ext.generator_actions_invoked = true;
     let mut actions = std::mem::take(&mut interp.ext.generator_actions);
     // Stable: keeps configure order within each directory.
-    actions.sort_by_key(|action| action.command().makefile);
+    actions.sort_by_key(|action| action.makefile());
     for action in actions {
         run_action(interp, expand, action);
     }
@@ -108,6 +108,11 @@ pub(crate) fn run_action(
             GeneratorAction::Utility { target, command } => {
                 add_utility_command(interp, expand, &target, command);
             }
+            GeneratorAction::FltkTarget {
+                makefile,
+                target,
+                backtrace,
+            } => super::wrap::check_fltk_target(interp, makefile, &target, &backtrace),
         }
     }
 }

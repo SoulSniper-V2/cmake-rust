@@ -1499,7 +1499,7 @@ fn custom_output(path: &str, binary: &str) -> String {
     }
 }
 
-fn validate_command_lines(interp: &mut Interp, command: &CustomCommand) -> CmdResult {
+pub(super) fn validate_command_lines(interp: &mut Interp, command: &CustomCommand) -> CmdResult {
     if let Some(name) = command
         .command_lines
         .iter()

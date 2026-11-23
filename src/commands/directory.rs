@@ -345,8 +345,7 @@ fn include_directories(interp: &mut Interp, args: &[String]) -> CmdResult {
     if before {
         includes.reverse();
     }
-    let value = includes.join(";");
-    append_directory(interp, "INCLUDE_DIRECTORIES", &value, before);
+    add_include_directories(interp, &includes.join(";"), before);
     let dir = interp.mf_index();
     interp
         .ext
@@ -356,12 +355,20 @@ fn include_directories(interp: &mut Interp, args: &[String]) -> CmdResult {
         .extend(system_includes.iter().cloned());
     for key in interp.mf().targets.clone() {
         let target = interp.ext.targets.get_mut(&key).unwrap();
-        target.insert_entry("INCLUDE_DIRECTORIES", &value, &interp.backtrace, before);
         target
             .system_include_directories
             .extend(system_includes.iter().cloned());
     }
     Ok(())
+}
+
+/// `cmMakefile::AddIncludeDirectories`.
+pub(super) fn add_include_directories(interp: &mut Interp, value: &str, before: bool) {
+    append_directory(interp, "INCLUDE_DIRECTORIES", value, before);
+    for key in interp.mf().targets.clone() {
+        let target = interp.ext.targets.get_mut(&key).unwrap();
+        target.insert_entry("INCLUDE_DIRECTORIES", value, &interp.backtrace, before);
+    }
 }
 
 fn add_definitions(interp: &mut Interp, args: &[String]) -> CmdResult {

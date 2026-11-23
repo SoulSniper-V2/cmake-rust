@@ -215,6 +215,12 @@ impl<'c, 'a> Tracer<'c, 'a> {
             }
             // Queue the source needed to generate this file, if any.
             self.follow_name(&path);
+            // Queue dependencies added programmatically by commands.
+            if let Some(source) = source {
+                for depend in &source.depends {
+                    self.follow_name(depend);
+                }
+            }
             // Queue custom command dependencies.
             if let Some(command) = source.and_then(|source| source.custom_command.as_ref()) {
                 self.check_custom_command(command);

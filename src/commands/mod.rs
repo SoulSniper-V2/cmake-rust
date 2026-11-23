@@ -28,6 +28,7 @@ pub mod sysinfo;
 pub mod target;
 pub mod targets;
 pub mod try_compile;
+mod wrap;
 
 pub fn register_all(interp: &mut Interp) {
     for name in [
@@ -77,6 +78,7 @@ pub fn register_all(interp: &mut Interp) {
         crate::instrumentation::register(interp);
     }
     try_compile::register(interp);
+    wrap::register(interp);
     // `cmState::AddRemovedCommand`: commands removed by policy that report a
     // FATAL_ERROR but still count as successfully invoked.
     for name in [
