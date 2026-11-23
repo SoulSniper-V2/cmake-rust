@@ -963,22 +963,47 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         installer.set("paths", paths);
     }
 
-    fn compile_data(&self, _graph: &mut BtGraph, target: &Target, lang: &str) -> CompileData {
-        let m = &self.ctx.interp.makefiles[target.makefile];
+    /// `Target::ProcessLanguage`: the backtraces enter the graph as
+    /// `ToJBT` converts them: flags, defines, include directories, precompile
+    /// headers, then the language standard.
+    fn compile_data(&self, graph: &mut BtGraph, target: &Target, lang: &str) -> CompileData {
         let sysroot = self
             .ctx
             .var(target.makefile, "CMAKE_SYSROOT_COMPILE")
             .or_else(|| self.ctx.var(target.makefile, "CMAKE_SYSROOT"))
             .unwrap_or_default();
-        let _ = m;
+        let flags = flags::flag_fragments(self.ctx, target, &self.config, lang);
+        for (_, bt) in &flags {
+            graph.add(bt);
+        }
+        let defines = flags::define_items(self.ctx, target, &self.config, lang);
+        for (_, bt) in &defines {
+            graph.add(bt);
+        }
+        let (includes, frameworks) = split_frameworks(
+            target,
+            flags::include_items(self.ctx, target, &self.config, lang),
+            graph,
+        );
+        let pch = flags::pch_items(self.ctx, target, &self.config, lang);
+        for (_, bt) in &pch {
+            graph.add(bt);
+        }
+        let standard = language_standard(self.ctx, target, &self.config, lang);
+        if let Some((_, bts)) = &standard {
+            for bt in bts {
+                graph.add(bt);
+            }
+        }
         CompileData {
             language: lang.to_owned(),
             sysroot,
-            flags: flags::flag_fragments(self.ctx, target, &self.config, lang),
-            defines: flags::define_items(self.ctx, target, &self.config, lang),
-            includes: flags::include_items(self.ctx, target, &self.config, lang),
-            pch: flags::pch_items(self.ctx, target, &self.config, lang),
-            standard: language_standard(self.ctx, target, &self.config, lang),
+            flags,
+            defines,
+            includes,
+            frameworks,
+            pch,
+            standard,
         }
     }
 
@@ -1044,16 +1069,19 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         }
         // cmSourceFile::GetIncludeDirectories: each backtraced entry
         // expands to a list whose items share the entry backtrace.
+        let mut file_includes = Vec::new();
         for (includes, bt) in
             gt::source_prop_entries(self.ctx, mf, &source.path, "INCLUDE_DIRECTORIES")
         {
             for dir in expand_list(&self.ctx.genex(&includes, Some(target), Some(lang)), false) {
-                let system = target
-                    .system_include_directories
-                    .contains(dir.trim_end_matches('/'));
-                data.includes.push((dir, system, bt.clone()));
+                let system =
+                    flags::is_system_include_directory(self.ctx, target, &self.config, lang, &dir);
+                file_includes.push((dir, system, bt.clone()));
             }
         }
+        let (includes, frameworks) = split_frameworks(target, file_includes, graph);
+        data.includes = includes;
+        data.frameworks = frameworks;
         // cmSourceFile::GetCompileDefinitions likewise.
         for (defines, bt) in
             gt::source_prop_entries(self.ctx, mf, &source.path, "COMPILE_DEFINITIONS")
@@ -1322,6 +1350,25 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 ),
             );
         }
+        if !data.frameworks.is_empty() {
+            out.set(
+                "frameworks",
+                Json::Array(
+                    data.frameworks
+                        .iter()
+                        .map(|(path, system, bt)| {
+                            let mut framework = jobj();
+                            framework.set("path", jstr(path));
+                            if *system {
+                                framework.set("isSystem", Json::Bool(true));
+                            }
+                            jbt(graph, &mut framework, bt);
+                            framework
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if !data.defines.is_empty() {
             out.set(
                 "defines",
@@ -1405,6 +1452,39 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             )),
         );
         out.push(artifact);
+        // Add Windows-specific artifacts produced by the linker.
+        if gt::has_import_library(self.ctx, target, &self.config) {
+            let mut artifact = jobj();
+            artifact.set(
+                "path",
+                jstr(relative_if_under(
+                    &self.top_build,
+                    &gt::full_path(
+                        self.ctx,
+                        target,
+                        &self.config,
+                        gt::ArtifactType::Import,
+                        false,
+                    ),
+                )),
+            );
+            out.push(artifact);
+        }
+        if target.platform.dll && target.kind != TargetKind::StaticLibrary {
+            let pdb_dir = gt::pdb_directory(self.ctx, target, &self.config);
+            if !pdb_dir.is_empty() {
+                let names = gt::names(self.ctx, target, &self.config);
+                let mut artifact = jobj();
+                artifact.set(
+                    "path",
+                    jstr(relative_if_under(
+                        &self.top_build,
+                        &format!("{pdb_dir}/{}", names.pdb),
+                    )),
+                );
+                out.push(artifact);
+            }
+        }
         out
     }
 
@@ -1579,8 +1659,33 @@ struct CompileData {
     flags: Vec<flags::BtFrag>,
     defines: Vec<flags::BtFrag>,
     includes: Vec<(String, bool, Vec<Frame>)>,
+    frameworks: Vec<(String, bool, Vec<Frame>)>,
     pch: Vec<flags::BtFrag>,
     standard: Option<(String, Vec<Vec<Frame>>)>,
+}
+
+/// `ProcessLanguage`/`BuildCompileData`: on Apple, include directories that
+/// are paths to frameworks are listed as frameworks. Each entry's backtrace
+/// enters the graph in list order.
+fn split_frameworks(
+    target: &Target,
+    entries: Vec<(String, bool, Vec<Frame>)>,
+    graph: &mut BtGraph,
+) -> (
+    Vec<(String, bool, Vec<Frame>)>,
+    Vec<(String, bool, Vec<Frame>)>,
+) {
+    let mut includes = Vec::new();
+    let mut frameworks = Vec::new();
+    for entry in entries {
+        graph.add(&entry.2);
+        if target.platform.apple && crate::apple::is_path_to_framework(&entry.0) {
+            frameworks.push(entry);
+        } else {
+            includes.push(entry);
+        }
+    }
+    (includes, frameworks)
 }
 
 /// `MergeCompileData`: target-wide data merged with a source's file data.
@@ -1602,6 +1707,8 @@ fn merge_compile_data(
     merged.flags.extend(file.flags.iter().cloned());
     merged.includes.extend(file.includes.iter().cloned());
     merged.includes.extend(target.includes.iter().cloned());
+    merged.frameworks.extend(file.frameworks.iter().cloned());
+    merged.frameworks.extend(target.frameworks.iter().cloned());
     merged.defines.extend(target.defines.iter().cloned());
     merged.defines.extend(file.defines.iter().cloned());
     merged.defines.sort_by(|a, b| a.0.cmp(&b.0));

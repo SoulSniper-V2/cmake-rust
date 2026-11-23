@@ -481,12 +481,9 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
         }
     }
     // System classification from usage requirements
-    // (INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, imported targets, SYSTEM).
-    for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
-        if item.system {
-            system.insert(unix_slashes(&item.value));
-        }
-    }
+    // (INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, imported targets, SYSTEM and
+    // their frameworks): cmGeneratorTarget::IsSystemIncludeDirectory.
+    system.extend(inputs.system_include_cache().iter().cloned());
     let mut source_dirs = Vec::new();
     let mut seen = HashSet::new();
     if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
@@ -601,6 +598,12 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
             directories.push(dir);
         }
     }
+    // The framework include directories end the target's list.
+    for dir in framework_includes(inputs) {
+        if !directories.contains(&dir) && !is_excluded(&dir) {
+            directories.push(dir);
+        }
+    }
     if is_on_opt(
         inputs
             .var("CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE")
@@ -621,9 +624,6 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     for dir in &standard {
         emit(dir);
     }
-    for dir in framework_includes(inputs) {
-        emit(&dir);
-    }
     result
 }
 
@@ -639,9 +639,11 @@ fn framework_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     {
         let lib_dir = match lib_target {
             None => crate::util::collapse_full_path(&text, &inputs.ctx.interp.home_binary),
+            // The C++ asks the head target whether it is an imported
+            // framework folder.
             Some(lib_target)
                 if lib_target.is_framework_on_apple()
-                    || is_imported_framework_folder(inputs, lib_target) =>
+                    || is_imported_framework_folder(inputs, inputs.target) =>
             {
                 crate::generator::target::full_path(
                     inputs.ctx,
@@ -1027,10 +1029,18 @@ pub(crate) fn include_directories(
         }
         let dir = unix_slashes(&item.value);
         let system = item.system
+            || inputs.system_include_cache().binary_search(&dir).is_ok()
             || target
                 .system_include_directories
                 .contains(dir.trim_end_matches('/'));
         users.push((dir, system, ctx.backtrace(item.backtrace), true));
+    }
+    // The framework include directories end the target's list.
+    for dir in framework_includes(&inputs) {
+        if !users.iter().any(|entry| entry.0 == dir) {
+            let system = inputs.system_include_cache().binary_search(&dir).is_ok();
+            users.push((dir, system, Vec::new(), true));
+        }
     }
 
     let mut result: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();

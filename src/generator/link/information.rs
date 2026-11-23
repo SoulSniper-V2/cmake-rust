@@ -825,6 +825,15 @@ impl<'a, 'q, 'i> Builder<'a, 'q, 'i> {
         }
     }
 
+    /// A path item built from a plain string, as the framework link names
+    /// are: `BT<std::string>` without the link entry's backtrace.
+    fn path_item_unbacktraced(&self, value: &str, entry: &Entry<'_>, default: &str) -> LinkItem {
+        LinkItem {
+            backtrace: Vec::new(),
+            ..self.path_item(value, entry, default)
+        }
+    }
+
     fn add_item(&mut self, entry: &Entry<'i>) {
         match entry.item.target {
             Some(target) => {
@@ -1119,10 +1128,10 @@ impl<'a, 'q, 'i> Builder<'a, 'q, 'i> {
             self.add_framework_path(&framework.directory);
         }
         let item = if entry.item.feature.ends_with("FRAMEWORK") {
-            self.path_item(&framework.link_name(), entry, "")
+            self.path_item_unbacktraced(&framework.link_name(), entry, "")
         } else if entry.item.feature == DEFAULT && imported_folder {
             self.add_library_feature("FRAMEWORK");
-            self.path_item(&framework.link_name(), entry, "FRAMEWORK")
+            self.path_item_unbacktraced(&framework.link_name(), entry, "FRAMEWORK")
         } else {
             self.path_item(path, entry, "__CMAKE_LINK_LIBRARY")
         };
@@ -1222,7 +1231,7 @@ impl<'a, 'q, 'i> Builder<'a, 'q, 'i> {
             // Ensure the FRAMEWORK feature is loaded.
             self.add_library_feature("FRAMEWORK");
         }
-        let item = self.path_item(&framework.link_name(), entry, "FRAMEWORK");
+        let item = self.path_item_unbacktraced(&framework.link_name(), entry, "FRAMEWORK");
         self.push_item(item);
     }
 

@@ -170,6 +170,38 @@ impl Flags<'_, '_> {
         items
     }
 
+    /// `cmGeneratorTarget::IsSystemIncludeDirectory`'s sorted cache
+    /// (`AddSystemIncludeCacheKey`) for this target, configuration and
+    /// language.
+    fn system_include_cache(&self) -> std::rc::Rc<Vec<String>> {
+        let key = self.ctx.target_key(self.target);
+        let memo = format!(
+            "{key}\u{0}SYSTEM_INCLUDE_CACHE\u{0}{}\u{0}{}",
+            self.config, self.lang
+        );
+        if let Some(items) = self.ctx.usage.borrow().get(&memo) {
+            return std::rc::Rc::new(items.iter().map(|item| item.value.clone()).collect());
+        }
+        let mut host = super::genex_host::CtxHost::new(self.ctx, self.target.makefile);
+        let dirs =
+            crate::genex::system_include_directories(&mut host, &key, self.config, self.lang)
+                .unwrap_or_default();
+        let items: Vec<crate::genex::UsageItem> = dirs
+            .iter()
+            .map(|value| crate::genex::UsageItem {
+                value: value.clone(),
+                link_item: None,
+                backtrace: None,
+                system: true,
+            })
+            .collect();
+        self.ctx
+            .usage
+            .borrow_mut()
+            .insert(memo, std::rc::Rc::new(items));
+        std::rc::Rc::new(dirs)
+    }
+
     fn policy(&self, index: usize) -> PolicyStatus {
         super::target::target_policy(self.ctx, self.target, index)
     }
@@ -466,7 +498,8 @@ impl Flags<'_, '_> {
         if !archs.is_empty() && matches!(self.lang, "C" | "CXX" | "OBJC" | "OBJCXX" | "ASM") {
             for arch in &archs {
                 if filter_arch.is_empty() || filter_arch == arch {
-                    append(flags, &format!("-arch {arch}"));
+                    flags.push_str(" -arch ");
+                    flags.push_str(arch);
                 }
             }
         }
@@ -496,21 +529,18 @@ impl Flags<'_, '_> {
                         continue;
                     }
                     if filter_arch.is_empty() || filter_arch == arch {
+                        flags.push_str(&format!(" -Xarch_{arch} "));
                         // Combine sysroot flag and path to work with -Xarch.
-                        append(
-                            flags,
-                            &format!(
-                                "-Xarch_{arch} {}",
-                                shell_with_make_vars(&format!("{sysroot_flag}{arch_sysroot}"))
-                            ),
-                        );
+                        flags.push_str(&shell_with_make_vars(&format!(
+                            "{sysroot_flag}{arch_sysroot}"
+                        )));
                     }
                 }
             } else if let Some(sysroot) = sysroot.as_deref().filter(|value| !value.is_empty()) {
-                append(
-                    flags,
-                    &format!("{sysroot_flag} {}", shell_with_make_vars(sysroot)),
-                );
+                flags.push(' ');
+                flags.push_str(&sysroot_flag);
+                flags.push(' ');
+                flags.push_str(&shell_with_make_vars(sysroot));
             }
         }
 
@@ -549,7 +579,8 @@ impl Flags<'_, '_> {
             } else {
                 flag.push_str(&deployment_target);
             }
-            append(flags, &flag);
+            flags.push(' ');
+            flags.push_str(&flag);
         }
     }
 
@@ -787,4 +818,23 @@ pub(crate) fn apple_archs(ctx: &GenCtx, target: &Target, config: &str, lang: &st
         lang,
     }
     .apple_archs()
+}
+
+/// `cmGeneratorTarget::IsSystemIncludeDirectory`.
+pub(crate) fn is_system_include_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+    dir: &str,
+) -> bool {
+    Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    }
+    .system_include_cache()
+    .binary_search_by(|probe| probe.as_str().cmp(dir))
+    .is_ok()
 }

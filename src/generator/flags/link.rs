@@ -84,19 +84,8 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
                 );
                 raw.push(' ');
             }
-            // `cmLocalGenerator::GetExeExportFlags`.
-            if is_on_opt(inputs.prop("ENABLE_EXPORTS"))
-                && is_on_opt(
-                    inputs
-                        .ctx
-                        .interp
-                        .global_props
-                        .get("TARGET_SUPPORTS_SHARED_LIBS"),
-                )
-                && let Some(export) =
-                    inputs.var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
-                && !export.is_empty()
-            {
+            let export = exe_export_flags(&inputs, language);
+            if !export.is_empty() {
                 raw.push_str(&export);
                 raw.push(' ');
             }
@@ -329,6 +318,29 @@ pub(crate) fn module_definition_info(
         sources.first().cloned().unwrap_or_default()
     };
     Some(ModuleDefinitionInfo { sources, def_file })
+}
+
+/// `cmLocalGenerator::GetExeExportFlags`: flags to export symbols from an
+/// executable, only with ENABLE_EXPORTS except on AIX, where the exports
+/// are computed.
+fn exe_export_flags(inputs: &Flags<'_, '_>, language: &str) -> String {
+    let target = inputs.target;
+    if target.kind != TargetKind::Executable
+        || !is_on_opt(
+            inputs
+                .ctx
+                .interp
+                .global_props
+                .get("TARGET_SUPPORTS_SHARED_LIBS"),
+        )
+        || target.platform.aix
+        || !is_on_opt(inputs.prop("ENABLE_EXPORTS"))
+    {
+        return String::new();
+    }
+    inputs
+        .var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
+        .unwrap_or_default()
 }
 
 /// `cmLocalGenerator::AppendModuleDefinitionFlag`: the `/DEF:` or bare
@@ -637,19 +649,8 @@ pub(crate) fn codemodel_link_flags(
                 );
                 raw.push(' ');
             }
-            // `cmLocalGenerator::GetExeExportFlags`.
-            if is_on_opt(inputs.prop("ENABLE_EXPORTS"))
-                && is_on_opt(
-                    inputs
-                        .ctx
-                        .interp
-                        .global_props
-                        .get("TARGET_SUPPORTS_SHARED_LIBS"),
-                )
-                && let Some(export) =
-                    inputs.var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
-                && !export.is_empty()
-            {
+            let export = exe_export_flags(&inputs, language);
+            if !export.is_empty() {
                 raw.push_str(&export);
                 raw.push(' ');
             }
@@ -708,6 +709,7 @@ pub(crate) fn codemodel_link_flags(
     {
         append_options(&mut extra, expand_list(&options, false));
     }
+    append_module_definition_flag(&inputs, &mut extra);
     if !extra.trim_matches(cmake_space).is_empty() {
         out.push((encode_literal(&extra), Vec::new()));
     }
