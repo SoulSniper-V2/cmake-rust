@@ -240,6 +240,7 @@ const RIGHT_MARGIN: usize = 74;
 
 struct Writer {
     indentation: &'static [u8],
+    multiline_arrays: bool,
     out: Vec<u8>,
     child_values: Vec<Vec<u8>>,
     indent_string: Vec<u8>,
@@ -249,12 +250,13 @@ struct Writer {
 
 impl Writer {
     fn write(root: &Json) -> Vec<u8> {
-        Self::write_indented(root, INDENTATION)
+        Self::write_indented(root, INDENTATION, false)
     }
 
-    fn write_indented(root: &Json, indentation: &'static [u8]) -> Vec<u8> {
+    fn write_indented(root: &Json, indentation: &'static [u8], multiline_arrays: bool) -> Vec<u8> {
         let mut writer = Writer {
             indentation,
+            multiline_arrays,
             out: Vec::new(),
             child_values: Vec::new(),
             indent_string: Vec::new(),
@@ -317,7 +319,7 @@ impl Writer {
             self.push_value(b"[]");
             return;
         }
-        if self.is_multiline_array(items) {
+        if self.multiline_arrays || self.is_multiline_array(items) {
             self.write_with_indent(b"[");
             self.indent();
             let has_child_value = !self.child_values.is_empty();
@@ -1094,7 +1096,33 @@ fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
 /// `operator<<(std::ostream&, Json::Value const&)`: the default
 /// StreamWriterBuilder (tab indentation).
 pub fn write_json_stream(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write_indented(value, b"\t")).into_owned()
+    String::from_utf8_lossy(&Writer::write_indented(value, b"\t", false)).into_owned()
+}
+
+/// Serialize generator metadata with the same writer as jsoncpp's operator<<.
+pub(crate) fn stream_value(value: &serde_json::Value) -> String {
+    fn convert(v: &serde_json::Value) -> Json {
+        use serde_json::Value;
+        match v {
+            Value::Null => Json::Null,
+            Value::Bool(b) => Json::Bool(*b),
+            Value::Number(n) => n
+                .as_i64()
+                .map(Json::Int)
+                .or_else(|| n.as_u64().map(Json::UInt))
+                .unwrap_or_else(|| Json::Real(n.as_f64().unwrap())),
+            Value::String(s) => Json::Str(s.as_bytes().to_vec()),
+            Value::Array(a) => Json::Array(a.iter().map(convert).collect()),
+            Value::Object(o) => Json::Object(
+                o.iter()
+                    .map(|(k, v)| (k.as_bytes().to_vec(), convert(v)))
+                    .collect(),
+            ),
+        }
+    }
+    // StreamWriterBuilder's default commentStyle=All sets every nonempty
+    // array on multiple lines, including single-element path lists.
+    String::from_utf8_lossy(&Writer::write_indented(&convert(value), b"\t", true)).into_owned()
 }
 
 /// `Json::StreamWriterBuilder` with `indentation = "  "` and
@@ -1103,7 +1131,7 @@ pub fn write_json_stream(value: &Json) -> String {
 /// `"key" : value`, and no trailing newline (StreamWriter does not emit
 /// one; `cmGeneratedFileStream` does not add one either).
 pub fn write_json_indent2(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write_indented(value, b"  ")).into_owned()
+    String::from_utf8_lossy(&Writer::write_indented(value, b"  ", false)).into_owned()
 }
 
 fn write_json(value: &Json) -> String {

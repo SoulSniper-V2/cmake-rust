@@ -1,0 +1,20 @@
+[
+  {
+    "name": "fortran-scan-and-collate",
+    "files": {
+      "tdi.json": "{\"dir-top-bld\":\"{work}\",\"module-dir\":\"{work}/mods\",\"include-dirs\":[\"{work}/inc\"],\"submodule-ext\":\".smod\",\"submodule-sep\":\"@\"}",
+      "pp.f90": "# 1 \"{work}/original.F90\"\nmodule Root; interface\nmodule ignored\nend interface\n#define HAVE_INC\n#ifdef HAVE_INC\ninclude 'uses&\n  &.inc'\n#else\nuse unwanted\n#endif\nend module\nsubmodule (ROOT) Child\nend submodule\nsubmodule (Root:Child) Nested\nend submodule\n",
+      "original.F90": "",
+      "inc/uses.inc": "use, intrinsic :: iso_c_binding\nuse, non_intrinsic :: & ! a comment\n & Remote, only: symbol\ninclude 'nested.inc'",
+      "inc/nested.inc": "use :: Another; use Root",
+      "other.f90": "module remote\nend module\nuse root\n",
+      "objects.rsp": "'dir/x y.ddi' dir/other.ddi"
+    },
+    "steps": [
+      {"argv": ["-E", "cmake_ninja_depends", "--tdi=tdi.json", "--lang=Fortran", "--src=pp.f90", "--obj=dir/x y.o", "--out=dir/x y.ddi", "--dep=dir/scan.d", "--ddi=dir/x y.ddi"]},
+      {"argv": ["-E", "cmake_ninja_depends", "--tdi=tdi.json", "--lang=Fortran", "--pp=other.f90", "--obj=dir/other.o", "--dep=dir/other.d", "--ddi=dir/other.ddi"]},
+      {"argv": ["-E", "cmake_ninja_dyndep", "--tdi=tdi.json", "--lang=Fortran", "--dd=dir/Fortran.dd", "@objects.rsp"]}
+    ],
+    "inspect": ["dir/scan.d", "dir/x y.ddi", "dir/other.ddi", "dir/Fortran.dd", "dir/FortranModules.json"]
+  }
+]

@@ -3,6 +3,8 @@
 //! cmNinjaNormalTargetGenerator and cmNinjaUtilityTargetGenerator) for the
 //! single-configuration "Ninja" generator on Unix.
 
+mod fortran;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -281,6 +283,8 @@ pub struct NinjaGenerator<'a> {
     global_targets: Vec<GlobalTarget>,
     /// Object files per target for later reuse (`Configs[config].Objects`).
     objects: HashMap<String, Vec<String>>,
+    /// Global dependency postorder used to break static cycles in module lookup.
+    module_order: HashMap<String, usize>,
     /// `cmGlobalNinjaGenerator::Configs[config].CustomCommands` (seen).
     seen_custom_commands: HashSet<CcRef>,
     /// `cmLocalNinjaGenerator::CustomCommands` of the current directory, in
@@ -330,6 +334,7 @@ impl<'a> NinjaGenerator<'a> {
             target_aliases: BTreeMap::new(),
             global_targets: Vec::new(),
             objects: HashMap::new(),
+            module_order: HashMap::new(),
             seen_custom_commands: HashSet::new(),
             local_custom_commands: Vec::new(),
             depends_closures: HashMap::new(),
@@ -1588,11 +1593,12 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     /// `cmNinjaTargetGenerator::LanguageCompilerRule`.
-    fn compiler_rule_name(&self, language: &str, target: &Target) -> String {
+    fn compiler_rule_name(&self, language: &str, target: &Target, scanned: bool) -> String {
         format!(
-            "{}_COMPILER__{}_unscanned_{}",
+            "{}_COMPILER__{}_{}_{}",
             language,
             encode_rule_name(&target.name),
+            if scanned { "scanned" } else { "unscanned" },
             self.config
         )
     }
@@ -1608,10 +1614,8 @@ impl<'a> NinjaGenerator<'a> {
         )
     }
 
-    /// Writes the compile rule for one language (cmNinjaTargetGenerator::WriteCompileRule,
-    /// without dependency scanning).
-    fn write_compile_rule(&mut self, language: &str, target: &Target) {
-        let name = self.compiler_rule_name(language, target);
+    fn write_compile_rule(&mut self, language: &str, target: &Target, scanned: bool) {
+        let name = self.compiler_rule_name(language, target, scanned);
         if self.has_rule(&name) {
             return;
         }
@@ -1624,7 +1628,9 @@ impl<'a> NinjaGenerator<'a> {
         let depfile_format = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_{language}_DEPFILE_FORMAT"));
-        if depfile_format == "msvc" {
+        if language == "Fortran" {
+            // The explicit scan step owns the preprocessing dependencies.
+        } else if depfile_format == "msvc" {
             rule.deptype = "msvc".into();
         } else {
             rule.deptype = "gcc".into();
@@ -1633,7 +1639,7 @@ impl<'a> NinjaGenerator<'a> {
         let depfile_flags = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_DEPFILE_FLAGS_{language}"));
-        if !depfile_flags.is_empty() {
+        if language != "Fortran" && !depfile_flags.is_empty() {
             let expanded = flags::expand_rule(
                 self.ctx,
                 target,
@@ -1659,14 +1665,29 @@ impl<'a> NinjaGenerator<'a> {
         );
         commands.extend(util::expand_list(&extra, false));
         let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_COMPILE");
+        let mut defines = if scanned && !self.fortran_compile_with_defines(target) {
+            ""
+        } else {
+            "$DEFINES"
+        };
+        let mut includes = "$INCLUDES";
+        if language == "Fortran"
+            && let Some(flag) = self.fortran_rsp_flag(target)
+        {
+            rule.rspfile = "$RSP_FILE".into();
+            rule.rspcontent = format!(" {defines} {includes} {flags_text}");
+            flags_text = format!("{flag}$RSP_FILE");
+            defines = "";
+            includes = "";
+        }
         let vars: Vec<(&str, String)> = vec![
             ("TARGET_NAME", target.name.clone()),
             ("TARGET_TYPE", target.kind.type_name().to_owned()),
             ("LANGUAGE", language.to_owned()),
             ("SOURCE", "$in".into()),
             ("OBJECT", "$out".into()),
-            ("DEFINES", "$DEFINES".into()),
-            ("INCLUDES", "$INCLUDES".into()),
+            ("DEFINES", defines.into()),
+            ("INCLUDES", includes.into()),
             ("TARGET_PDB", "$TARGET_PDB".into()),
             ("TARGET_COMPILE_PDB", "$TARGET_COMPILE_PDB".into()),
             ("OBJECT_DIR", "$OBJECT_DIR".into()),
@@ -2015,7 +2036,11 @@ impl<'a> NinjaGenerator<'a> {
             );
         }
         for language in &languages {
-            self.write_compile_rule(language, target);
+            if language == "Fortran" {
+                self.write_fortran_scan_rules(target);
+                self.write_compile_rule(language, target, true);
+            }
+            self.write_compile_rule(language, target, false);
         }
         // WriteObjectBuildStatements
         let mut out = String::new();
@@ -2028,6 +2053,7 @@ impl<'a> NinjaGenerator<'a> {
         );
         // GetCustomCommands: register each attached command with this target.
         let mut custom_outputs: Vec<String> = Vec::new();
+        let mut fortran_ddis = Vec::new();
         for source in sources.iter() {
             if source.kind != SourceKind::CustomCommandOutput {
                 continue;
@@ -2096,7 +2122,11 @@ impl<'a> NinjaGenerator<'a> {
                 source,
                 &source_props,
             );
-            let mut build = Build::new(&self.compiler_rule_name(&source.language, target));
+            let scanned = source.language == "Fortran"
+                && !pch_extension
+                    .as_ref()
+                    .is_some_and(|ext| object.ends_with(ext));
+            let mut build = Build::new(&self.compiler_rule_name(&source.language, target, scanned));
             build.outputs.push(object.clone());
             // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
             // passed to the compiler by absolute path.
@@ -2192,7 +2222,18 @@ impl<'a> NinjaGenerator<'a> {
             let mut export_vars = build.variables.clone();
             export_vars.insert("FLAGS".into(), vars.flags_untrimmed.clone());
             self.export_object_compile_command(target, source, &object, &export_vars);
-            write_build(&mut out, &build, 0);
+            if scanned {
+                fortran_ddis.push(self.write_fortran_scan(
+                    &mut out,
+                    target,
+                    source,
+                    &source_props,
+                    &mut build,
+                ));
+            }
+            let force_rsp = source.language == "Fortran" && self.fortran_rsp_flag(target).is_some();
+            build.rsp_file = format!("{object}.rsp");
+            write_build(&mut out, &build, if force_rsp { -1 } else { 0 });
             // PCH objects are not linked.
             let is_pch = self
                 .ctx
@@ -2201,6 +2242,16 @@ impl<'a> NinjaGenerator<'a> {
             if !is_pch {
                 objects.push(object);
             }
+        }
+        if !fortran_ddis.is_empty()
+            || (self.ctx.interp.langs.enabled.iter().any(|l| l == "Fortran")
+                && self.has_fortran_sources(target))
+        {
+            if fortran_ddis.is_empty() {
+                self.write_fortran_scan_rules(target);
+                self.write_compile_rule("Fortran", target, true);
+            }
+            self.write_fortran_dyndep(&mut out, target, &sources, fortran_ddis);
         }
         out.push('\n');
         self.build.push_str(&out);
@@ -2304,19 +2355,16 @@ impl<'a> NinjaGenerator<'a> {
         commands
     }
 
-    /// `cmNinjaNormalTargetGenerator::WriteLinkRule` +
-    /// `WriteLinkStatement` (no device link, no Apple).
-    fn write_link_statement(&mut self, target: &'a Target, language: &str, objects: &[String]) {
-        let config = self.config.clone();
+    fn write_link_rules(
+        &mut self,
+        target: &Target,
+        language: &str,
+        has_depfile: bool,
+        symlink: bool,
+        use_rsp: bool,
+    ) {
         let makefile = target.makefile;
-        let names = gt::names(self.ctx, target, &config);
-        let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let target_output = self.ninja_path(&format!("{directory}/{}", names.output));
-        let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
         let rule_name = self.linker_rule_name(language, target);
-        // cmGeneratorTarget::HasLinkDependencyFile.
-        let link_depfile = flags::link_dependency_file(self.ctx, target, language);
-        let use_rsp = false;
         if !self.has_rule(&rule_name) {
             // cmNinjaNormalTargetGenerator::WriteLinkStatement: PRE_BUILD and
             // PRE_LINK comments precede the link description, POST_BUILD
@@ -2346,7 +2394,7 @@ impl<'a> NinjaGenerator<'a> {
                 name: rule_name.clone(),
                 ..Rule::default()
             };
-            if link_depfile.is_some() {
+            if has_depfile {
                 rule.deptype = self
                     .ctx
                     .var_safe(makefile, &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"));
@@ -2369,6 +2417,11 @@ impl<'a> NinjaGenerator<'a> {
                     .is_empty()
                 && let Some(checker) = self.ctx.var(makefile, "CMAKE_LINK_WHAT_YOU_USE_CHECK")
             {
+                // GetFullPath(config, RuntimeBinaryArtifact, realname).
+                let config = self.config.clone();
+                let names = gt::names(self.ctx, target, &config);
+                let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
+                let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
                 commands.push(format!(
                     "{} -E __run_co_compile --lwyu={} --source={}",
                     self.cmake_cmd,
@@ -2377,12 +2430,40 @@ impl<'a> NinjaGenerator<'a> {
                 ));
             }
             let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
+            let mut objects = "$in".to_owned();
+            let mut libraries = "$LINK_PATH $LINK_LIBRARIES";
+            if use_rsp {
+                let flag = self
+                    .ctx
+                    .var(
+                        makefile,
+                        &format!("CMAKE_{language}_RESPONSE_FILE_LINK_FLAG"),
+                    )
+                    .unwrap_or_else(|| "@".to_owned());
+                if !flag.is_empty() {
+                    rule.rspfile = "$RSP_FILE".into();
+                    objects = format!("{flag}$RSP_FILE");
+                    rule.rspcontent = "$in_newline".into();
+                    if self
+                        .ctx
+                        .var(
+                            makefile,
+                            &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_LIBRARIES"),
+                        )
+                        .is_none_or(|v| util::is_on(&v))
+                    {
+                        rule.rspcontent.push(' ');
+                        rule.rspcontent.push_str(libraries);
+                        libraries = "";
+                    }
+                }
+            }
             let mut vars: Vec<(&str, String)> = vec![
                 ("TARGET_NAME", target.name.clone()),
                 ("TARGET_TYPE", target.kind.type_name().to_owned()),
                 ("LANGUAGE", language.to_owned()),
-                ("OBJECTS", "$in".into()),
-                ("LINK_LIBRARIES", "$LINK_PATH $LINK_LIBRARIES".into()),
+                ("OBJECTS", objects),
+                ("LINK_LIBRARIES", libraries.into()),
                 ("OBJECT_DIR", "$OBJECT_DIR".into()),
                 ("TARGET", "$TARGET_FILE".into()),
                 ("SONAME_FLAG", "$SONAME_FLAG".into()),
@@ -2438,7 +2519,7 @@ impl<'a> NinjaGenerator<'a> {
             rule.restat = "$RESTAT".into();
             self.add_rule(&rule);
         }
-        if names.output != names.real {
+        if symlink {
             let (rule_name, command, description, comment) =
                 if target.kind == TargetKind::Executable {
                     (
@@ -2469,7 +2550,19 @@ impl<'a> NinjaGenerator<'a> {
                 ..Rule::default()
             });
         }
-        // Link statement.
+    }
+
+    /// cmNinjaNormalTargetGenerator::WriteLinkStatement (no device link, no Apple).
+    fn write_link_statement(&mut self, target: &'a Target, language: &str, objects: &[String]) {
+        let config = self.config.clone();
+        let makefile = target.makefile;
+        let names = gt::names(self.ctx, target, &config);
+        let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
+        let target_output = self.ninja_path(&format!("{directory}/{}", names.output));
+        let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
+        let rule_name = self.linker_rule_name(language, target);
+        let link_depfile = flags::link_dependency_file(self.ctx, target, language);
+        let has_depfile = link_depfile.is_some();
         let mut out = String::new();
         write_divider(&mut out);
         let _ = write!(
@@ -2635,12 +2728,22 @@ impl<'a> NinjaGenerator<'a> {
         }
         build.outputs.extend(byproducts.explicit);
         build.workdir_outs = byproducts.workdir;
-        let limit = if use_rsp {
+        if language == "Fortran" {
+            build.rsp_file = self.ninja_path(&format!("CMakeFiles/{}.rsp", target.name));
+        }
+        let limit = if language == "Fortran" && self.fortran_rsp_flag(target).is_some() {
             -1
         } else {
             command_line_length_limit()
         };
-        let _ = write_build(&mut out, &build, limit);
+        let use_rsp = write_build(&mut out, &build, limit);
+        self.write_link_rules(
+            target,
+            language,
+            has_depfile,
+            names.output != names.real,
+            language == "Fortran" && use_rsp,
+        );
         // Symlinks.
         if names.output != names.real {
             let mut symlink = Build::new(if target.kind == TargetKind::Executable {

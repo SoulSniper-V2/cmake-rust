@@ -5,8 +5,9 @@ set -u
 ROOT=/tmp/cmake-rust-validation.hSLgEZHR
 which="${1:?rust|oracle}"; tag="${2:-run}"
 case "$which" in
-  rust) "$(dirname "$0")/stage-prefix.sh" >/dev/null
-        CMAKE="$ROOT/rust-prefix/bin/cmake" ;;
+  rust) prefix="${CMAKE_RUST_STAGE_PREFIX:-$ROOT/rust-prefix}"
+        "$(dirname "$0")/stage-prefix.sh" "$prefix" >/dev/null
+        CMAKE="$prefix/bin/cmake" ;;
   oracle) CMAKE="$ROOT/kitware-reference/bin/cmake" ;;
   *) echo "bad which" >&2; exit 2 ;;
 esac

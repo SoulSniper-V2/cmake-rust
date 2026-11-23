@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
+project(ForwardModules LANGUAGES Fortran)
+set(CMAKE_Fortran_PREPROCESS OFF)
+add_subdirectory(lib)
+add_executable(main main.f90)
+target_link_libraries(main PRIVATE wrapped)

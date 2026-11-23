@@ -996,7 +996,7 @@ fn generate_cmake_build_command(
 }
 
 /// `kwsys::SystemTools::ConvertToUnixOutputPath`.
-fn convert_to_unix_output_path(path: &str) -> String {
+pub(crate) fn convert_to_unix_output_path(path: &str) -> String {
     // Remove "//" except at the beginning.
     let mut ret = path.to_owned();
     let mut pos = 1;

@@ -304,7 +304,22 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
         }
         interp.ext.in_top_level_includes = false;
     }
-    // Ninja supports every language the Modules provide except a few.
+    // cmGlobalNinjaGenerator::CheckFortran also accepts the pre-1.10
+    // Kitware Ninja branch implementing version 1 of the dyndep feature.
+    if unique.contains("Fortran")
+        && let Some(version) = &interp.langs.ninja_version
+        && util::version_compare(util::CompareOp::Less, version, "1.10")
+        && !version
+            .split_once(".dyndep-")
+            .is_some_and(|(_, v)| v.parse::<u64>() == Ok(1))
+    {
+        let message = format!(
+            "The Ninja generator does not support Fortran using Ninja version\n  {version}\ndue to lack of required features.  Ninja 1.10 or higher is required."
+        );
+        interp.issue(MessageType::FatalError, &message);
+        interp.set_fatal();
+        return;
+    }
     if interp
         .get_def("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED")
         .is_none()
