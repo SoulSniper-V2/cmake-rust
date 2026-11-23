@@ -303,7 +303,7 @@ impl<'a> NinjaGenerator<'a> {
         out: &mut String,
         target: &Target,
         sources: &[gt::SourceInfo],
-        ddis: Vec<String>,
+        files: &[ScanningFiles],
     ) {
         if self.module_order.is_empty() {
             self.module_target_order();
@@ -375,8 +375,11 @@ impl<'a> NinjaGenerator<'a> {
         build
             .implicit_outs
             .push(self.ninja_path(&format!("{object_dir}/FortranModules.json")));
-        build.explicit_deps = ddis;
         build.implicit_deps.push(tdi_path);
+        build.explicit_deps = files
+            .iter()
+            .filter_map(|files| files.scanning_output.clone())
+            .collect();
         build.implicit_deps.extend(
             direct
                 .iter()
