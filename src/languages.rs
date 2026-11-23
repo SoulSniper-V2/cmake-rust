@@ -112,8 +112,8 @@ fn find_make_program(interp: &mut Interp) -> bool {
     }
     let program = interp.get_def("CMAKE_MAKE_PROGRAM").map(str::to_owned);
     if program.as_deref().is_none_or(util::is_off) {
-        interp.issue(
-            MessageType::FatalError,
+        crate::configure::system_error(
+            Some(interp),
             "CMake was unable to find a build program corresponding to \"Ninja\".  CMAKE_MAKE_PROGRAM is not set.  You probably need to select a different build tool.",
         );
         interp.set_fatal();
@@ -143,7 +143,20 @@ fn find_make_program(interp: &mut Interp) -> bool {
 }
 
 /// `cmGlobalGenerator::EnableLanguage`.
+/// `cmGlobalNinjaGenerator::EnableLanguage`: the common language enabling,
+/// then `ResolveLanguageCompiler` for each language, which runs even when
+/// enabling stopped early.
 pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool) {
+    enable_language_common(interp, languages, optional);
+    for lang in languages {
+        if lang != "NONE" {
+            resolve_language_compiler(interp, lang, optional);
+        }
+    }
+}
+
+/// `cmGlobalGenerator::EnableLanguage`.
+fn enable_language_common(interp: &mut Interp, languages: &[String], optional: bool) {
     // cmMakefile::EnableLanguage: cmGlobalGenerator::GetCMakeCFGIntDir is "."
     // for single-configuration generators and "${CONFIGURATION}" for
     // multi-configuration generators.
@@ -371,7 +384,6 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
             let path = format!("{root_bin}/CMake{lang}Compiler.cmake");
             if std::path::Path::new(&path).is_file() {
                 read(interp, &path);
-                check_compiler_change(interp, lang, optional);
                 need_test.insert(lang.clone(), false);
                 set_language_enabled_flag(interp, lang);
                 need_maps.insert(lang.clone(), true);
@@ -598,41 +610,62 @@ fn find_in_path(name: &str) -> Option<String> {
     None
 }
 
-/// `cmGlobalGenerator::CheckCompilerPath`: when the compiler just loaded
+/// `cmGlobalGenerator::ResolveLanguageCompiler`: when the compiler found
 /// differs from the cached entry, flag the cache for deletion so that
 /// `cmake::HandleDeleteCacheVariables` restarts configure cleanly.
-fn check_compiler_change(interp: &mut Interp, lang: &str, optional: bool) {
-    let cname = format!("CMAKE_{lang}_COMPILER");
-    let Some(cached) = interp.cache.value(&cname).map(str::to_owned) else {
+fn resolve_language_compiler(interp: &mut Interp, lang: &str, optional: bool) {
+    let lang_comp = format!("CMAKE_{lang}_COMPILER");
+    let Some(name) = interp.get_def(&lang_comp).map(str::to_owned) else {
+        if !optional {
+            crate::configure::system_error(
+                Some(interp),
+                &format!("{lang_comp} not set, after EnableLanguage"),
+            );
+        }
+        return;
+    };
+    let path = if util::is_full_path(&name) {
+        name
+    } else {
+        find_in_path(&name).unwrap_or_default()
+    };
+    if !optional && (path.is_empty() || !std::path::Path::new(&path).exists()) {
+        return;
+    }
+    // GetInitializedCacheValue, split from its arguments.
+    let cname = interp
+        .cache
+        .get(&lang_comp)
+        .filter(|entry| entry.initialized)
+        .map(|entry| entry.value.clone())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            util::expand_list(&value, false)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        });
+    let Some(cname) = cname else {
         return;
     };
     if optional {
         return;
     }
-    // Split compiler from arguments (first word).
-    let first = cached
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_owned();
-    let cached_path = if util::is_full_path(&first) {
-        first
+    let cached_path = if util::is_full_path(&cname) {
+        cname.clone()
     } else {
-        find_in_path(&first).unwrap_or(first)
+        find_in_path(&cname).unwrap_or_default()
     };
-    let found_path = interp
-        .get_def(&cname)
-        .map(str::to_owned)
-        .unwrap_or_default();
-    if util::collapse_full_path(&found_path, "") != util::collapse_full_path(&cached_path, "") {
+    if util::collapse_full_path(&path, "") != util::collapse_full_path(&cached_path, "") {
         const KEY: &str = "__CMAKE_DELETE_CACHE_CHANGE_VARS_";
-        let mut vars = interp.global_props.get(KEY).unwrap_or_default().to_owned();
-        if !vars.is_empty() {
+        let mut vars = String::new();
+        if let Some(existing) = interp.global_props.get(KEY) {
+            vars.push_str(existing);
             vars.push(';');
         }
-        vars.push_str(&cname);
+        vars.push_str(&lang_comp);
         vars.push(';');
-        vars.push_str(&cached);
+        vars.push_str(&cname);
         interp.global_props.set(KEY, vars);
     }
 }
