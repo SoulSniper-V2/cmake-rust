@@ -19,6 +19,7 @@ mod genex;
 mod help;
 mod install_model;
 mod install_script;
+mod instrumentation;
 mod interp;
 mod languages;
 mod lexer;
@@ -33,6 +34,7 @@ mod presets;
 mod profiling;
 pub mod properties;
 mod props;
+mod sarif;
 mod state;
 mod util;
 

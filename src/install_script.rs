@@ -115,6 +115,13 @@ impl InstallScriptHandler {
         self.parallel
     }
 
+    /// The `instrument_arg` prefix `Install` puts before every command.
+    pub fn prefix_commands(&mut self, prefix: &[String]) {
+        for command in &mut self.commands {
+            command.splice(0..0, prefix.iter().cloned());
+        }
+    }
+
     pub fn commands(&self) -> &[Vec<String>] {
         &self.commands
     }

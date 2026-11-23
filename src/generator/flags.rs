@@ -10,7 +10,7 @@ pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
 pub(crate) use compile::{BtFrag, define_items, flag_fragments, include_items, pch_items};
 pub use link::{link_dependency_file, link_flag_vars};
-pub use rule::{compiler_launcher, expand_rule};
+pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
 
 // API pending the source-property and linked-target integrations below;
 // kept visible to the oracle replay tests.

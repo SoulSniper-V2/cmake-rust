@@ -73,6 +73,9 @@ pub fn register_all(interp: &mut Interp) {
     property::register(interp);
     separate_arguments::register(interp);
     sysinfo::register(interp);
+    if interp.mode == crate::interp::Mode::Project {
+        crate::instrumentation::register(interp);
+    }
     try_compile::register(interp);
     // `cmState::AddRemovedCommand`: commands removed by policy that report a
     // FATAL_ERROR but still count as successfully invoked.

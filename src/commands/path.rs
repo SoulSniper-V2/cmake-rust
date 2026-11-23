@@ -75,7 +75,7 @@ pub(super) fn normal(path: &str) -> String {
     result
 }
 
-pub(super) fn relative(path: &str, base: &str) -> String {
+pub(crate) fn relative(path: &str, base: &str) -> String {
     if path.starts_with('/') != base.starts_with('/') {
         return String::new();
     }

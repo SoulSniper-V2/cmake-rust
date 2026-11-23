@@ -32,8 +32,8 @@ pub fn main() -> i32 {
     let args = &argv[1..];
     match args.first().map(String::as_str) {
         Some("-E") => cmcmd::dispatch(&argv[0], &args[1..]),
-        Some("--build") => build(&args[1..], &cwd),
-        Some("--install") => install(&argv[0], &args[1..], &cwd),
+        Some("--build") => build(&argv, &cwd),
+        Some("--install") => install(&argv, &cwd),
         Some("--workflow") => crate::presets::cli::workflow(&args[1..], &cwd),
         Some("--print-config-dir") => {
             if let Ok(dir) = std::env::var("CMAKE_CONFIG_DIR") {
@@ -497,7 +497,10 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     if !script_mode {
         warn_orphan_generator_settings();
     }
-    let mut options = ConfigureOptions::default();
+    let mut options = ConfigureOptions {
+        command_args: argv.to_vec(),
+        ..ConfigureOptions::default()
+    };
     let mut view = None::<CacheView>;
     let mut view_only = false;
     let mut regenerate = false;
@@ -571,6 +574,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                 "--preset" => preset_name = value.clone(),
                 // cmSystemTools::ToNormalizedPathOnDisk
                 "--graphviz" => options.graphviz = Some(normalized_path(&value, cwd)),
+                "--sarif-output" => options.sarif_output = Some(normalized_path(&value, cwd)),
                 "--profiling-format" => profiling_format = value.clone(),
                 "--debug-find-pkg" => {
                     let packages = tokenize_commas(&value);
@@ -753,6 +757,12 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     if bad_generator || trace_file_failed {
         return Ok(1);
     }
+    if let Some(path) = &options.sarif_output
+        && std::fs::File::create(path).is_err()
+    {
+        cmcmd::error(format!("Invalid SARIF output file path: {path}"));
+        return Ok(1);
+    }
     if options.binary_dir.is_empty() {
         options.binary_dir = cwd.to_owned();
     }
@@ -842,6 +852,9 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     }
     let result = if view_only {
         let result = apply_cache_view_args(&mut cache, &cache_args, &options, cwd);
+        if let Some(path) = &options.sarif_output {
+            crate::sarif::ResultsLog::default().write(path, false);
+        }
         if let Some(report) = &options.preset_report {
             print!("{report}");
         }
@@ -1383,7 +1396,8 @@ fn run_script_mode(
                 Ok(definition) => add_definition(&mut interp.cache, &definition),
                 Err(error) => {
                     cmcmd::error(error);
-                    return cli_failure();
+                    result = cli_failure();
+                    break;
                 }
             },
             "-U" => unset_cache_entries(&mut interp.cache, value),
@@ -1405,6 +1419,9 @@ fn run_script_mode(
     }
     if let Some(view) = view {
         view.print(&interp.cache);
+    }
+    if let Some(path) = &options.sarif_output {
+        interp.sarif_log.write(path, false);
     }
     result
 }
@@ -1537,8 +1554,8 @@ fn parse_build(args: &[String], cwd: &str) -> Result<BuildOptions, ()> {
     Ok(options)
 }
 
-fn build(args: &[String], cwd: &str) -> i32 {
-    let Ok(mut options) = parse_build(args, cwd) else {
+fn build(argv: &[String], cwd: &str) -> i32 {
+    let Ok(mut options) = parse_build(&argv[2..], cwd) else {
         eprint!("{}", include_str!("cmcmd/build-usage.txt"));
         return 1;
     };
@@ -1622,6 +1639,21 @@ fn build(args: &[String], cwd: &str) -> i32 {
         eprintln!("Error: could not find CMAKE_PROJECT_NAME in Cache");
         return 1;
     }
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(cache_dir);
+    instrumentation.load();
+    if instrumentation.errors {
+        return 1;
+    }
+    instrumentation.collect("preCMakeBuild");
+    let clock = instrumentation.timer();
+    let result = run_build(options, &cache, generator);
+    instrumentation.write_snippet("cmakeBuild", argv, clock, result);
+    instrumentation.collect("postCMakeBuild");
+    result
+}
+
+fn run_build(options: BuildOptions, cache: &Cache, generator: &str) -> i32 {
+    let dir = Path::new(&options.dir);
     let verbose = options.verbose || util::is_on_opt(cache.value("CMAKE_VERBOSE_MAKEFILE"));
     let make_program = cache
         .value("CMAKE_MAKE_PROGRAM")
@@ -1707,8 +1739,8 @@ fn quote_command(command: &[String]) -> String {
         .join(" ")
 }
 
-fn install(program: &str, args: &[String], cwd: &str) -> i32 {
-    let Some((dir, args)) = args.split_first() else {
+fn install(invocation: &[String], cwd: &str) -> i32 {
+    let Some((dir, args)) = invocation[2..].split_first() else {
         eprint!("{}", include_str!("cmcmd/install-usage.txt"));
         return 1;
     };
@@ -1765,7 +1797,7 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
         }
         index += 1;
     }
-    let mut argv = vec![program.to_owned()];
+    let mut argv = vec![invocation[0].clone()];
     for (flag, key) in [
         ("--prefix", "CMAKE_INSTALL_PREFIX"),
         ("--component", "CMAKE_INSTALL_COMPONENT"),
@@ -1792,7 +1824,9 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
     argv.push("-P".to_owned());
     let component = variables.get("--component").cloned().unwrap_or_default();
     let config = variables.get("--config").cloned().unwrap_or_default();
-    let handler =
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(&dir);
+    instrumentation.load();
+    let mut handler =
         crate::install_script::InstallScriptHandler::new(&dir, &component, &config, &mut argv);
     if jobs == 0 && handler.is_parallel() {
         jobs = 1;
@@ -1808,30 +1842,61 @@ fn install(program: &str, args: &[String], cwd: &str) -> i32 {
             }
         }
     }
-    if handler.is_parallel() {
-        return i32::from(handler.install(jobs, cwd) > 0);
-    }
-    let mut result = 0;
-    for command in handler.commands() {
-        let Some(script) = command.last() else {
-            continue;
-        };
-        let Some(mut interp) = make_script_interp(command, cwd) else {
-            return 1;
-        };
-        // cmake --install -v: SetDebugOutputOn(verbose).
-        interp.debug.output = verbose;
-        for arg in command[1..command.len() - 2]
-            .iter()
-            .filter_map(|arg| arg.strip_prefix("-D"))
-        {
-            if let Ok(definition) = cache_definition(arg) {
-                add_definition(&mut interp.cache, &definition);
+    // cmInstrumentation::InstrumentCommand("cmakeInstall", ...) around
+    // the install, then the postInstall hook.
+    let clock = instrumentation.timer();
+    let result = (|| {
+        if handler.is_parallel() {
+            // cmInstallScriptHandler::Install: each script runs under
+            // `ctest --instrument` when instrumentation is queried.
+            if instrumentation.enabled {
+                handler.prefix_commands(&[
+                    ctest_command(),
+                    "--instrument".to_owned(),
+                    "--command-type".to_owned(),
+                    "install".to_owned(),
+                    "--build-dir".to_owned(),
+                    dir.clone(),
+                    "--".to_owned(),
+                ]);
             }
+            return i32::from(handler.install(jobs, cwd) > 0);
         }
-        result = i32::from(read_script(&mut interp, script, cwd, true) != 0);
-    }
+        let mut result = 0;
+        for command in handler.commands() {
+            let Some(script) = command.last() else {
+                continue;
+            };
+            let Some(mut interp) = make_script_interp(command, cwd) else {
+                return 1;
+            };
+            // cmake --install -v: SetDebugOutputOn(verbose).
+            interp.debug.output = verbose;
+            for arg in command[1..command.len() - 2]
+                .iter()
+                .filter_map(|arg| arg.strip_prefix("-D"))
+            {
+                if let Ok(definition) = cache_definition(arg) {
+                    add_definition(&mut interp.cache, &definition);
+                }
+            }
+            result = i32::from(read_script(&mut interp, script, cwd, true) != 0);
+        }
+        result
+    })();
+    instrumentation.write_snippet("cmakeInstall", invocation, clock, result);
+    instrumentation.collect("postInstall");
     result
+}
+
+/// `cmSystemTools::GetCTestCommand`: the ctest next to this cmake.
+fn ctest_command() -> String {
+    let command = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.canonicalize().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "cmake".to_owned());
+    format!("{}/ctest", util::filename_path(&command))
 }
 
 fn directory_permissions(value: &str) -> Option<String> {

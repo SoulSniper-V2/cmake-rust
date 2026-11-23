@@ -156,7 +156,7 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
             && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
         {
-            append(&mut flags, &option);
+            append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
         }
     }
 
