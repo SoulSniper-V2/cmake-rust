@@ -590,6 +590,12 @@ impl<'a> GenCtx<'a> {
     /// Runs the whole generate step; returns the diagnostics it raised.
     /// The caller reports them and decides failure from their severity.
     pub fn check_and_generate(&self) -> Vec<Diagnostic> {
+        // cmGlobalGenerator::Compute: cmQtAutoGenGlobalInitializer precedes
+        // ComputeTargetCompileFeatures.
+        super::autogen::initialize(self);
+        if self.has_error() {
+            return self.errors.take();
+        }
         if !super::flags::validate_compile_features(self) {
             return self.errors.take();
         }

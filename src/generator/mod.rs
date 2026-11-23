@@ -20,6 +20,7 @@
 //! - `tests.rs`    cmTestGenerator -> CTestTestfile.cmake.
 //! - `export.rs`   export()/install(EXPORT) files.
 
+mod autogen;
 pub mod automatic;
 mod compatible;
 pub mod ctx;
