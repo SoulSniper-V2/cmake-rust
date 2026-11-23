@@ -160,6 +160,27 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
                 1
             }
         },
+        // cmake_depends <generator> <dirs...> <dep-info>: only Makefile
+        // generators scan (cmLocalUnixMakefileGenerator3::UpdateDependencies);
+        // other generators' UpdateDependencies succeeds trivially and an
+        // unknown generator name fails without a message.
+        "cmake_depends" if args.len() >= 4 => match args[0].as_str() {
+            "Ninja" | "Ninja Multi-Config" => 0,
+            "Unix Makefiles"
+            | "MinGW Makefiles"
+            | "MSYS Makefiles"
+            | "NMake Makefiles"
+            | "NMake Makefiles JOM"
+            | "Borland Makefiles"
+            | "Watcom WMake" => {
+                error(format!(
+                    "cmake_depends: dependency scanning for the \"{}\" generator (cmDependsC) is not implemented by cmake-rust",
+                    args[0]
+                ));
+                2
+            }
+            _ => 1,
+        },
         "tar" if args.len() >= 2 => archive::tar(args),
         // copy_if_newer is absent from the pinned 4.1.0 cmcmd dispatcher.
         _ => {

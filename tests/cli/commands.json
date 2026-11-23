@@ -1971,5 +1971,40 @@
   "inspect": [
    "d/out.txt"
   ]
+ },
+ {
+  "name": "cmake_depends-ninja",
+  "argv": [
+   "-E",
+   "cmake_depends",
+   "Ninja",
+   "{work}",
+   "{work}",
+   "{work}",
+   "{work}",
+   "{work}/DependInfo.cmake"
+  ]
+ },
+ {
+  "name": "cmake_depends-unknown-generator",
+  "argv": [
+   "-E",
+   "cmake_depends",
+   "Bogus",
+   "{work}",
+   "{work}",
+   "{work}",
+   "{work}",
+   "{work}/DependInfo.cmake"
+  ]
+ },
+ {
+  "name": "cmake_depends-too-few",
+  "argv": [
+   "-E",
+   "cmake_depends",
+   "Ninja",
+   "{work}"
+  ]
  }
 ]
