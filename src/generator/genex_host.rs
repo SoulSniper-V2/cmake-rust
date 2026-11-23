@@ -306,13 +306,14 @@ impl GenexHost for CtxHost<'_, '_> {
             gt::sources(self.ctx, target, config)
                 .iter()
                 .filter(|source| source.kind == SourceKind::ObjectSource)
-                .map(|source| format!("{}/{}", dir.trim_end_matches('/'), source.object_name))
+                .map(|source| format!("{dir}{}", source.object_name))
                 .collect()
         };
         // cmMakefile::AddTargetObject in the referencing directory.
         let mut registry = self.ctx.target_objects.borrow_mut();
         for object in &objects {
-            registry.insert((self.dir, object.clone()), target.name.clone());
+            let path = crate::util::collapse_full_path(object, "");
+            registry.insert((self.dir, path), target.name.clone());
         }
         Ok(objects)
     }

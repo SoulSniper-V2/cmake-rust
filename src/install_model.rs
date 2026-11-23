@@ -10,7 +10,9 @@ pub struct InstallState {
     /// `cmExportSetMap` (a std::map: iteration in name order).
     pub export_sets: BTreeMap<String, ExportSet>,
     pub build_exports: BTreeMap<String, BuildExport>,
-    pub runtime_sets: HashMap<String, Vec<String>>,
+    /// Runtime dependency sets: the targets, each with the directory whose
+    /// install() named it.
+    pub runtime_sets: HashMap<String, Vec<(usize, String)>>,
 }
 
 #[derive(Clone, Debug, Default)]

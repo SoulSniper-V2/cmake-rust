@@ -5,7 +5,7 @@
 //! `cmGeneratorTarget::{ApplyCXXStdTargets,DiscoverSyntheticTargets}`, and
 //! the `CollationInformation*` blocks of `cmDyndepCollation`.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -13,160 +13,194 @@ use sha3::{Digest, Sha3_512};
 
 use super::*;
 use crate::commands::string::json::stream_value;
-use crate::generator::ctx::{self, Diagnostic, GenCtx};
+use crate::generator::ctx::{Diagnostic, GenCtx};
 use crate::install_model::InstallAction;
 use crate::interp::Interp;
 use crate::messages::MessageType;
 use crate::state::{FileSet, PropertyEntry};
 
-/// `cmGlobalGenerator::Compute` ordering: `ApplyCXXStdTargets` for every
-/// target, then `DiscoverSyntheticTargets` — both while targets are still
-/// mutable, before build files are generated.  Returns diagnostics raised
-/// by the evaluations.
+/// `cmGlobalGenerator::Compute`: `ApplyCXXStdTargets` for every target, then
+/// `DiscoverSyntheticTargets`, while targets are still mutable. Returns the
+/// diagnostics of the former.
 pub fn finalize_cxx_module_targets(interp: &mut Interp) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let keys: Vec<String> = interp.ext.target_order.clone();
-    for key in &keys {
-        apply_std_to_target(interp, key, &mut diagnostics);
-    }
-    // cmGeneratorTarget::DiscoverSyntheticTargets: worklist over target
-    // keys; synthetic targets enqueue themselves since their own link
-    // implementations may import further module targets.
-    let mut queue = keys;
-    let mut done: HashSet<String> = HashSet::new();
-    // `(imported_key, synthetic_key)` — the `CxxModuleTargets` cache.
-    let mut cache: Vec<(String, String)> = Vec::new();
-    while let Some(key) = queue.pop() {
-        if !done.insert(key.clone()) {
-            continue;
-        }
-        let imported_keys = {
-            let ctx = ctx::GenCtx::new(interp);
-            diagnostics.extend(ctx.errors.take());
-            let Some(target) = ctx.interp.ext.targets.get(&key) else {
-                continue;
-            };
-            if target.imported {
-                continue;
-            }
-            let config = ctx.config.clone();
-            let lang = gt::linker_language(&ctx, target, &config);
-            let mut imported = Vec::new();
-            for (dep, _objects_item) in link::module_link_targets(&ctx, target, &lang) {
-                if dep.imported && gt::have_cxx20_module_sources(&ctx, dep, &config) {
-                    imported.push(ctx.target_key(dep));
-                }
-            }
-            imported
-        };
-        for dep_key in imported_keys {
-            let Some(synth_key) =
-                synthesize_cxx_module_target(interp, &dep_key, &mut cache, &mut diagnostics)
-            else {
-                continue;
-            };
+    let keys: Vec<String> = interp
+        .makefiles
+        .iter()
+        .flat_map(|makefile| &makefile.targets)
+        .filter(|key| {
             interp
                 .ext
-                .synthetic_deps
-                .entry(dep_key.clone())
-                .or_default()
-                .push(synth_key.clone());
-            // gtp->ApplyCXXStdTargets() + the recursive
-            // gtp->DiscoverSyntheticTargets on the new target.
-            apply_std_to_target(interp, &synth_key, &mut diagnostics);
-            queue.push(synth_key);
+                .targets
+                .get(*key)
+                .is_some_and(|target| !target.imported)
+        })
+        .cloned()
+        .collect();
+    // Compile features are computed before any standard library target is
+    // linked, so every target is inspected before the first is changed.
+    let std_items: Vec<(String, Vec<String>)> = {
+        let ctx = GenCtx::new(interp);
+        keys.iter()
+            .map(|key| (key.clone(), cxx_std_items(&ctx, key, &mut diagnostics)))
+            .filter(|(_, items)| !items.is_empty())
+            .collect()
+    };
+    for (key, items) in std_items {
+        append_link_items(interp, &key, items);
+    }
+    let imports_modules = interp
+        .ext
+        .targets
+        .values()
+        .any(|target| target.imported && gt::have_cxx20_module_sources(target));
+    if imports_modules {
+        // `cmSyntheticTargetCache`: the keys of the targets by name.
+        let mut cache = HashMap::new();
+        let configs = GenCtx::new(interp).configs;
+        for key in &keys {
+            for config in &configs {
+                discover_synthetic_targets(interp, &mut cache, key, config, &mut diagnostics);
+            }
         }
     }
     diagnostics
 }
 
-/// `cmGeneratorTarget::ApplyCXXStdTargets` for one target: diagnose
-/// `CXX_MODULE_STD` and inject the `__CMAKE::CXX<level>` link item when the
-/// toolchain provides it and `import std` support is enabled.
-fn apply_std_to_target(interp: &mut Interp, target_key: &str, diagnostics: &mut Vec<Diagnostic>) {
-    enum Action {
-        Inject(String),
+/// `cmGeneratorTarget::DiscoverSyntheticTargets`.
+fn discover_synthetic_targets(
+    interp: &mut Interp,
+    cache: &mut HashMap<String, String>,
+    key: &str,
+    config: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let imported: Vec<String> = {
+        // The link implementation is evaluated (and diagnosed) again when
+        // the target is generated.
+        let ctx = GenCtx::new(interp).for_config(config);
+        let Some(target) = ctx.interp.ext.targets.get(key) else {
+            return;
+        };
+        let language = gt::linker_language(&ctx, target, config);
+        link::implementation_targets(&ctx, target, config, &language)
+            .into_iter()
+            .filter(|dep| dep.imported && gt::have_cxx20_module_sources(dep))
+            .map(|dep| ctx.target_key(dep))
+            .collect()
+    };
+    for imported_key in imported {
+        let name = synthetic_target_name(interp, &imported_key);
+        let synthetic = match cache.get(&name) {
+            Some(synthetic) => synthetic.clone(),
+            None => {
+                let synthetic = synthesize_cxx_module_target(interp, &imported_key, &name);
+                cache.insert(name, synthetic.clone());
+                let items = cxx_std_items(&GenCtx::new(interp), &synthetic, diagnostics);
+                append_link_items(interp, &synthetic, items);
+                discover_synthetic_targets(interp, cache, &synthetic, config, diagnostics);
+                synthetic
+            }
+        };
+        interp
+            .ext
+            .synthetic_deps
+            .entry((key.to_owned(), config.to_owned()))
+            .or_default()
+            .entry(imported_key)
+            .or_default()
+            .push(synthetic);
     }
-    let action = {
-        let ctx = ctx::GenCtx::new(interp);
-        let result = (|| {
-            let target = ctx.interp.ext.targets.get(target_key)?;
-            let std_prop = target.props.get("CXX_MODULE_STD")?;
-            let compiled = crate::genex::parse(std_prop);
-            let mut ectx = crate::genex::EvalContext {
-                config: "",
-                ..crate::genex::EvalContext::default()
-            };
-            let mut host = crate::generator::genex_host::CtxHost::new(&ctx, target.makefile);
-            let std_prop_value = match crate::genex::evaluate(&compiled, &mut ectx, &mut host) {
-                Ok(value) => value,
-                Err(error) => {
-                    ctx.genex_error(Vec::new(), &error);
-                    return None;
-                }
-            };
-            if ectx.context_sensitive {
-                ctx.error(
-                    ctx.dir_backtrace(target.makefile),
-                    format!(
-                        "The \"CXX_MODULE_STD\" property on the target \"{}\" contains a context-sensitive condition that is not supported.",
-                        target.name
-                    ),
-                );
-                return None;
-            }
-            if !util::is_on(&std_prop_value) {
-                return None;
-            }
-            if cxx_module_support_level(&ctx, target) != CxxSupportLevel::Supported {
-                return None;
-            }
-            let level = explicit_cxx_standard(&ctx, target)?;
-            // `standardResolver.LanguageStandardLevel("CXX", "23")`: the
-            // smallest C++ standard level that can `import std`.
-            if level < 23 {
-                return None;
-            }
-            let target_name = format!("__CMAKE::CXX{level}");
-            if find_target_to_use(&ctx, target.makefile, &target_name).is_none() {
-                let reason = ctx
-                    .var(
-                        target.makefile,
-                        &format!("CMAKE_CXX{level}_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE"),
-                    )
-                    .filter(|reason| !reason.is_empty())
-                    .map(|reason| format!("  Reason:\n  {reason}"))
-                    .unwrap_or_default();
-                ctx.error(
-                    ctx.dir_backtrace(target.makefile),
-                    format!(
-                        "The \"CXX_MODULE_STD\" property on the target \"{}\" requires that the \"{target_name}\" target exist, but it was not provided by the toolchain.{reason}",
-                        target.name
-                    ),
-                );
-                return None;
-            }
-            // `cmExperimental::HasSupportEnabled(CxxImportStd)`: a toolchain
-            // may provide the target while `import std` is disabled.
-            if !experimental_enabled_ctx(&ctx, target.makefile, "CxxImportStd") {
-                return None;
-            }
-            Some(Action::Inject(target_name))
-        })();
-        diagnostics.extend(ctx.errors.take());
-        result
+}
+
+fn append_link_items(interp: &mut Interp, key: &str, items: Vec<String>) {
+    if let Some(target) = interp.ext.targets.get_mut(key) {
+        for item in items {
+            target.props.append("LINK_LIBRARIES", &item, false);
+        }
+    }
+}
+
+/// `cmGeneratorTarget::ApplyCXXStdTargets`: diagnose `CXX_MODULE_STD` and
+/// compute the `LINK_LIBRARIES` entries of the `__CMAKE::CXX<level>` target.
+fn cxx_std_items(ctx: &GenCtx, key: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<String> {
+    let mut items = Vec::new();
+    let Some(target) = ctx.interp.ext.targets.get(key) else {
+        return items;
     };
-    let Some(Action::Inject(target_name)) = action else {
-        return;
+    let Some(std_prop) = target.props.get("CXX_MODULE_STD") else {
+        return items;
     };
-    let Some(target) = interp.ext.targets.get_mut(target_key) else {
-        return;
+    let compiled = crate::genex::parse(std_prop);
+    let mut evaluation = crate::genex::EvalContext {
+        config: "",
+        ..crate::genex::EvalContext::default()
     };
-    // `$<$<CONFIG:cfg>:...>` guards the item for multi-config generators;
-    // under the single-config Ninja generator the one config is always
-    // active.
-    let item = format!("$<BUILD_LOCAL_INTERFACE:{target_name}>");
-    target.props.append("LINK_LIBRARIES", &item, false);
+    let mut host = crate::generator::genex_host::CtxHost::new(ctx, target.makefile);
+    let value = match crate::genex::evaluate(&compiled, &mut evaluation, &mut host) {
+        Ok(value) => value,
+        Err(error) => {
+            ctx.genex_error(Vec::new(), &error);
+            diagnostics.extend(ctx.errors.take());
+            return items;
+        }
+    };
+    diagnostics.extend(ctx.errors.take());
+    let error = |text: String| {
+        Diagnostic::Message(
+            MessageType::FatalError,
+            ctx.dir_backtrace(target.makefile),
+            text,
+        )
+    };
+    if evaluation.context_sensitive {
+        diagnostics.push(error(format!(
+            "The \"CXX_MODULE_STD\" property on the target \"{}\" contains a context-sensitive condition that is not supported.",
+            target.name
+        )));
+        return items;
+    }
+    if !util::is_on(&value) {
+        return items;
+    }
+    for config in &ctx.configs {
+        let ctx = ctx.for_config(config);
+        let supported = module_support::support_level(&ctx, target, config);
+        let level = flags::standard::explicit_level(&ctx, target, config, "CXX");
+        // The usage requirements are diagnosed when the target is generated.
+        ctx.errors.take();
+        let Some(level) = level.filter(|level| *level >= module_support::cxx_level("23")) else {
+            continue;
+        };
+        if supported != CxxSupportLevel::Supported {
+            continue;
+        }
+        let level = flags::standard::levels("CXX")[level];
+        let target_name = format!("__CMAKE::CXX{level}");
+        if find_target_to_use(&ctx, target.makefile, &target_name).is_none() {
+            let reason = ctx
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_CXX{level}_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE"),
+                )
+                .filter(|reason| !reason.is_empty())
+                .map(|reason| format!("  Reason:\n  {reason}"))
+                .unwrap_or_default();
+            diagnostics.push(error(format!(
+                "The \"CXX_MODULE_STD\" property on the target \"{}\" requires that the \"{target_name}\" target exist, but it was not provided by the toolchain.{reason}",
+                target.name
+            )));
+            break;
+        }
+        // A toolchain may provide the target while `import std` is disabled.
+        if !experimental_enabled_ctx(&ctx, target.makefile, "CxxImportStd") {
+            break;
+        }
+        items.push(format!(
+            "$<BUILD_LOCAL_INTERFACE:$<$<CONFIG:{config}>:{target_name}>>"
+        ));
+    }
+    items
 }
 
 /// `cmExperimental::HasSupportEnabled` in a generation context.
@@ -174,32 +208,29 @@ fn experimental_enabled_ctx(ctx: &GenCtx, makefile: usize, feature: &str) -> boo
     ctx.experimental_enabled(makefile, feature)
 }
 
-/// `cmSyntheticTargetCache::GetSyntheticTarget` + the copy logic in
-/// `cmGeneratorTarget::DiscoverSyntheticTargets`.  Returns the `ext.targets`
-/// key of the synthetic BMI-only interface target.
-fn synthesize_cxx_module_target(
-    interp: &mut Interp,
-    imported_key: &str,
-    cache: &mut Vec<(String, String)>,
-    _diagnostics: &mut Vec<Diagnostic>,
-) -> Option<String> {
-    if let Some((_, synth)) = cache.iter().find(|(imp, _)| imp == imported_key) {
-        return Some(synth.clone());
-    }
-    // Compute the name against an immutable view.
-    let (name, makefile, file_sets, entries_props, entries_prov, policies) = {
-        let imported = interp.ext.targets.get(imported_key)?;
+/// The name of the synthetic target of an imported module target.
+fn synthetic_target_name(interp: &Interp, imported_key: &str) -> String {
+    let imported = &interp.ext.targets[imported_key];
+    let safe_name = imported.name.replace(':', "_");
+    // `cmCxxModuleUsageEffects` is a fixed placeholder upstream.
+    let usage_hash = "0000000000000000000000000000000000000000";
+    let dir_hash = hex(&Sha3_512::digest(
+        interp.makefiles[imported.makefile].binary_dir.as_bytes(),
+    ));
+    let ident = hex(&Sha3_512::digest(
+        format!("@d_{dir_hash}@u_{usage_hash}").as_bytes(),
+    ));
+    format!("{safe_name}@synth_{}", &ident[..12])
+}
+
+/// The target creation of `cmGeneratorTarget::DiscoverSyntheticTargets`.
+/// Returns the `ext.targets` key of the BMI-only interface target.
+fn synthesize_cxx_module_target(interp: &mut Interp, imported_key: &str, name: &str) -> String {
+    let configs = GenCtx::new(interp).configs;
+    // Collect the copies against an immutable view.
+    let (makefile, file_sets, entries_props, entries_prov, policies) = {
+        let imported = &interp.ext.targets[imported_key];
         let imported_policies = imported.policies.clone();
-        let safe_name = imported.name.replace(':', "_");
-        // `cmCxxModuleUsageEffects` is a fixed placeholder upstream.
-        let usage_hash = "0000000000000000000000000000000000000000";
-        let dir_hash = hex(&Sha3_512::digest(
-            interp.makefiles[imported.makefile].binary_dir.as_bytes(),
-        ));
-        let ident = hex(&Sha3_512::digest(
-            format!("@d_{dir_hash}@u_{usage_hash}").as_bytes(),
-        ));
-        let name = format!("{safe_name}@synth_{}", &ident[..12]);
         // cmTarget::CopyImportedCxxModulesEntries: imported C++ module usage
         // requirements become private properties of the synthetic target.
         let mut entries_props: Vec<(String, String)> = Vec::new();
@@ -236,14 +267,8 @@ fn synthesize_cxx_module_target(
                 entries_props.push(((*prop).into(), value.to_owned()));
             }
         }
-        // Per-config copies (GetGeneratorConfigs(ExcludeEmptyConfig) is
-        // empty for the single-config Ninja generator without a build type,
-        // but an explicitly set CMAKE_BUILD_TYPE produces one config name).
-        let config = interp
-            .get_def("CMAKE_BUILD_TYPE")
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        if !config.is_empty() {
+        for config in configs.iter().filter(|config| !config.is_empty()) {
+            let config = config.to_ascii_uppercase();
             for prefix in [
                 "EXCLUDE_FROM_DEFAULT_BUILD_",
                 "IMPORTED_CXX_MODULES_",
@@ -273,7 +298,6 @@ fn synthesize_cxx_module_target(
             })
             .collect();
         (
-            name,
             imported.makefile,
             file_sets,
             entries_props,
@@ -281,15 +305,8 @@ fn synthesize_cxx_module_target(
             imported_policies,
         )
     };
-    if let Some((_, synth)) = cache
-        .iter()
-        .find(|(imp, s)| imp == imported_key || s == &name)
-    {
-        return Some(synth.clone());
-    }
-
     // `cmMakefile::AddSynthesizedTarget(INTERFACE_LIBRARY, name)`.
-    let mut target = Target::new(&name, crate::state::TargetKind::InterfaceLibrary, makefile);
+    let mut target = Target::new(name, crate::state::TargetKind::InterfaceLibrary, makefile);
     target.synthetic = true;
     target.template_name = Some(
         interp
@@ -314,9 +331,7 @@ fn synthesize_cxx_module_target(
         .props
         .append("LINK_LIBRARIES", &format!("$<COMPILE_ONLY:{model}>"), false);
 
-    let key = crate::state::register_target(interp, target);
-    cache.push((imported_key.to_owned(), key.clone()));
-    Some(key)
+    crate::state::register_target(interp, target)
 }
 
 /// `cmTarget::CopyImportedCxxModulesProperties` list.
@@ -370,61 +385,6 @@ fn hex(digest: &[u8]) -> String {
 fn find_target_to_use<'i>(ctx: &GenCtx<'i>, dir: usize, name: &str) -> Option<&'i Target> {
     crate::state::find_target_key_at(ctx.interp, dir, name)
         .and_then(|key| ctx.interp.ext.targets.get(&key))
-}
-
-/// `cmGeneratorTarget::HaveCxxModuleSupport` (free-standing variant for
-/// the mutable finalization phase; `NinjaGenerator` has the same logic on
-/// `&self` for generation).
-fn cxx_module_support_level(ctx: &GenCtx, target: &Target) -> CxxSupportLevel {
-    if !ctx.interp.langs.enabled.iter().any(|l| l == "CXX") {
-        return CxxSupportLevel::MissingCxx;
-    }
-    if ctx
-        .var(target.makefile, "CMAKE_CXX_STANDARD_DEFAULT")
-        .is_none_or(|default| default.is_empty())
-    {
-        return CxxSupportLevel::NoCxx20;
-    }
-    if explicit_cxx_standard(ctx, target).is_none_or(|level| level < 20) {
-        return CxxSupportLevel::NoCxx20;
-    }
-    if ctx
-        .var(target.makefile, "CMAKE_CXX_SCANDEP_SOURCE")
-        .is_none()
-    {
-        return CxxSupportLevel::MissingRule;
-    }
-    CxxSupportLevel::Supported
-}
-
-/// `cmStandardLevelResolver::GetExplicitStandardLevel` (duplicated from
-/// `NinjaGenerator::explicit_cxx_standard` for the mutable phase).
-fn explicit_cxx_standard(ctx: &GenCtx, target: &Target) -> Option<u32> {
-    let mut level: Option<u32> = None;
-    if let Some(standard) = target.props.get("CXX_STANDARD") {
-        let standard = ctx.genex(standard, Some(target), None);
-        let standard = standard
-            .trim()
-            .strip_suffix("-FORCED")
-            .unwrap_or(standard.trim());
-        if let Ok(requested) = standard.parse::<u32>() {
-            level = Some(level.unwrap_or(0).max(requested));
-        }
-    }
-    let features = target
-        .props
-        .get("COMPILE_FEATURES")
-        .map(|features| ctx.genex(features, Some(target), None))
-        .unwrap_or_default();
-    for feature in util::expand_list(&features, false) {
-        if let Some(requested) = feature
-            .strip_prefix("cxx_std_")
-            .and_then(|requested| requested.parse::<u32>().ok())
-        {
-            level = Some(level.unwrap_or(0).max(requested));
-        }
-    }
-    level
 }
 
 impl<'a> NinjaGenerator<'a> {
@@ -519,12 +479,8 @@ impl<'a> NinjaGenerator<'a> {
             ..Rule::default()
         };
         let (mut defines, mut includes, mut flags) = ("$DEFINES", "$INCLUDES", "$FLAGS".to_owned());
-        if self.cxx_force_rsp(target) {
-            let flag = self
-                .ctx
-                .var(mf, "CMAKE_CXX_RESPONSE_FILE_FLAG")
-                .filter(|flag| !flag.is_empty())
-                .unwrap_or_else(|| "@".into());
+        let flag = self.response_file_flag(target, "CXX");
+        if !flag.is_empty() {
             rule.rspfile = "$RSP_FILE".into();
             rule.rspcontent = format!(" {defines} {includes} {flags}");
             flags = format!("{flag}$RSP_FILE");
@@ -609,7 +565,7 @@ impl<'a> NinjaGenerator<'a> {
                 build.variables.insert("pool".into(), pool.into());
             }
         }
-        write_build(out, &scan, if self.cxx_force_rsp(target) { -1 } else { 0 });
+        write_build(out, &scan, self.compile_command_limit(target, "CXX"));
         let dyndep = self.ninja_path(&self.cxx_dyndep_path(target));
         obj.order_only_deps.push(dyndep.clone());
         obj.variables.insert("dyndep".into(), dyndep);
@@ -758,7 +714,7 @@ impl<'a> NinjaGenerator<'a> {
                 b.variables.insert("pool".into(), pool.into());
             }
         }
-        write_build(out, &scan, if self.cxx_force_rsp(target) { -1 } else { 0 });
+        write_build(out, &scan, self.compile_command_limit(target, "CXX"));
 
         let dyndep = self.ninja_path(&self.cxx_dyndep_path(target));
         build.order_only_deps.push(dyndep.clone());
@@ -777,7 +733,7 @@ impl<'a> NinjaGenerator<'a> {
             modmap = Some(file);
         }
         build.rsp_file = format!("{bmi_file}.rsp");
-        write_build(out, &build, if self.cxx_force_rsp(target) { -1 } else { 0 });
+        write_build(out, &build, self.compile_command_limit(target, "CXX"));
         (ddi, modmap)
     }
 
@@ -792,7 +748,7 @@ impl<'a> NinjaGenerator<'a> {
             if dep.imported
                 || (dep.kind == TargetKind::InterfaceLibrary && !dep.synthetic)
                 || self.module_order.get(&dep.name) >= self.module_order.get(&target.name)
-                || !gt::have_cxx20_module_sources(&self.ctx, dep, &self.config)
+                || !gt::have_cxx20_module_sources(dep)
             {
                 continue;
             }
@@ -1014,11 +970,12 @@ impl<'a> NinjaGenerator<'a> {
         }
 
         let mut tdi_sources = json!({});
+        let modules = ModuleSupport::new(&self.ctx, target, &self.config);
         for (path, (source, bmi_only)) in &sf_map {
             if *bmi_only {
                 continue;
             }
-            if !self.need_dyndep_for_source(target, &[], source) {
+            if !modules.need_dyndep_for_source(source) {
                 continue;
             }
             let obj_path = self.ninja_path(&format!(
@@ -1119,7 +1076,7 @@ impl<'a> NinjaGenerator<'a> {
             .implicit_outs
             .push(self.ninja_path(&format!("{object_dir}/CXXModules.json")));
         build.explicit_deps = ddis;
-        build.implicit_deps.push(self.ninja_path(&tdi_path));
+        build.implicit_deps.push(tdi_path.clone());
         if let Some(bdb_path) = self.build_database_path(target) {
             let template = format!("{bdb_path}.in");
             self.write_build_database(target, &template);
@@ -1200,13 +1157,6 @@ impl<'a> NinjaGenerator<'a> {
             .push(self.ninja_path(&self.cxx_dyndep_path(target)));
         self.write_build(&build);
         self.add_target_alias(&target.name.clone(), target);
-    }
-
-    fn cxx_force_rsp(&self, target: &Target) -> bool {
-        self.ctx
-            .var(target.makefile, "CMAKE_NINJA_FORCE_RESPONSE_FILE")
-            .is_some()
-            || std::env::var_os("CMAKE_NINJA_FORCE_RESPONSE_FILE").is_some()
     }
 
     /// `cmNinjaTargetGenerator::ExportObjectCompileCommand` for a scanned

@@ -11,7 +11,8 @@ use md5::{Digest, Md5};
 
 use super::ctx::GenCtx;
 use super::export::{
-    Exporter, Record, config_suffix, export_name, replacement_check, write_config_copy,
+    Exporter, Record, config_suffix, export_configs, export_name, install_configs,
+    replacement_check, write_config_copy,
 };
 use super::install::{CopyRule, absolute_dest, write_copy};
 use crate::commands::string::json::{Json, write_json_indent2};
@@ -454,13 +455,6 @@ pub(super) fn write_build(
     export: &BuildExport,
     package: &PackageInfoArguments,
 ) -> std::io::Result<()> {
-    if ctx.multi_config {
-        ctx.error(
-            export.backtrace.clone(),
-            "cmake-rust does not implement per-configuration CPS package information export (export(PACKAGE_INFO)) for the \"Ninja Multi-Config\" generator.",
-        );
-        return Ok(());
-    }
     let inst = &ctx.interp.ext.install;
     let set = export
         .set
@@ -508,9 +502,8 @@ pub(super) fn write_build(
         component.insert(skey("type"), jstr(component_type(record.kind)));
         if record.kind != TargetKind::InterfaceLibrary {
             let mut configurations = Obj::new();
-            {
-                let c = ctx.config.clone();
-                interface_properties_config(&mut ex, &mut configurations, record, &c);
+            for config in export_configs(ctx) {
+                interface_properties_config(&mut ex, &mut configurations, record, &config);
             }
             if !configurations.is_empty() {
                 component.insert(skey("configurations"), Json::Object(configurations));
@@ -564,22 +557,16 @@ fn import_prefix_path(
 /// `cmInstallPackageInfoExportGenerator` + the
 /// `cmExportInstallPackageInfoGenerator` file generation: emit the staged
 /// main `.cps` file, its install rules, and per-config `<stem>@<cfg>.cps`.
+/// `out` and `config_rules` are as in `export::write_install_export`.
 pub(super) fn write_install(
     ctx: &GenCtx,
-    out: &mut String,
+    (out, indent): (&mut String, &str),
+    (config_rules, config_indent): (&mut String, &str),
     index: usize,
     rule: &InstallRule,
     set_name: &str,
     package: &PackageInfoArguments,
-    indent: &str,
 ) -> std::io::Result<()> {
-    if ctx.multi_config {
-        ctx.error(
-            rule.backtrace.clone(),
-            "cmake-rust does not implement per-configuration CPS package information export (install(PACKAGE_INFO)) for the \"Ninja Multi-Config\" generator.",
-        );
-        return Ok(());
-    }
     let set = ctx.interp.ext.install.export_sets.get(set_name);
     if set.is_none_or(|set| set.targets.is_empty()) {
         ctx.error(
@@ -689,14 +676,33 @@ pub(super) fn write_install(
     let has_config = records
         .iter()
         .any(|r| r.kind != TargetKind::InterfaceLibrary);
-    let installs = opts.configurations.is_empty()
-        || opts
-            .configurations
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(&ctx.config));
-    if has_config && installs {
-        let config_file = format!("{temp}/{stem}@{}.cps", config_suffix(&ctx.config));
-        let config = &ctx.config;
+    if !has_config {
+        return Ok(());
+    }
+    // `GenerateImportTargetsConfig` iterates all exports including
+    // namelink-only entries.
+    let all: Vec<Record<'_>> = set
+        .targets
+        .iter()
+        .filter_map(|item| {
+            let tgt = ex.find(index, &item.name)?;
+            let kind = if tgt.kind == TargetKind::ObjectLibrary && item.artifact.is_none() {
+                TargetKind::InterfaceLibrary
+            } else {
+                tgt.kind
+            };
+            Some(Record {
+                target: tgt,
+                installed: Some(item),
+                kind,
+                name: format!("{}{}", package.namespace(), export_name(tgt)),
+            })
+        })
+        .collect();
+    // ConfigImportFiles is a std::map.
+    let mut config_files: BTreeMap<String, String> = BTreeMap::new();
+    for config in &install_configs(ctx, &opts) {
+        let config_file = format!("{temp}/{stem}@{}.cps", config_suffix(config));
         let suffix = property_config_suffix(config);
         let mut cfg_root = Obj::new();
         cfg_root.insert(skey("name"), jstr(&package.package_name));
@@ -708,26 +714,6 @@ pub(super) fn write_install(
                 config
             }),
         );
-        // `GenerateImportTargetsConfig` iterates all exports including
-        // namelink-only entries.
-        let all: Vec<Record<'_>> = set
-            .targets
-            .iter()
-            .filter_map(|item| {
-                let tgt = ex.find(index, &item.name)?;
-                let kind = if tgt.kind == TargetKind::ObjectLibrary && item.artifact.is_none() {
-                    TargetKind::InterfaceLibrary
-                } else {
-                    tgt.kind
-                };
-                Some(Record {
-                    target: tgt,
-                    installed: Some(item),
-                    kind,
-                    name: format!("{}{}", package.namespace(), export_name(tgt)),
-                })
-            })
-            .collect();
         let mut cfg_components = Obj::new();
         for record in &all {
             if record.kind == TargetKind::InterfaceLibrary {
@@ -747,7 +733,17 @@ pub(super) fn write_install(
             Path::new(&config_file),
             write_json_indent2(&Json::Object(cfg_root)).as_bytes(),
         )?;
-        write_config_copy(&ctx.config, out, indent, &opts, dest, config_file);
+        config_files.insert(config.clone(), config_file);
+    }
+    for (config, config_file) in config_files {
+        write_config_copy(
+            &config,
+            config_rules,
+            config_indent,
+            &opts,
+            dest,
+            &[config_file],
+        );
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! Target-level dependencies and static-library cycle linearization.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::messages::Frame;
@@ -19,9 +19,26 @@ struct Edge {
     backtrace: Rc<Vec<Frame>>,
 }
 
-/// A final dependency edge with its backtrace, for File API consumers.
-/// The third field is `cmGraphEdge::IsCross`.
-pub(crate) type DepEdge = (usize, Rc<Vec<Frame>>, bool);
+/// A `cmComputeTargetDepends::FinalGraph` edge.
+#[derive(Clone)]
+pub(crate) struct DepEdge {
+    pub to: usize,
+    pub strong: bool,
+    pub cross: bool,
+    pub backtrace: Rc<Vec<Frame>>,
+}
+
+/// `cmTargetDepend`: the combination of all the final edges to one dependee.
+pub struct TargetDepend {
+    /// The dependee's `ext.targets` key.
+    pub key: String,
+    /// `IsLink`: some edge is a (weak) link dependency.
+    pub link: bool,
+    /// `IsCross`, as the last edge set it.
+    pub cross: bool,
+    /// As the last edge set it.
+    pub backtrace: Rc<Vec<Frame>>,
+}
 
 /// The whole `cmComputeTargetDepends` result: the in-build-system targets in
 /// `cmGlobalGenerator`'s target order plus each one's `FinalGraph` edges.
@@ -30,122 +47,73 @@ pub(crate) struct DepGraph<'i> {
     pub edges: Vec<Vec<DepEdge>>,
 }
 
-/// `cmGlobalGenerator::GetTargetDirectDepends`: `target`'s final dependency
-/// edges ordered by the dependee's target order index.
-pub(crate) fn dep_edges<'i>(
-    ctx: &GenCtx<'i>,
-    head: &'i Target,
-    config: &str,
-) -> Vec<(&'i Target, Rc<Vec<Frame>>)> {
-    if !ctx.dep_graph.borrow().contains_key(config) {
-        let query = Query::new(ctx, config, "");
-        let graph = compute(&query);
-        // Target pointers to their `ext.targets` keys (which can be the
-        // scoped `[dir]name` form for imported/duplicate targets).
-        let keys: HashMap<usize, &str> = ctx
-            .interp
-            .ext
-            .targets
-            .iter()
-            .map(|(key, target)| (std::ptr::from_ref(target) as usize, key.as_str()))
-            .collect();
-        let mut map = HashMap::new();
-        for (index, target) in graph.targets.iter().enumerate() {
-            let mut edges: Vec<(usize, Rc<Vec<Frame>>)> = graph.edges[index]
-                .iter()
-                .map(|(to, bt, _)| (*to, bt.clone()))
-                .collect();
-            edges.sort_by_key(|(to, _)| *to);
-            edges.dedup_by_key(|(to, _)| *to);
-            map.insert(
-                std::ptr::from_ref(*target) as usize,
-                edges
-                    .into_iter()
-                    .filter_map(|(to, bt)| {
-                        keys.get(&(std::ptr::from_ref(graph.targets[to]) as usize))
-                            .map(|key| ((*key).to_owned(), bt))
-                    })
-                    .collect::<Vec<(String, Rc<Vec<Frame>>)>>(),
-            );
-        }
-        ctx.dep_graph
-            .borrow_mut()
-            .insert(config.to_owned(), Rc::new(map));
-    }
-    let graph = ctx.dep_graph.borrow();
+/// `cmGlobalGenerator::GetTargetDirectDepends`: `head`'s dependees in the
+/// global generator's target order. The graph unites all configurations.
+pub(crate) fn direct_depends(ctx: &GenCtx, head: &Target) -> Rc<Vec<TargetDepend>> {
+    let cached = ctx.dep_graph.borrow().clone();
+    let graph = cached.unwrap_or_else(|| {
+        let graph = Rc::new(compute_all(ctx));
+        *ctx.dep_graph.borrow_mut() = Some(graph.clone());
+        graph
+    });
     graph
-        .get(config)
-        .and_then(|map| map.get(&(std::ptr::from_ref(head) as usize)))
-        .map(|edges| {
-            edges
-                .iter()
-                .filter_map(|(name, bt)| {
-                    ctx.interp
-                        .ext
-                        .targets
-                        .get(name.as_str())
-                        .map(|target| (target, bt.clone()))
-                })
-                .collect()
-        })
+        .get(&(std::ptr::from_ref(head) as usize))
+        .cloned()
         .unwrap_or_default()
 }
 
-pub(super) fn dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<String> {
-    let key = format!("link:target-dependencies:{config}:{}", head.name);
-    if let Some(value) = ctx.memo.borrow().get(&key) {
-        return expand_list(value, false);
-    }
-    let query = Query::new(ctx, config, "");
-    let graph = compute(&query);
-    for (target, deps) in graph.targets.iter().zip(&graph.edges) {
-        ctx.memo.borrow_mut().insert(
-            format!("link:target-dependencies:{config}:{}", target.name),
-            unique(
-                deps.iter()
-                    .map(|(to, _, _)| graph.targets[*to].name.clone()),
-            )
-            .join(";"),
-        );
-        // cmComputeTargetDepends::GetTargetDirectDepends: the set keeps one
-        // entry per dependee whose cross flag the last edge sets.
-        let mut cross: Vec<(usize, bool)> = Vec::new();
-        for (to, _, is_cross) in deps {
-            match cross.iter_mut().find(|(dep, _)| dep == to) {
-                Some(entry) => entry.1 = *is_cross,
-                None => cross.push((*to, *is_cross)),
-            }
+fn compute_all(ctx: &GenCtx) -> HashMap<usize, Rc<Vec<TargetDepend>>> {
+    let contexts: Vec<GenCtx> = if ctx.multi_config {
+        ctx.configs
+            .iter()
+            .map(|config| ctx.for_config(config))
+            .collect()
+    } else {
+        vec![ctx.clone()]
+    };
+    let queries: Vec<Query> = contexts
+        .iter()
+        .map(|ctx| Query::new(ctx, &ctx.config, ""))
+        .collect();
+    let graph = compute(&queries);
+    // Target pointers to their `ext.targets` keys (which can be the
+    // scoped `[dir]name` form for imported/duplicate targets).
+    let keys: HashMap<usize, &str> = ctx
+        .interp
+        .ext
+        .targets
+        .iter()
+        .map(|(key, target)| (std::ptr::from_ref(target) as usize, key.as_str()))
+        .collect();
+    let mut result = HashMap::new();
+    for (target, edges) in graph.targets.iter().zip(&graph.edges) {
+        let mut depends: BTreeMap<usize, TargetDepend> = BTreeMap::new();
+        for edge in edges {
+            let dependee = std::ptr::from_ref(graph.targets[edge.to]) as usize;
+            let Some(key) = keys.get(&dependee) else {
+                continue;
+            };
+            let depend = depends.entry(edge.to).or_insert_with(|| TargetDepend {
+                key: (*key).to_owned(),
+                link: false,
+                cross: false,
+                backtrace: Rc::default(),
+            });
+            depend.link |= !edge.strong;
+            depend.cross = edge.cross;
+            depend.backtrace = edge.backtrace.clone();
         }
-        ctx.memo.borrow_mut().insert(
-            format!("link:target-dependencies-cross:{config}:{}", target.name),
-            cross
-                .into_iter()
-                .filter(|(_, is_cross)| *is_cross)
-                .map(|(to, _)| graph.targets[to].name.clone())
-                .collect::<Vec<_>>()
-                .join(";"),
+        result.insert(
+            std::ptr::from_ref(*target) as usize,
+            Rc::new(depends.into_values().collect()),
         );
     }
-    ctx.memo
-        .borrow()
-        .get(&key)
-        .map(|value| expand_list(value, false))
-        .unwrap_or_default()
+    result
 }
 
-pub(super) fn cross_dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<String> {
-    dependencies(ctx, head, config);
-    ctx.memo
-        .borrow()
-        .get(&format!(
-            "link:target-dependencies-cross:{config}:{}",
-            head.name
-        ))
-        .map(|value| expand_list(value, false))
-        .unwrap_or_default()
-}
-
-pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
+/// `cmComputeTargetDepends::Compute`, with one query per configuration.
+pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
+    let query = &queries[0];
     let mut targets = query.ctx.targets_in_order();
     targets.retain(|target| in_build_system(target));
     targets.sort_by_key(|target| target.makefile);
@@ -157,7 +125,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
 
     let mut initial = Vec::new();
     for (index, target) in targets.iter().enumerate() {
-        let language = if matches!(
+        let language_sensitive = matches!(
             target.kind,
             TargetKind::Executable
                 | TargetKind::StaticLibrary
@@ -169,33 +137,48 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
                 .props
                 .get(property)
                 .is_some_and(|value| value.contains("$<"))
-        }) {
-            query.generator.language(query.ctx, target, query.config)
-        } else {
-            query.language.to_owned()
-        };
-        let query = Query {
-            language: &language,
-            ..*query
-        };
-        let mut collector = Collector {
-            query: &query,
-            head: target,
-            head_index: index,
-            indices: &indices,
-            emitted: HashSet::from([std::ptr::from_ref(*target) as usize]),
-            utility_followed: HashSet::new(),
-            edges: Vec::new(),
-        };
-        let links = implementation(&query, target);
-        collector.follow_interface(&links, None);
-        collector.follow_utilities(target, true);
-        if let Some(sources) = target.props.get("SOURCES") {
-            for source in expand_list(sources, false) {
-                collector.add_object_source(&source);
+        });
+        // CollectTargetDepends: the union over all configurations.
+        let mut edges = Vec::new();
+        let mut emitted = HashSet::from([std::ptr::from_ref(*target) as usize]);
+        let mut utility_followed = HashSet::new();
+        for (config, query) in queries.iter().enumerate() {
+            let language = if language_sensitive {
+                query.generator.language(query.ctx, target, query.config)
+            } else {
+                query.language.to_owned()
+            };
+            let query = Query {
+                language: &language,
+                ..*query
+            };
+            let mut collector = Collector {
+                query: &query,
+                head: target,
+                head_index: index,
+                indices: &indices,
+                emitted,
+                utility_followed,
+                edges,
+            };
+            let links = implementation(&query, target);
+            collector.follow_interface(&links, None);
+            if config == 0 {
+                collector.follow_utilities(target, true);
             }
+            if let Some(sources) = target.props.get("SOURCES") {
+                for source in expand_list(sources, false) {
+                    collector.add_object_source(&source);
+                }
+            }
+            Collector {
+                emitted,
+                utility_followed,
+                edges,
+                ..
+            } = collector;
         }
-        initial.push(collector.edges);
+        initial.push(edges);
     }
 
     let components = self::components(&initial);
@@ -232,7 +215,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         let mut visited = vec![false; count];
         for index in 0..count {
             collect_side_effects(
-                query,
+                queries,
                 &targets,
                 &initial,
                 index,
@@ -270,7 +253,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
                         });
                     }
                 }
-                for lang in compile_languages(query, target) {
+                for lang in compile_languages(queries, target) {
                     if let Some(set) = lang_side[edge.to].get(&lang) {
                         for &dep in set {
                             if emitted.insert(dep) {
@@ -329,7 +312,12 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         for pair in linear.order.windows(2) {
             // The linking edges that linearize a component carry no
             // backtrace (`cmListFileBacktrace()` in IntraComponent).
-            result[pair[1]].push((pair[0], Rc::new(Vec::new()), false));
+            result[pair[1]].push(DepEdge {
+                to: pair[0],
+                strong: false,
+                cross: false,
+                backtrace: Rc::default(),
+            });
         }
     }
     for (node, edges) in intermediate.iter().enumerate() {
@@ -337,7 +325,12 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         for edge in edges {
             let dest = components.index[edge.to];
             if source != dest {
-                result[tails[source]].push((heads[dest], edge.backtrace.clone(), edge.cross));
+                result[tails[source]].push(DepEdge {
+                    to: heads[dest],
+                    strong: edge.strong,
+                    cross: edge.cross,
+                    backtrace: edge.backtrace.clone(),
+                });
             }
         }
     }
@@ -456,7 +449,12 @@ impl LinearComponent<'_> {
             if !edge.strong || self.components.index[edge.to] != self.component {
                 continue;
             }
-            self.result[node].push((edge.to, edge.backtrace.clone(), edge.cross));
+            self.result[node].push(DepEdge {
+                to: edge.to,
+                strong: true,
+                cross: edge.cross,
+                backtrace: edge.backtrace.clone(),
+            });
             if !self.visit(edge.to) {
                 return false;
             }
@@ -599,32 +597,39 @@ impl<'i> Collector<'_, '_, 'i> {
 /// `cmGeneratorTarget::AppendCustomCommandSideEffects`: the target produces
 /// build side effects if it has target-level custom commands or a source
 /// with an attached custom command.
-fn has_custom_command_side_effect(query: &Query<'_, '_>, target: &Target) -> bool {
+fn has_custom_command_side_effect(queries: &[Query<'_, '_>], target: &Target) -> bool {
     if !target.custom_commands.is_empty() {
         return true;
     }
-    target::sources(query.ctx, target, query.config)
-        .iter()
-        .any(|source| {
-            crate::commands::target::find_known_source(
-                query.ctx.interp,
-                target.makefile,
-                &source.path,
-            )
-            .is_some_and(|index| {
-                query.ctx.interp.ext.sources[&target.makefile][index]
-                    .custom_command
-                    .is_some()
+    queries.iter().any(|query| {
+        target::sources(query.ctx, target, query.config)
+            .iter()
+            .any(|source| {
+                crate::commands::target::find_known_source(
+                    query.ctx.interp,
+                    target.makefile,
+                    &source.path,
+                )
+                .is_some_and(|index| {
+                    query.ctx.interp.ext.sources[&target.makefile][index]
+                        .custom_command
+                        .is_some()
+                })
             })
-        })
+    })
 }
 
 /// `cmGeneratorTarget::GetAllConfigCompileLanguages` restricted to the
 /// languages that do not have side effects of their own.
-fn compile_languages(query: &Query<'_, '_>, target: &Target) -> BTreeSet<String> {
-    target::sources(query.ctx, target, query.config)
+fn compile_languages(queries: &[Query<'_, '_>], target: &Target) -> BTreeSet<String> {
+    queries
         .iter()
-        .map(|source| source.language.clone())
+        .flat_map(|query| {
+            target::sources(query.ctx, target, query.config)
+                .iter()
+                .map(|source| source.language.clone())
+                .collect::<Vec<_>>()
+        })
         .filter(|language| !language.is_empty())
         .collect()
 }
@@ -632,7 +637,7 @@ fn compile_languages(query: &Query<'_, '_>, target: &Target) -> BTreeSet<String>
 /// `cmComputeTargetDepends::CollectSideEffectsForTarget`.
 #[allow(clippy::too_many_arguments, reason = "mirrors the C++ accumulation")]
 fn collect_side_effects(
-    query: &Query<'_, '_>,
+    queries: &[Query<'_, '_>],
     targets: &[&Target],
     initial: &[Vec<Edge>],
     index: usize,
@@ -645,17 +650,17 @@ fn collect_side_effects(
         return;
     }
     visited[index] = true;
-    if has_custom_command_side_effect(query, targets[index]) {
+    if has_custom_command_side_effect(queries, targets[index]) {
         cc_side[index].insert(index);
     }
-    for language in compile_languages(query, targets[index]) {
+    for language in compile_languages(queries, targets[index]) {
         if !NO_SIDE_EFFECT.contains(&language.as_str()) && language != "HIP" {
             lang_side[index].entry(language).or_default().insert(index);
         }
     }
     for edge in &initial[index] {
         collect_side_effects(
-            query, targets, initial, edge.to, visited, cc_side, lang_side,
+            queries, targets, initial, edge.to, visited, cc_side, lang_side,
         );
         let transitive_cc: Vec<usize> = cc_side[edge.to].iter().copied().collect();
         cc_side[index].extend(transitive_cc);

@@ -318,11 +318,10 @@ pub struct Ext {
     /// (a directory snapshot has no call-stack parent).
     pub execution_file_bases: Vec<usize>,
     pub testing_enabled: BTreeSet<usize>,
-    /// `cmGeneratorTarget::InfoByConfig::SyntheticDeps`: imported target name
-    /// -> synthetic BMI-only C++ module targets created for it at generate
-    /// time. Synthetic link items are appended alongside the imported item
-    /// in the link implementation.
-    pub synthetic_deps: BTreeMap<String, Vec<String>>,
+    /// `cmGeneratorTarget::InfoByConfig::SyntheticDeps`: by target key and
+    /// configuration, the synthetic BMI-only C++ module targets of each
+    /// imported target in the link implementation.
+    pub synthetic_deps: BTreeMap<(String, String), BTreeMap<String, Vec<String>>>,
     pub sources: BTreeMap<usize, Vec<SourceFile>>,
     pub generated_sources: BTreeSet<String>,
     /// Where `target_order` continues with targets the generator created

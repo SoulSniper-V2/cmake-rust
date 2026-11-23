@@ -8,6 +8,7 @@ use sha3::Digest;
 use super::{FileApi, JsonExt, jarr, jobj, jstr, juint};
 use crate::commands::string::json::Json;
 use crate::generator::ctx::GenCtx;
+use crate::generator::install::{generates_for_config, genex_at};
 use crate::generator::{flags, link, pch, target as gt};
 use crate::install_model::{CopyKind, InstallAction};
 use crate::interp::Interp;
@@ -415,14 +416,12 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         installers: &mut Json,
         rule: &crate::install_model::InstallRule,
     ) {
-        // InstallsForConfig: single-config generates for the empty config.
         let opts = &rule.options;
-        if !opts.configurations.is_empty() && !opts.configurations.iter().any(|c| c == &self.config)
-        {
+        if !generates_for_config(&opts.configurations, &self.config) {
             return;
         }
         let mut installer = jobj();
-        let dest = || self.ctx.genex(&opts.destination, None, None);
+        let dest = || genex_at(self.ctx, mf, &opts.destination);
         match &rule.action {
             InstallAction::Target {
                 name,
@@ -530,11 +529,11 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     }),
                 );
                 installer.set("destination", jstr(dest()));
-                let rename = self.ctx.genex(&opts.rename, None, None);
+                let rename = genex_at(self.ctx, mf, &opts.rename);
                 let mut out_paths = jarr();
                 if matches!(kind, CopyKind::Directory) {
                     for dir in paths {
-                        let dir = self.ctx.genex(dir, None, None);
+                        let dir = genex_at(self.ctx, mf, dir);
                         if let Some(stripped) = dir.strip_suffix('/') {
                             out_paths.push(installer_path(
                                 &relative_if_under(&self.top_source, stripped),
@@ -550,7 +549,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 } else {
                     let mut evaluated = Vec::new();
                     for path in paths {
-                        evaluated.extend(expand_list(&self.ctx.genex(path, None, None), false));
+                        evaluated.extend(expand_list(&genex_at(self.ctx, mf, path), false));
                     }
                     if !rename.is_empty() && evaluated.len() == 1 {
                         out_paths.push(installer_path(
@@ -683,10 +682,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 if let Some(fw) = framework.as_deref().filter(|_| apple) {
                     let mut fw_installer = jobj();
                     fw_installer.set("type", jstr("runtimeDependencySet"));
-                    fw_installer.set(
-                        "destination",
-                        jstr(self.ctx.genex(&fw.destination, None, None)),
-                    );
+                    fw_installer.set("destination", jstr(genex_at(self.ctx, mf, &fw.destination)));
                     if !name.is_empty() {
                         fw_installer.set("runtimeDependencySetName", jstr(name));
                     }
@@ -1380,7 +1376,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     "path",
                     jstr(relative_if_under(
                         &self.top_build,
-                        &format!("{obj_dir}/{name}"),
+                        &format!("{obj_dir}{name}"),
                     )),
                 );
                 out.push(artifact);
@@ -1500,10 +1496,13 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         // dependency's backtrace injected, and add_dependencies utilities),
         // in the dependee's target order index.
         let mut out = jarr();
-        for (dependee, bt) in link::codemodel_target_dependencies(self.ctx, target, &self.config) {
+        for depend in link::target_depends(self.ctx, target).iter() {
             let mut dep = jobj();
-            dep.set("id", jstr(self.id_of(dependee)));
-            jbt(graph, &mut dep, &bt);
+            dep.set(
+                "id",
+                jstr(self.id_of(&self.ctx.interp.ext.targets[&depend.key])),
+            );
+            jbt(graph, &mut dep, &depend.backtrace);
             out.push(dep);
         }
         out
@@ -1570,7 +1569,11 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 let mut dest = jobj();
                 dest.set(
                     "path",
-                    jstr(self.ctx.genex(&rule.options.destination, None, None)),
+                    jstr(genex_at(
+                        self.ctx,
+                        target.makefile,
+                        &rule.options.destination,
+                    )),
                 );
                 jbt(graph, &mut dest, &rule.backtrace);
                 destinations.push(dest);

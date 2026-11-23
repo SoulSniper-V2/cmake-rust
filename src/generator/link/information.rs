@@ -156,13 +156,15 @@ pub(super) fn objects(query: &Query<'_, '_>, head: &Target) -> Vec<String> {
                 false,
             );
         }
+        // The objects' source locations are normalized.
         let dir = query.generator.object_dir(query.ctx, target, query.config);
+        let dir = collapse_full_path(&dir, "");
         query
             .generator
             .sources(query.ctx, target, query.config)
             .into_iter()
             .filter(|source| source.kind == target::SourceKind::ObjectSource)
-            .map(|source| format!("{}/{}", dir.trim_end_matches('/'), source.object_name))
+            .map(|source| format!("{dir}/{}", source.object_name))
             .collect()
     }))
 }

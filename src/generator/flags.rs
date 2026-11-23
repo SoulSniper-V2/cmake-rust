@@ -4,7 +4,7 @@
 mod compile;
 mod link;
 mod rule;
-mod standard;
+pub(in crate::generator) mod standard;
 
 pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]

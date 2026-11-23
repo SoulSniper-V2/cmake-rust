@@ -976,7 +976,7 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
                     kind,
                     TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
                 ) {
-                    dependencies.push(name.clone());
+                    dependencies.push((interp.mf_index(), name.clone()));
                 }
             }
             if !imported
@@ -1077,7 +1077,8 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
             .install
             .runtime_sets
             .insert(set.clone(), dependencies);
-        let opts = with_destination(interp, group("LIBRARY").clone(), "LIB");
+        let (key, standard) = runtime_dependency_group(interp);
+        let opts = with_destination(interp, group(key).clone(), standard);
         let framework = group("FRAMEWORK").clone();
         let framework = (!framework.destination.is_empty()).then(|| Box::new(framework));
         add(
@@ -1101,6 +1102,16 @@ fn targets(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
+/// The artifact group (and its default destination type) that runtime
+/// dependencies belong to: RUNTIME on DLL platforms.
+fn runtime_dependency_group(interp: &Interp) -> (&'static str, &'static str) {
+    if interp.get_safe("CMAKE_IMPORT_LIBRARY_SUFFIX").is_empty() {
+        ("LIBRARY", "LIB")
+    } else {
+        ("RUNTIME", "BIN")
+    }
+}
+
 fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     let system = interp.get_safe("CMAKE_HOST_SYSTEM_NAME");
     if !matches!(system.as_str(), "Linux" | "Darwin" | "Windows") {
@@ -1113,11 +1124,12 @@ fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     let filters = dependency_filters(&parsed.unknown, "RUNTIME_DEPENDENCY_SET")?;
     let generic = options(interp, &parsed, &defaults(interp));
     validate_permissions(&generic)?;
+    let (group_key, standard) = runtime_dependency_group(interp);
     let mut library = generic.clone();
     let mut framework_opts = None;
     for (key, group) in groups {
         let (opts, _) = artifact_options(interp, "RUNTIME_DEPENDENCY_SET", &group, &generic)?;
-        if key == "LIBRARY" {
+        if key == group_key {
             library = opts.clone();
         }
         if key == "FRAMEWORK" {
@@ -1128,7 +1140,7 @@ fn runtime_set(interp: &mut Interp, args: &[String]) -> CmdResult {
     if set.is_empty() {
         return err("RUNTIME_DEPENDENCY_SET not given a runtime dependency set.");
     }
-    let opts = with_destination(interp, library, "LIB");
+    let opts = with_destination(interp, library, standard);
     let framework = framework_opts.map(Box::new);
     add(
         interp,

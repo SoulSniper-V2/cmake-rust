@@ -5,6 +5,7 @@ mod directories;
 mod information;
 pub(crate) mod target_graph;
 
+pub use target_graph::TargetDepend;
 pub(crate) use target_graph::in_build_system;
 
 #[cfg(test)]
@@ -81,10 +82,8 @@ pub(super) fn module_link_targets<'i>(
             if let Some(dep) = entry.item.target {
                 Some((dep, false))
             } else {
-                let objects = ctx.target_objects.borrow();
-                objects
-                    .get(&(target.makefile, entry.item.text))
-                    .and_then(|name| ctx.target(name))
+                target::target_object_library(ctx, target.makefile, &entry.item.text)
+                    .and_then(|name| ctx.target(&name))
                     .map(|dep| (dep, true))
             }
         })
@@ -151,6 +150,20 @@ pub(super) fn implementation_library_targets<'i>(
         .collect()
 }
 
+/// The targets of `ComputeLinkImplementationLibraries(config, UseTo::Link)`,
+/// for any kind of head target.
+pub(super) fn implementation_targets<'i>(
+    ctx: &GenCtx<'i>,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> Vec<&'i Target> {
+    implementation(&Query::new(ctx, config, language), target)
+        .into_iter()
+        .filter_map(|item| item.target)
+        .collect()
+}
+
 /// Direct target-level dependencies after linearizing static-library cycles.
 /// `cmGeneratorTarget::GetLinkInterfaceLibraries(config, target,
 /// UseTo::Link)`: each item's string and resolved target. Upstream caches
@@ -171,14 +184,9 @@ pub(crate) fn interface_link_items<'i>(
     items
 }
 
-pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
-    target_graph::dependencies(ctx, target, config)
-}
-
-/// The dependees of `target_dependencies` whose `cmTargetDepend::IsCross`
-/// is set.
-pub fn target_cross_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
-    target_graph::cross_dependencies(ctx, target, config)
+/// `cmGlobalGenerator::GetTargetDirectDepends`.
+pub fn target_depends(ctx: &GenCtx, target: &Target) -> std::rc::Rc<Vec<TargetDepend>> {
+    target_graph::direct_depends(ctx, target)
 }
 
 /// `cmGlobalGenerator::CheckTargetLinkLibraries` +
@@ -200,16 +208,6 @@ pub(crate) fn check_link_libraries(ctx: &GenCtx<'_>) {
         let query = Query::new(ctx, &ctx.config, "");
         interface(&query, target, target);
     }
-}
-
-/// `cmGlobalGenerator::GetTargetDirectDepends`: final dependency edges with
-/// their edge backtraces, in target creation order (File API codemodel).
-pub fn codemodel_target_dependencies<'i>(
-    ctx: &GenCtx<'i>,
-    target: &'i Target,
-    config: &str,
-) -> Vec<(&'i Target, std::rc::Rc<Vec<crate::messages::Frame>>)> {
-    target_graph::dep_edges(ctx, target, config)
 }
 
 /// A `cmLinkItem` for dependency-graph consumers: a target or a string.
@@ -753,17 +751,19 @@ fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
         excluded: HashSet::new(),
         items: Vec::new(),
     };
+    let synthetic = &query.ctx.interp.ext.synthetic_deps;
+    let synthetic = if synthetic.is_empty() {
+        None
+    } else {
+        synthetic.get(&(query.ctx.target_key(head), query.config.to_owned()))
+    };
     for item in original {
         // cmGeneratorTarget::ComputeLinkImplementationLibraries: each
         // imported target with discovered synthetic C++ module targets
         // contributes them as direct link items (before the item itself).
         if let Some(target) = item.target
-            && let Some(deps) = query
-                .ctx
-                .interp
-                .ext
-                .synthetic_deps
-                .get(&query.ctx.target_key(target))
+            && let Some(deps) =
+                synthetic.and_then(|synthetic| synthetic.get(&query.ctx.target_key(target)))
         {
             for dep_key in deps {
                 if let Some(dep) = query.ctx.interp.ext.targets.get(dep_key) {

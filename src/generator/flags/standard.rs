@@ -1,6 +1,8 @@
 use super::{Flags, append_options};
+use crate::generator::ctx::GenCtx;
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
+use crate::state::Target;
 use crate::util::{expand_list, is_on_opt, strtol};
 
 pub(crate) fn levels(language: &str) -> &'static [&'static str] {
@@ -27,6 +29,102 @@ pub(crate) fn level(standards: &[&str], value: &str) -> Option<usize> {
         .position(|standard| strtol(standard, 10).0 == number)
 }
 
+/// `cmGeneratorTarget::GetExplicitStandardLevel`: the highest level among the
+/// `<LANG>_STANDARD` property and the compile features.
+pub(in crate::generator) fn explicit_level(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Option<usize> {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    let standards = levels(lang);
+    let property = inputs
+        .prop(&format!("{lang}_STANDARD"))
+        .and_then(|value| level(standards, value));
+    property.max(feature_level(&inputs, lang))
+}
+
+/// The highest level of `language` that the compile features require.
+fn feature_level(inputs: &Flags<'_, '_>, language: &str) -> Option<usize> {
+    let features = inputs.usage("COMPILE_FEATURES");
+    if features.is_empty() {
+        return None;
+    }
+    levels(language).iter().rposition(|standard| {
+        let items = inputs
+            .var(&format!("CMAKE_{language}{standard}_COMPILE_FEATURES"))
+            .unwrap_or_default();
+        expand_list(&items, false)
+            .iter()
+            .any(|item| features.contains(item))
+    })
+}
+
+/// `cmStandardLevelResolver::GetEffectiveStandard`.
+pub(in crate::generator) fn effective_standard(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Option<String> {
+    let inputs = &Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    let standards = levels(lang);
+    let default = inputs
+        .lang_var("STANDARD_DEFAULT")
+        .filter(|value| !value.is_empty())?;
+    let new = ctx.interp.policy_status_at(target.makefile, "CMP0128") == PolicyStatus::New;
+    let default_ext = is_on_opt(inputs.lang_var("EXTENSIONS_DEFAULT").as_deref());
+    let extensions =
+        paired_prop(inputs, "EXTENSIONS").map_or(!new || default_ext, crate::util::is_on);
+    let Some(standard) = requested_standard(inputs, &default) else {
+        let reported = if new {
+            extensions != default_ext
+        } else {
+            extensions
+        };
+        return reported.then_some(default);
+    };
+    if is_on_opt(paired_prop(inputs, "STANDARD_REQUIRED")) {
+        return Some(standard);
+    }
+    if new && standard == default && extensions == default_ext {
+        return None;
+    }
+    let standard = if lang == "CUDA" && standard == "98" {
+        "03"
+    } else {
+        &standard
+    };
+    let requested = level(standards, standard)?;
+    let default_level = level(standards, &default)?;
+    if (new && (requested < default_level || extensions != default_ext))
+        || (!new && requested <= default_level)
+    {
+        return Some(standards[requested].to_owned());
+    }
+    let kind = if extensions { "EXTENSION" } else { "STANDARD" };
+    (default_level + 1..=requested)
+        .rev()
+        .map(|index| standards[index])
+        .find(|standard| {
+            inputs
+                .var(&format!("CMAKE_{lang}{standard}_{kind}_COMPILE_OPTION"))
+                .is_some()
+        })
+        .map(str::to_owned)
+}
+
 fn paired_language(lang: &str) -> Option<&str> {
     match lang {
         "OBJC" => Some("C"),
@@ -42,18 +140,10 @@ fn paired_prop<'a>(inputs: &'a Flags<'_, '_>, suffix: &str) -> Option<&'a str> {
 }
 
 fn requested_standard(inputs: &Flags<'_, '_>, default: &str) -> Option<String> {
-    let features = inputs.usage("COMPILE_FEATURES");
     let raise = |language: &str, default: &str| {
         let current = inputs.prop(&format!("{language}_STANDARD"));
         let standards = levels(language);
-        let highest = standards.iter().rposition(|standard| {
-            let items = inputs
-                .var(&format!("CMAKE_{language}{standard}_COMPILE_FEATURES"))
-                .unwrap_or_default();
-            expand_list(&items, false)
-                .iter()
-                .any(|item| features.contains(item))
-        });
+        let highest = feature_level(inputs, language);
         if let Some(highest) = highest
             && level(standards, current.unwrap_or(default)).is_none_or(|idx| idx < highest)
         {

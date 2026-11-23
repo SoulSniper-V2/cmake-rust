@@ -80,15 +80,14 @@ pub struct GenCtx<'a> {
     /// Usage requirements per (target, property, config, language), as
     /// cmGeneratorTarget caches its evaluated property entries.
     pub usage: Rc<RefCell<HashMap<String, Rc<Vec<crate::genex::UsageItem>>>>>,
-    /// `cmComputeTargetDepends` final edges with backtraces (File API
-    /// codemodel target dependencies), computed once per configuration.
-    /// Keyed by depender target pointer; dependees are stored by name.
+    /// `cmGlobalGenerator::TargetDependencies`, computed on first use.
+    /// Keyed by depender target pointer; dependees are stored by key.
     /// Pointer-free so `GenCtx` stays covariant over `'a`.
-    pub dep_graph: Rc<RefCell<HashMap<String, Rc<DepGraphEdges>>>>,
+    pub dep_graph: Rc<RefCell<Option<Rc<DepGraph>>>>,
 }
 
-/// Depender target pointer -> (dependee name, edge backtrace).
-pub type DepGraphEdges = HashMap<usize, Vec<(String, Rc<Vec<Frame>>)>>;
+/// Depender target pointer -> its direct dependees.
+pub type DepGraph = HashMap<usize, Rc<Vec<super::link::TargetDepend>>>;
 
 impl<'a> GenCtx<'a> {
     pub fn new(interp: &'a Interp) -> GenCtx<'a> {
@@ -120,7 +119,7 @@ impl<'a> GenCtx<'a> {
             target_objects: Rc::new(RefCell::new(HashMap::new())),
             sources: Rc::new(RefCell::new(HashMap::new())),
             usage: Rc::new(RefCell::new(HashMap::new())),
-            dep_graph: Rc::new(RefCell::new(HashMap::new())),
+            dep_graph: Rc::default(),
         }
     }
 

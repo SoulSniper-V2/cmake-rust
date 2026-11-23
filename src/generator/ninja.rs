@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use super::ctx::GenCtx;
+use super::module_support::{self, CxxSupportLevel, ModuleSupport};
 use super::target::{self as gt, ArtifactType, SourceKind};
 use super::{custom, flags, link};
 use crate::outconv;
@@ -40,15 +41,6 @@ fn remove_unknown_tidy_fixes(dir: &std::path::Path, known: &BTreeSet<String>) {
 pub type CcRef = (usize, usize);
 const REQUIRED_NINJA_VERSION_CONSOLE_POOL: &str = "1.5";
 const REQUIRED_NINJA_VERSION_MANIFEST_RESTAT: &str = "1.8";
-
-/// `cmGeneratorTarget::Cxx20SupportLevel`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CxxSupportLevel {
-    MissingCxx,
-    NoCxx20,
-    MissingRule,
-    Supported,
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct Rule {
@@ -304,7 +296,8 @@ pub struct NinjaGenerator<'a> {
     streams: std::collections::BTreeMap<Stream, String>,
     /// The stream `self.out()` currently routes to.
     stream: Stream,
-    rule_names: HashSet<String>,
+    /// `cmGlobalNinjaGenerator::RuleCmdLength` of every written rule.
+    rule_lengths: HashMap<String, i64>,
     pub custom_command_outputs: BTreeSet<String>,
     /// `TargetAliases`: alias -> (target name, config), None when ambiguous.
     target_aliases: BTreeMap<String, AliasEntry>,
@@ -374,7 +367,7 @@ impl<'a> NinjaGenerator<'a> {
             rules: String::new(),
             streams: std::collections::BTreeMap::new(),
             stream: Stream::Common,
-            rule_names: HashSet::new(),
+            rule_lengths: HashMap::new(),
             custom_command_outputs: BTreeSet::new(),
             target_aliases: BTreeMap::new(),
             config_target_aliases: BTreeMap::new(),
@@ -450,13 +443,57 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     pub fn add_rule(&mut self, rule: &Rule) {
-        if self.rule_names.insert(rule.name.clone()) {
+        if !self.has_rule(&rule.name) {
+            self.rule_lengths
+                .insert(rule.name.clone(), rule.command.len() as i64);
             write_rule(&mut self.rules, rule);
         }
     }
 
     pub fn has_rule(&self, name: &str) -> bool {
-        self.rule_names.contains(name)
+        self.rule_lengths.contains_key(name)
+    }
+
+    /// `cmGlobalNinjaGenerator::GetRuleCmdLength`: 0 for an unwritten rule.
+    fn rule_command_length(&self, name: &str) -> i64 {
+        self.rule_lengths.get(name).copied().unwrap_or_default()
+    }
+
+    /// `cmNinjaTargetGenerator::ForceResponseFile`.
+    fn force_response_file(&self, target: &Target) -> bool {
+        let name = "CMAKE_NINJA_FORCE_RESPONSE_FILE";
+        self.ctx.var(target.makefile, name).is_some() || std::env::var_os(name).is_some()
+    }
+
+    /// The flag introducing a compile rule's response file, or empty.
+    fn response_file_flag(&self, target: &Target, language: &str) -> String {
+        if language == "RC" || !self.force_response_file(target) {
+            return String::new();
+        }
+        let flag = self.ctx.var_safe(
+            target.makefile,
+            &format!("CMAKE_{language}_RESPONSE_FILE_FLAG"),
+        );
+        if flag.is_empty() && language != "CUDA" {
+            "@".to_owned()
+        } else {
+            flag
+        }
+    }
+
+    /// `WriteBuild`'s command line limit for an object's compilation.
+    fn compile_command_limit(&self, target: &Target, language: &str) -> i64 {
+        let supports_response = language != "RC"
+            && (language != "CUDA"
+                || self
+                    .ctx
+                    .var(target.makefile, "CMAKE_CUDA_RESPONSE_FILE_FLAG")
+                    .is_some());
+        if supports_response && self.force_response_file(target) {
+            -1
+        } else {
+            0
+        }
     }
 
     /// The buffer `self.stream` routes to (`build.ninja` when not
@@ -591,16 +628,10 @@ impl<'a> NinjaGenerator<'a> {
             return;
         }
         let mut outs = Vec::new();
-        let cross = link::target_cross_dependencies(&self.ctx, target, &self.config);
-        for dependency in link::target_dependencies(&self.ctx, target, &self.config) {
-            let Some(dep) = self.ctx.target(&dependency) else {
-                continue;
-            };
-            if !is_in_build_system(dep) {
-                continue;
-            }
+        for dependency in link::target_depends(&self.ctx, target).iter() {
+            let dep = &self.ctx.interp.ext.targets[&dependency.key];
             // A cross dependency is built in the file config.
-            let config = if cross.contains(&dependency) {
+            let config = if dependency.cross {
                 self.file_config.clone()
             } else {
                 self.config.clone()
@@ -2021,8 +2052,7 @@ impl<'a> NinjaGenerator<'a> {
             generator: true,
             ..Rule::default()
         };
-        write_rule(&mut self.rules, &rule);
-        self.rule_names.insert(rule.name.clone());
+        self.add_rule(&rule);
         let mut rebuild = Build::new("RERUN_CMAKE");
         rebuild.comment = "Re-run CMake if any of its inputs changed.".into();
         rebuild.outputs.push(self.output_path("build.ninja"));
@@ -2140,8 +2170,7 @@ impl<'a> NinjaGenerator<'a> {
             generator: true,
             ..Rule::default()
         };
-        write_rule(&mut self.rules, &rule);
-        self.rule_names.insert(rule.name.clone());
+        self.add_rule(&rule);
         let mut phony = Build::new("phony");
         phony.comment = "Phony target to force glob verification run.".into();
         phony.outputs.push(format!("{script}_force"));
@@ -2424,9 +2453,8 @@ pub fn is_in_build_system(target: &Target) -> bool {
 
 impl<'a> NinjaGenerator<'a> {
     fn object_dir(&self, target: &Target) -> String {
-        gt::object_directory(&self.ctx, target, &self.config)
-            .trim_end_matches('/')
-            .to_owned()
+        // cmNinjaTargetGenerator names objects by their normalized directory.
+        gt::support_directory(&self.ctx, target) + &self.ctx.config_directory(&self.config)
     }
 
     /// `cmNinjaTargetGenerator::LanguageCompilerRule`.
@@ -2473,6 +2501,34 @@ impl<'a> NinjaGenerator<'a> {
             rule.deptype = "gcc".into();
             rule.depfile = "$DEP_FILE".into();
         }
+        // Explicitly preprocessed sources do not need the defines, unless
+        // the compiler wants them for some other purpose.
+        let mut defines = if scanned
+            && matches!(language, "Fortran" | "Swift")
+            && !util::is_on_opt(
+                self.ctx
+                    .var(makefile, &format!("CMAKE_{language}_COMPILE_WITH_DEFINES"))
+                    .as_deref(),
+            ) {
+            ""
+        } else {
+            "$DEFINES"
+        };
+        let mut includes = "$INCLUDES";
+        let mut source = "$in";
+        // If using a response file, move defines, includes, and flags into it.
+        let response_flag = self.response_file_flag(target, language);
+        if !response_flag.is_empty() {
+            rule.rspfile = "$RSP_FILE".into();
+            rule.rspcontent = format!(" {defines} {includes} {flags_text}");
+            flags_text = format!("{response_flag}$RSP_FILE");
+            defines = "";
+            includes = "";
+            if language == "Swift" {
+                rule.rspcontent.push_str(" $in");
+                source = "";
+            }
+        }
         let depfile_flags = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_DEPFILE_FLAGS_{language}"));
@@ -2489,6 +2545,18 @@ impl<'a> NinjaGenerator<'a> {
             flags_text.push(' ');
             flags_text.push_str(&expanded);
         }
+        if scanned
+            && !self
+                .ctx
+                .var_safe(makefile, &format!("CMAKE_{language}_MODULE_MAP_FORMAT"))
+                .is_empty()
+        {
+            let flag = self
+                .ctx
+                .var_safe(makefile, &format!("CMAKE_{language}_MODULE_MAP_FLAG"));
+            flags_text.push(' ');
+            flags_text.push_str(&flag.replace("<MODULE_MAP_FILE>", "$DYNDEP_MODULE_MAP_FILE"));
+        }
         let compile = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_{language}_COMPILE_OBJECT"));
@@ -2502,26 +2570,11 @@ impl<'a> NinjaGenerator<'a> {
         );
         commands.extend(util::expand_list(&extra, false));
         let launcher = rule_launcher(&self.ctx, target, "RULE_LAUNCH_COMPILE");
-        let mut defines = if scanned && !self.fortran_compile_with_defines(target) {
-            ""
-        } else {
-            "$DEFINES"
-        };
-        let mut includes = "$INCLUDES";
-        if language == "Fortran"
-            && let Some(flag) = self.fortran_rsp_flag(target)
-        {
-            rule.rspfile = "$RSP_FILE".into();
-            rule.rspcontent = format!(" {defines} {includes} {flags_text}");
-            flags_text = format!("{flag}$RSP_FILE");
-            defines = "";
-            includes = "";
-        }
         let vars: Vec<(&str, String)> = vec![
             ("TARGET_NAME", target.name.clone()),
             ("TARGET_TYPE", target.kind.type_name().to_owned()),
             ("LANGUAGE", language.to_owned()),
-            ("SOURCE", "$in".into()),
+            ("SOURCE", source.into()),
             ("OBJECT", "$out".into()),
             ("DEFINES", defines.into()),
             ("INCLUDES", includes.into()),
@@ -2588,143 +2641,23 @@ impl<'a> NinjaGenerator<'a> {
         (public, private)
     }
 
-    /// `cmGeneratorTarget::HaveCxx20ModuleSources`: files of the target's
-    /// `CXX_MODULES` file sets, expanded and collapsed to full paths.
-    fn cxx_module_file_set_files(&self, target: &Target) -> Vec<String> {
-        let source_dir = &self.ctx.interp.makefiles[target.makefile].source_dir;
-        let mut files = Vec::new();
-        for set in target.file_sets.values() {
-            if set.kind != "CXX_MODULES" {
-                continue;
-            }
-            for (entry, _backtrace) in &set.files {
-                for file in util::expand_list(&self.ctx.genex(entry, Some(target), None), false) {
-                    files.push(util::collapse_full_path(&file, source_dir));
-                }
-            }
-        }
-        files
-    }
-
-    /// `cmStandardLevelResolver::GetExplicitStandardLevel`: the highest
-    /// C++ standard level requested by the target's `CXX_STANDARD`
-    /// property or `cxx_std_*` compile features.
-    fn explicit_cxx_standard(&self, target: &Target) -> Option<u32> {
-        let mut level: Option<u32> = None;
-        if let Some(standard) = target.props.get("CXX_STANDARD") {
-            let standard = self.ctx.genex(standard, Some(target), None);
-            let standard = standard
-                .trim()
-                .strip_suffix("-FORCED")
-                .unwrap_or(standard.trim());
-            if let Ok(requested) = standard.parse::<u32>() {
-                level = Some(level.unwrap_or(0).max(requested));
-            }
-        }
-        let features = target
-            .props
-            .get("COMPILE_FEATURES")
-            .map(|features| self.ctx.genex(features, Some(target), None))
-            .unwrap_or_default();
-        for feature in util::expand_list(&features, false) {
-            if let Some(requested) = feature
-                .strip_prefix("cxx_std_")
-                .and_then(|requested| requested.parse::<u32>().ok())
-            {
-                level = Some(level.unwrap_or(0).max(requested));
-            }
-        }
-        level
-    }
-
-    /// `cmGeneratorTarget::HaveCxxModuleSupport`.
-    fn cxx_module_support_level(&self, target: &Target) -> CxxSupportLevel {
-        if !self.ctx.interp.langs.enabled.iter().any(|l| l == "CXX") {
-            return CxxSupportLevel::MissingCxx;
-        }
-        if self
-            .ctx
-            .var(target.makefile, "CMAKE_CXX_STANDARD_DEFAULT")
-            .is_none_or(|default| default.is_empty())
-        {
-            // We do not know any meaningful C++ standard levels.
-            return CxxSupportLevel::NoCxx20;
-        }
-        if self
-            .explicit_cxx_standard(target)
-            .is_none_or(|level| level < 20)
-        {
-            return CxxSupportLevel::NoCxx20;
-        }
-        if self
-            .ctx
-            .var(target.makefile, "CMAKE_CXX_SCANDEP_SOURCE")
-            .is_none()
-        {
-            return CxxSupportLevel::MissingRule;
-        }
-        CxxSupportLevel::Supported
-    }
-
-    /// `cmGeneratorTarget::NeedCxxDyndep` == Enabled.
-    fn need_cxx_dyndep(&self, target: &Target) -> bool {
-        if let Some(prop) = target.props.get("CXX_SCAN_FOR_MODULES") {
-            return util::is_on(&self.ctx.genex(prop, Some(target), None));
-        }
-        matches!(
-            self.ctx.interp.policy_status_at(target.makefile, "CMP0155"),
-            crate::policy::PolicyStatus::New
-        ) && self.cxx_module_support_level(target) == CxxSupportLevel::Supported
-    }
-
-    /// `cmGeneratorTarget::NeedDyndepForSource`.
-    fn need_dyndep_for_source(
-        &self,
-        target: &Target,
-        module_files: &[String],
-        source: &gt::SourceInfo,
-    ) -> bool {
-        if source.language == "Fortran" {
-            return true;
-        }
-        if source.language != "CXX" {
-            return false;
-        }
-        if module_files.iter().any(|file| file == &source.path) {
-            return true;
-        }
-        if let Some(index) = crate::commands::target::find_known_source(
-            self.ctx.interp,
-            target.makefile,
-            &source.path,
-        ) && let Some(prop) = self.ctx.interp.ext.sources[&target.makefile][index]
-            .props
-            .get("CXX_SCAN_FOR_MODULES")
-        {
-            return util::is_on(prop);
-        }
-        self.need_cxx_dyndep(target)
-    }
-
     /// `cmGeneratorTarget::CheckCxxModuleStatus`, plus the per-source
     /// diagnostics from cmNinjaTargetGenerator::WriteObjectBuildStatement
     /// (a `CXX_MODULES` file-set member not classified as CXX) and
     /// cmDyndepCollation (a `CXX_MODULES` file-set member not scheduled
     /// for compilation).
     fn check_cxx_module_status(&mut self, target: &Target, sources: &[gt::SourceInfo]) {
-        let module_files = self.cxx_module_file_set_files(target);
-        let mut scannable = !module_files.is_empty();
-        if !scannable {
-            scannable = sources.iter().any(|source| {
-                source.language == "CXX"
-                    && self.need_dyndep_for_source(target, &module_files, source)
-            });
-        }
+        let modules = ModuleSupport::new(&self.ctx, target, &self.config);
+        let scannable = gt::have_cxx20_module_sources(target)
+            || sources
+                .iter()
+                .any(|source| source.language == "CXX" && modules.need_dyndep_for_source(source));
         if !scannable {
             return;
         }
         // Ninja has module support; only the toolchain level can fail.
-        let level = self.cxx_module_support_level(target);
+        let module_files = modules.files();
+        let level = modules.level();
         match level {
             CxxSupportLevel::MissingCxx => self.ctx.error(
                 self.ctx.dir_backtrace(target.makefile),
@@ -2734,8 +2667,13 @@ impl<'a> NinjaGenerator<'a> {
                 ),
             ),
             CxxSupportLevel::NoCxx20 => {
-                let effective = match self.explicit_cxx_standard(target) {
-                    Some(level) => format!("; found \"cxx_std_{level}\""),
+                let effective = match flags::standard::effective_standard(
+                    &self.ctx,
+                    target,
+                    &self.config,
+                    "CXX",
+                ) {
+                    Some(standard) => format!("; found \"cxx_std_{standard}\""),
                     None => "; no C++ standard found".to_owned(),
                 };
                 self.ctx.error(
@@ -2755,7 +2693,7 @@ impl<'a> NinjaGenerator<'a> {
             ),
             CxxSupportLevel::Supported => {}
         }
-        for file in &module_files {
+        for file in module_files {
             match sources
                 .iter()
                 .find(|source| &source.path == file && source.kind == SourceKind::ObjectSource)
@@ -2859,7 +2797,8 @@ impl<'a> NinjaGenerator<'a> {
             // toolchain supports module scanning (`NeedDyndep("CXX")`), even
             // when no source of this target is scanned.
             if language == "CXX"
-                && self.cxx_module_support_level(target) == CxxSupportLevel::Supported
+                && module_support::support_level(&self.ctx, target, &config)
+                    == CxxSupportLevel::Supported
             {
                 self.write_cxx_scan_rules(target);
                 self.write_compile_rule(language, target, true);
@@ -2946,7 +2885,8 @@ impl<'a> NinjaGenerator<'a> {
         // scanned C++ object builds, collated into the `CXX.dd` statement.
         let mut cxx_ddis = Vec::new();
         let mut cxx_modmaps = Vec::new();
-        let cxx_module_files = self.cxx_module_file_set_files(target);
+        let module_ctx = self.ctx.clone();
+        let modules = ModuleSupport::new(&module_ctx, target, &config);
         for source in sources.iter() {
             if source.kind != SourceKind::CustomCommandOutput {
                 continue;
@@ -3035,8 +2975,7 @@ impl<'a> NinjaGenerator<'a> {
                 .is_some_and(|ext| object.ends_with(ext));
             let scanned = !is_pch_obj
                 && (source.language == "Fortran"
-                    || (source.language == "CXX"
-                        && self.need_dyndep_for_source(target, &cxx_module_files, source)));
+                    || (source.language == "CXX" && modules.need_dyndep_for_source(source)));
             let mut build = Build::new(&self.compiler_rule_name(&source.language, target, scanned));
             build.outputs.push(object.clone());
             // cmNinjaTargetGenerator::GetCompiledSourceNinjaPath: sources are
@@ -3159,9 +3098,9 @@ impl<'a> NinjaGenerator<'a> {
                     cxx_modmaps.push(mm);
                 }
             }
-            let force_rsp = source.language == "Fortran" && self.fortran_rsp_flag(target).is_some();
             build.rsp_file = format!("{object}.rsp");
-            write_build(&mut out, &build, if force_rsp { -1 } else { 0 });
+            let limit = self.compile_command_limit(target, &source.language);
+            write_build(&mut out, &build, limit);
             // PCH objects are not linked.
             let is_pch = self
                 .ctx
@@ -3715,18 +3654,22 @@ impl<'a> NinjaGenerator<'a> {
         }
         build.outputs.extend(byproducts.explicit);
         build.workdir_outs = byproducts.workdir;
-        if language == "Fortran" {
-            let suffix = if self.ctx.multi_config {
-                format!(".{config}")
-            } else {
-                String::new()
-            };
-            build.rsp_file = self.ninja_path(&format!("CMakeFiles/{}{suffix}.rsp", target.name));
-        }
-        let limit = if language == "Fortran" && self.fortran_rsp_flag(target).is_some() {
+        let suffix = if self.ctx.multi_config {
+            format!(".{config}")
+        } else {
+            String::new()
+        };
+        build.rsp_file = self.ninja_path(&format!("CMakeFiles/{}{suffix}.rsp", target.name));
+        let supports_response = language != "RC"
+            && (language != "CUDA"
+                || self
+                    .ctx
+                    .var(target.makefile, "CMAKE_CUDA_RESPONSE_FILE_LINK_FLAG")
+                    .is_some());
+        let limit = if supports_response && self.force_response_file(target) {
             -1
         } else {
-            command_line_length_limit()
+            command_line_length_limit() - self.rule_command_length(&build.rule)
         };
         let use_rsp = write_build(&mut out, &build, limit);
         self.write_link_rules(
@@ -3734,7 +3677,7 @@ impl<'a> NinjaGenerator<'a> {
             language,
             has_depfile,
             names.output != names.real,
-            language == "Fortran" && use_rsp,
+            use_rsp,
         );
         // Symlinks.
         if names.output != names.real {
@@ -4400,15 +4343,9 @@ impl<'a> NinjaGenerator<'a> {
             Some(cached) => cached.clone(),
             None => {
                 let mut outs = BTreeSet::new();
-                let cross = link::target_cross_dependencies(&self.ctx, target, &self.config);
-                for dependency in link::target_dependencies(&self.ctx, target, &self.config) {
-                    let Some(dep) = self.ctx.target(&dependency) else {
-                        continue;
-                    };
-                    if !is_in_build_system(dep) {
-                        continue;
-                    }
-                    let is_cross = cross.contains(&dependency);
+                for depend in link::target_depends(&self.ctx, target).iter() {
+                    let dep = &self.ctx.interp.ext.targets[&depend.key];
+                    let is_cross = depend.cross;
                     if !self.is_single_config_utility(target)
                         && !self.is_single_config_utility(dep)
                         && self.cross_enabled()

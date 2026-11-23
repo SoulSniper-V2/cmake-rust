@@ -125,6 +125,16 @@ pub(super) fn config_suffix(config: &str) -> String {
     }
 }
 
+/// The configuration as C++ module property files name it: unlike
+/// `config_suffix` it keeps the case.
+fn module_config_suffix(config: &str) -> &str {
+    if config.is_empty() {
+        "noconfig"
+    } else {
+        config
+    }
+}
+
 /// `cmExportFileGeneratorEscape` (cmExportCMakeConfigGenerator.cxx).
 fn export_escape(value: &str) -> String {
     escape_for_cmake(value)
@@ -2034,7 +2044,7 @@ fn build_module_files(
     let optional = if configs.len() > 1 { " OPTIONAL" } else { "" };
     let mut main_content = String::new();
     for config in &configs {
-        let config = config_suffix(config);
+        let config = module_config_suffix(config);
         writeln!(
             main_content,
             "include(\"${{CMAKE_CURRENT_LIST_DIR}}/cxx-modules-{name}-{config}.cmake\"{optional})"
@@ -2047,7 +2057,7 @@ fn build_module_files(
     )?;
     // GenerateImportCxxModuleConfigTargetInclusion.
     for config in &configs {
-        let config = config_suffix(config);
+        let config = module_config_suffix(config);
         let mut content = String::new();
         for record in records {
             if ex.have_cxx20_module_sources(record.target) {
@@ -2075,6 +2085,16 @@ pub(super) fn export_configs(ctx: &GenCtx) -> Vec<String> {
     } else {
         vec![ctx.config.clone()]
     }
+}
+
+/// The export's configurations that `InstallsForConfig` accepts.
+pub(super) fn install_configs(
+    ctx: &GenCtx,
+    opts: &crate::install_model::InstallOptions,
+) -> Vec<String> {
+    let mut configs = export_configs(ctx);
+    configs.retain(|config| generates_for_config(&opts.configurations, config));
+    configs
 }
 
 /// `cmGeneratorTarget::GetFilesystemExportName`.
@@ -2402,13 +2422,16 @@ fn write_install_android_mk<'a>(
     Ok(())
 }
 
+/// `cmInstallExportGenerator::GenerateScript`: `out` receives the main
+/// file's install rule at `indent`, and `config_rules` the rules that follow
+/// it outside of any CONFIGURATIONS test, at `config_indent`.
 pub(super) fn write_install_export(
     ctx: &GenCtx,
-    out: &mut String,
+    (out, indent): (&mut String, &str),
+    (config_rules, config_indent): (&mut String, &str),
     index: usize,
     rule: &InstallRule,
     export: &InstallExport,
-    indent: &str,
 ) -> std::io::Result<()> {
     let set = ctx.interp.ext.install.export_sets.get(&export.set);
     if set.is_none_or(|set| set.targets.is_empty()) {
@@ -2536,7 +2559,7 @@ pub(super) fn write_install_export(
                 })
             })
             .collect();
-        for config in export_configs(ctx) {
+        for config in install_configs(ctx, &opts) {
             let suffix = config_suffix(&config);
             let config_file = format!("{temp}/{stem}-{suffix}.cmake");
             let mut config_out = String::new();
@@ -2547,14 +2570,14 @@ pub(super) fn write_install_export(
             config_files.insert(config, config_file);
         }
         for (config, config_file) in &config_files {
-            if opts.configurations.is_empty()
-                || opts
-                    .configurations
-                    .iter()
-                    .any(|c| c.eq_ignore_ascii_case(config))
-            {
-                write_config_copy(config, out, indent, &opts, dest, config_file.clone());
-            }
+            write_config_copy(
+                config,
+                config_rules,
+                config_indent,
+                &opts,
+                dest,
+                std::slice::from_ref(config_file),
+            );
         }
     }
     // C++ module include files.
@@ -2562,7 +2585,6 @@ pub(super) fn write_install_export(
         let modules = Path::new(&temp).join(module_dir);
         let set_name = &export.set;
         let main = modules.join(format!("cxx-modules-{set_name}.cmake"));
-        let glob = format!("cxx-modules-{set_name}-*.cmake");
         let module_destination = format!("{dest}/{module_dir}");
         let installed_dir = format!("$ENV{{DESTDIR}}{}/", absolute_dest(&module_destination));
         let content = "# Load information for each installed configuration.\nfile(GLOB _cmake_cxx_module_includes \"${CMAKE_CURRENT_LIST_DIR}/cxx-modules-".to_owned()
@@ -2571,40 +2593,61 @@ pub(super) fn write_install_export(
         write_if_different(&main, content.as_bytes())?;
         let main = main.to_string_lossy().into_owned();
         replacement_check(
-            out,
-            indent,
+            config_rules,
+            config_indent,
             &format!("{installed_dir}cxx-modules-{set_name}.cmake"),
             &main,
             &format!("{installed_dir}{glob}"),
             "C++ module export",
         );
         write_copy(
-            out,
-            indent,
+            config_rules,
+            config_indent,
             &opts,
             CopyRule::new(&module_destination, CopyKind::File, &[main]),
         );
         if has_config {
-            let mut module_files: BTreeMap<String, String> = BTreeMap::new();
+            // ConfigCxxModuleFiles and ConfigCxxModuleTargetFiles.
+            let mut module_files: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
             for config in export_configs(ctx) {
-                let suffix = config_suffix(&config);
+                let suffix = module_config_suffix(&config);
                 let mut content = String::new();
+                let mut target_files = Vec::new();
                 for record in &records {
                     if ex.have_cxx20_module_sources(record.target) {
-                        let fs = filesystem_export_name(record.target);
-                        writeln!(
-                            content,
-                            "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs}-{suffix}.cmake\")"
-                        )
-                        .unwrap();
+                        let name = format!(
+                            "target-{}-{suffix}.cmake",
+                            filesystem_export_name(record.target)
+                        );
+                        writeln!(content, "include(\"${{CMAKE_CURRENT_LIST_DIR}}/{name}\")")
+                            .unwrap();
+                        target_files.push(modules.join(name).to_string_lossy().into_owned());
                     }
                 }
                 let per_config = modules.join(format!("cxx-modules-{set_name}-{suffix}.cmake"));
                 write_if_different(&per_config, content.as_bytes())?;
-                module_files.insert(config, per_config.to_string_lossy().into_owned());
+                let per_config = per_config.to_string_lossy().into_owned();
+                module_files.insert(config, (per_config, target_files));
             }
-            for (config, per_config) in module_files {
-                write_config_copy(&config, out, indent, &opts, &module_destination, per_config);
+            for (config, (per_config, _)) in &module_files {
+                write_config_copy(
+                    config,
+                    config_rules,
+                    config_indent,
+                    &opts,
+                    &module_destination,
+                    std::slice::from_ref(per_config),
+                );
+            }
+            for (config, (_, target_files)) in &module_files {
+                write_config_copy(
+                    config,
+                    config_rules,
+                    config_indent,
+                    &opts,
+                    &module_destination,
+                    target_files,
+                );
             }
         }
     }
@@ -2617,7 +2660,7 @@ pub(super) fn write_config_copy(
     indent: &str,
     opts: &crate::install_model::InstallOptions,
     dest: &str,
-    config_file: String,
+    files: &[String],
 ) {
     writeln!(
         out,
@@ -2629,7 +2672,7 @@ pub(super) fn write_config_copy(
         out,
         &format!("{indent}  "),
         opts,
-        CopyRule::new(dest, CopyKind::File, &[config_file]),
+        CopyRule::new(dest, CopyKind::File, files),
     );
     writeln!(out, "{indent}endif()").unwrap();
 }

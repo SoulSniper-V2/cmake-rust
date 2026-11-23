@@ -133,7 +133,7 @@ fn default_install_config(ctx: &GenCtx) -> String {
 }
 
 /// `cmScriptGenerator::GeneratesForConfig`.
-pub(super) fn generates_for_config(configurations: &[String], config: &str) -> bool {
+pub(crate) fn generates_for_config(configurations: &[String], config: &str) -> bool {
     configurations.is_empty()
         || configurations
             .iter()
@@ -422,14 +422,7 @@ fn render_rule(
     rule: &InstallRule,
 ) -> std::io::Result<()> {
     let opts = &rule.options;
-    if let InstallAction::RuntimeDependencies {
-        set,
-        filters,
-        framework,
-    } = &rule.action
-    {
-        return render_runtime_dependencies(ctx, out, rule, set, filters, framework.as_deref());
-    }
+    let header = out.len();
     let all = matches!(
         rule.action,
         InstallAction::Script {
@@ -456,11 +449,53 @@ fn render_rule(
         .unwrap();
     }
     let base_indent = if all { "" } else { "  " };
+    if let InstallAction::RuntimeDependencies { set, filters, .. } = &rule.action {
+        // cmInstallGetRuntimeDependenciesGenerator followed by
+        // cmInstallRuntimeDependencySetGenerator.
+        let header = out[header..].to_owned();
+        render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
+            render_get_runtime_dependencies(ctx, out, index, set, filters, indent);
+            Ok(())
+        })?;
+        out.push_str("endif()\n\n");
+        out.push_str(&header);
+        render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
+            render_runtime_dependency_set(ctx, out, index, rule, indent);
+            Ok(())
+        })?;
+    } else {
+        let mut config_rules = String::new();
+        render_configs(ctx, out, rule, base_indent, &mut |ctx, out, indent| {
+            render_action(
+                ctx,
+                (out, indent),
+                (&mut config_rules, base_indent),
+                index,
+                rule,
+            )
+        })?;
+        out.push_str(&config_rules);
+    }
+    if conditional {
+        out.push_str("endif()\n\n");
+    }
+    Ok(())
+}
+
+/// `cmScriptGenerator::GenerateScriptConfigs`.
+fn render_configs(
+    ctx: &GenCtx,
+    out: &mut String,
+    rule: &InstallRule,
+    base_indent: &str,
+    render: &mut dyn FnMut(&GenCtx, &mut String, &str) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let configurations = &rule.options.configurations;
     if ctx.multi_config && actions_per_config(rule) {
-        // cmScriptGenerator::GenerateScriptActionsPerConfig.
+        // GenerateScriptActionsPerConfig.
         let mut first = true;
         for config in &ctx.configs {
-            if !generates_for_config(&opts.configurations, config) {
+            if !generates_for_config(configurations, config) {
                 continue;
             }
             writeln!(
@@ -471,43 +506,54 @@ fn render_rule(
             )
             .unwrap();
             let config_ctx = ctx.for_config(config);
-            render_action(&config_ctx, out, index, rule, &format!("{base_indent}  "))?;
+            render(&config_ctx, out, &format!("{base_indent}  "))?;
             first = false;
         }
         if !first {
             writeln!(out, "{base_indent}endif()").unwrap();
         }
+    } else if configurations.is_empty() {
+        render(ctx, out, base_indent)?;
     } else {
-        let mut indent = base_indent.to_owned();
-        let config = !opts.configurations.is_empty();
-        if config {
-            writeln!(
-                out,
-                "{indent}if({})",
-                config_test("CMAKE_INSTALL_CONFIG_NAME", &opts.configurations)
-            )
-            .unwrap();
-            indent.push_str("  ");
-        }
-        render_action(ctx, out, index, rule, &indent)?;
-        if config {
-            writeln!(out, "{base_indent}endif()").unwrap();
-        }
-    }
-    if conditional {
-        out.push_str("endif()\n\n");
+        writeln!(
+            out,
+            "{base_indent}if({})",
+            config_test("CMAKE_INSTALL_CONFIG_NAME", configurations)
+        )
+        .unwrap();
+        render(ctx, out, &format!("{base_indent}  "))?;
+        writeln!(out, "{base_indent}endif()").unwrap();
     }
     Ok(())
 }
 
+/// `cmGeneratorExpression::Evaluate` in directory `index`.
+pub(crate) fn genex_at(ctx: &GenCtx, index: usize, text: &str) -> String {
+    ctx.genex_full(text, index, None, None, false, &[])
+}
+
+/// `cmInstallCxxModuleBmiGenerator::GetScriptLocation`.
+pub(super) fn bmi_script(ctx: &GenCtx, target: &Target) -> String {
+    let config = if ctx.config.is_empty() {
+        "noconfig"
+    } else {
+        ctx.config.as_str()
+    };
+    format!(
+        "{}/install-cxx-module-bmi-{config}.cmake",
+        target::support_directory(ctx, target)
+    )
+}
+
 /// The install generator's script actions for one configuration
-/// (`GenerateScriptForConfig`, or `GenerateScriptActions`).
+/// (`GenerateScriptForConfig`, or `GenerateScriptActions`). Export rules also
+/// collect the per-configuration rules that follow in `config_rules`.
 fn render_action(
     ctx: &GenCtx,
-    out: &mut String,
+    (out, indent): (&mut String, &str),
+    config_rules: (&mut String, &str),
     index: usize,
     rule: &InstallRule,
-    indent: &str,
 ) -> std::io::Result<()> {
     let opts = &rule.options;
     match &rule.action {
@@ -517,10 +563,8 @@ fn render_action(
             dir_permissions,
             arguments,
         } => {
-            // INTEGRATION: file and directory destination and path expressions
-            // are evaluated in the generating makefile.
-            let dest = ctx.genex(&opts.destination, None, None);
-            let rename = ctx.genex(&opts.rename, None, None);
+            let dest = genex_at(ctx, index, &opts.destination);
+            let rename = genex_at(ctx, index, &opts.rename);
             let mut evaluated = Vec::new();
             let is_directory = matches!(kind, CopyKind::Directory);
             let files = if opts.destination.contains("$<")
@@ -528,7 +572,7 @@ fn render_action(
                 || paths.iter().any(|p| p.contains("$<"))
             {
                 for path in paths {
-                    evaluated.extend(expand_list(&ctx.genex(path, None, None), false));
+                    evaluated.extend(expand_list(&genex_at(ctx, index, path), false));
                 }
                 if is_directory {
                     for path in &mut evaluated {
@@ -552,6 +596,7 @@ fn render_action(
                     dir_permissions,
                     rename: &rename,
                     arguments,
+                    files_var: "",
                 },
             );
         }
@@ -568,10 +613,10 @@ fn render_action(
                 );
             }
             let text = if has_genex && policy == PolicyStatus::New {
-                ctx.genex(
+                genex_at(
+                    ctx,
+                    index,
                     &text.replace("$<INSTALL_PREFIX>", "${CMAKE_INSTALL_PREFIX}"),
-                    None,
-                    None,
                 )
             } else {
                 text.clone()
@@ -593,32 +638,27 @@ fn render_action(
         }
         InstallAction::Bmi(name) => {
             if let Some(tgt) = ctx.target_at(index, name) {
-                let objects = target::object_directory(ctx, tgt, &ctx.config);
-                // cmInstallCxxModuleBmiGenerator::GetScriptLocation: the
-                // configuration as given, or "noconfig".
-                let config = if ctx.config.is_empty() {
-                    "noconfig"
-                } else {
-                    ctx.config.as_str()
-                };
-                writeln!(
-                    out,
-                    "{indent}include(\"{objects}install-cxx-module-bmi-{config}.cmake\" OPTIONAL)"
-                )
-                .unwrap();
+                let script = escape_for_cmake(&bmi_script(ctx, tgt));
+                writeln!(out, "{indent}include({script} OPTIONAL)").unwrap();
             }
         }
         InstallAction::FileSet { name, set } => {
             if let Some(tgt) = ctx.target_at(index, name) {
-                render_file_set(ctx, out, opts, tgt, set, indent);
+                render_file_set(ctx, (out, indent), index, opts, tgt, set);
             }
         }
         InstallAction::Export(export) => {
-            export::write_install_export(ctx, out, index, rule, export, indent)?
+            export::write_install_export(ctx, (out, indent), config_rules, index, rule, export)?
         }
-        InstallAction::PackageInfo { set, arguments } => {
-            package_info::write_install(ctx, out, index, rule, set, arguments, indent)?
-        }
+        InstallAction::PackageInfo { set, arguments } => package_info::write_install(
+            ctx,
+            (out, indent),
+            config_rules,
+            index,
+            rule,
+            set,
+            arguments,
+        )?,
         InstallAction::LegacyFiles { args, programs } => {
             let opts = InstallOptions {
                 component: ctx
@@ -706,6 +746,8 @@ pub(super) struct CopyRule<'a> {
     pub dir_permissions: &'a [String],
     pub rename: &'a str,
     pub arguments: &'a str,
+    /// The script variable holding the list of files.
+    pub files_var: &'a str,
 }
 
 impl<'a> CopyRule<'a> {
@@ -717,6 +759,7 @@ impl<'a> CopyRule<'a> {
             dir_permissions: &[],
             rename: "",
             arguments: "",
+            files_var: "",
         }
     }
 }
@@ -734,6 +777,7 @@ pub(super) fn write_copy(
         dir_permissions,
         rename,
         arguments,
+        files_var,
     } = rule;
     if is_full_path(dest) {
         if !files.is_empty() {
@@ -754,6 +798,9 @@ pub(super) fn write_copy(
                 absolute.join(";")
             )
             .unwrap();
+        }
+        if !files_var.is_empty() {
+            write!(out, "{indent}foreach(_cmake_abs_file IN LISTS {files_var})\n{indent}  get_filename_component(_cmake_abs_file_name \"${{_cmake_abs_file}}\" NAME)\n{indent}  list(APPEND CMAKE_ABSOLUTE_DESTINATION_FILES \"{dest}/${{_cmake_abs_file_name}}\")\n{indent}endforeach()\n{indent}unset(_cmake_abs_file_name)\n{indent}unset(_cmake_abs_file)\n").unwrap();
         }
         write!(out, "{indent}if(CMAKE_WARN_ON_ABSOLUTE_INSTALL_DESTINATION)\n{indent}  message(WARNING \"ABSOLUTE path INSTALL DESTINATION : ${{CMAKE_ABSOLUTE_DESTINATION_FILES}}\")\n{indent}endif()\n").unwrap();
         write!(out, "{indent}if(CMAKE_ERROR_ON_ABSOLUTE_INSTALL_DESTINATION)\n{indent}  message(FATAL_ERROR \"ABSOLUTE path INSTALL DESTINATION forbidden (by caller): ${{CMAKE_ABSOLUTE_DESTINATION_FILES}}\")\n{indent}endif()\n").unwrap();
@@ -786,6 +833,9 @@ pub(super) fn write_copy(
     } else {
         for file in files {
             write!(out, "\n{indent}  \"{file}\"").unwrap();
+        }
+        if !files_var.is_empty() {
+            write!(out, " ${{{files_var}}}").unwrap();
         }
         write!(out, "\n{indent} ").unwrap();
         if arguments.is_empty() {
@@ -829,14 +879,13 @@ fn render_target(
         TargetKind::ObjectLibrary => CopyKind::File,
         _ => return,
     };
-    // INTEGRATION: artifact destinations may depend on the target's config.
-    let dest = ctx.genex(&opts.destination, None, None);
+    let dest = genex_at(ctx, tgt.makefile, &opts.destination);
     if tgt.kind == TargetKind::ObjectLibrary {
         let files = object_names(ctx, tgt);
         if !files.is_empty() {
             let base = target::object_directory(ctx, tgt, &ctx.config);
             let dest = format!("{dest}/{}", object_subdir(tgt, &ctx.config));
-            let arguments = format!(" FILES_FROM_DIR \"{base}./\"");
+            let arguments = format!(" FILES_FROM_DIR \"{base}\"");
             write_copy(
                 out,
                 indent,
@@ -1032,11 +1081,11 @@ pub(super) fn file_set_properties(
 
 fn render_file_set(
     ctx: &GenCtx,
-    out: &mut String,
+    (out, indent): (&mut String, &str),
+    index: usize,
     opts: &InstallOptions,
     tgt: &Target,
     set: &str,
-    indent: &str,
 ) {
     if !["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"]
         .iter()
@@ -1051,7 +1100,6 @@ fn render_file_set(
     let Some((files, bases, _)) = file_set_properties(tgt, set) else {
         return;
     };
-    // INTEGRATION: FILE_SET properties and destination accept genex.
     let src = &ctx.interp.makefiles[tgt.makefile].source_dir;
     let resolver = |p: &str| crate::util::collapse_full_path(p, src);
     let bases: Vec<_> = expand_list(&ctx.genex(&bases, Some(tgt), None), false)
@@ -1072,7 +1120,7 @@ fn render_file_set(
                 .push(file);
         }
     }
-    let dest = ctx.genex(&opts.destination, None, None);
+    let dest = genex_at(ctx, index, &opts.destination);
     for (dir, files) in groups {
         let dest = if dir.is_empty() {
             dest.clone()
@@ -1089,129 +1137,89 @@ fn render_file_set(
 }
 
 // ---------------------------------------------------------------------
-// cmInstallGetRuntimeDependenciesGenerator +
-// cmInstallRuntimeDependencySetGenerator (Unix path; install_name_tool
-// branches are Apple-only and unreachable here).
-
-/// `cmInstallGenerator::CreateComponentTest`.
-fn runtime_dep_component_test(component: &str, exclude_from_all: bool) -> String {
-    let component = if component.is_empty() {
-        "Unspecified"
-    } else {
-        component
-    };
-    if exclude_from_all {
-        format!("CMAKE_INSTALL_COMPONENT STREQUAL \"{component}\"")
-    } else {
-        format!("CMAKE_INSTALL_COMPONENT STREQUAL \"{component}\" OR NOT CMAKE_INSTALL_COMPONENT")
+/// `WriteMultiArgument`.
+fn write_dep_argument(out: &mut String, indent: &str, keyword: &str, items: &[String]) {
+    if !items.is_empty() {
+        writeln!(out, "{indent}  {keyword}").unwrap();
     }
-}
-
-/// `WriteMultiArgument`/`WriteFilesArgument`/`WriteGenexEvaluatorArgument`.
-fn write_dep_argument(out: &mut String, keyword: &str, items: &[String], quoted: bool) {
-    let mut first = true;
     for item in items {
-        if item.is_empty() {
-            continue;
-        }
-        if first {
-            out.push_str(&format!("  {keyword}\n"));
-            first = false;
-        }
-        if quoted {
-            out.push_str(&format!("    \"{item}\"\n"));
-        } else {
-            out.push_str(&format!("    {}\n", escape_for_cmake(item)));
-        }
+        writeln!(out, "{indent}    {item}").unwrap();
     }
 }
 
-/// Transitive link dependencies of EXECUTABLE/SHARED_LIBRARY/MODULE_LIBRARY
-/// type (`GetTargetDependsClosure`, `IsLink()` only, non-cross).
-fn runtime_dep_closure(ctx: &GenCtx, config: &str, target: &Target, found: &mut BTreeSet<String>) {
-    for dep in crate::generator::link::target_dependencies(ctx, target, config) {
-        let Some(dep_target) = ctx.interp.ext.targets.get(&dep) else {
+/// `GetTargetDependsClosure` (cmInstallRuntimeDependencySet.cxx): the keys of
+/// the linked executables, shared libraries and modules.
+fn runtime_dep_closure(
+    ctx: &GenCtx,
+    target: &Target,
+    visited: &mut BTreeSet<String>,
+    found: &mut BTreeSet<String>,
+) {
+    for depend in link::target_depends(ctx, target).iter() {
+        if depend.cross || !depend.link {
             continue;
-        };
-        if !matches!(
-            dep_target.kind,
+        }
+        let dependee = &ctx.interp.ext.targets[&depend.key];
+        if matches!(
+            dependee.kind,
             TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
         ) {
-            continue;
+            found.insert(depend.key.clone());
         }
-        if found.insert(dep) {
-            runtime_dep_closure(ctx, config, dep_target, found);
+        if visited.insert(depend.key.clone()) {
+            runtime_dep_closure(ctx, dependee, visited, found);
         }
     }
 }
 
-fn render_runtime_dependencies(
+/// `cmInstallGetRuntimeDependenciesGenerator::GenerateScriptForConfig`
+/// without the install_name_tool arguments, which exist only on Apple.
+fn render_get_runtime_dependencies(
     ctx: &GenCtx,
     out: &mut String,
-    rule: &InstallRule,
+    index: usize,
     set: &str,
     filters: &BTreeMap<String, Vec<String>>,
-    framework: Option<&InstallOptions>,
-) -> std::io::Result<()> {
-    use std::fmt::Write as _;
-    let opts = &rule.options;
-    let config = &ctx.config;
-    let _ = framework; // framework generators exist only on Apple.
-
-    // file(GET_RUNTIME_DEPENDENCIES ...) block.
-    writeln!(
-        out,
-        "if({})",
-        runtime_dep_component_test(&opts.component, opts.exclude)
-    )
-    .unwrap();
-    let mut body = String::new();
-    body.push_str("file(GET_RUNTIME_DEPENDENCIES\n  RESOLVED_DEPENDENCIES_VAR _CMAKE_DEPS\n");
-    let names = ctx
+    indent: &str,
+) {
+    let full_path = |target: &Target| {
+        target::full_path(
+            ctx,
+            target,
+            &ctx.config,
+            target::ArtifactType::Runtime,
+            false,
+        )
+    };
+    let targets: Vec<&Target> = ctx
         .interp
         .ext
         .install
         .runtime_sets
         .get(set)
-        .cloned()
-        .unwrap_or_default();
-    let mut post_exclude: BTreeSet<String> = BTreeSet::new();
-    for (keyword, kinds) in [
-        ("EXECUTABLES", vec![TargetKind::Executable]),
-        ("LIBRARIES", vec![TargetKind::SharedLibrary]),
-        ("MODULES", vec![TargetKind::ModuleLibrary]),
+        .into_iter()
+        .flatten()
+        .filter_map(|(dir, name)| ctx.target_at(*dir, name))
+        .collect();
+    writeln!(
+        out,
+        "{indent}file(GET_RUNTIME_DEPENDENCIES\n{indent}  RESOLVED_DEPENDENCIES_VAR _CMAKE_DEPS"
+    )
+    .unwrap();
+    let mut closure = BTreeSet::new();
+    for (keyword, kind) in [
+        ("EXECUTABLES", TargetKind::Executable),
+        ("LIBRARIES", TargetKind::SharedLibrary),
+        ("MODULES", TargetKind::ModuleLibrary),
     ] {
         let mut paths = Vec::new();
-        for name in &names {
-            let Some(target) = ctx.interp.ext.targets.get(name) else {
-                continue;
-            };
-            if !kinds.contains(&target.kind) {
-                continue;
-            }
-            paths.push(crate::generator::target::full_path(
-                ctx,
-                target,
-                config,
-                crate::generator::target::ArtifactType::Runtime,
-                false,
-            ));
-            let mut closure = BTreeSet::new();
-            runtime_dep_closure(ctx, config, target, &mut closure);
-            for dep in &closure {
-                let Some(dep_target) = ctx.interp.ext.targets.get(dep) else {
-                    continue;
-                };
-                post_exclude.insert(crate::generator::target::full_path(
-                    ctx,
-                    dep_target,
-                    config,
-                    crate::generator::target::ArtifactType::Runtime,
-                    false,
-                ));
+        for target in targets.iter().filter(|target| target.kind == kind) {
+            paths.push(format!("\"{}\"", full_path(target)));
+            if !target.imported {
+                runtime_dep_closure(ctx, target, &mut BTreeSet::new(), &mut closure);
             }
         }
-        write_dep_argument(&mut body, keyword, &paths, true);
+        write_dep_argument(out, indent, keyword, &paths);
     }
     for keyword in [
         "DIRECTORIES",
@@ -1224,65 +1232,54 @@ fn render_runtime_dependencies(
     ] {
         let evaluated: Vec<String> = filters
             .get(keyword)
-            .map(|values| {
-                values
-                    .iter()
-                    .map(|v| ctx.genex(v, None, None))
-                    .filter(|v| !v.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-        write_dep_argument(&mut body, keyword, &evaluated, false);
+            .into_iter()
+            .flatten()
+            .map(|value| genex_at(ctx, index, value))
+            .filter(|value| !value.is_empty())
+            .map(|value| escape_for_cmake(&value))
+            .collect();
+        write_dep_argument(out, indent, keyword, &evaluated);
     }
+    let post_exclude: BTreeSet<String> = closure
+        .iter()
+        .map(|key| format!("\"{}\"", full_path(&ctx.interp.ext.targets[key])))
+        .collect();
     write_dep_argument(
-        &mut body,
+        out,
+        indent,
         "POST_EXCLUDE_FILES_STRICT",
         &post_exclude.into_iter().collect::<Vec<_>>(),
-        true,
     );
-    body.push_str("  )\n");
-    write_per_config(ctx, out, &body, &opts.configurations);
-    out.push_str("endif()\n\n");
-
-    // foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS) install loop.
-    writeln!(
-        out,
-        "if({})",
-        runtime_dep_component_test(&opts.component, opts.exclude)
-    )
-    .unwrap();
-    let destination = absolute_dest(&ctx.genex(&opts.destination, None, None));
-    let mut body = String::new();
-    body.push_str("foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS)\n");
-    body.push_str(&format!(
-        "  file(INSTALL DESTINATION \"{destination}\" TYPE SHARED_LIBRARY FILES ${{_CMAKE_TMP_dep}}\n    FOLLOW_SYMLINK_CHAIN)\n"
-    ));
-    body.push_str("endforeach()\n");
-    write_per_config(ctx, out, &body, &opts.configurations);
-    out.push_str("endif()\n\n");
-    Ok(())
+    writeln!(out, "{indent}  )").unwrap();
 }
 
-/// `GenerateScriptConfigs`: wraps a script fragment in the per-config test
-/// when the generator has explicit CONFIGURATIONS.
-fn write_per_config(ctx: &GenCtx, out: &mut String, body: &str, configs: &[String]) {
-    if configs.is_empty() {
-        for line in body.lines() {
-            out.push_str("  ");
-            out.push_str(line);
-            out.push('\n');
-        }
-        return;
-    }
-    out.push_str(&format!(
-        "  if({})\n",
-        config_test("CMAKE_INSTALL_CONFIG_NAME", configs)
-    ));
-    let _ = ctx;
-    for line in body.lines() {
-        out.push_str("    ");
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str("  endif()\n");
+/// `cmInstallRuntimeDependencySetGenerator::GenerateScriptForConfig` without
+/// install_name_tool, for which install() leaves the RPATH alone.
+fn render_runtime_dependency_set(
+    ctx: &GenCtx,
+    out: &mut String,
+    index: usize,
+    rule: &InstallRule,
+    indent: &str,
+) {
+    let opts = InstallOptions {
+        optional: false,
+        ..rule.options.clone()
+    };
+    writeln!(out, "{indent}foreach(_CMAKE_TMP_dep IN LISTS _CMAKE_DEPS)").unwrap();
+    write_copy(
+        out,
+        &format!("{indent}  "),
+        &opts,
+        CopyRule {
+            files_var: "_CMAKE_TMP_dep",
+            arguments: " FOLLOW_SYMLINK_CHAIN",
+            ..CopyRule::new(
+                &genex_at(ctx, index, &opts.destination),
+                CopyKind::Shared,
+                &[],
+            )
+        },
+    );
+    writeln!(out, "{indent}endforeach()").unwrap();
 }

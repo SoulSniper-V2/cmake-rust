@@ -27,18 +27,6 @@ impl<'a> NinjaGenerator<'a> {
             .is_some_and(|s| util::is_on(&s))
     }
 
-    pub(super) fn fortran_rsp_flag(&self, target: &Target) -> Option<String> {
-        let key = "CMAKE_NINJA_FORCE_RESPONSE_FILE";
-        (self.ctx.var(target.makefile, key).is_some() || std::env::var_os(key).is_some()).then(
-            || {
-                self.ctx
-                    .var(target.makefile, "CMAKE_Fortran_RESPONSE_FILE_FLAG")
-                    .filter(|flag| !flag.is_empty())
-                    .unwrap_or_else(|| "@".into())
-            },
-        )
-    }
-
     pub(super) fn write_fortran_scan_rules(&mut self, target: &Target) {
         let tdi = self.shell(&self.ninja_path(&format!(
             "{}/FortranDependInfo.json",
@@ -71,7 +59,8 @@ impl<'a> NinjaGenerator<'a> {
             ..Rule::default()
         };
         let (mut defines, mut includes, mut flags) = ("$DEFINES", "$INCLUDES", "$FLAGS".to_owned());
-        if let Some(flag) = self.fortran_rsp_flag(target) {
+        let flag = self.response_file_flag(target, "Fortran");
+        if !flag.is_empty() {
             rule.rspfile = "$RSP_FILE".into();
             rule.rspcontent = format!(" {defines} {includes} {flags}");
             flags = format!("{flag}$RSP_FILE");
@@ -201,15 +190,7 @@ impl<'a> NinjaGenerator<'a> {
         let dd = self.ninja_path(&format!("{}/Fortran.dd", self.object_dir(target)));
         obj.order_only_deps.push(dd.clone());
         obj.variables.insert("dyndep".into(), dd);
-        write_build(
-            out,
-            &scan,
-            if self.fortran_rsp_flag(target).is_some() {
-                -1
-            } else {
-                0
-            },
-        );
+        write_build(out, &scan, self.compile_command_limit(target, "Fortran"));
         ddi
     }
 
@@ -234,8 +215,8 @@ impl<'a> NinjaGenerator<'a> {
                 return;
             }
             seen.insert(t.name.clone(), 0);
-            for (dep, _) in link::target_graph::dep_edges(ctx, t, &ctx.config) {
-                visit(ctx, dep, seen, index);
+            for depend in link::target_depends(ctx, t).iter() {
+                visit(ctx, &ctx.interp.ext.targets[&depend.key], seen, index);
             }
             seen.insert(t.name.clone(), *index);
             *index += 1;
@@ -304,19 +285,14 @@ impl<'a> NinjaGenerator<'a> {
         let mut bmi = Value::Null;
         for rule in install.rules.get(&target.makefile).into_iter().flatten() {
             if matches!(&rule.action, InstallAction::Bmi(name) if name == &target.name) {
-                let config = if self.config.is_empty() {
-                    "noconfig"
-                } else {
-                    &self.config
-                };
                 let permissions: String = rule
                     .options
                     .permissions
                     .iter()
                     .map(|p| format!(" {p}"))
                     .collect();
-                bmi = json!({"permissions":permissions,"destination":self.ctx.genex(&rule.options.destination, Some(target), None),
-                    "message-level":rule.options.message,"script-location":format!("{}/install-cxx-module-bmi-{config}.cmake",self.object_dir(target))});
+                bmi = json!({"permissions":permissions,"destination":super::super::install::genex_at(&self.ctx, target.makefile, &rule.options.destination),
+                    "message-level":rule.options.message,"script-location":super::super::install::bmi_script(&self.ctx, target)});
             }
         }
         (exports, bmi)

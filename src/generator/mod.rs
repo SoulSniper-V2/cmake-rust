@@ -33,6 +33,7 @@ pub mod genex_host;
 pub mod graphviz;
 pub mod install;
 pub mod link;
+mod module_support;
 pub mod ninja;
 pub mod package_info;
 pub mod pch;
@@ -194,20 +195,19 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let Some(autogen) = autogen::initialize(interp) else {
         return -1;
     };
+    // cmGlobalGenerator::Compute: ApplyCXXStdTargets and
+    // DiscoverSyntheticTargets follow ComputeTargetCompileFeatures (lazy in
+    // this implementation).
+    let mut module_diagnostics = ninja::modules::finalize_cxx_module_targets(interp);
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
     let (computed, mut diagnostics) = {
-        // cmGlobalGenerator::Compute: after TraceDependencies and
-        // ComputeTargetCompileFeatures (lazy in this implementation) come
-        // ApplyCXXStdTargets and DiscoverSyntheticTargets — the last target
-        // mutations before the generation context becomes read-only.
-        let mut diags = ninja::modules::finalize_cxx_module_targets(interp);
         let ctx = ctx::GenCtx::new(interp);
         let (computed, generated) = ctx.check_and_generate(&autogen);
-        diags.extend(generated);
-        (computed, diags)
+        module_diagnostics.extend(generated);
+        (computed, module_diagnostics)
     };
     for diagnostic in diagnostics.drain(..) {
         match diagnostic {

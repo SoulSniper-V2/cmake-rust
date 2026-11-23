@@ -555,9 +555,10 @@ pub fn compile_pdb_path(ctx: &GenCtx, target: &Target, config: &str) -> String {
 
 /// `cmGeneratorTarget::GetSupportDirectory`.
 pub fn support_directory(ctx: &GenCtx, target: &Target) -> String {
-    object_directory(ctx, target, "")
-        .trim_end_matches('/')
-        .to_owned()
+    let binary_dir = ctx.interp.makefiles[target.makefile]
+        .binary_dir
+        .trim_end_matches('/');
+    format!("{binary_dir}/CMakeFiles/{}.dir", target.name)
 }
 
 /// `cmCommonTargetGenerator::ComputeTargetCompilePDB` (single-config).
@@ -590,18 +591,16 @@ pub fn target_compile_pdb(ctx: &GenCtx, target: &Target, config: &str) -> String
 }
 
 /// `cmGeneratorTarget::GetObjectDirectory` (absolute, with trailing '/').
-/// The Ninja generators' `ComputeTargetObjectDirectory` gives
-/// `<support dir>/${CONFIGURATION}/` under Ninja Multi-Config, which
-/// `ExpandCFGIntDir` replaces with the configuration.
+/// The Ninja generators' `ComputeTargetObjectDirectory` appends the
+/// configuration's intermediate directory: "." for a single configuration,
+/// and `${CONFIGURATION}`, which `ExpandCFGIntDir` replaces, otherwise.
 pub fn object_directory(ctx: &GenCtx, target: &Target, config: &str) -> String {
-    let binary_dir = ctx.interp.makefiles[target.makefile]
-        .binary_dir
-        .trim_end_matches('/');
-    if ctx.multi_config && !config.is_empty() {
-        format!("{binary_dir}/CMakeFiles/{}.dir/{config}/", target.name)
+    let int_dir = if ctx.multi_config && !config.is_empty() {
+        config
     } else {
-        format!("{binary_dir}/CMakeFiles/{}.dir/", target.name)
-    }
+        "."
+    };
+    format!("{}/{int_dir}/", support_directory(ctx, target))
 }
 
 /// `cmGeneratorTarget::HasSOName`.
@@ -1019,10 +1018,7 @@ pub(crate) fn source_prop(
         return value;
     }
     if matches!(name, "GENERATED" | "EXTERNAL_OBJECT")
-        && ctx
-            .target_objects
-            .borrow()
-            .contains_key(&(dir_index, path.to_owned()))
+        && target_object_library(ctx, dir_index, path).is_some()
     {
         return Some("1".to_owned());
     }
@@ -1060,12 +1056,14 @@ pub(crate) fn source_prop_entries(
         .unwrap_or_default()
 }
 
-/// The OBJECT library whose `$<TARGET_OBJECTS>` named `path` in `dir`.
-fn target_object_library(ctx: &GenCtx, dir: usize, path: &str) -> Option<String> {
-    ctx.target_objects
-        .borrow()
-        .get(&(dir, path.to_owned()))
-        .cloned()
+/// The OBJECT library whose `$<TARGET_OBJECTS>` named `path` in `dir`
+/// (`cmSourceFile::GetObjectLibrary`).
+pub(crate) fn target_object_library(ctx: &GenCtx, dir: usize, path: &str) -> Option<String> {
+    let objects = ctx.target_objects.borrow();
+    if objects.is_empty() || !is_full_path(path) {
+        return None;
+    }
+    objects.get(&(dir, collapse_full_path(path, ""))).cloned()
 }
 
 const LEGACY_SOURCE_EXTENSIONS: &[&str] = &[
@@ -1487,9 +1485,7 @@ fn object_file_name(
         }
     }
 
-    // cmGlobalNinjaGenerator::ComputeTargetObjectDirectory appends the
-    // configuration intermediate directory "." (`<support>/./`).
-    let directory = format!("{}./", object_directory(ctx, target, config));
+    let directory = object_directory(ctx, target, config);
     let max = object_path_max(ctx, target.makefile);
     if !shorten_object_name(&mut name, directory.len(), max) {
         let warning_key = format!("target:object-path-violation:{directory}");
@@ -1838,11 +1834,12 @@ fn collect_sources(
                     let list = mapped_import_config(library, config).and_then(|info| info.location);
                     expand_list(list.unwrap_or_default(), false)
                 } else {
-                    let object_dir = object_directory(ctx, library, config);
+                    let object_dir =
+                        collapse_full_path(&object_directory(ctx, library, config), "");
                     sources(ctx, library, config)
                         .iter()
                         .filter(|source| source.kind == SourceKind::ObjectSource)
-                        .map(|source| format!("{object_dir}{}", source.object_name))
+                        .map(|source| format!("{object_dir}/{}", source.object_name))
                         .collect()
                 };
                 entries.push(
@@ -2049,7 +2046,7 @@ pub fn sources(ctx: &GenCtx, target: &Target, config: &str) -> std::rc::Rc<Vec<S
 /// file sets is a `CXX_MODULES` set.  This is a property of the target's
 /// file sets (upstream iterates `GetAllFileSetNames`), not of its compiled
 /// sources, so it holds for IMPORTED and synthetic targets as well.
-pub fn have_cxx20_module_sources(_ctx: &GenCtx, target: &Target, _config: &str) -> bool {
+pub fn have_cxx20_module_sources(target: &Target) -> bool {
     target
         .file_sets
         .values()
@@ -2633,7 +2630,7 @@ mod corpus_tests {
         for (target_name, want) in expected["targets"].as_object().unwrap() {
             let target = &interp.ext.targets[target_name];
             let found = sources(&ctx, target, &config);
-            let object_dir = object_directory(&ctx, target, &config);
+            let object_dir = object_directory(&ctx, target, &config).replace("/./", "/");
             let objects: Vec<String> = found
                 .iter()
                 .filter(|source| source.kind == SourceKind::ObjectSource)
@@ -3133,7 +3130,7 @@ pub(super) mod tests {
         fixture: &Value,
         root: &str,
     ) {
-        let directory = object_directory(ctx, target, &ctx.config);
+        let directory = object_directory(ctx, target, &ctx.config).replace("/./", "/");
         let object_dir = directory.strip_prefix(&format!("{root}/build/")).unwrap();
         let objects: Vec<_> = result
             .into_iter()

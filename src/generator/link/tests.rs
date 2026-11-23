@@ -284,7 +284,7 @@ fn cmake_4_1_ninja_edges() {
             generator: &FixtureGenerator,
             compile_usage: false,
         };
-        let graph = target_graph::compute(&query);
+        let graph = target_graph::compute(std::slice::from_ref(&query));
         if let Some(failure) = fixture.failure {
             for target in ctx.targets_in_order() {
                 information::compute(&query, target);
@@ -329,8 +329,8 @@ fn cmake_4_1_ninja_edges() {
             let mut seen = std::collections::HashSet::new();
             let mut order_only = graph.edges[index]
                 .iter()
-                .filter(|(dep, _, _)| seen.insert(*dep))
-                .map(|(dep, _, _)| target_artifact(&query, graph.targets[*dep]))
+                .filter(|edge| seen.insert(edge.to))
+                .map(|edge| target_artifact(&query, graph.targets[edge.to]))
                 .collect::<Vec<_>>();
             order_only.sort();
             order_only.extend(line.shared_symlinks);
