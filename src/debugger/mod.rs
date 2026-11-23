@@ -71,10 +71,11 @@ struct ExceptionState {
     current: Option<(String, String)>,
 }
 
-/// (filter, label) pairs from `cmDebuggerExceptionManager`'s `ExceptionMap`.
-/// The upstream `unordered_map` iteration order is reproduced by
-/// `FILTER_ORDER`, determined from the reference adapter's
-/// `exceptionBreakpointFilters` response.
+/// (filter, label) pairs from `cmDebuggerExceptionManager`'s `ExceptionMap`,
+/// in insertion (`MessageType` value) order.  The map is an
+/// `unordered_map` hashed by the enum value: every key lands in its own
+/// bucket and libstdc++ links each new bucket's node at the front of the
+/// element list, so iteration yields the reverse of this order.
 const EXCEPTION_FILTERS: &[(&str, &str)] = &[
     ("AUTHOR_WARNING", "Warning (dev)"),
     ("AUTHOR_ERROR", "Error (dev)"),
@@ -212,56 +213,105 @@ impl J {
     pub fn str(s: impl Into<String>) -> J {
         J::Str(s.into())
     }
-    fn write(&self, out: &mut String) {
+    /// `Json::valueToQuotedStringN` with `emitUTF8 == false` (the
+    /// `StreamWriterBuilder` default): control and non-ASCII characters are
+    /// written as lowercase `\uXXXX` escapes (UTF-16 surrogate pairs above
+    /// the BMP); `/` is not escaped.
+    fn quote(s: &str, out: &mut String) {
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\u{08}' => out.push_str("\\b"),
+                '\u{0c}' => out.push_str("\\f"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (' '..'\u{80}').contains(&c) => out.push(c),
+                c => {
+                    let mut units = [0u16; 2];
+                    for unit in c.encode_utf16(&mut units) {
+                        out.push_str(&format!("\\u{unit:04x}"));
+                    }
+                }
+            }
+        }
+        out.push('"');
+    }
+
+    /// `Json::BuiltStyledStreamWriter::writeValue` as configured by a default
+    /// `Json::StreamWriterBuilder` (what cppdap's `JsonCppSerializer::dump`
+    /// uses): tab indentation, `" : "` separators, members in sorted key
+    /// order, and every non-empty array written one element per line
+    /// (`CommentStyle::All` makes `isMultiLine` unconditional).
+    /// `indented` mirrors the writer's `indented_` flag.
+    fn write_styled(&self, out: &mut String, indent: &mut String, indented: &mut bool) {
+        fn write_with_indent(out: &mut String, indent: &str, indented: &mut bool, text: &str) {
+            if !*indented {
+                out.push('\n');
+                out.push_str(indent);
+            }
+            out.push_str(text);
+            *indented = false;
+        }
         match self {
             J::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             J::Int(i) => out.push_str(&i.to_string()),
-            J::Str(s) => {
-                out.push('"');
-                for c in s.chars() {
-                    match c {
-                        '"' => out.push_str("\\\""),
-                        '\\' => out.push_str("\\\\"),
-                        '\n' => out.push_str("\\n"),
-                        '\r' => out.push_str("\\r"),
-                        '\t' => out.push_str("\\t"),
-                        '\u{08}' => out.push_str("\\b"),
-                        '\u{0c}' => out.push_str("\\f"),
-                        c if (c as u32) < 0x20 => {
-                            out.push_str(&format!("\\u{:04x}", c as u32));
-                        }
-                        c => out.push(c),
-                    }
-                }
-                out.push('"');
-            }
+            J::Str(s) => J::quote(s, out),
+            J::Arr(items) if items.is_empty() => out.push_str("[]"),
             J::Arr(items) => {
-                out.push('[');
+                write_with_indent(out, indent, indented, "[");
+                indent.push('\t');
                 for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
+                    if !*indented {
+                        out.push('\n');
+                        out.push_str(indent);
+                    }
+                    *indented = true;
+                    item.write_styled(out, indent, indented);
+                    *indented = false;
+                    if i + 1 < items.len() {
                         out.push(',');
                     }
-                    item.write(out);
                 }
-                out.push(']');
+                indent.pop();
+                write_with_indent(out, indent, indented, "]");
             }
+            J::Obj(fields) if fields.is_empty() => out.push_str("{}"),
             J::Obj(fields) => {
-                out.push('{');
-                for (i, (key, value)) in fields.iter().enumerate() {
-                    if i > 0 {
+                // `Value::getMemberNames` iterates the std::map: sorted,
+                // unique keys.
+                let mut sorted: Vec<&(String, J)> = Vec::with_capacity(fields.len());
+                for field in fields {
+                    match sorted.binary_search_by(|f| f.0.as_str().cmp(&field.0)) {
+                        Ok(_) => {}
+                        Err(pos) => sorted.insert(pos, field),
+                    }
+                }
+                write_with_indent(out, indent, indented, "{");
+                indent.push('\t');
+                for (i, (key, value)) in sorted.iter().map(|f| (&f.0, &f.1)).enumerate() {
+                    let mut name = String::new();
+                    J::quote(key, &mut name);
+                    write_with_indent(out, indent, indented, &name);
+                    out.push_str(" : ");
+                    value.write_styled(out, indent, indented);
+                    if i + 1 < sorted.len() {
                         out.push(',');
                     }
-                    J::Str(key.clone()).write(out);
-                    out.push(':');
-                    value.write(out);
                 }
-                out.push('}');
+                indent.pop();
+                write_with_indent(out, indent, indented, "}");
             }
         }
     }
+    /// `dap::json::JsonCppSerializer::dump` of the message.
     pub fn render(&self) -> String {
         let mut out = String::new();
-        self.write(&mut out);
+        let mut indent = String::new();
+        let mut indented = true;
+        self.write_styled(&mut out, &mut indent, &mut indented);
         out
     }
 }
@@ -362,9 +412,9 @@ impl Inner {
         let header = format!("Content-Length: {}\r\n\r\n", text.len());
         let mut writer = self.writer.lock().unwrap();
         for part in [header, text] {
+            // `dap::spy(Writer)`: each write is logged after "\n<-".
             if let Some(log) = self.log.lock().unwrap().as_mut() {
-                let _ = writeln!(log, "\n->");
-                let _ = write!(log, "{part}");
+                let _ = write!(log, "\n<-{part}");
                 let _ = log.flush();
             }
             if writer.write_all(part.as_bytes()).is_err() {
@@ -451,12 +501,12 @@ impl Inner {
             Ordering::Relaxed,
         );
         // `HandleInitializeRequest` fills exceptionBreakpointFilters in
-        // `ExceptionMap` (unordered) iteration order; FILTER_ORDER was
-        // captured from the reference adapter's response.
+        // `ExceptionMap` iteration order (see EXCEPTION_FILTERS).
         let filters: Vec<J> = {
             let state = self.state.lock().unwrap();
             EXCEPTION_FILTERS
                 .iter()
+                .rev()
                 .map(|(filter, label)| {
                     J::Obj(vec![
                         (
@@ -579,7 +629,11 @@ impl Inner {
                 ("description".into(), J::str(description)),
                 ("exceptionId".into(), J::str(id)),
             ]),
-            None => J::Obj(vec![]),
+            // Defaults of the required fields (`breakMode = "never"`).
+            None => J::Obj(vec![
+                ("breakMode".into(), J::str("never")),
+                ("exceptionId".into(), J::str("")),
+            ]),
         }
     }
 
@@ -687,10 +741,13 @@ impl Inner {
                 }
             }
         }
+        // `result` and `variablesReference` are required (always
+        // serialized); `type` is optional.
         let mut body = vec![("result".into(), J::str(result))];
         if found {
             body.push(("type".into(), J::str("string")));
         }
+        body.push(("variablesReference".into(), J::Int(0)));
         J::Obj(body)
     }
 
@@ -825,7 +882,7 @@ fn process_message(inner: &Arc<Inner>, text: &str) {
 
 /// `dap::ContentReader` (kScan mode): scan to `Content-Length:`, read the
 /// length, expect `\r\n\r\n`, then read the payload. `read` logs each
-/// socket chunk to the spy log (`"\n<-"`), matching `dap::spy`.
+/// socket chunk to the spy log (`"\n->"`), matching `dap::spy`.
 fn read_message(stream: &mut UnixStream, log: &Mutex<Option<std::fs::File>>) -> Option<String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut fill = |buf: &mut Vec<u8>, need: usize| -> bool {
@@ -835,8 +892,9 @@ fn read_message(stream: &mut UnixStream, log: &Mutex<Option<std::fs::File>>) -> 
             match stream.read(&mut chunk[..want]) {
                 Ok(0) | Err(_) => return false,
                 Ok(got) => {
+                    // `dap::spy(Reader)`: each read is logged after "\n->".
                     if let Some(log) = log.lock().unwrap().as_mut() {
-                        let _ = writeln!(log, "\n<-");
+                        let _ = log.write_all(b"\n->");
                         let _ = log.write_all(&chunk[..got]);
                         let _ = log.flush();
                     }
@@ -846,27 +904,17 @@ fn read_message(stream: &mut UnixStream, log: &Mutex<Option<std::fs::File>>) -> 
         }
         true
     };
-    // scan for the header prefix.
+    // `ContentReader::scan`: buffer the prefix length, compare, and on a
+    // mismatch drop one byte and buffer again.
     let prefix = b"Content-Length:";
-    'scan: loop {
-        if buf.len() >= prefix.len() && buf.starts_with(prefix) {
-            break 'scan;
-        }
-        let want = buf.len() + 1;
-        if !fill(&mut buf, want) {
+    loop {
+        if !fill(&mut buf, prefix.len()) {
             return None;
         }
-        if buf.len() >= prefix.len() && buf.starts_with(prefix) {
-            break 'scan;
+        if buf.starts_with(prefix) {
+            break;
         }
-        if buf.len() > prefix.len() {
-            // Discard bytes before a possible prefix match.
-            if let Some(pos) = buf.windows(prefix.len()).position(|w| w == prefix) {
-                buf.drain(..pos);
-            } else {
-                buf.drain(..buf.len() - prefix.len() + 1);
-            }
-        }
+        buf.remove(0);
     }
     buf.drain(..prefix.len());
     loop {
@@ -961,7 +1009,7 @@ impl Debugger {
             next_frame_id: AtomicI64::new(1),
             next_thread_id: AtomicI64::new(1),
             next_var_id: AtomicI64::new(1),
-            next_breakpoint_id: AtomicI64::new(1),
+            next_breakpoint_id: AtomicI64::new(0),
             session_active: AtomicBool::new(true),
             disconnect_event: SyncEvent::new(),
             configuration_done: SyncEvent::new(),

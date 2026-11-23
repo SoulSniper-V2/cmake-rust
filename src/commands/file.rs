@@ -968,6 +968,7 @@ fn configure(interp: &mut Interp, args: &[String]) -> CmdResult {
         return Err(CmdErr::Reported);
     }
     interp.ext.configure_outputs.insert(output.clone());
+    interp.mf_mut().output_files.push(output.clone());
     let data = configure_text(
         interp,
         content.as_bytes(),

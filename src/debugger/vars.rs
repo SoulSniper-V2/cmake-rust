@@ -141,10 +141,9 @@ fn register_tree(state: &mut State, inner: &Inner, node: TreeNode) -> i64 {
         subvars,
         handler,
     } = node;
-    let mut child_ids = Vec::with_capacity(subvars.len());
-    for child in subvars {
-        child_ids.push(register_tree(state, inner, child));
-    }
+    // Every `cmDebuggerVariablesHelper` constructs the parent
+    // `cmDebuggerVariables` (taking the next id) before creating its
+    // children: ids are assigned in pre-order.
     let id = register(
         state,
         inner,
@@ -156,6 +155,10 @@ fn register_tree(state: &mut State, inner: &Inner, node: TreeNode) -> i64 {
             handler,
         },
     );
+    let mut child_ids = Vec::with_capacity(subvars.len());
+    for child in subvars {
+        child_ids.push(register_tree(state, inner, child));
+    }
     state.var_children.insert(id, child_ids);
     id
 }
@@ -197,6 +200,7 @@ impl TreeNode {
 pub fn scope_json(state: &State, var_id: i64) -> J {
     let node = &state.variables[&var_id];
     J::Obj(vec![
+        ("expensive".into(), J::Bool(false)),
         ("name".into(), J::str(node.name.clone())),
         ("presentationHint".into(), J::str("locals")),
         ("source".into(), state.frame_source(var_id)),
@@ -528,7 +532,9 @@ fn target_node(ip: usize, _mf: usize, name: &str) -> TreeNode {
             ),
             VarEntry::boolean("IsImported", target.imported),
             VarEntry::boolean("IsImportedGloballyVisible", target.imported_global),
-            VarEntry::boolean("IsPerConfig", false),
+            // `PerConfig::No` is only used for the generator's global
+            // targets, which are not in `GetOrderedTargets`.
+            VarEntry::boolean("IsPerConfig", true),
             VarEntry::str("Name", target.name.clone()),
             VarEntry::str(
                 "RuntimeInstallPath",
@@ -556,21 +562,56 @@ fn target_node(ip: usize, _mf: usize, name: &str) -> TreeNode {
             .ext
             .targets
             .get(&name3)
-            .map(|t| props_list(&t.props))
+            .map(|t| target_property_map(&t.props))
             .unwrap_or_default()
     }) {
         target.subvars.push(node);
     }
-    // Directory-property backed lists (`GetIncludeDirectoriesEntries` etc.)
-    // are tracked in the makefile/target property maps in this model.
-    if let Some(node) = create_if_any_bt_range("SystemIncludeDirectories", {
-        let interp = interp_at(ip);
-        interp
-            .ext
-            .targets
-            .get(&name_owned)
-            .map(|t| t.system_include_directories.iter().cloned().collect())
-            .unwrap_or_default()
+    // The `cmTarget::Get*Entries` usage-requirement collections, in the
+    // order `CreateIfAny(..., std::vector<cmTarget*>)` adds them.
+    for (label, property) in [
+        ("IncludeDirectories", "INCLUDE_DIRECTORIES"),
+        ("Sources", "SOURCES"),
+        ("CompileDefinitions", "COMPILE_DEFINITIONS"),
+        ("CompileFeatures", "COMPILE_FEATURES"),
+        ("CompileOptions", "COMPILE_OPTIONS"),
+        ("CxxModuleSets", "CXX_MODULE_SETS"),
+        ("HeaderSets", "HEADER_SETS"),
+        ("InterfaceHeaderSets", "INTERFACE_HEADER_SETS"),
+        ("LinkDirectories", "LINK_DIRECTORIES"),
+        ("LinkImplementations", "LINK_LIBRARIES"),
+        ("LinkInterfaceDirects", "INTERFACE_LINK_LIBRARIES_DIRECT"),
+        (
+            "LinkInterfaceDirectExcludes",
+            "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE",
+        ),
+        ("LinkInterfaces", "INTERFACE_LINK_LIBRARIES"),
+        ("LinkOptions", "LINK_OPTIONS"),
+    ] {
+        let entries = {
+            let interp = interp_at(ip);
+            interp
+                .ext
+                .targets
+                .get(&name_owned)
+                .map(|t| target_entries(t, property))
+                .unwrap_or_default()
+        };
+        if let Some(node) = create_if_any_bt_range(label, entries) {
+            target.subvars.push(node);
+        }
+    }
+    if let Some(node) = create_if_any_vec("SystemIncludeDirectories", {
+        let name = name_owned.clone();
+        move || {
+            let interp = interp_at(ip);
+            interp
+                .ext
+                .targets
+                .get(&name)
+                .map(|t| t.system_include_directories.iter().cloned().collect())
+                .unwrap_or_default()
+        }
     }) {
         target.subvars.push(node);
     }
@@ -584,6 +625,37 @@ fn target_node(ip: usize, _mf: usize, name: &str) -> TreeNode {
             .map(|t| t.makefile)
             .unwrap_or(0)
     }));
+    target.subvars.push(global_generator_node(ip));
+
+    // `GetAllFileSetNames` (the std::map of file sets: sorted by name) and
+    // `GetAllInterfaceFileSets` (the expanded INTERFACE_HEADER_SETS then
+    // INTERFACE_CXX_MODULE_SETS entries).
+    let (all, interface) = {
+        let interp = interp_at(ip);
+        match interp.ext.targets.get(&name_owned) {
+            Some(t) => {
+                let all: Vec<String> = t.file_sets.keys().cloned().collect();
+                let mut interface = Vec::new();
+                for property in ["INTERFACE_HEADER_SETS", "INTERFACE_CXX_MODULE_SETS"] {
+                    for entry in target_entries(t, property) {
+                        interface.extend(crate::util::expand_list(&entry, false));
+                    }
+                }
+                (all, interface)
+            }
+            None => (Vec::new(), Vec::new()),
+        }
+    };
+    for (label, names) in [("AllFileSets", all), ("AllInterfaceFileSets", interface)] {
+        if names.is_empty() {
+            continue;
+        }
+        let mut sets = TreeNode::node(label);
+        for set in names {
+            sets.subvars.push(file_set_node(ip, &name_owned, &set));
+        }
+        target.subvars.push(sets);
+    }
     target
 }
 
@@ -622,6 +694,238 @@ fn makefile_node(ip: usize, mf_of: impl Fn() -> usize + Send + Sync + 'static) -
     }) {
         node.subvars.push(list);
     }
+    let mf = mf_of.clone();
+    if let Some(list) = create_if_any_vec("OutputFiles", move || {
+        let interp = interp_at(ip);
+        interp.makefiles[mf()].output_files.clone()
+    }) {
+        node.subvars.push(list);
+    }
+    node
+}
+
+/// `cmMakefile::AppleSDK` as `GetAppleSDKType` classifies
+/// `CMAKE_OSX_SYSROOT`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppleSdk {
+    MacOS,
+    AppleTvOs,
+    AppleTvSimulator,
+    IPhoneOs,
+    IPhoneSimulator,
+    WatchOs,
+    WatchSimulator,
+    XrOs,
+    XrSimulator,
+}
+
+impl AppleSdk {
+    fn of(sysroot: &str) -> AppleSdk {
+        let root = sysroot.to_lowercase();
+        for (name, sdk) in [
+            ("appletvos", AppleSdk::AppleTvOs),
+            ("appletvsimulator", AppleSdk::AppleTvSimulator),
+            ("iphoneos", AppleSdk::IPhoneOs),
+            ("iphonesimulator", AppleSdk::IPhoneSimulator),
+            ("watchos", AppleSdk::WatchOs),
+            ("watchsimulator", AppleSdk::WatchSimulator),
+            ("xros", AppleSdk::XrOs),
+            ("xrsimulator", AppleSdk::XrSimulator),
+        ] {
+            if root.starts_with(name) || root.contains(&format!("/{name}")) {
+                return sdk;
+            }
+        }
+        AppleSdk::MacOS
+    }
+
+    /// The debugger's `AppleSDKTypeString` (watch/xr SDKs fall through to
+    /// "Unknown").
+    fn label(self) -> &'static str {
+        match self {
+            AppleSdk::MacOS => "MacOS",
+            AppleSdk::IPhoneOs => "IPhoneOS",
+            AppleSdk::IPhoneSimulator => "IPhoneSimulator",
+            AppleSdk::AppleTvOs => "AppleTVOS",
+            AppleSdk::AppleTvSimulator => "AppleTVSimulator",
+            _ => "Unknown",
+        }
+    }
+}
+
+/// Target property names that `cmTarget` stores outside its
+/// `cmPropertyMap` (usage-requirement entries, file-set storage and
+/// computed properties), so `GetProperties().GetList()` never lists them.
+fn is_unmapped_target_property(name: &str) -> bool {
+    const USAGE: &[&str] = &[
+        "INCLUDE_DIRECTORIES",
+        "COMPILE_OPTIONS",
+        "COMPILE_FEATURES",
+        "COMPILE_DEFINITIONS",
+        "PRECOMPILE_HEADERS",
+        "SOURCES",
+        "LINK_OPTIONS",
+        "LINK_DIRECTORIES",
+        "LINK_LIBRARIES",
+        "INTERFACE_LINK_LIBRARIES",
+        "INTERFACE_LINK_LIBRARIES_DIRECT",
+        "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE",
+        "IMPORTED_CXX_MODULES_INCLUDE_DIRECTORIES",
+        "IMPORTED_CXX_MODULES_COMPILE_DEFINITIONS",
+        "IMPORTED_CXX_MODULES_COMPILE_FEATURES",
+        "IMPORTED_CXX_MODULES_COMPILE_OPTIONS",
+        "IMPORTED_CXX_MODULES_LINK_LIBRARIES",
+        // FileSetType::WriteProperties / FileSetEntries.
+        "HEADER_DIRS",
+        "HEADER_SET",
+        "HEADER_SETS",
+        "INTERFACE_HEADER_SETS",
+        "CXX_MODULE_DIRS",
+        "CXX_MODULE_SET",
+        "CXX_MODULE_SETS",
+        "INTERFACE_CXX_MODULE_SETS",
+        // cmTarget::GetComputedProperty / read-only specials.
+        "MANUALLY_ADDED_DEPENDENCIES",
+        "TYPE",
+        "NAME",
+        "IMPORTED",
+        "IMPORTED_GLOBAL",
+        "BINARY_DIR",
+        "SOURCE_DIR",
+    ];
+    USAGE.contains(&name)
+        || name.starts_with("HEADER_DIRS_")
+        || name.starts_with("HEADER_SET_")
+        || name.starts_with("CXX_MODULE_DIRS_")
+        || name.starts_with("CXX_MODULE_SET_")
+}
+
+fn target_property_map(props: &crate::props::Props) -> Vec<(String, String)> {
+    props
+        .iter()
+        .filter(|(k, _)| !is_unmapped_target_property(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// `cmTarget::Get*Entries` for one usage-requirement property: the
+/// recorded per-call entries, or the whole value as a single entry.  The
+/// file-set name lists (`FileSetEntries`) hold one entry per set.
+fn target_entries(target: &crate::state::Target, property: &str) -> Vec<String> {
+    if property.ends_with("_SETS") {
+        return target
+            .props
+            .get(property)
+            .map(|v| crate::util::expand_list(v, false))
+            .unwrap_or_default();
+    }
+    match target.provenance.get(property) {
+        Some(entries) => entries.iter().map(|(value, _)| value.clone()).collect(),
+        None => target
+            .props
+            .get(property)
+            .map(|v| vec![v.to_owned()])
+            .unwrap_or_default(),
+    }
+}
+
+/// `CreateIfAny(..., cmFileSet*)`.
+fn file_set_node(ip: usize, target: &str, set: &str) -> TreeNode {
+    let (kind, visibility, dirs, files) = {
+        let interp = interp_at(ip);
+        match interp
+            .ext
+            .targets
+            .get(target)
+            .and_then(|t| t.file_sets.get(set))
+        {
+            Some(fs) => (
+                fs.kind.clone(),
+                match fs.scope {
+                    crate::state::Scope::Private => "Private",
+                    crate::state::Scope::Public => "Public",
+                    crate::state::Scope::Interface => "Interface",
+                },
+                fs.base_dirs
+                    .iter()
+                    .map(|(v, _)| v.clone())
+                    .collect::<Vec<_>>(),
+                fs.files.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>(),
+            ),
+            None => (String::new(), "Unknown", Vec::new(), Vec::new()),
+        }
+    };
+    let name = set.to_owned();
+    let mut node = TreeNode::leaf(set, move || {
+        vec![
+            VarEntry::str("Name", name.clone()),
+            VarEntry::str("Type", kind.clone()),
+            VarEntry::str("Visibility", visibility),
+        ]
+    });
+    if let Some(list) = create_if_any_vec("Directories", move || dirs.clone()) {
+        node.subvars.push(list);
+    }
+    if let Some(list) = create_if_any_vec("Files", move || files.clone()) {
+        node.subvars.push(list);
+    }
+    node
+}
+
+/// `CreateIfAny(..., cmGlobalGenerator*)` for the Ninja generators.
+fn global_generator_node(ip: usize) -> TreeNode {
+    let name = interp_at(ip).get_safe("CMAKE_GENERATOR").to_owned();
+    let multi = name == "Ninja Multi-Config";
+    let label = name.clone();
+    let mut node = TreeNode::leaf("GlobalGenerator", move || {
+        let interp = interp_at(ip);
+        // cmGlobalCommonGenerator::GetEditCacheCommand: no curses or GUI
+        // dialog ships with this implementation, so only a cached
+        // CMAKE_EDIT_COMMAND can name one.
+        let edit = interp
+            .cache
+            .entries
+            .get("CMAKE_EDIT_COMMAND")
+            .map(|e| e.value.clone())
+            .unwrap_or_default();
+        vec![
+            VarEntry::str("AllTargetName", "all"),
+            VarEntry::str("CleanTargetName", "clean"),
+            VarEntry::str("EditCacheCommand", edit),
+            VarEntry::str("EditCacheTargetName", "edit_cache"),
+            VarEntry::str("ExtraGeneratorName", ""),
+            VarEntry::boolean("ForceUnixPaths", false),
+            VarEntry::str("InstallLocalTargetName", "install/local"),
+            VarEntry::str("InstallStripTargetName", "install/strip"),
+            VarEntry::str("InstallTargetName", "install"),
+            VarEntry::boolean("IsMultiConfig", multi),
+            VarEntry::str("Name", label.clone()),
+            VarEntry::str("MakefileEncoding", "None"),
+            VarEntry::str("PackageSourceTargetName", "package_source"),
+            VarEntry::str("PackageTargetName", "package"),
+            VarEntry::str("PreinstallTargetName", ""),
+            VarEntry::boolean("NeedSymbolicMark", false),
+            VarEntry::str("RebuildCacheTargetName", "rebuild_cache"),
+            VarEntry::str("TestTargetName", "test"),
+            VarEntry::boolean("UseLinkScript", false),
+        ]
+    });
+    // `GetInstallComponents` is never null; CreateIfAny drops it when the
+    // set is empty.
+    let components: Vec<String> = {
+        let interp = interp_at(ip);
+        interp
+            .ext
+            .misc
+            .get("install-components")
+            .map(|v| crate::util::expand_list(v, false))
+            .unwrap_or_default()
+    };
+    if let Some(list) = create_if_any_vec("InstallComponents", move || components.clone()) {
+        node.subvars.push(list);
+    }
+    node.ignore_empty = true;
+    node.value = name;
     node
 }
 
@@ -635,8 +939,18 @@ fn makefile_entries(interp: &crate::interp::Interp, mf: usize) -> Vec<VarEntry> 
     let makefile = &interp.makefiles[mf];
     let void_p: i64 = interp.get_safe("CMAKE_SIZEOF_VOID_P").parse().unwrap_or(0);
     let is_x32 = interp.get_safe("CMAKE_INTERNAL_PLATFORM_ABI") == "ELF X32";
+    let apple_sdk = AppleSdk::of(&interp.get_safe("CMAKE_OSX_SYSROOT"));
     vec![
-        VarEntry::str("DefineFlags", ""),
+        // cmMakefile initializes DefineFlags to " ".
+        VarEntry::str(
+            "DefineFlags",
+            interp
+                .ext
+                .directory_define_flags
+                .get(&mf)
+                .cloned()
+                .unwrap_or_else(|| " ".to_owned()),
+        ),
         VarEntry::str("DirectoryId", directory_id(interp, mf)),
         VarEntry::boolean("IsRootMakefile", makefile.parent.is_none()),
         VarEntry::str("HomeDirectory", interp.home_source.clone()),
@@ -646,7 +960,7 @@ fn makefile_entries(interp: &crate::interp::Interp, mf: usize) -> Vec<VarEntry> 
         VarEntry::boolean("PlatformIs32Bit", !is_x32 && void_p == 4),
         VarEntry::boolean("PlatformIs64Bit", void_p == 8),
         VarEntry::boolean("PlatformIsx32", is_x32),
-        VarEntry::str("AppleSDKType", "Unknown"),
-        VarEntry::boolean("PlatformIsAppleEmbedded", false),
+        VarEntry::str("AppleSDKType", apple_sdk.label()),
+        VarEntry::boolean("PlatformIsAppleEmbedded", apple_sdk != AppleSdk::MacOS),
     ]
 }

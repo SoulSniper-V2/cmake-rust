@@ -141,6 +141,7 @@ fn subdirectory(interp: &mut Interp, parent: usize, name: &str, exclude: bool) -
         props: Props::default(),
         policies,
         list_files: Vec::new(),
+        output_files: Vec::new(),
         targets: Vec::new(),
         children: Vec::new(),
         exclude_from_all: exclude,

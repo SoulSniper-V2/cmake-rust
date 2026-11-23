@@ -187,6 +187,9 @@ pub struct Makefile {
     pub props: Props,
     pub policies: Vec<PolicyFrame>,
     pub list_files: Vec<String>,
+    /// `cmMakefile::OutputFiles` (`AddCMakeOutputFile`): configure_file and
+    /// file(CONFIGURE) outputs, in call order.
+    pub output_files: Vec<String>,
     pub targets: Vec<String>,
     pub children: Vec<usize>,
     pub exclude_from_all: bool,
@@ -383,6 +386,7 @@ impl Interp {
                 weak: false,
             }],
             list_files: Vec::new(),
+            output_files: Vec::new(),
             targets: Vec::new(),
             children: Vec::new(),
             exclude_from_all: false,
@@ -808,6 +812,7 @@ impl Interp {
             props,
             policies: Vec::new(),
             list_files: Vec::new(),
+            output_files: Vec::new(),
             targets: Vec::new(),
             children: Vec::new(),
             exclude_from_all: exclude,

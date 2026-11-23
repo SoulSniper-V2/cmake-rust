@@ -300,6 +300,7 @@ pub(super) fn configure_file_core(
     }
     deps.push_str(&input);
     interp.ext.configure_outputs.insert(output.clone());
+    interp.mf_mut().output_files.push(output.clone());
     if bits == 0 {
         bits = fs::metadata(&input).map_or(0o644, |meta| meta.permissions().mode());
     }
