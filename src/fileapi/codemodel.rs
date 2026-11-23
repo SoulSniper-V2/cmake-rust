@@ -1652,14 +1652,18 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     }
 }
 
+/// An include directory or framework: path, whether it is a system one,
+/// and its backtrace.
+type IncludeEntry = (String, bool, Vec<Frame>);
+
 #[derive(Clone, Default, PartialEq)]
 struct CompileData {
     language: String,
     sysroot: String,
     flags: Vec<flags::BtFrag>,
     defines: Vec<flags::BtFrag>,
-    includes: Vec<(String, bool, Vec<Frame>)>,
-    frameworks: Vec<(String, bool, Vec<Frame>)>,
+    includes: Vec<IncludeEntry>,
+    frameworks: Vec<IncludeEntry>,
     pch: Vec<flags::BtFrag>,
     standard: Option<(String, Vec<Vec<Frame>>)>,
 }
@@ -1669,12 +1673,9 @@ struct CompileData {
 /// enters the graph in list order.
 fn split_frameworks(
     target: &Target,
-    entries: Vec<(String, bool, Vec<Frame>)>,
+    entries: Vec<IncludeEntry>,
     graph: &mut BtGraph,
-) -> (
-    Vec<(String, bool, Vec<Frame>)>,
-    Vec<(String, bool, Vec<Frame>)>,
-) {
+) -> (Vec<IncludeEntry>, Vec<IncludeEntry>) {
     let mut includes = Vec::new();
     let mut frameworks = Vec::new();
     for entry in entries {
