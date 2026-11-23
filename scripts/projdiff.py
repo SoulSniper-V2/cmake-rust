@@ -14,8 +14,9 @@ CMakeLists.txt (and sources). Optional files in the case directory:
                the pass/fail summary; its lines are extra ctest arguments
 Generated files compared (when present on either side): every *.ninja file
 (build.ninja and CMakeFiles/rules.ninja, plus the Ninja Multi-Config
-build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja), CMakeCache.txt (with volatile entries dropped),
-CTestTestfile.cmake, cmake_install.cmake (all directories),
+build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja),
+CMakeCache.txt (with volatile entries dropped), CTestTestfile.cmake,
+cmake_install.cmake (all directories), CMakeFiles/clean_additional.cmake,
 compile_commands.json, Android.mk-style `*.mk` exports, and every file under
 CMakeFiles/Export/ (install-tree export files).
 
@@ -67,7 +68,7 @@ def gather(build_dir):
         name = path.name
         if not path.is_file():
             continue
-        if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake",
+        if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json")
                 or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")):
             files[rel] = path.read_text(errors="replace")

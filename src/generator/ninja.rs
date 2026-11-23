@@ -315,6 +315,8 @@ pub struct NinjaGenerator<'a> {
     byproducts_for_clean: Vec<String>,
     /// `Configs[config].ByproductsForCleanTarget`.
     config_byproducts_for_clean: BTreeMap<String, Vec<String>>,
+    /// `Configs[config].AdditionalCleanFiles` (ADDITIONAL_CLEAN_FILES).
+    additional_clean_files: BTreeMap<String, BTreeSet<String>>,
     global_targets: Vec<GlobalTarget>,
     /// Global dependency postorder used to break static cycles in module lookup.
     module_order: HashMap<String, usize>,
@@ -378,6 +380,7 @@ impl<'a> NinjaGenerator<'a> {
             default_target_aliases: BTreeMap::new(),
             byproducts_for_clean: Vec::new(),
             config_byproducts_for_clean: BTreeMap::new(),
+            additional_clean_files: BTreeMap::new(),
             global_targets: Vec::new(),
             module_order: HashMap::new(),
             seen_custom_commands: HashSet::new(),
@@ -935,6 +938,38 @@ impl<'a> NinjaGenerator<'a> {
             .collect()
     }
 
+    /// `cmNinjaTargetGenerator::AdditionalCleanFiles` (with a target) and
+    /// `cmLocalNinjaGenerator::AdditionalCleanFiles` (directory property).
+    fn add_additional_clean_files(&mut self, makefile: usize, target: Option<&Target>) {
+        let value = match target {
+            Some(target) => target
+                .props
+                .get("ADDITIONAL_CLEAN_FILES")
+                .map(str::to_owned),
+            None => self.ctx.interp.makefiles[makefile]
+                .props
+                .get("ADDITIONAL_CLEAN_FILES")
+                .map(str::to_owned),
+        };
+        let Some(value) = value else {
+            return;
+        };
+        let evaluated = match target {
+            Some(target) => self.ctx.genex(&value, Some(target), None),
+            None => self.ctx.genex_full(&value, makefile, None, None, true, &[]),
+        };
+        let binary_dir = self.ctx.interp.makefiles[makefile].binary_dir.clone();
+        let config = self.config.clone();
+        for file in util::expand_list(&evaluated, false) {
+            // Support relative paths.
+            let path = util::collapse_full_path(&file, &binary_dir);
+            self.additional_clean_files
+                .entry(config.clone())
+                .or_default()
+                .insert(path);
+        }
+    }
+
     /// `cmGlobalNinjaGenerator::IsSingleConfigUtility`.
     fn is_single_config_utility(&self, target: &Target) -> bool {
         target.kind == TargetKind::Utility
@@ -1134,11 +1169,13 @@ impl<'a> NinjaGenerator<'a> {
         if multi {
             for config in &configs {
                 self.with_config(config, |this| {
-                    this.write_custom_command_build_statements(&commands)
+                    this.write_custom_command_build_statements(&commands);
+                    this.add_additional_clean_files(makefile, None);
                 });
             }
         } else {
             self.write_custom_command_build_statements(&commands);
+            self.add_additional_clean_files(makefile, None);
         }
     }
 
@@ -2167,6 +2204,76 @@ impl<'a> NinjaGenerator<'a> {
         outputs
     }
 
+    /// `cmGlobalNinjaGenerator::WriteTargetCleanAdditional`: the
+    /// `CMakeFiles/clean_additional.cmake` script and its build statements
+    /// in the common file. Returns whether there are files to clean.
+    fn write_target_clean_additional(&mut self) -> bool {
+        let script_rel = "CMakeFiles/clean_additional.cmake";
+        let script_abs = format!("{}/{script_rel}", self.home_binary);
+        let configs = self.ctx.configs.clone();
+        if configs.iter().all(|config| {
+            self.additional_clean_files
+                .get(config)
+                .is_none_or(BTreeSet::is_empty)
+        }) {
+            let _ = std::fs::remove_file(&script_abs);
+            return false;
+        }
+        let mut script =
+            String::from("# Additional clean files\ncmake_minimum_required(VERSION 3.16)\n");
+        for config in &configs {
+            let Some(files) = self.additional_clean_files.get(config) else {
+                continue;
+            };
+            if files.is_empty() {
+                continue;
+            }
+            let _ = write!(
+                script,
+                "\nif(\"${{CONFIG}}\" STREQUAL \"\" OR \"${{CONFIG}}\" STREQUAL \"{config}\")\n  file(REMOVE_RECURSE\n"
+            );
+            for file in files {
+                let _ = writeln!(
+                    script,
+                    "  {}",
+                    util::escape_for_cmake(&self.ninja_path(file))
+                );
+            }
+            script.push_str("  )\nendif()\n");
+        }
+        if crate::fsutil::write_generated(std::path::Path::new(&script_abs), script.as_bytes())
+            .is_err()
+        {
+            return false;
+        }
+        let rule = Rule {
+            name: "CLEAN_ADDITIONAL".into(),
+            command: format!(
+                "{} -DCONFIG=$CONFIG -P {}",
+                self.cmake_cmd,
+                self.shell(&self.output_path(script_rel))
+            ),
+            description: "Cleaning additional files...".into(),
+            comment: "Rule for cleaning additional files.".into(),
+            ..Rule::default()
+        };
+        write_rule(&mut self.rules, &rule);
+        let target = self.output_path("CMakeFiles/clean.additional");
+        let mut build = Build::new("CLEAN_ADDITIONAL");
+        build.comment = "Clean additional files.".into();
+        for config in &configs {
+            build.outputs = vec![self.ctx.build_alias(&target, config)];
+            build.variables.insert("CONFIG".into(), config.clone());
+            self.write_build_to(&Stream::Common, &build);
+        }
+        if self.ctx.multi_config {
+            build.outputs = vec![target];
+            build.variables.insert("CONFIG".into(), String::new());
+            self.write_build_to(&Stream::Common, &build);
+        }
+        true
+    }
+
     /// `cmGlobalNinjaGenerator::WriteTargetClean`.
     fn write_target_clean(&mut self) {
         let rule = Rule {
@@ -2176,15 +2283,23 @@ impl<'a> NinjaGenerator<'a> {
             comment: "Rule for cleaning all built files.".into(),
             ..Rule::default()
         };
-        write_rule(&mut self.rules, &rule);
         let multi = self.ctx.multi_config;
         let configs = self.ctx.configs.clone();
+        // -- Additional clean target
+        let additional = self.write_target_clean_additional();
+        let additional_target = self.output_path("CMakeFiles/clean.additional");
+        write_rule(&mut self.rules, &rule);
         let clean = self.output_path("clean");
         let byproducts = self.output_path("CMakeFiles/cmake_byproducts_for_clean_target");
         for config in &configs {
             let mut build = Build::new("CLEAN");
             build.comment = "Clean all the built files.".into();
             build.outputs.push(self.ctx.build_alias(&clean, config));
+            if additional {
+                build
+                    .explicit_deps
+                    .push(self.ctx.build_alias(&additional_target, config));
+            }
             if multi {
                 build.variables.insert(
                     "TARGETS".into(),
@@ -2211,6 +2326,13 @@ impl<'a> NinjaGenerator<'a> {
             let mut build = Build::new("CLEAN");
             build.comment = "Clean all the built files.".into();
             build.outputs.push(self.ctx.build_alias(&clean, "all"));
+            if additional {
+                for config in self.ctx.cross_configs.clone() {
+                    build
+                        .explicit_deps
+                        .push(self.ctx.build_alias(&additional_target, &config));
+                }
+            }
             let mut targets: Vec<String> = self
                 .ctx
                 .cross_configs
@@ -2862,6 +2984,8 @@ impl<'a> NinjaGenerator<'a> {
         if self.cross_enabled() {
             self.add_target_alias_cfg(&target.name.clone(), target, "all");
         }
+        // Find ADDITIONAL_CLEAN_FILES.
+        self.add_additional_clean_files(target.makefile, Some(target));
     }
 
     /// `cmNinjaTargetGenerator::WriteObjectBuildStatements(config,
@@ -4055,6 +4179,8 @@ impl<'a> NinjaGenerator<'a> {
             phony.explicit_deps.push(util_command_name);
             self.write_build(&phony);
         }
+        // Find ADDITIONAL_CLEAN_FILES.
+        self.add_additional_clean_files(makefile, Some(target));
         self.add_target_alias(&target.name.clone(), target);
     }
 

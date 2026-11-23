@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(AdditionalClean C)
+add_executable(app main.c)
+set_property(TARGET app PROPERTY ADDITIONAL_CLEAN_FILES extra.txt "$<TARGET_FILE_DIR:app>/gen dir" /abs/$<CONFIG>.log)
+add_custom_target(util COMMAND ${CMAKE_COMMAND} -E touch util.txt)
+set_property(TARGET util PROPERTY ADDITIONAL_CLEAN_FILES util.txt)
+set_property(DIRECTORY PROPERTY ADDITIONAL_CLEAN_FILES dir-file.txt)
