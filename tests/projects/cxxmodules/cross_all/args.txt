@@ -1,0 +1,4 @@
+-DCMAKE_CROSS_CONFIGS=all
+-DCMAKE_DEFAULT_CONFIGS=all
+-DCMAKE_DEFAULT_BUILD_TYPE=Release
+-DCMAKE_CXX_COMPILER=/home/linuxbrew/.linuxbrew/bin/g++-15

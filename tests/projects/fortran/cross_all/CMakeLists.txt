@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.26)
+project(FortranCrossAll Fortran)
+add_library(fstat STATIC stat.f90)
+add_library(fshared SHARED more.F90)
+target_link_libraries(fshared PRIVATE fstat)
+target_compile_definitions(fshared PRIVATE "EXTRA=2")
+add_executable(fmain main.f90)
+target_link_libraries(fmain PRIVATE fstat fshared)

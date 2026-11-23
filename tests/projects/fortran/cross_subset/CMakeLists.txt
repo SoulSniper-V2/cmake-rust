@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.26)
+project(FortranCrossSubset Fortran)
+enable_testing()
+add_library(base STATIC base.f90 pp.F90)
+add_executable(sub main.f90)
+target_link_libraries(sub PRIVATE base)
+add_test(NAME runs COMMAND sub)
