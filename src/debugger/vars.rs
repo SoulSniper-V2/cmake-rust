@@ -487,49 +487,17 @@ fn target_node(ip: usize, _mf: usize, name: &str) -> TreeNode {
         let Some(target) = interp.ext.targets.get(&name2) else {
             return Vec::new();
         };
-        let kind = target.kind;
-        let is_apple = interp
-            .get_def("APPLE")
-            .map(crate::util::is_on)
-            .unwrap_or(false);
-        let system_name = interp.get_def("CMAKE_SYSTEM_NAME").unwrap_or("");
-        let is_aix = system_name == "AIX" || system_name == "OS400";
-        let is_android = system_name == "Android";
-        let is_dll_platform = !interp.get_safe("CMAKE_IMPORT_LIBRARY_SUFFIX").is_empty();
-        let prop_bool = |name: &str| {
-            target
-                .props
-                .get(name)
-                .map(crate::util::is_on)
-                .unwrap_or(false)
-        };
         vec![
             VarEntry::str("InstallPath", target_install_path(interp, target)),
-            VarEntry::boolean("IsAIX", is_aix),
-            VarEntry::boolean(
-                "IsAndroidGuiExecutable",
-                kind == crate::state::TargetKind::Executable
-                    && is_android
-                    && prop_bool("ANDROID_GUI"),
-            ),
-            VarEntry::boolean(
-                "IsAppBundleOnApple",
-                kind == crate::state::TargetKind::Executable
-                    && is_apple
-                    && prop_bool("MACOSX_BUNDLE"),
-            ),
-            VarEntry::boolean("IsDLLPlatform", is_dll_platform),
+            VarEntry::boolean("IsAIX", target.platform.aix),
+            VarEntry::boolean("IsAndroidGuiExecutable", target.is_android_gui_executable()),
+            VarEntry::boolean("IsAppBundleOnApple", target.is_app_bundle_on_apple()),
+            VarEntry::boolean("IsDLLPlatform", target.platform.dll),
             VarEntry::boolean(
                 "IsExecutableWithExports",
-                kind == crate::state::TargetKind::Executable && prop_bool("ENABLE_EXPORTS"),
+                target.is_executable_with_exports(),
             ),
-            VarEntry::boolean(
-                "IsFrameworkOnApple",
-                (kind == crate::state::TargetKind::SharedLibrary
-                    || kind == crate::state::TargetKind::StaticLibrary)
-                    && is_apple
-                    && prop_bool("FRAMEWORK"),
-            ),
+            VarEntry::boolean("IsFrameworkOnApple", target.is_framework_on_apple()),
             VarEntry::boolean("IsImported", target.imported),
             VarEntry::boolean("IsImportedGloballyVisible", target.imported_global),
             // `PerConfig::No` is only used for the generator's global
@@ -540,7 +508,7 @@ fn target_node(ip: usize, _mf: usize, name: &str) -> TreeNode {
                 "RuntimeInstallPath",
                 target_runtime_install_path(interp, target),
             ),
-            VarEntry::str("Type", kind.type_name()),
+            VarEntry::str("Type", target.kind.type_name()),
         ]
     });
     target.value = type_name;
@@ -702,55 +670,6 @@ fn makefile_node(ip: usize, mf_of: impl Fn() -> usize + Send + Sync + 'static) -
         node.subvars.push(list);
     }
     node
-}
-
-/// `cmMakefile::AppleSDK` as `GetAppleSDKType` classifies
-/// `CMAKE_OSX_SYSROOT`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AppleSdk {
-    MacOS,
-    AppleTvOs,
-    AppleTvSimulator,
-    IPhoneOs,
-    IPhoneSimulator,
-    WatchOs,
-    WatchSimulator,
-    XrOs,
-    XrSimulator,
-}
-
-impl AppleSdk {
-    fn of(sysroot: &str) -> AppleSdk {
-        let root = sysroot.to_lowercase();
-        for (name, sdk) in [
-            ("appletvos", AppleSdk::AppleTvOs),
-            ("appletvsimulator", AppleSdk::AppleTvSimulator),
-            ("iphoneos", AppleSdk::IPhoneOs),
-            ("iphonesimulator", AppleSdk::IPhoneSimulator),
-            ("watchos", AppleSdk::WatchOs),
-            ("watchsimulator", AppleSdk::WatchSimulator),
-            ("xros", AppleSdk::XrOs),
-            ("xrsimulator", AppleSdk::XrSimulator),
-        ] {
-            if root.starts_with(name) || root.contains(&format!("/{name}")) {
-                return sdk;
-            }
-        }
-        AppleSdk::MacOS
-    }
-
-    /// The debugger's `AppleSDKTypeString` (watch/xr SDKs fall through to
-    /// "Unknown").
-    fn label(self) -> &'static str {
-        match self {
-            AppleSdk::MacOS => "MacOS",
-            AppleSdk::IPhoneOs => "IPhoneOS",
-            AppleSdk::IPhoneSimulator => "IPhoneSimulator",
-            AppleSdk::AppleTvOs => "AppleTVOS",
-            AppleSdk::AppleTvSimulator => "AppleTVSimulator",
-            _ => "Unknown",
-        }
-    }
 }
 
 /// Target property names that `cmTarget` stores outside its
@@ -939,7 +858,7 @@ fn makefile_entries(interp: &crate::interp::Interp, mf: usize) -> Vec<VarEntry> 
     let makefile = &interp.makefiles[mf];
     let void_p: i64 = interp.get_safe("CMAKE_SIZEOF_VOID_P").parse().unwrap_or(0);
     let is_x32 = interp.get_safe("CMAKE_INTERNAL_PLATFORM_ABI") == "ELF X32";
-    let apple_sdk = AppleSdk::of(&interp.get_safe("CMAKE_OSX_SYSROOT"));
+    let apple_sdk = crate::apple::Sdk::of(&interp.get_safe("CMAKE_OSX_SYSROOT"));
     vec![
         // cmMakefile initializes DefineFlags to " ".
         VarEntry::str(
@@ -961,6 +880,9 @@ fn makefile_entries(interp: &crate::interp::Interp, mf: usize) -> Vec<VarEntry> 
         VarEntry::boolean("PlatformIs64Bit", void_p == 8),
         VarEntry::boolean("PlatformIsx32", is_x32),
         VarEntry::str("AppleSDKType", apple_sdk.label()),
-        VarEntry::boolean("PlatformIsAppleEmbedded", apple_sdk != AppleSdk::MacOS),
+        VarEntry::boolean(
+            "PlatformIsAppleEmbedded",
+            apple_sdk != crate::apple::Sdk::MacOs,
+        ),
     ]
 }

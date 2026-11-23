@@ -64,6 +64,7 @@ pub(super) fn add_targets(interp: &mut Interp) -> bool {
             .backtrace
             .clone_from(&interp.makefiles[dir].backtrace);
         verify.policies.clone_from(&original.policies);
+        verify.platform = original.platform;
         verify
             .policies
             .set(index_of("CMP0119").unwrap(), PolicyStatus::New);

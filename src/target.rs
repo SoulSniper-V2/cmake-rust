@@ -7,7 +7,7 @@ use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::{Frame, MessageType};
 use crate::policy::{self, PolicyStatus};
 use crate::state::{
-    PropertyEntry, SourceFile, SourceFileLocation, Target, TargetKind, find_alias,
+    Platform, PropertyEntry, SourceFile, SourceFileLocation, Target, TargetKind, find_alias,
     find_global_target_key, find_target_key, find_target_to_use,
 };
 use crate::util::{collapse_full_path, expand_list, is_on, relative_if_under};
@@ -466,6 +466,7 @@ pub fn create_target(
         target.find_package_stack.clone_from(&package.calls);
     }
     target.policies = interp.effective_policies();
+    target.platform = Platform::new(|name| interp.get_def(name));
     // TYPE, NAME, SOURCE_DIR, BINARY_DIR, IMPORTED[_GLOBAL] and the file
     // set lists are computed on read (cmTargetPropertyComputer), not stored.
     if !imported {

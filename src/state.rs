@@ -81,6 +81,31 @@ pub struct Target {
     pub template_name: Option<String>,
     /// `cmTarget::IsGeneratorProvided`.
     pub generator_provided: bool,
+    pub platform: Platform,
+}
+
+/// The platform a target is created for (`cmTargetInternals::IsDLLPlatform`,
+/// `IsAIX`, `IsApple` and `IsAndroid`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Platform {
+    pub dll: bool,
+    pub aix: bool,
+    pub apple: bool,
+    pub android: bool,
+}
+
+impl Platform {
+    /// Reads the platform from variable definitions, as the cmTarget
+    /// constructor does.
+    pub fn new<'a>(get: impl Fn(&str) -> Option<&'a str>) -> Self {
+        let system = get("CMAKE_SYSTEM_NAME").unwrap_or_default();
+        Platform {
+            dll: get("CMAKE_IMPORT_LIBRARY_SUFFIX").is_some_and(|suffix| !suffix.is_empty()),
+            aix: matches!(system, "AIX" | "OS400"),
+            apple: get("APPLE").is_some_and(crate::util::is_on),
+            android: system == "Android",
+        }
+    }
 }
 
 impl Target {
@@ -112,7 +137,74 @@ impl Target {
             synthetic: false,
             template_name: None,
             generator_provided: false,
+            platform: Platform::default(),
         }
+    }
+
+    fn is_on(&self, property: &str) -> bool {
+        crate::util::is_on_opt(self.props.get(property))
+    }
+
+    /// `cmTarget::IsExecutableWithExports`.
+    pub fn is_executable_with_exports(&self) -> bool {
+        self.kind == TargetKind::Executable && self.is_on("ENABLE_EXPORTS")
+    }
+
+    /// `cmTarget::IsSharedLibraryWithExports`.
+    pub fn is_shared_library_with_exports(&self) -> bool {
+        self.kind == TargetKind::SharedLibrary && self.is_on("ENABLE_EXPORTS")
+    }
+
+    /// `cmTarget::IsFrameworkOnApple`.
+    pub fn is_framework_on_apple(&self) -> bool {
+        self.platform.apple
+            && matches!(
+                self.kind,
+                TargetKind::SharedLibrary | TargetKind::StaticLibrary
+            )
+            && self.is_on("FRAMEWORK")
+    }
+
+    /// `cmTarget::IsAppBundleOnApple`.
+    pub fn is_app_bundle_on_apple(&self) -> bool {
+        self.platform.apple && self.kind == TargetKind::Executable && self.is_on("MACOSX_BUNDLE")
+    }
+
+    /// `cmGeneratorTarget::IsCFBundleOnApple`.
+    pub fn is_cf_bundle_on_apple(&self) -> bool {
+        self.platform.apple && self.kind == TargetKind::ModuleLibrary && self.is_on("BUNDLE")
+    }
+
+    /// `cmGeneratorTarget::IsXCTestOnApple`.
+    pub fn is_xctest_on_apple(&self) -> bool {
+        self.is_cf_bundle_on_apple() && self.is_on("XCTEST")
+    }
+
+    /// `cmGeneratorTarget::IsBundleOnApple`.
+    pub fn is_bundle_on_apple(&self) -> bool {
+        self.is_framework_on_apple()
+            || self.is_app_bundle_on_apple()
+            || self.is_cf_bundle_on_apple()
+    }
+
+    /// `cmTarget::IsAndroidGuiExecutable`.
+    pub fn is_android_gui_executable(&self) -> bool {
+        self.platform.android && self.kind == TargetKind::Executable && self.is_on("ANDROID_GUI")
+    }
+
+    /// `cmTarget::IsArchivedAIXSharedLibrary`.
+    pub fn is_archived_aix_shared_library(&self) -> bool {
+        if self.kind != TargetKind::SharedLibrary || !self.platform.aix {
+            return false;
+        }
+        if let Some(value) = self
+            .props
+            .get("AIX_SHARED_LIBRARY_ARCHIVE")
+            .filter(|value| !value.is_empty())
+        {
+            return crate::util::is_on(value);
+        }
+        !self.imported && self.policies.get(182) == Some(crate::policy::PolicyStatus::New)
     }
 }
 

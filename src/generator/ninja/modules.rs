@@ -228,7 +228,7 @@ fn synthetic_target_name(interp: &Interp, imported_key: &str) -> String {
 fn synthesize_cxx_module_target(interp: &mut Interp, imported_key: &str, name: &str) -> String {
     let configs = GenCtx::new(interp).configs;
     // Collect the copies against an immutable view.
-    let (makefile, file_sets, entries_props, entries_prov, policies) = {
+    let (makefile, file_sets, entries_props, entries_prov, policies, platform) = {
         let imported = &interp.ext.targets[imported_key];
         let imported_policies = imported.policies.clone();
         // cmTarget::CopyImportedCxxModulesEntries: imported C++ module usage
@@ -303,6 +303,7 @@ fn synthesize_cxx_module_target(interp: &mut Interp, imported_key: &str, name: &
             entries_props,
             entries_prov,
             imported_policies,
+            imported.platform,
         )
     };
     // `cmMakefile::AddSynthesizedTarget(INTERFACE_LIBRARY, name)`.
@@ -317,6 +318,7 @@ fn synthesize_cxx_module_target(interp: &mut Interp, imported_key: &str, name: &
             .unwrap_or_default(),
     );
     target.policies = policies;
+    target.platform = platform;
     target.file_sets = file_sets;
     for (prop, value) in entries_props {
         target.props.set(&prop, value);

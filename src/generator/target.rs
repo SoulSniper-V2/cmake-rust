@@ -12,6 +12,7 @@ use std::rc::Rc;
 use md5::{Digest, Md5};
 
 use super::ctx::GenCtx;
+use crate::apple::{FrameworkFormat, Sdk, split_framework_path, supports_text_stubs};
 use crate::messages::{self, Frame, MessageType};
 use crate::policy::{self, PolicyStatus};
 use crate::state::{FileSet, Target, TargetKind};
@@ -33,6 +34,8 @@ pub enum ArtifactType {
 pub struct Names {
     pub output: String,
     pub real: String,
+    pub import_output: String,
+    pub import_real: String,
     pub import_library: String,
     pub pdb: String,
     pub shared_object: String,
@@ -93,9 +96,15 @@ impl NameComponents {
     }
 }
 
-fn artifact_kind(kind: TargetKind, artifact: ArtifactType) -> &'static str {
-    match (kind, artifact) {
+/// `cmGeneratorTarget::GetOutputTargetType`.
+fn artifact_kind(target: &Target, mut artifact: ArtifactType) -> &'static str {
+    if target.is_framework_on_apple() {
+        // The import file (a .tbd file) is always beside the library.
+        artifact = ArtifactType::Runtime;
+    }
+    match (target.kind, artifact) {
         (TargetKind::Executable, ArtifactType::Runtime) => "RUNTIME",
+        (TargetKind::SharedLibrary, ArtifactType::Runtime) if target.platform.dll => "RUNTIME",
         (TargetKind::SharedLibrary | TargetKind::ModuleLibrary, ArtifactType::Runtime) => "LIBRARY",
         (TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary, _)
         | (TargetKind::StaticLibrary, _) => "ARCHIVE",
@@ -150,7 +159,7 @@ fn cached_string(
 }
 
 pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: ArtifactType) -> String {
-    let kind = artifact_kind(target.kind, artifact);
+    let kind = artifact_kind(target, artifact);
     let config_upper = config.to_ascii_uppercase();
     let key = memo_key(&format!("output-name-{artifact:?}"), target, config);
     cached_string(
@@ -181,22 +190,30 @@ pub fn output_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifa
     )
 }
 
-pub(super) fn postfix<'a>(target: &'a Target, config: &str) -> &'a str {
+/// `cmGeneratorTarget::GetFilePostfix`.
+pub(super) fn postfix<'a>(ctx: &GenCtx, target: &'a Target, config: &str) -> &'a str {
     if config.is_empty() {
         return "";
     }
     let config = config.to_ascii_uppercase();
-    target
+    let framework = target.is_framework_on_apple();
+    // Frameworks of multi-config generators can have a special postfix.
+    if let Some(postfix) = target
         .props
         .get(&format!("FRAMEWORK_MULTI_CONFIG_POSTFIX_{config}"))
+        .filter(|_| target.imported || !framework || ctx.multi_config)
         .filter(|value| !value.is_empty())
-        .or_else(|| target.props.get(&format!("{config}_POSTFIX")))
+    {
+        return postfix;
+    }
+    // Application bundles and frameworks have no regular postfix.
+    if !target.imported && (framework || target.is_app_bundle_on_apple()) {
+        return "";
+    }
+    target
+        .props
+        .get(&format!("{config}_POSTFIX"))
         .unwrap_or_default()
-}
-
-pub(super) fn dll_platform(ctx: &GenCtx, target: &Target) -> bool {
-    !ctx.var_safe(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
-        .is_empty()
 }
 
 fn affix(ctx: &GenCtx, target: &Target, property: &str, variable: &str, language: &str) -> String {
@@ -225,64 +242,230 @@ pub(super) fn file_affixes(
     } else {
         compute_linker_language(ctx, target, config)
     };
-    if artifact == ArtifactType::Import {
-        return (
-            affix(
-                ctx,
-                target,
-                "IMPORT_PREFIX",
-                "CMAKE_IMPORT_LIBRARY_PREFIX",
-                &language,
-            ),
-            affix(
-                ctx,
-                target,
-                "IMPORT_SUFFIX",
-                "CMAKE_IMPORT_LIBRARY_SUFFIX",
-                &language,
-            ),
-        );
+    let import = artifact == ArtifactType::Import;
+    if import && !need_import_library_name(ctx, target, config) {
+        return (String::new(), String::new());
     }
-    let (prefix_var, suffix_var) = match target.kind {
-        TargetKind::Executable => ("", "CMAKE_EXECUTABLE_SUFFIX"),
-        TargetKind::StaticLibrary => ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX"),
-        TargetKind::SharedLibrary => ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX"),
-        TargetKind::ModuleLibrary => ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX"),
+    let platform = target.platform;
+    let (prefix_var, suffix_var) = match (target.kind, import) {
+        (TargetKind::StaticLibrary, _) => {
+            ("CMAKE_STATIC_LIBRARY_PREFIX", "CMAKE_STATIC_LIBRARY_SUFFIX")
+        }
+        (TargetKind::SharedLibrary, false) => (
+            "CMAKE_SHARED_LIBRARY_PREFIX",
+            if target.is_archived_aix_shared_library() {
+                "CMAKE_SHARED_LIBRARY_ARCHIVE_SUFFIX"
+            } else {
+                "CMAKE_SHARED_LIBRARY_SUFFIX"
+            },
+        ),
+        (TargetKind::SharedLibrary, true) if platform.apple => (
+            "CMAKE_APPLE_IMPORT_FILE_PREFIX",
+            "CMAKE_APPLE_IMPORT_FILE_SUFFIX",
+        ),
+        (TargetKind::ModuleLibrary, false) => {
+            ("CMAKE_SHARED_MODULE_PREFIX", "CMAKE_SHARED_MODULE_SUFFIX")
+        }
+        // Android GUI application packages store the native binary as a
+        // shared library.
+        (TargetKind::Executable, false) if target.is_android_gui_executable() => {
+            ("CMAKE_SHARED_LIBRARY_PREFIX", "CMAKE_SHARED_LIBRARY_SUFFIX")
+        }
+        (TargetKind::Executable, false) => ("", "CMAKE_EXECUTABLE_SUFFIX"),
+        (TargetKind::Executable, true) if platform.aix => (
+            "CMAKE_AIX_IMPORT_FILE_PREFIX",
+            "CMAKE_AIX_IMPORT_FILE_SUFFIX",
+        ),
+        (TargetKind::SharedLibrary | TargetKind::ModuleLibrary | TargetKind::Executable, true) => {
+            ("CMAKE_IMPORT_LIBRARY_PREFIX", "CMAKE_IMPORT_LIBRARY_SUFFIX")
+        }
         _ => return (String::new(), String::new()),
     };
+    let (prefix, suffix) = if import {
+        ("IMPORT_PREFIX", "IMPORT_SUFFIX")
+    } else {
+        ("PREFIX", "SUFFIX")
+    };
     (
-        affix(ctx, target, "PREFIX", prefix_var, &language),
-        affix(ctx, target, "SUFFIX", suffix_var, &language),
+        affix(ctx, target, prefix, prefix_var, &language),
+        affix(ctx, target, suffix, suffix_var, &language),
     )
 }
 
+/// `cmGeneratorTarget::BundleDirectoryLevel`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BundleLevel {
+    BundleDir,
+    Content,
+    Full,
+}
+
+/// `cmMakefile::PlatformIsAppleEmbedded`.
+pub(super) fn apple_embedded(ctx: &GenCtx, target: &Target) -> bool {
+    Sdk::of(&ctx.var_safe(target.makefile, "CMAKE_OSX_SYSROOT")) != Sdk::MacOs
+}
+
+fn bundle_contents(ctx: &GenCtx, target: &Target, level: BundleLevel) -> &'static str {
+    if level == BundleLevel::BundleDir || apple_embedded(ctx, target) {
+        ""
+    } else if level == BundleLevel::Full {
+        "/Contents/MacOS"
+    } else {
+        "/Contents"
+    }
+}
+
+/// `cmGeneratorTarget::GetAppBundleDirectory`.
+pub(super) fn app_bundle_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    level: BundleLevel,
+) -> String {
+    let name = full_name(ctx, target, config, ArtifactType::Runtime);
+    let extension = target.props.get("BUNDLE_EXTENSION").unwrap_or("app");
+    format!("{name}.{extension}{}", bundle_contents(ctx, target, level))
+}
+
+/// `cmGeneratorTarget::GetCFBundleDirectory`.
+pub(super) fn cf_bundle_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    level: BundleLevel,
+) -> String {
+    let name = output_name(ctx, target, config, ArtifactType::Runtime);
+    let extension =
+        target
+            .props
+            .get("BUNDLE_EXTENSION")
+            .unwrap_or(if target.is_xctest_on_apple() {
+                "xctest"
+            } else {
+                "bundle"
+            });
+    format!("{name}.{extension}{}", bundle_contents(ctx, target, level))
+}
+
+/// `cmGeneratorTarget::GetFrameworkVersion`.
+pub(super) fn framework_version(target: &Target) -> &str {
+    target
+        .props
+        .get("FRAMEWORK_VERSION")
+        .or_else(|| target.props.get("VERSION"))
+        .unwrap_or("A")
+}
+
+/// `cmGeneratorTarget::GetFrameworkDirectory`.
+pub(super) fn framework_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    level: BundleLevel,
+) -> String {
+    let name = output_name(ctx, target, config, ArtifactType::Runtime);
+    let extension = target.props.get("BUNDLE_EXTENSION").unwrap_or("framework");
+    let mut path = format!("{name}.{extension}");
+    if level == BundleLevel::Full && !apple_embedded(ctx, target) {
+        path.push_str("/Versions/");
+        path.push_str(framework_version(target));
+    }
+    path
+}
+
+/// `cmGeneratorTarget::BuildBundleDirectory`.
+pub(super) fn build_bundle_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    level: BundleLevel,
+) -> String {
+    if target.is_app_bundle_on_apple() {
+        app_bundle_directory(ctx, target, config, level)
+    } else if target.is_framework_on_apple() {
+        framework_directory(ctx, target, config, level)
+    } else if target.is_cf_bundle_on_apple() {
+        cf_bundle_directory(ctx, target, config, level)
+    } else {
+        String::new()
+    }
+}
+
+/// `cmGeneratorTarget::GetMacContentDirectory`.
+pub(super) fn mac_content_directory(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    artifact: ArtifactType,
+) -> String {
+    // Additional files of a framework go into the version-specific directory.
+    let level = if target.is_framework_on_apple() {
+        BundleLevel::Full
+    } else {
+        BundleLevel::Content
+    };
+    format!(
+        "{}/{}",
+        directory(ctx, target, config, artifact),
+        build_bundle_directory(ctx, target, config, level)
+    )
+}
+
+/// `cmGeneratorTarget::GetFullNameInternalComponents`.
 pub fn full_name_components(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
     artifact: ArtifactType,
 ) -> NameComponents {
-    if artifact == ArtifactType::Import && !has_import_library(ctx, target, config) {
-        return NameComponents::default();
-    }
-    if artifact_kind(target.kind, artifact).is_empty() || target.kind == TargetKind::ObjectLibrary {
+    if !matches!(
+        target.kind,
+        TargetKind::Executable
+            | TargetKind::StaticLibrary
+            | TargetKind::SharedLibrary
+            | TargetKind::ModuleLibrary
+    ) {
         return NameComponents {
             base: target.name.clone(),
             ..NameComponents::default()
         };
     }
-    let (prefix, suffix) = file_affixes(ctx, target, config, artifact);
+    let import = artifact == ArtifactType::Import;
+    if import && !need_import_library_name(ctx, target, config) {
+        return NameComponents::default();
+    }
+    let (mut prefix, mut suffix) = file_affixes(ctx, target, config, artifact);
+    if target.is_framework_on_apple() {
+        prefix = framework_directory(ctx, target, config, BundleLevel::Content) + "/";
+        if !import {
+            suffix.clear();
+        }
+    }
+    if target.is_cf_bundle_on_apple() {
+        prefix = cf_bundle_directory(ctx, target, config, BundleLevel::Full) + "/";
+        suffix.clear();
+    }
     let mut base = output_name(ctx, target, config, artifact);
-    base.push_str(postfix(target, config));
+    base.push_str(postfix(ctx, target, config));
     if target.kind == TargetKind::SharedLibrary
-        && is_on_opt(
-            ctx.var(target.makefile, "CMAKE_SHARED_LIBRARY_NAME_WITH_VERSION")
-                .as_deref(),
-        )
+        && !import
         && let Some(version) = target.props.get("SOVERSION")
     {
-        base.push('-');
-        base.push_str(version);
+        let dll_name = target
+            .props
+            .get("DLL_NAME_WITH_SOVERSION")
+            .filter(|_| target.platform.dll);
+        let versioned = match dll_name {
+            Some(value) => crate::util::is_on(value),
+            None => is_on_opt(
+                ctx.var(target.makefile, "CMAKE_SHARED_LIBRARY_NAME_WITH_VERSION")
+                    .as_deref(),
+            ),
+        };
+        if versioned {
+            base.push('-');
+            base.push_str(version);
+        }
     }
     NameComponents {
         prefix,
@@ -306,74 +489,110 @@ pub(super) fn pdb_base_name(ctx: &GenCtx, target: &Target, config: &str) -> Stri
             format!(
                 "{}{}",
                 output_name(ctx, target, config, ArtifactType::Runtime),
-                postfix(target, config)
+                postfix(ctx, target, config)
             )
         },
         |value| ctx.genex(value, None, None),
     )
 }
 
+/// `cmGeneratorTarget::ComputeVersionedName`.
+fn versioned_name(target: &Target, parts: &NameComponents, version: Option<&str>) -> String {
+    let version = version.map_or_else(String::new, |version| format!(".{version}"));
+    let NameComponents {
+        prefix,
+        base,
+        suffix,
+    } = parts;
+    if target.platform.apple {
+        format!("{prefix}{base}{version}{suffix}")
+    } else {
+        format!("{prefix}{base}{suffix}{version}")
+    }
+}
+
 /// `cmGeneratorTarget::GetLibraryNames` / `GetExecutableNames`.
 pub fn names(ctx: &GenCtx, target: &Target, config: &str) -> Names {
     let parts = full_name_components(ctx, target, config, ArtifactType::Runtime);
-    let output = parts.filename();
+    let import = full_name_components(ctx, target, config, ArtifactType::Import);
+    let import_output = import.filename();
     let pdb_base = pdb_base_name(ctx, target, config);
-    let (real, shared_object) = if target.kind == TargetKind::Executable {
+    let pdb = format!("{}{pdb_base}.pdb", parts.prefix);
+    let output = parts.filename();
+    if target.kind == TargetKind::Executable {
+        // This versioning is supported only when the host supports symbolic
+        // links.
         let real = target
             .props
             .get("VERSION")
+            .filter(|_| !is_on_opt(ctx.var(target.makefile, "XCODE").as_deref()))
             .map_or_else(|| output.clone(), |version| format!("{output}-{version}"));
-        (real, String::new())
-    } else {
-        let versioned = has_soname(ctx, target, config)
-            && !is_on_opt(
-                ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME")
-                    .as_deref(),
-            );
-        let version = target.props.get("VERSION");
-        let soversion = target.props.get("SOVERSION");
-        let versioned_name = |version: Option<&str>| match version.filter(|_| versioned) {
-            Some(version) => format!("{output}.{version}"),
-            None => output.clone(),
+        return Names {
+            output,
+            real,
+            import_real: import_output.clone(),
+            import_library: import_output.clone(),
+            import_output,
+            pdb,
+            shared_object: String::new(),
         };
+    }
+    let framework = target.is_framework_on_apple();
+    // Versioning is supported only when the platform supports an soname flag.
+    let versioned = has_soname(ctx, target, config)
+        && !framework
+        && !is_on_opt(
+            ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME")
+                .as_deref(),
+        );
+    let version = target.props.get("VERSION").filter(|_| versioned);
+    let soversion = target.props.get("SOVERSION").filter(|_| versioned);
+    let (version, soversion) = (version.or(soversion), soversion.or(version));
+    let framework_path = |parts: &NameComponents| {
+        let version = if apple_embedded(ctx, target) {
+            String::new()
+        } else {
+            format!("Versions/{}/", framework_version(target))
+        };
+        format!("{}{version}", parts.prefix)
+    };
+    let (real, shared_object) = if framework {
+        let real = format!("{}{}{}", framework_path(&parts), parts.base, parts.suffix);
+        (real.clone(), real)
+    } else if target.is_archived_aix_shared_library() {
+        let version = soversion.map_or_else(String::new, |version| format!(".{version}"));
         (
-            versioned_name(version.or(soversion)),
-            versioned_name(soversion.or(version)),
+            output.clone(),
+            format!("{}{}.so{version}", parts.prefix, parts.base),
+        )
+    } else {
+        (
+            versioned_name(target, &parts, version),
+            versioned_name(target, &parts, soversion),
         )
     };
-    // The import library names (GetLibraryNames): ComputeVersionedName of the
-    // import output with the effective SOVERSION.
-    let import_library = if matches!(
+    let mut names = Names {
+        output,
+        real,
+        pdb,
+        shared_object,
+        ..Names::default()
+    };
+    if matches!(
         target.kind,
         TargetKind::SharedLibrary | TargetKind::ModuleLibrary
     ) {
-        let import_output =
-            full_name_components(ctx, target, config, ArtifactType::Import).filename();
-        let versioned = has_soname(ctx, target, config)
-            && !is_on_opt(
-                ctx.var(target.makefile, "CMAKE_PLATFORM_NO_VERSIONED_SONAME")
-                    .as_deref(),
-            );
-        let soversion = target
-            .props
-            .get("SOVERSION")
-            .or_else(|| target.props.get("VERSION"));
-        match soversion.filter(|_| versioned) {
-            Some(soversion) => format!("{import_output}.{soversion}"),
-            None => import_output,
+        if framework && target.is_shared_library_with_exports() {
+            names.import_real =
+                format!("{}{}{}", framework_path(&parts), import.base, import.suffix);
+            names.import_library.clone_from(&import_output);
+        } else {
+            names.import_library = versioned_name(target, &import, soversion);
+            names.import_real = versioned_name(target, &import, version);
         }
-    } else if target.kind == TargetKind::Executable && has_import_library(ctx, target, config) {
-        full_name_components(ctx, target, config, ArtifactType::Import).filename()
-    } else {
-        String::new()
-    };
-    Names {
-        output,
-        real,
-        import_library,
-        pdb: format!("{}{pdb_base}.pdb", parts.prefix),
-        shared_object,
+        names.import_output = import_output;
     }
+    names
 }
 
 /// `cmGeneratorTarget::GetFullPath(config, artifact, realname)`.
@@ -387,19 +606,34 @@ pub fn full_path(
     if target.imported {
         return imported_full_path(ctx, target, config, artifact);
     }
-    let dir = directory(ctx, target, config, artifact);
-    let file = if realname && artifact == ArtifactType::Runtime {
-        names(ctx, target, config).real
-    } else {
-        full_name(ctx, target, config, artifact)
+    let mut path = directory(ctx, target, config, artifact) + "/";
+    if target.is_app_bundle_on_apple() {
+        path.push_str(&app_bundle_directory(
+            ctx,
+            target,
+            config,
+            BundleLevel::Full,
+        ));
+        path.push('/');
+    }
+    let file = match (realname, artifact) {
+        (true, ArtifactType::Runtime) => names(ctx, target, config).real,
+        (true, ArtifactType::Import) => names(ctx, target, config).import_real,
+        (false, _) => full_name(ctx, target, config, artifact),
     };
-    format!("{dir}/{file}")
+    path + &file
 }
 
 /// `cmGeneratorTarget::GetDirectory(config, artifact)`.
 pub fn directory(ctx: &GenCtx, target: &Target, config: &str, artifact: ArtifactType) -> String {
     if target.imported {
-        return filename_path(&imported_full_path(ctx, target, config, artifact));
+        let path = imported_full_path(ctx, target, config, artifact);
+        if target.is_framework_on_apple()
+            && let Some(framework) = split_framework_path(&path, FrameworkFormat::Strict)
+        {
+            return framework.directory;
+        }
+        return filename_path(&path);
     }
     output_directory(ctx, target, config, artifact, |value| {
         ctx.genex(value, Some(target), None)
@@ -413,7 +647,7 @@ fn output_directory(
     artifact: ArtifactType,
     evaluate: impl FnOnce(&str) -> String,
 ) -> String {
-    let kind = artifact_kind(target.kind, artifact);
+    let kind = artifact_kind(target, artifact);
     if kind.is_empty() {
         ctx.error(
             Vec::new(),
@@ -618,6 +852,9 @@ pub fn has_soname(ctx: &GenCtx, target: &Target, config: &str) -> bool {
     if target.kind != TargetKind::SharedLibrary || is_on_opt(target.props.get("NO_SONAME")) {
         return false;
     }
+    if target.is_archived_aix_shared_library() {
+        return true;
+    }
     let language = compute_linker_language(ctx, target, config);
     let variable = if language.is_empty() {
         "CMAKE_SHARED_LIBRARY_SONAME_FLAG".to_owned()
@@ -627,21 +864,32 @@ pub fn has_soname(ctx: &GenCtx, target: &Target, config: &str) -> bool {
     ctx.var(target.makefile, &variable).is_some()
 }
 
-#[allow(dead_code, reason = "target query for generator consumers")]
-pub fn is_framework_on_apple(_ctx: &GenCtx, _target: &Target, _config: &str) -> bool {
-    false
-}
-
-/// `cmTarget::IsDLLPlatform`.
-pub fn is_dll_platform(ctx: &GenCtx, target: &Target) -> bool {
-    !ctx.var(target.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
-        .unwrap_or_default()
-        .is_empty()
-}
-
-/// `cmTarget::IsExecutableWithExports`.
-pub fn executable_with_exports(target: &Target) -> bool {
-    target.kind == TargetKind::Executable && is_on_opt(target.props.get("ENABLE_EXPORTS"))
+/// `cmGeneratorTarget::GetSOName`.
+pub fn soname(ctx: &GenCtx, target: &Target, config: &str, artifact: ArtifactType) -> String {
+    if !target.imported {
+        let names = names(ctx, target, config);
+        return match artifact {
+            ArtifactType::Runtime => names.shared_object,
+            ArtifactType::Import => names.import_library,
+        };
+    }
+    let Some(info) = import_info(target, config) else {
+        return String::new();
+    };
+    if info.no_soname {
+        // The imported library has no builtin soname so the name searched at
+        // runtime will be just the filename.
+        return filename_name(info.location);
+    }
+    if target.is_framework_on_apple()
+        && let Some(framework) = split_framework_path(info.soname, FrameworkFormat::Strict)
+    {
+        return framework.versioned_name();
+    }
+    info.soname
+        .strip_prefix("@rpath/")
+        .unwrap_or(info.soname)
+        .to_owned()
 }
 
 /// `cmGeneratorTarget::IsCSharpOnly`: the only language compiled by the
@@ -664,26 +912,30 @@ fn is_csharp_only(ctx: &GenCtx, target: &Target, config: &str) -> bool {
 /// `cmGeneratorTarget::HasImportLibrary` (without the Xcode
 /// GENERATE_TEXT_BASED_STUBS attribute override).
 pub fn has_import_library(ctx: &GenCtx, target: &Target, config: &str) -> bool {
-    let dll = is_dll_platform(ctx, target)
-        && (target.kind == TargetKind::SharedLibrary || executable_with_exports(target))
-        && !is_csharp_only(ctx, target, config);
-    let aix = {
-        let system = ctx
-            .var(target.makefile, "CMAKE_SYSTEM_NAME")
-            .unwrap_or_default();
-        (system == "AIX" || system == "OS400") && executable_with_exports(target)
-    };
-    // cmMakefile::PlatformSupportsAppleTextStubs.
-    let apple_stubs = ctx
-        .var(target.makefile, "APPLE")
-        .is_some_and(|value| crate::util::is_on(&value))
-        // cmMakefile::IsSet: defined, non-empty and not NOTFOUND.
-        && ctx.var(target.makefile, "CMAKE_TAPI").is_some_and(|value| {
-            !value.is_empty() && !value.ends_with("-NOTFOUND") && value != "NOTFOUND"
-        })
-        && target.kind == TargetKind::SharedLibrary
-        && is_on_opt(target.props.get("ENABLE_EXPORTS"));
-    dll || aix || apple_stubs
+    let platform = target.platform;
+    (platform.dll
+        && (target.kind == TargetKind::SharedLibrary || target.is_executable_with_exports())
+        // Assemblies which have only managed code do not have import
+        // libraries.
+        && !is_csharp_only(ctx, target, config))
+        || (platform.aix && target.is_executable_with_exports())
+        || (target.is_shared_library_with_exports()
+            && supports_text_stubs(
+                ctx.var(target.makefile, "APPLE").as_deref(),
+                ctx.var(target.makefile, "CMAKE_TAPI").as_deref(),
+            ))
+}
+
+/// `cmGeneratorTarget::NeedImportLibraryName`.
+fn need_import_library_name(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    has_import_library(ctx, target, config)
+        // On DLL platforms we always generate the import library name just
+        // in case the sources have export markup.
+        || (target.platform.dll
+            && matches!(
+                target.kind,
+                TargetKind::Executable | TargetKind::ModuleLibrary
+            ))
 }
 
 #[derive(Debug)]

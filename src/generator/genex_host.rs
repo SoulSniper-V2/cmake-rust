@@ -7,7 +7,7 @@ use crate::policy::{self, PolicyStatus};
 use crate::state::{Target, TargetKind};
 
 use super::ctx::GenCtx;
-use super::target::{self as gt, ArtifactType, SourceKind};
+use super::target::{self as gt, ArtifactType, BundleLevel, SourceKind};
 
 pub struct CtxHost<'c, 'a> {
     pub ctx: &'c GenCtx<'a>,
@@ -35,34 +35,27 @@ impl<'c, 'a> CtxHost<'c, 'a> {
         match kind {
             ArtifactKind::SonameFile | ArtifactKind::SonameImportFile => {
                 let dir = gt::directory(ctx, target, config, artifact);
-                let soname = if target.imported {
-                    gt::import_info(target, config)
-                        .map(|info| {
-                            if info.no_soname {
-                                crate::util::filename_name(info.location)
-                            } else {
-                                info.soname.trim_start_matches("@rpath/").to_owned()
-                            }
-                        })
-                        .unwrap_or_default()
-                } else {
-                    let names = gt::names(ctx, target, config);
-                    if artifact == ArtifactType::Import {
-                        names.import_library
-                    } else {
-                        names.shared_object
-                    }
-                };
+                let soname = gt::soname(ctx, target, config, artifact);
                 format!("{dir}/{soname}")
             }
             ArtifactKind::PdbFile => {
-                let dir = gt::directory(ctx, target, config, artifact);
+                let dir = gt::pdb_directory(ctx, target, config);
                 format!("{dir}/{}", gt::names(ctx, target, config).pdb)
             }
             ArtifactKind::BundleDir | ArtifactKind::BundleContentDir => {
-                gt::directory(ctx, target, config, artifact)
+                let level = if kind == ArtifactKind::BundleDir {
+                    BundleLevel::BundleDir
+                } else {
+                    BundleLevel::Content
+                };
+                let dir = gt::directory(ctx, target, config, artifact);
+                let bundle = gt::build_bundle_directory(ctx, target, config, level);
+                format!("{dir}/{bundle}")
             }
-            _ => gt::full_path(ctx, target, config, artifact, kind == ArtifactKind::File),
+            _ => {
+                let real = matches!(kind, ArtifactKind::File | ArtifactKind::ImportFile);
+                gt::full_path(ctx, target, config, artifact, real)
+            }
         }
     }
 
@@ -82,8 +75,7 @@ impl<'c, 'a> CtxHost<'c, 'a> {
                 Some(ArtifactType::Import)
             }
             ArtifactKind::LinkerLibraryFile
-                if gt::dll_platform(self.ctx, target)
-                    && target.kind != TargetKind::StaticLibrary =>
+                if target.platform.dll && target.kind != TargetKind::StaticLibrary =>
             {
                 None
             }
@@ -236,6 +228,9 @@ impl GenexHost for CtxHost<'_, '_> {
         };
         Ok(match component {
             ArtifactComponent::Path => self.artifact_path(target, kind, config),
+            ArtifactComponent::Name if kind == ArtifactKind::BundleDir => {
+                gt::build_bundle_directory(self.ctx, target, config, BundleLevel::BundleDir)
+            }
             ArtifactComponent::Name => {
                 crate::util::filename_name(&self.artifact_path(target, kind, config))
             }
@@ -248,7 +243,7 @@ impl GenexHost for CtxHost<'_, '_> {
             ArtifactComponent::BaseName => format!(
                 "{}{}",
                 gt::output_name(self.ctx, target, config, artifact),
-                gt::postfix(target, config),
+                gt::postfix(self.ctx, target, config),
             ),
             ArtifactComponent::Prefix => gt::file_affixes(self.ctx, target, config, artifact).0,
             ArtifactComponent::Suffix => gt::file_affixes(self.ctx, target, config, artifact).1,
@@ -256,8 +251,16 @@ impl GenexHost for CtxHost<'_, '_> {
     }
 
     fn dll_platform(&self, name: &str) -> bool {
+        self.find(name).is_some_and(|target| target.platform.dll)
+    }
+
+    fn archived_aix_shared_library(&self, name: &str) -> bool {
         self.find(name)
-            .is_some_and(|target| gt::dll_platform(self.ctx, target))
+            .is_some_and(Target::is_archived_aix_shared_library)
+    }
+
+    fn apple_bundle(&self, name: &str) -> bool {
+        self.find(name).is_some_and(Target::is_bundle_on_apple)
     }
 
     /// `TargetRuntimeDllsBaseNode::CollectDlls`: the target's
@@ -284,7 +287,7 @@ impl GenexHost for CtxHost<'_, '_> {
         }
         // cmComputeLinkInformation::AddRuntimeDLL records shared libraries
         // only on DLL platforms, which cmake-rust does not target.
-        if gt::is_dll_platform(self.ctx, target) {
+        if target.platform.dll {
             return Err(
                 "TARGET_RUNTIME_DLLS on DLL platforms is not supported by cmake-rust.".to_owned(),
             );
