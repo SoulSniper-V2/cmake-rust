@@ -2062,7 +2062,21 @@ impl<'a> NinjaGenerator<'a> {
                     target.name
                 ),
             ),
-            CxxSupportLevel::Supported => {}
+            CxxSupportLevel::Supported => {
+                // cmNinjaTargetGenerator's C++ scan/dyndep rules and
+                // cmDyndepCollation are not ported. Sources outside
+                // CXX_MODULES file sets compile identically without
+                // scanning, but module interface units cannot.
+                if !module_files.is_empty() {
+                    self.ctx.error(
+                        self.ctx.dir_backtrace(target.makefile),
+                        format!(
+                            "The target named \"{}\" has C++ module sources in a \"FILE_SET TYPE CXX_MODULES\", but cmake-rust does not implement C++ module dependency scanning and collation for the Ninja generator.",
+                            target.name
+                        ),
+                    );
+                }
+            }
         }
         for file in &module_files {
             match sources
