@@ -229,6 +229,14 @@ impl Regex {
         self.find_at(text, 0, false)
     }
 
+    /// [`find_at`] over raw bytes: `RegularExpression::find` on a
+    /// `char const*` that points `start` bytes into `text` (so `^` anchors
+    /// at `start` unless `not_bol`).
+    pub fn find_bytes(&self, text: &[u8], start: usize, not_bol: bool) -> Option<Match> {
+        let options = if not_bol { 0 } else { BOL_AT_OFFSET };
+        self.find_opts(text, start, options)
+    }
+
     /// `RegularExpression::find(string, rmatch, offset, options)`.
     fn find_opts(&self, text: &[u8], offset: usize, options: u8) -> Option<Match> {
         // Check validity of program.
