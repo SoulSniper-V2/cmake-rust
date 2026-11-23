@@ -820,11 +820,12 @@ fn actual_configure(
         .clone()
         .or(cached.clone())
         .unwrap_or_else(|| "Ninja".to_owned());
-    if generator != "Ninja" {
+    if generator != "Ninja" && generator != "Ninja Multi-Config" {
         let message = format!("Could not create named generator {generator}");
         system_error(Some(interp), &message);
         return -1;
     }
+    interp.ext.multi_config = generator == "Ninja Multi-Config";
     if let (Some(requested), Some(cached)) = (&requested, &cached)
         && requested != cached
     {

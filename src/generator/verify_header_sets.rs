@@ -44,7 +44,7 @@ pub(super) fn add_targets(interp: &mut Interp) -> bool {
             }
         }
         let failed = ctx.has_error();
-        (plans, ctx.errors.into_inner(), failed)
+        (plans, ctx.errors.take(), failed)
     };
     for diagnostic in diagnostics {
         match diagnostic {

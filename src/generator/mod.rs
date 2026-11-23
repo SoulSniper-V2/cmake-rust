@@ -43,26 +43,131 @@ mod verify_header_sets;
 #[cfg(test)]
 mod oracle_tests;
 
+use std::collections::BTreeSet;
+
 use crate::configure::ConfigureOptions;
 use crate::interp::Interp;
 
 /// `cmake::Generate`: compute and write the build system. Returns 0 on
 /// success.
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
-    for name in [
-        "CMAKE_DEFAULT_BUILD_TYPE",
-        "CMAKE_CROSS_CONFIGS",
-        "CMAKE_DEFAULT_CONFIGS",
-    ] {
-        if interp.get_def(name).is_some() {
-            interp.issue_at(
-                crate::messages::MessageType::FatalError,
-                &format!(
-                    "Generator\n  Ninja\ndoes not support variable\n  {name}\nbut it has been specified."
+    let multi_config = interp.get_def("CMAKE_GENERATOR").as_deref() == Some("Ninja Multi-Config");
+    if multi_config {
+        // cmGlobalNinjaMultiGenerator::InspectConfigTypeVariables.
+        let mut config_list: Vec<String> = interp
+            .get_def("CMAKE_CONFIGURATION_TYPES")
+            .map(|value| crate::util::expand_list(&value, true))
+            .unwrap_or_default();
+        // cmMakefile::GetGeneratorConfigs(IncludeEmptyConfig).
+        if config_list.is_empty() {
+            config_list.push(String::new());
+        }
+        let configs: BTreeSet<String> = config_list.iter().cloned().collect();
+        let mut fatal = |interp: &mut Interp, message: String| {
+            interp.issue_at(crate::messages::MessageType::FatalError, &message, &[]);
+        };
+        // cmGlobalNinjaGenerator::ListSubsetWithAll.
+        fn subset_with_all(
+            all: &BTreeSet<String>,
+            defaults: &BTreeSet<String>,
+            items: &[String],
+        ) -> Option<BTreeSet<String>> {
+            let mut result = BTreeSet::new();
+            for item in items {
+                if item == "all" {
+                    if items.len() == 1 {
+                        result = defaults.clone();
+                    } else {
+                        return None;
+                    }
+                } else if all.contains(item) {
+                    result.insert(item.clone());
+                } else {
+                    return None;
+                }
+            }
+            Some(result)
+        }
+        let mut default_file_config = interp
+            .get_def("CMAKE_DEFAULT_BUILD_TYPE")
+            .unwrap_or_default()
+            .to_owned();
+        if default_file_config.is_empty() {
+            default_file_config = config_list[0].clone();
+        }
+        if !configs.contains(&default_file_config) {
+            fatal(
+                interp,
+                format!(
+                    "The configuration specified by CMAKE_DEFAULT_BUILD_TYPE ({default_file_config}) is not present in CMAKE_CONFIGURATION_TYPES"
                 ),
-                &[],
             );
             return -1;
+        }
+        let cross_list: Vec<String> = interp
+            .get_def("CMAKE_CROSS_CONFIGS")
+            .map(|value| crate::util::expand_list(&value, true))
+            .unwrap_or_default();
+        let Some(cross_configs) = subset_with_all(&configs, &configs, &cross_list) else {
+            fatal(
+                interp,
+                "CMAKE_CROSS_CONFIGS is not a subset of CMAKE_CONFIGURATION_TYPES".to_owned(),
+            );
+            return -1;
+        };
+        let mut default_configs_string = interp
+            .get_def("CMAKE_DEFAULT_CONFIGS")
+            .unwrap_or_default()
+            .to_owned();
+        if default_configs_string.is_empty() {
+            default_configs_string = default_file_config.clone();
+        }
+        if !default_configs_string.is_empty()
+            && default_configs_string != default_file_config
+            && (default_file_config.is_empty() || cross_configs.is_empty())
+        {
+            fatal(
+                interp,
+                "CMAKE_DEFAULT_CONFIGS cannot be used without CMAKE_DEFAULT_BUILD_TYPE or CMAKE_CROSS_CONFIGS"
+                    .to_owned(),
+            );
+            return -1;
+        }
+        let mut default_configs = BTreeSet::new();
+        if !default_file_config.is_empty() {
+            let mut superset = cross_configs.clone();
+            superset.insert(default_file_config.clone());
+            let items = crate::util::expand_list(&default_configs_string, true);
+            let Some(subset) = subset_with_all(&superset, &cross_configs, &items) else {
+                fatal(
+                    interp,
+                    "CMAKE_DEFAULT_CONFIGS is not a subset of CMAKE_CROSS_CONFIGS".to_owned(),
+                );
+                return -1;
+            };
+            default_configs = subset;
+        }
+        interp.ext.multi_config = true;
+        interp.ext.gen_configs = config_list;
+        interp.ext.gen_default_file_config = default_file_config;
+        interp.ext.gen_cross_configs = cross_configs;
+        interp.ext.gen_default_configs = default_configs;
+    } else {
+        for name in [
+            "CMAKE_DEFAULT_BUILD_TYPE",
+            "CMAKE_CROSS_CONFIGS",
+            "CMAKE_DEFAULT_CONFIGS",
+        ] {
+            if interp.get_def(name).is_some() {
+                interp.issue_at(
+                    crate::messages::MessageType::FatalError,
+                    &format!(
+                        "Generator\n  Ninja\ndoes not support variable\n  {name}\nbut it has been specified."
+                    ),
+                    &[],
+                );
+                return -1;
+            }
         }
     }
     let start = std::time::Instant::now();

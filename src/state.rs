@@ -379,6 +379,20 @@ pub struct Ext {
     pub file_locks: crate::commands::file::LockPool,
     /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
     pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,
+    /// `cmGlobalNinjaMultiGenerator` state, filled by `generator::generate`
+    /// before `GenCtx::new`: whether the generator is multi-config, the
+    /// `CMAKE_CONFIGURATION_TYPES` list, the default file configuration
+    /// (`CMAKE_DEFAULT_BUILD_TYPE` or the first config), the
+    /// `CMAKE_CROSS_CONFIGS` and `CMAKE_DEFAULT_CONFIGS` sets.
+    pub multi_config: bool,
+    pub gen_configs: Vec<String>,
+    pub gen_default_file_config: String,
+    pub gen_cross_configs: BTreeSet<String>,
+    pub gen_default_configs: BTreeSet<String>,
+    /// `cmGlobalNinjaGenerator::PerConfigUtilityTargets`: utility targets
+    /// whose outputs are per-config (created by `CreateUtilityOutput` in
+    /// `cmLocalNinjaGenerator`).
+    pub per_config_utility_targets: BTreeSet<String>,
 }
 
 #[derive(Debug)]

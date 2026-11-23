@@ -145,19 +145,39 @@ fn find_make_program(interp: &mut Interp) -> bool {
 /// `cmGlobalGenerator::EnableLanguage`.
 pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool) {
     // cmMakefile::EnableLanguage: cmGlobalGenerator::GetCMakeCFGIntDir is "."
-    // for single-configuration generators.
-    interp.set_def("CMAKE_CFG_INTDIR", ".");
-    if !interp.in_try_compile
-        && interp.get_def("CMAKE_BUILD_TYPE").is_none()
-        && let Ok(build_type) = std::env::var("CMAKE_BUILD_TYPE")
-    {
-        interp.add_cache_def(
-            "CMAKE_BUILD_TYPE",
-            Some(&build_type),
-            Some("Choose the type of build.  Options include: empty, Debug, Release, RelWithDebInfo, MinSizeRel."),
-            CacheType::String,
-            false,
-        );
+    // for single-configuration generators and "${CONFIGURATION}" for
+    // multi-configuration generators.
+    if interp.get_def("CMAKE_GENERATOR").as_deref() == Some("Ninja Multi-Config") {
+        interp.set_def("CMAKE_CFG_INTDIR", "${CONFIGURATION}");
+        interp.set_def("CMAKE_BUILD_TYPE", "Debug");
+        // cmMakefile::InitCMAKE_CONFIGURATION_TYPES.
+        if interp.get_def("CMAKE_CONFIGURATION_TYPES").is_none() {
+            let def = std::env::var("CMAKE_CONFIGURATION_TYPES")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "Debug;Release;RelWithDebInfo;MinSizeRel".to_owned());
+            interp.add_cache_def(
+                "CMAKE_CONFIGURATION_TYPES",
+                Some(&def),
+                Some("Semicolon separated list of supported configuration types, only supports Debug, Release, MinSizeRel, and RelWithDebInfo, anything else will be ignored."),
+                CacheType::String,
+                false,
+            );
+        }
+    } else {
+        interp.set_def("CMAKE_CFG_INTDIR", ".");
+        if !interp.in_try_compile
+            && interp.get_def("CMAKE_BUILD_TYPE").is_none()
+            && let Ok(build_type) = std::env::var("CMAKE_BUILD_TYPE")
+        {
+            interp.add_cache_def(
+                "CMAKE_BUILD_TYPE",
+                Some(&build_type),
+                Some("Choose the type of build.  Options include: empty, Debug, Release, RelWithDebInfo, MinSizeRel."),
+                CacheType::String,
+                false,
+            );
+        }
     }
     if languages.is_empty() {
         crate::configure::system_error(Some(interp), "EnableLanguage must have a lang specified!");

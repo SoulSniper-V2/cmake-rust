@@ -509,6 +509,35 @@ fn add_target_command(
         .push(command);
 }
 
+/// `cmLocalNinjaGenerator::HasUniqueByproducts`: every byproduct contains a
+/// generator expression and evaluates to a distinct path per configuration.
+fn has_unique_byproducts(
+    interp: &Interp,
+    dir: usize,
+    byproducts: &[String],
+    backtrace: &[Frame],
+) -> bool {
+    let ctx = crate::generator::ctx::GenCtx::new(interp);
+    for path in byproducts {
+        if !path.contains("$<") {
+            return false;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for config in &interp.ext.gen_configs {
+            let cfg_ctx = ctx.for_config(config);
+            let value = cfg_ctx.genex_output(path, dir, backtrace);
+            for evaluated in crate::util::expand_list(&value, false) {
+                let evaluated =
+                    crate::util::collapse_full_path(&evaluated, &interp.makefiles[dir].binary_dir);
+                if !seen.insert(evaluated) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 /// `detail::AddUtilityCommand` with `cmLocalGenerator::CreateUtilityOutput`.
 fn add_utility_command(
     interp: &mut Interp,
@@ -523,7 +552,25 @@ fn add_utility_command(
         command.comment = Some(String::new());
     }
     let name = interp.ext.targets[key].name.clone();
-    let output = format!("{}/CMakeFiles/{name}", interp.makefiles[dir].binary_dir);
+    // cmLocalNinjaGenerator::CreateUtilityOutput: under a multi-config
+    // generator with per-config-unique byproducts the output is
+    // config-suffixed and the target joins PerConfigUtilityTargets.
+    let output =
+        if interp.ext.multi_config && has_unique_byproducts(interp, dir, &byproducts, &backtrace) {
+            let base = format!("{}/CMakeFiles/{name}-", interp.makefiles[dir].binary_dir);
+            for config in interp.ext.gen_configs.clone() {
+                let force = format!("{base}{config}");
+                super::target::mark_generated(interp, dir, &force);
+                let index = source_index(interp, dir, &force, false);
+                interp.ext.sources.get_mut(&dir).unwrap()[index]
+                    .props
+                    .set("SYMBOLIC", "1".to_owned());
+            }
+            interp.ext.per_config_utility_targets.insert(name.clone());
+            format!("{base}$<CONFIG>")
+        } else {
+            format!("{}/CMakeFiles/{name}", interp.makefiles[dir].binary_dir)
+        };
     super::target::mark_generated(interp, dir, &output);
     let index = source_index(interp, dir, &output, false);
     interp.ext.sources.get_mut(&dir).unwrap()[index]

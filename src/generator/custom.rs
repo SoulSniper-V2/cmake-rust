@@ -106,6 +106,18 @@ pub fn evaluate(ctx: &GenCtx) -> EvaluatedCommand {
 /// Evaluate and resolve a custom command for single-config Ninja
 /// (`cmCustomCommandGenerator` constructor + accessors).
 pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand {
+    evaluate_spec_cfg(ctx, spec, &ctx.config.clone(), &ctx.config.clone())
+}
+
+/// `cmCustomCommandGenerator(cc, commandConfig, lg, outputConfig)`:
+/// `output_config` is the configuration the evaluated outputs belong to,
+/// `command_config` the configuration of the file holding the command.
+pub fn evaluate_spec_cfg(
+    ctx: &GenCtx,
+    spec: &CustomCommandSpec,
+    output_config: &str,
+    command_config: &str,
+) -> EvaluatedCommand {
     let dir = spec.makefile;
     let directory = &ctx.interp.makefiles[dir];
     let target = spec
@@ -121,18 +133,26 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         escape_allow_make_vars: spec.escape_allow_make_vars,
         ..EvaluatedCommand::default()
     };
+    let cmd_ctx = ctx.for_config(command_config);
+    let distinct = output_config != command_config;
     let mut utilities = Vec::new();
     for line in &spec.command_lines {
         let mut argv = Vec::new();
+        let mut use_output_config = false;
         for argument in line {
             let value = ctx.genex_command(
                 argument,
                 dir,
                 target_key.as_deref(),
-                false,
+                use_output_config,
+                output_config,
+                command_config,
                 &spec.backtrace,
                 Some(&mut utilities),
             );
+            if distinct {
+                use_output_config = true;
+            }
             if spec.command_expand_lists {
                 argv.extend(expand_list(&value, false));
             } else {
@@ -154,13 +174,19 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
             // GetArgv0Location / emulator handling.
             let emulator = executable.props.get("CROSSCOMPILING_EMULATOR");
             if executable.imported || !cross_compiling || emulator.is_some() {
-                argv[0] = full_path(ctx, executable, &ctx.config, ArtifactType::Runtime, false);
+                argv[0] = full_path(
+                    ctx,
+                    executable,
+                    command_config,
+                    ArtifactType::Runtime,
+                    false,
+                );
             }
             if cross_compiling
                 && !executable.imported
                 && let Some(emulator) = emulator
             {
-                let mut emulator = expand_list(&ctx.genex(emulator, None, None), false);
+                let mut emulator = expand_list(&cmd_ctx.genex(emulator, None, None), false);
                 if !emulator.is_empty() {
                     emulator.append(&mut argv);
                     argv = emulator;
@@ -180,7 +206,16 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
             .iter()
             .flat_map(|path| {
                 expand_list(
-                    &ctx.genex_command(path, dir, None, true, &spec.backtrace, None),
+                    &ctx.genex_command(
+                        path,
+                        dir,
+                        None,
+                        true,
+                        output_config,
+                        command_config,
+                        &spec.backtrace,
+                        None,
+                    ),
                     false,
                 )
             })
@@ -192,7 +227,16 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
 
     // EvaluateDepends.
     for dependency in &spec.depends {
-        let value = ctx.genex_command(dependency, dir, None, true, &spec.backtrace, None);
+        let value = ctx.genex_command(
+            dependency,
+            dir,
+            None,
+            true,
+            output_config,
+            command_config,
+            &spec.backtrace,
+            None,
+        );
         for dependency in expand_list(&value, false) {
             let dependency = if is_full_path(&dependency) {
                 collapse_full_path(&dependency, "")
@@ -203,7 +247,7 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         }
     }
     for dependency in &result.raw_depends {
-        let (path, target) = resolve_dependency(ctx, dir, dependency);
+        let (path, target) = resolve_dependency(&cmd_ctx, dir, dependency);
         if let Some(path) = path {
             result.depends.push(path);
         }
@@ -217,21 +261,40 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
         dir,
         target_key.as_deref(),
         true,
+        output_config,
+        command_config,
         &spec.backtrace,
         None,
     );
     if !working_directory.is_empty() {
         result.working_directory = unix_full_path(&working_directory, &directory.binary_dir);
     }
-    result.comment = spec
-        .comment
-        .as_ref()
-        .map(|comment| ctx.genex_command(comment, dir, None, true, &spec.backtrace, None));
-    result.depfile = ctx.genex_command(&spec.depfile, dir, None, true, &spec.backtrace, None);
+    result.comment = spec.comment.as_ref().map(|comment| {
+        ctx.genex_command(
+            comment,
+            dir,
+            None,
+            true,
+            output_config,
+            command_config,
+            &spec.backtrace,
+            None,
+        )
+    });
+    result.depfile = ctx.genex_command(
+        &spec.depfile,
+        dir,
+        None,
+        true,
+        output_config,
+        command_config,
+        &spec.backtrace,
+        None,
+    );
     if !result.depfile.is_empty() {
         result.full_depfile = unix_full_path(&result.depfile, &directory.binary_dir);
     }
-    if let Some(transformed_path) = &spec.internal_depfile
+    if spec.internal_depfile.is_some()
         && !spec.depfile.is_empty()
         && !result.command_lines.is_empty()
     {
@@ -246,7 +309,7 @@ pub fn evaluate_spec(ctx: &GenCtx, spec: &CustomCommandSpec) -> EvaluatedCommand
             ctx.interp.home_binary.clone(),
             directory.binary_dir.clone(),
             result.full_depfile.clone(),
-            transformed_path.clone(),
+            internal_depfile_name(ctx, &result.full_depfile),
         ]);
     }
     result
@@ -260,7 +323,10 @@ pub fn internal_depfile_name(ctx: &GenCtx, full_depfile: &str) -> String {
 }
 
 /// A configured custom command as the generator's input.
-pub fn spec_from_command(ctx: &GenCtx, command: &crate::state::CustomCommand) -> CustomCommandSpec {
+pub fn spec_from_command(
+    _ctx: &GenCtx,
+    command: &crate::state::CustomCommand,
+) -> CustomCommandSpec {
     let mut spec = CustomCommandSpec {
         makefile: command.makefile,
         target: command.target.clone(),
@@ -279,21 +345,11 @@ pub fn spec_from_command(ctx: &GenCtx, command: &crate::state::CustomCommand) ->
         internal_depfile: None,
         backtrace: command.backtrace.clone(),
     };
-    // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW.
+    // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW. The
+    // internal depfile path is computed per configuration by evaluate_spec.
     let cmp0116 = crate::policy::index_of("CMP0116").and_then(|index| command.policies.get(index));
     if cmp0116 == Some(crate::policy::PolicyStatus::New) && !command.depfile.is_empty() {
-        let depfile = ctx.genex_command(
-            &command.depfile,
-            command.makefile,
-            None,
-            true,
-            &command.backtrace,
-            None,
-        );
-        if !depfile.is_empty() {
-            let full = unix_full_path(&depfile, &ctx.interp.makefiles[command.makefile].binary_dir);
-            spec.internal_depfile = Some(internal_depfile_name(ctx, &full));
-        }
+        spec.internal_depfile = Some(String::new());
     }
     spec
 }
@@ -481,10 +537,16 @@ impl EvaluatedCommand {
     }
 
     /// AppendArguments. The result is ready for a Ninja variable value.
-    pub fn append_arguments(&self, line: usize, command: &mut String) {
+    pub fn append_arguments(&self, ctx: &GenCtx, line: usize, command: &mut String) {
         let flags = NINJA_UNIX
             | if self.escape_allow_make_vars {
                 FLAG_ALLOW_MAKE_VARIABLES
+            } else {
+                0
+            }
+            | if ctx.multi_config {
+                // cmOutputConverter::NINJAMULTI
+                crate::outconv::FLAG_UNESCAPE_NINJA_CONFIGURATION
             } else {
                 0
             };
@@ -504,7 +566,13 @@ impl EvaluatedCommand {
         if self.command_lines.is_empty() {
             return Vec::new();
         }
-        let flags = NINJA_UNIX | FLAG_ALLOW_MAKE_VARIABLES;
+        let flags = NINJA_UNIX
+            | FLAG_ALLOW_MAKE_VARIABLES
+            | if ctx.multi_config {
+                crate::outconv::FLAG_UNESCAPE_NINJA_CONFIGURATION
+            } else {
+                0
+            };
         let directory = if self.working_directory.is_empty() {
             &ctx.interp.makefiles[makefile].binary_dir
         } else {
@@ -516,7 +584,7 @@ impl EvaluatedCommand {
                 continue;
             }
             let mut line = escape_for_shell(&argv[0], flags);
-            self.append_arguments(index, &mut line);
+            self.append_arguments(ctx, index, &mut line);
             lines.push(line);
         }
         lines

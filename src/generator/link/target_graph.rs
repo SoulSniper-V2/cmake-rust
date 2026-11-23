@@ -33,7 +33,7 @@ pub(crate) fn dep_edges<'i>(
     head: &'i Target,
     config: &str,
 ) -> Vec<(&'i Target, Rc<Vec<Frame>>)> {
-    if ctx.dep_graph.borrow().is_none() {
+    if !ctx.dep_graph.borrow().contains_key(config) {
         let query = Query::new(ctx, config, "");
         let graph = compute(&query);
         // Target pointers to their `ext.targets` keys (which can be the
@@ -61,11 +61,13 @@ pub(crate) fn dep_edges<'i>(
                     .collect::<Vec<(String, Rc<Vec<Frame>>)>>(),
             );
         }
-        *ctx.dep_graph.borrow_mut() = Some(Rc::new(map));
+        ctx.dep_graph
+            .borrow_mut()
+            .insert(config.to_owned(), Rc::new(map));
     }
     let graph = ctx.dep_graph.borrow();
     graph
-        .as_ref()
+        .get(config)
         .and_then(|map| map.get(&(std::ptr::from_ref(head) as usize)))
         .map(|edges| {
             edges

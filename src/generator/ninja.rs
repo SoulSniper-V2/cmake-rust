@@ -3314,7 +3314,7 @@ impl<'a> NinjaGenerator<'a> {
                 continue;
             }
             let mut line = format!("{launcher}{}", self.shell(&argv[0]));
-            evaluated.append_arguments(index, &mut line);
+            evaluated.append_arguments(self.ctx, index, &mut line);
             lines.push(line);
         }
         lines

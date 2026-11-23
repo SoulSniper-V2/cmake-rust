@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 use crate::interp::Interp;
 use crate::messages::{Frame, MessageType};
@@ -48,51 +49,156 @@ impl Diagnostic {
     }
 }
 
+#[derive(Clone)]
 pub struct GenCtx<'a> {
     pub interp: &'a Interp,
-    /// The build configuration (CMAKE_BUILD_TYPE) — single-config Ninja.
+    /// The build configuration being evaluated (CMAKE_BUILD_TYPE for
+    /// single-config Ninja; the iterated configuration for multi-config).
     pub config: String,
-    pub errors: RefCell<Vec<Diagnostic>>,
+    /// `cmGlobalGenerator::IsMultiConfig` (Ninja Multi-Config).
+    pub multi_config: bool,
+    /// `CMAKE_CONFIGURATION_TYPES` (all generator configurations).
+    pub configs: Vec<String>,
+    /// `cmGlobalNinjaMultiGenerator::DefaultFileConfig`: the configuration
+    /// of the impl file included by `build.ninja`.
+    pub default_file_config: String,
+    /// `CMAKE_CROSS_CONFIGS`.
+    pub cross_configs: BTreeSet<String>,
+    /// `CMAKE_DEFAULT_CONFIGS`.
+    pub default_configs: BTreeSet<String>,
+    pub errors: Rc<RefCell<Vec<Diagnostic>>>,
     /// Free-form memo for expensive per-target computations.
-    pub memo: RefCell<HashMap<String, String>>,
+    pub memo: Rc<RefCell<HashMap<String, String>>>,
     /// Backtrace table referenced by generator-expression provenance ids.
-    pub backtraces: RefCell<Vec<Vec<Frame>>>,
+    pub backtraces: Rc<RefCell<Vec<Vec<Frame>>>>,
     /// `cmMakefile::AddTargetObject`: object files named by
     /// `$<TARGET_OBJECTS:...>`, as (referencing directory, path) -> library.
-    pub target_objects: RefCell<HashMap<(usize, String), String>>,
+    pub target_objects: Rc<RefCell<HashMap<(usize, String), String>>>,
     /// `cmGeneratorTarget::KindedSourcesMap`: computed sources per target
     /// and configuration.
-    pub sources: RefCell<HashMap<String, std::rc::Rc<Vec<super::target::SourceInfo>>>>,
+    pub sources: Rc<RefCell<HashMap<String, Rc<Vec<super::target::SourceInfo>>>>>,
     /// Usage requirements per (target, property, config, language), as
     /// cmGeneratorTarget caches its evaluated property entries.
-    pub usage: RefCell<HashMap<String, std::rc::Rc<Vec<crate::genex::UsageItem>>>>,
+    pub usage: Rc<RefCell<HashMap<String, Rc<Vec<crate::genex::UsageItem>>>>>,
     /// `cmComputeTargetDepends` final edges with backtraces (File API
     /// codemodel target dependencies), computed once per configuration.
     /// Keyed by depender target pointer; dependees are stored by name.
     /// Pointer-free so `GenCtx` stays covariant over `'a`.
-    pub dep_graph: RefCell<Option<std::rc::Rc<DepGraphEdges>>>,
+    pub dep_graph: Rc<RefCell<HashMap<String, Rc<DepGraphEdges>>>>,
 }
 
 /// Depender target pointer -> (dependee name, edge backtrace).
-pub type DepGraphEdges = HashMap<usize, Vec<(String, std::rc::Rc<Vec<Frame>>)>>;
+pub type DepGraphEdges = HashMap<usize, Vec<(String, Rc<Vec<Frame>>)>>;
 
 impl<'a> GenCtx<'a> {
     pub fn new(interp: &'a Interp) -> GenCtx<'a> {
-        let config = interp
-            .get_def("CMAKE_BUILD_TYPE")
-            .unwrap_or_default()
-            .to_owned();
+        let multi_config = interp.ext.multi_config;
+        let config = if multi_config {
+            interp.ext.gen_default_file_config.clone()
+        } else {
+            interp
+                .get_def("CMAKE_BUILD_TYPE")
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let configs = if multi_config {
+            interp.ext.gen_configs.clone()
+        } else {
+            vec![config.clone()]
+        };
         GenCtx {
             interp,
             config,
-            errors: RefCell::new(Vec::new()),
-            memo: RefCell::new(HashMap::new()),
-            backtraces: RefCell::new(Vec::new()),
-            target_objects: RefCell::new(HashMap::new()),
-            sources: RefCell::new(HashMap::new()),
-            usage: RefCell::new(HashMap::new()),
-            dep_graph: RefCell::new(None),
+            multi_config,
+            configs,
+            default_file_config: interp.ext.gen_default_file_config.clone(),
+            cross_configs: interp.ext.gen_cross_configs.clone(),
+            default_configs: interp.ext.gen_default_configs.clone(),
+            errors: Rc::new(RefCell::new(Vec::new())),
+            memo: Rc::new(RefCell::new(HashMap::new())),
+            backtraces: Rc::new(RefCell::new(Vec::new())),
+            target_objects: Rc::new(RefCell::new(HashMap::new())),
+            sources: Rc::new(RefCell::new(HashMap::new())),
+            usage: Rc::new(RefCell::new(HashMap::new())),
+            dep_graph: Rc::new(RefCell::new(HashMap::new())),
         }
+    }
+
+    /// A view of this context that evaluates generator expressions for
+    /// `config` (the multi-config generator's per-configuration passes).
+    /// All shared state stays shared.
+    pub fn for_config(&self, config: &str) -> GenCtx<'a> {
+        let mut ctx = self.clone();
+        ctx.config = config.to_owned();
+        ctx
+    }
+
+    /// `cmGlobalNinjaGenerator::BuildAlias`: `name:config` for a nonempty
+    /// config, otherwise `name`.
+    pub fn build_alias(&self, alias: &str, config: &str) -> String {
+        if config.is_empty() {
+            alias.to_owned()
+        } else {
+            format!("{alias}:{config}")
+        }
+    }
+
+    /// `cmGlobalNinjaGenerator::ConfigDirectory`: `/<config>` for a
+    /// nonempty config, otherwise empty.
+    pub fn config_directory(&self, config: &str) -> String {
+        if config.is_empty() {
+            String::new()
+        } else {
+            format!("/{config}")
+        }
+    }
+
+    /// `cmGlobalNinjaGenerator::GetCrossConfigs`: the file config plus all
+    /// cross configs.
+    pub fn cross_configs_of(&self, file_config: &str) -> Vec<String> {
+        let mut configs = vec![file_config.to_owned()];
+        configs.extend(
+            self.cross_configs
+                .iter()
+                .filter(|c| *c != file_config)
+                .cloned(),
+        );
+        configs
+    }
+
+    /// `cmGlobalNinjaGenerator::OrderDependsTargetForTarget`: the
+    /// config-suffixed order-only phony name under Ninja Multi-Config.
+    pub fn order_depends_name(&self, name: &str, config: &str) -> String {
+        if self.multi_config && !config.is_empty() {
+            format!(
+                "cmake_object_order_depends_target_{name}_{}",
+                config.to_uppercase()
+            )
+        } else {
+            format!("cmake_object_order_depends_target_{name}")
+        }
+    }
+
+    /// `cmTarget::IsPerConfig` for the purposes of generation: ordinary
+    /// and utility targets generate per configuration; INTERFACE_LIBRARY
+    /// and non-per-config GLOBAL_TARGETs generate once.
+    pub fn is_per_config(&self, target: &Target) -> bool {
+        !matches!(
+            target.kind,
+            TargetKind::InterfaceLibrary | TargetKind::GlobalTarget
+        )
+    }
+
+    /// `cmGlobalNinjaGenerator::IsSingleConfigUtility`: a UTILITY target
+    /// whose output is shared by all configurations (not created through
+    /// the per-config utility-output path).
+    pub fn is_single_config_utility(&self, target: &Target) -> bool {
+        target.kind == TargetKind::Utility
+            && !self
+                .interp
+                .ext
+                .per_config_utility_targets
+                .contains(&target.name)
     }
 
     /// An AUTHOR_WARNING issued during generation (cmake::IssueMessage).
@@ -570,12 +676,18 @@ impl<'a> GenCtx<'a> {
     /// config): evaluates `text` as `cge->Evaluate(lg, config, target)` per
     /// top-level expression and records the targets the expressions depend
     /// on (`cge->GetTargets()`) with their cross flag into `utilities`.
+    /// `cmCustomCommandGenerator`'s split-config evaluation: `output_config`
+    /// is where the evaluated paths will be consumed, `command_config` is
+    /// the configuration of the ninja file holding the command.
+    #[allow(clippy::too_many_arguments)]
     pub fn genex_command(
         &self,
         text: &str,
         dir: usize,
         target: Option<&str>,
         use_output_config: bool,
+        output_config: &str,
+        command_config: &str,
         backtrace: &[Frame],
         utilities: Option<&mut Vec<(String, bool)>>,
     ) -> String {
@@ -583,7 +695,11 @@ impl<'a> GenCtx<'a> {
             return text.to_owned();
         }
         let mut ectx = crate::genex::EvalContext {
-            config: &self.config,
+            config: if use_output_config {
+                output_config
+            } else {
+                command_config
+            },
             head_target: target,
             current_target: target,
             // cmCompiledGeneratorExpression: the backtrace of the command
@@ -599,8 +715,8 @@ impl<'a> GenCtx<'a> {
             text,
             &mut ectx,
             &mut host,
-            &self.config,
-            &self.config,
+            output_config,
+            command_config,
             use_output_config,
             &mut dependencies,
         );
