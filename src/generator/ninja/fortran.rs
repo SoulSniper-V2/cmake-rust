@@ -51,7 +51,7 @@ impl<'a> NinjaGenerator<'a> {
             .var_safe(target.makefile, "CMAKE_Fortran_SCANDEP_DEPFILE_FORMAT");
         let depfile = if scan_deps == "msvc" { "" } else { "$DEP_FILE" };
         let deptype = if scan_deps == "msvc" { "msvc" } else { "" };
-        let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_COMPILE");
+        let launcher = rule_launcher(&self.ctx, target, "RULE_LAUNCH_COMPILE");
         let pp = self
             .ctx
             .var_safe(target.makefile, "CMAKE_Fortran_PREPROCESS_SOURCE");
@@ -94,7 +94,7 @@ impl<'a> NinjaGenerator<'a> {
         ];
         let mut cmds: Vec<_> = util::expand_list(&pp, false)
             .iter()
-            .map(|cmd| flags::expand_rule(self.ctx, target, &format!("{launcher}{cmd}"), &vars))
+            .map(|cmd| flags::expand_rule(&self.ctx, target, &format!("{launcher}{cmd}"), &vars))
             .collect();
         cmds.push(format!("{scan} --src=$out --out=$out --dep=$DEP_FILE --obj=$OBJ_FILE --ddi=$DYNDEP_INTERMEDIATE_FILE --src-orig=$in"));
         rule.command = self.build_command_line(&cmds);
@@ -174,7 +174,7 @@ impl<'a> NinjaGenerator<'a> {
                 .var_safe(target.makefile, "CMAKE_Fortran_POSTPROCESS_FLAG");
             flags::append(obj.variables.get_mut("FLAGS").unwrap(), &post);
             let src_inc =
-                flags::fortran_source_include(self.ctx, target, util::filename_path(&source.path));
+                flags::fortran_source_include(&self.ctx, target, util::filename_path(&source.path));
             obj.variables.insert(
                 "INCLUDES".into(),
                 format!("{src_inc} {}", scan.variables["INCLUDES"]),
@@ -214,7 +214,7 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     pub(super) fn has_fortran_sources(&self, target: &Target) -> bool {
-        let sources = gt::sources(self.ctx, target, &self.config);
+        let sources = gt::sources(&self.ctx, target, &self.config);
         sources.iter().any(|s| s.language == "Fortran")
             || sources
                 .iter()
@@ -245,7 +245,7 @@ impl<'a> NinjaGenerator<'a> {
         let mut index = 0;
         for target in targets {
             if !target.imported {
-                visit(self.ctx, target, &mut self.module_order, &mut index);
+                visit(&self.ctx, target, &mut self.module_order, &mut index);
             }
         }
     }
@@ -337,8 +337,8 @@ impl<'a> NinjaGenerator<'a> {
         let mf = &self.ctx.interp.makefiles[target.makefile];
         let mut direct = Vec::new();
         let mut forward = Vec::new();
-        let lang = gt::linker_language(self.ctx, target, &self.config);
-        let linked = link::module_link_targets(self.ctx, target, &lang);
+        let lang = gt::linker_language(&self.ctx, target, &self.config);
+        let linked = link::module_link_targets(&self.ctx, target, &lang);
         let objects = sources
             .iter()
             .filter_map(|s| s.object_library.as_ref())
@@ -363,7 +363,7 @@ impl<'a> NinjaGenerator<'a> {
             self.ctx
                 .var_safe(target.makefile, &format!("CMAKE_Fortran_{suffix}"))
         };
-        let includes: Vec<_> = flags::include_items(self.ctx, target, &self.config, "Fortran")
+        let includes: Vec<_> = flags::include_items(&self.ctx, target, &self.config, "Fortran")
             .iter()
             .map(|(dir, _, _)| self.ninja_path(dir))
             .collect();
@@ -379,7 +379,7 @@ impl<'a> NinjaGenerator<'a> {
         let tdi = json!({
             "language":"Fortran", "compiler-id":var("COMPILER_ID"), "compiler-simulate-id":var("SIMULATE_ID"),
             "compiler-frontend-variant":var("COMPILER_FRONTEND_VARIANT"), "submodule-sep":var("SUBMODULE_SEP"),
-            "submodule-ext":var("SUBMODULE_EXT"), "module-dir":flags::fortran_module_dir(self.ctx,target).unwrap_or_else(|| mf.binary_dir.clone()),
+            "submodule-ext":var("SUBMODULE_EXT"), "module-dir":flags::fortran_module_dir(&self.ctx,target).unwrap_or_else(|| mf.binary_dir.clone()),
             "dir-cur-src":mf.source_dir,"dir-cur-bld":mf.binary_dir,"dir-top-bld":self.home_binary,"dir-top-src":self.home_source,
             "include-dirs":includes,"linked-target-dirs":direct,"forward-modules-from-target-dirs":forward,
             "sources":tdi_sources,"cxx-modules":{},"database-info":null,"bmi-installation":bmi,"exports":exports,"config":self.config
