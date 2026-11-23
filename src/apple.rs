@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+// Helpers here are consumed by the platform-model and link/install
+// generators; not every consumer exists yet.
+
 //! Apple platform queries shared by the configure and generate steps.
 
 use crate::cmregex::Regex;

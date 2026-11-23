@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(darwin_versioned C)
+add_library(v SHARED lib.c)
+set_target_properties(v PROPERTIES VERSION 4.2.0 SOVERSION 4)
+add_library(n SHARED lib.c)
+set_target_properties(n PROPERTIES INSTALL_NAME_DIR @rpath)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE v)

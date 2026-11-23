@@ -926,6 +926,12 @@ pub fn has_import_library(ctx: &GenCtx, target: &Target, config: &str) -> bool {
             ))
 }
 
+/// `cmGeneratorTarget::HasImplibGNUtoMS`.
+pub fn has_implib_gnu_to_ms(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    has_import_library(ctx, target, config)
+        && target.props.get("GNUtoMS").is_some_and(crate::util::is_on)
+}
+
 /// `cmGeneratorTarget::NeedImportLibraryName`.
 fn need_import_library_name(ctx: &GenCtx, target: &Target, config: &str) -> bool {
     has_import_library(ctx, target, config)
@@ -936,6 +942,92 @@ fn need_import_library_name(ctx: &GenCtx, target: &Target, config: &str) -> bool
                 target.kind,
                 TargetKind::Executable | TargetKind::ModuleLibrary
             ))
+}
+
+/// `cmTarget::IsRuntimeBinary`.
+pub fn is_runtime_binary(target: &Target) -> bool {
+    matches!(
+        target.kind,
+        TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    )
+}
+
+/// `cmGeneratorTarget::ModuleDefinitionInfo`.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleDefinitionInfo {
+    /// Full paths of `MODULE_DEFINITION` sources.
+    pub sources: Vec<String>,
+    pub windows_export_all_symbols: bool,
+    pub def_file_generated: bool,
+    pub def_file: String,
+}
+
+/// `cmGeneratorTarget::GetModuleDefinitionInfo` +
+/// `ComputeModuleDefinitionInfo`.  Only linked target types that can
+/// export symbols consult module definition files.
+pub fn module_definition_info(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+) -> Option<ModuleDefinitionInfo> {
+    if target.kind != TargetKind::SharedLibrary
+        && target.kind != TargetKind::ModuleLibrary
+        && !target.is_executable_with_exports()
+    {
+        return None;
+    }
+    let mut module_sources: Vec<String> = Vec::new();
+    for source in sources(ctx, target, config).iter() {
+        if source.kind == SourceKind::ModuleDefinition {
+            module_sources.push(source.path.clone());
+        }
+    }
+    let windows_export_all_symbols = is_on_opt(
+        ctx.var(target.makefile, "CMAKE_SUPPORT_WINDOWS_EXPORT_ALL_SYMBOLS")
+            .as_deref(),
+    ) && is_on_opt(target.props.get("WINDOWS_EXPORT_ALL_SYMBOLS"));
+    let def_file_generated = windows_export_all_symbols || module_sources.len() > 1;
+    let def_file = if def_file_generated {
+        format!("{}exports.def", object_directory(ctx, target, config))
+    } else {
+        module_sources.first().cloned().unwrap_or_default()
+    };
+    Some(ModuleDefinitionInfo {
+        sources: module_sources,
+        windows_export_all_symbols,
+        def_file_generated,
+        def_file,
+    })
+}
+
+/// `cmGeneratorTarget::GetTargetVersion` for a single property:
+/// `sscanf(value, "%d.%d.%d")` semantics with defaults of 0.
+fn target_version(target: &Target, property: &str) -> (i64, i64, i64) {
+    let Some(version) = target.props.get(property) else {
+        return (0, 0, 0);
+    };
+    let mut parts = version.split('.');
+    let next = |parts: &mut std::str::Split<'_, char>| {
+        parts.next().and_then(|part| part.parse::<i64>().ok())
+    };
+    let major = next(&mut parts);
+    let minor = next(&mut parts);
+    let patch = next(&mut parts);
+    match (major, minor, patch) {
+        (Some(major), Some(minor), Some(patch)) => (major, minor, patch),
+        (Some(major), Some(minor), None) => (major, minor, 0),
+        (Some(major), None, _) => (major, 0, 0),
+        _ => (0, 0, 0),
+    }
+}
+
+/// `cmGeneratorTarget::GetTargetVersionFallback`.
+pub fn target_version_fallback(target: &Target, property: &str, fallback: &str) -> (i64, i64, i64) {
+    if target.props.get(property).is_some() {
+        target_version(target, property)
+    } else {
+        target_version(target, fallback)
+    }
 }
 
 #[derive(Debug)]

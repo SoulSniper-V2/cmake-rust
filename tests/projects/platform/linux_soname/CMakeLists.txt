@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(linux_soname C)
+add_library(v SHARED lib.c)
+set_target_properties(v PROPERTIES VERSION 4.2.0 SOVERSION 4)
+add_library(nov SHARED lib.c)
+set_target_properties(nov PROPERTIES NO_SONAME ON)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE v)

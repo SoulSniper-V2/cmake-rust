@@ -36,6 +36,7 @@ mod install_name;
 pub mod link;
 mod module_support;
 pub mod ninja;
+pub mod osx_bundle;
 pub mod package_info;
 pub mod pch;
 pub mod target;

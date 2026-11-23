@@ -275,51 +275,6 @@ fn warning_as_error(inputs: &Flags<'_, '_>, flags: &mut String) {
     }
 }
 
-/// `cmGeneratorTarget::ModuleDefinitionInfo`.
-pub(crate) struct ModuleDefinitionInfo {
-    /// The full paths of the target's `.def` sources.
-    pub sources: Vec<String>,
-    /// The `.def` file used when linking; empty without one.
-    pub def_file: String,
-}
-
-/// `cmGeneratorTarget::GetModuleDefinitionInfo`: `None` for target types
-/// on which a module definition file makes no sense.
-pub(crate) fn module_definition_info(
-    ctx: &GenCtx,
-    target: &Target,
-    config: &str,
-) -> Option<ModuleDefinitionInfo> {
-    if !matches!(
-        target.kind,
-        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-    ) && !target.is_executable_with_exports()
-    {
-        return None;
-    }
-    // ComputeModuleDefinitionInfo.
-    let sources: Vec<String> = crate::generator::target::sources(ctx, target, config)
-        .iter()
-        .filter(|source| source.kind == crate::generator::target::SourceKind::ModuleDefinition)
-        .map(|source| source.path.clone())
-        .collect();
-    let windows_export_all_symbols = ctx
-        .var(target.makefile, "CMAKE_SUPPORT_WINDOWS_EXPORT_ALL_SYMBOLS")
-        .is_some_and(|value| crate::util::is_on(&value))
-        && is_on_opt(target.props.get("WINDOWS_EXPORT_ALL_SYMBOLS"));
-    // DefFileGenerated: `__create_def` writes exports.def before linking.
-    let def_file_generated = windows_export_all_symbols || sources.len() > 1;
-    let def_file = if def_file_generated {
-        format!(
-            "{}exports.def",
-            crate::generator::target::object_directory(ctx, target, config)
-        )
-    } else {
-        sources.first().cloned().unwrap_or_default()
-    };
-    Some(ModuleDefinitionInfo { sources, def_file })
-}
-
 /// `cmLocalGenerator::GetExeExportFlags`: flags to export symbols from an
 /// executable, only with ENABLE_EXPORTS except on AIX, where the exports
 /// are computed.
@@ -346,7 +301,9 @@ fn exe_export_flags(inputs: &Flags<'_, '_>, language: &str) -> String {
 /// `cmLocalGenerator::AppendModuleDefinitionFlag`: the `/DEF:` or bare
 /// `.def` path from `cmGeneratorTarget::GetModuleDefinitionInfo`.
 fn append_module_definition_flag(inputs: &Flags<'_, '_>, flags: &mut String) {
-    let Some(info) = module_definition_info(inputs.ctx, inputs.target, inputs.config) else {
+    let Some(info) =
+        crate::generator::target::module_definition_info(inputs.ctx, inputs.target, inputs.config)
+    else {
         return;
     };
     if info.def_file.is_empty() {

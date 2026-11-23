@@ -13,7 +13,6 @@ pub(crate) use compile::{
     interface_values, pch_items, standard_option,
 };
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
-pub(crate) use link::module_definition_info;
 pub use link::{link_dependency_file, link_flag_vars};
 pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};

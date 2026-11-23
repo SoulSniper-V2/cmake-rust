@@ -1,10 +1,10 @@
 //! The install name queries of `cmGeneratorTarget` on Apple platforms.
 
 use super::ctx::GenCtx;
-use super::target::{import_info, target_policy};
+use super::target::{ArtifactType, directory, import_info, target_policy};
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
-use crate::util::is_on;
+use crate::util::{is_on, is_on_opt};
 
 /// `cmMakefile::IsSet`.
 fn is_set(ctx: &GenCtx, target: &Target, name: &str) -> bool {
@@ -86,4 +86,105 @@ fn determine_rpath_install_name_dir(ctx: &GenCtx, target: &Target, config: &str)
         );
     }
     true
+}
+
+/// `cmGlobalGenerator::AddCMP0068WarnTarget`: the names are collected and
+/// the warning is issued once generation finishes.
+fn warn_cmp0068(ctx: &GenCtx, target: &Target) {
+    ctx.cmp0068_warn_targets
+        .borrow_mut()
+        .insert(target.name.clone());
+}
+
+/// `cmGeneratorTarget::MacOSXUseInstallNameDir`, with the CMP0068 warning.
+fn use_install_name_dir_warn(ctx: &GenCtx, target: &Target) -> bool {
+    if let Some(value) = target.props.get("BUILD_WITH_INSTALL_NAME_DIR") {
+        return is_on(value);
+    }
+    let policy = target_policy(ctx, target, index_of("CMP0068").unwrap());
+    if policy == PolicyStatus::New {
+        return false;
+    }
+    let use_install_name = is_on_opt(target.props.get("BUILD_WITH_INSTALL_RPATH"));
+    if use_install_name && policy == PolicyStatus::Warn {
+        warn_cmp0068(ctx, target);
+    }
+    use_install_name
+}
+
+/// `cmGeneratorTarget::CanGenerateInstallNameDir`.
+fn can_generate_install_name_dir(ctx: &GenCtx, target: &Target, for_install: bool) -> bool {
+    let policy = target_policy(ctx, target, index_of("CMP0068").unwrap());
+    if policy == PolicyStatus::New {
+        return true;
+    }
+    let mut skip = is_on_opt(ctx.var(target.makefile, "CMAKE_SKIP_RPATH").as_deref());
+    if for_install {
+        skip |= is_on_opt(
+            ctx.var(target.makefile, "CMAKE_SKIP_INSTALL_RPATH")
+                .as_deref(),
+        );
+    } else {
+        skip |= is_on_opt(target.props.get("SKIP_BUILD_RPATH"));
+    }
+    if skip && policy == PolicyStatus::Warn {
+        warn_cmp0068(ctx, target);
+    }
+    !skip
+}
+
+/// `cmGeneratorTarget::GetInstallNameDirForBuildTree`.
+pub(super) fn install_name_dir_for_build_tree(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+) -> String {
+    if !is_set(ctx, target, "CMAKE_PLATFORM_HAS_INSTALLNAME") {
+        return String::new();
+    }
+    // If building directly for installation then the build tree
+    // install_name is the same as the install tree.
+    if use_install_name_dir_warn(ctx, target) {
+        let prefix = ctx.var_safe(target.makefile, "CMAKE_INSTALL_PREFIX");
+        return install_name_dir_for_install_tree(ctx, target, config, &prefix);
+    }
+    // Use the build tree directory for the target.
+    if can_generate_install_name_dir(ctx, target, false) {
+        let mut dir = if rpath_install_name_dir_default(ctx, target) {
+            "@rpath".to_owned()
+        } else {
+            directory(ctx, target, config, ArtifactType::Runtime)
+        };
+        dir.push('/');
+        return dir;
+    }
+    String::new()
+}
+
+/// `cmGeneratorTarget::GetInstallNameDirForInstallTree`.
+pub(super) fn install_name_dir_for_install_tree(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    install_prefix: &str,
+) -> String {
+    if !is_set(ctx, target, "CMAKE_PLATFORM_HAS_INSTALLNAME") {
+        return String::new();
+    }
+    let mut dir = String::new();
+    let install_name_dir = target.props.get("INSTALL_NAME_DIR");
+    if can_generate_install_name_dir(ctx, target, true)
+        && let Some(value) = install_name_dir.filter(|value| !value.is_empty())
+    {
+        // cmGeneratorExpression::ReplaceInstallPrefix.
+        let value = value.replace("$<INSTALL_PREFIX>", install_prefix);
+        let value = ctx.genex(&value, None, Some(config));
+        if !value.is_empty() {
+            dir = format!("{value}/");
+        }
+    }
+    if install_name_dir.is_none() && rpath_install_name_dir_default(ctx, target) {
+        dir = "@rpath/".to_owned();
+    }
+    dir
 }

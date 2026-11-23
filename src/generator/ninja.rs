@@ -13,8 +13,9 @@ use std::rc::Rc;
 
 use super::ctx::GenCtx;
 use super::module_support::{self, CxxSupportLevel, ModuleSupport};
+use super::osx_bundle::{self, SkipParts, SourceFileType};
 use super::target::{self as gt, ArtifactType, SourceKind};
-use super::{custom, flags, link};
+use super::{custom, flags, install_name, link};
 use crate::outconv;
 use crate::state::{CustomCommand, CustomCommandKind, Target, TargetKind};
 use crate::util;
@@ -350,6 +351,12 @@ pub struct NinjaGenerator<'a> {
     /// target currently being generated (std::map: sorted by language).
     /// Accumulates across the `fileConfig` loop of one `Generate(config)`.
     scanning_info: BTreeMap<String, Vec<ScanningFiles>>,
+    /// `cmNinjaTargetGenerator::MacContentFolders` — per-target set of
+    /// bundle content folders used by CreateFramework's symlinks.
+    mac_content_folders: BTreeSet<String>,
+    /// `cmNinjaTargetGenerator::Configs[config].ExtraFiles`: order-only
+    /// files (bundle content copies) for the current target.
+    extra_files: Vec<String>,
     pub cmake_cmd: String,
     pub ninja_cmd: String,
     home_binary: String,
@@ -407,6 +414,8 @@ impl<'a> NinjaGenerator<'a> {
             tidy_fixes_files: BTreeSet::new(),
             assumed_source_dependencies: BTreeMap::new(),
             scanning_info: BTreeMap::new(),
+            mac_content_folders: BTreeSet::new(),
+            extra_files: Vec::new(),
             cmake_cmd: cmake,
             ninja_cmd: ninja,
             home_binary: interp.home_binary.clone(),
@@ -587,6 +596,11 @@ impl<'a> NinjaGenerator<'a> {
             view = self.ctx.for_config(config);
             &view
         };
+        // For frameworks we want the real name, not the symlink name:
+        // frameworks always appear versioned, and the build files manage
+        // their symbolic links inside the bundle instead of letting
+        // cmOSXBundleGenerator's links be build products.
+        let realname = target.is_framework_on_apple();
         match target.kind {
             TargetKind::SharedLibrary
             | TargetKind::StaticLibrary
@@ -596,12 +610,21 @@ impl<'a> NinjaGenerator<'a> {
                     out.push(ctx.order_depends_name(&target.name, config));
                     return;
                 }
+                if target.platform.apple && gt::has_import_library(ctx, target, config) {
+                    out.push(self.ninja_path(&gt::full_path(
+                        ctx,
+                        target,
+                        config,
+                        ArtifactType::Import,
+                        realname,
+                    )));
+                }
                 out.push(self.ninja_path(&gt::full_path(
                     ctx,
                     target,
                     config,
                     ArtifactType::Runtime,
-                    false,
+                    realname,
                 )));
             }
             TargetKind::ObjectLibrary
@@ -2140,6 +2163,11 @@ impl<'a> NinjaGenerator<'a> {
         {
             deps.push(self.ninja_path(&extra));
         }
+        // Inputs read by configure_file-style generation during generate
+        // (Info.plist templates and friends).
+        for extra in self.ctx.cmake_depend_files.borrow().iter() {
+            deps.push(self.ninja_path(extra));
+        }
         deps.push(self.output_path("CMakeCache.txt"));
         rebuild.variables.insert("pool".into(), "console".into());
         if let Some((script, stamp)) = self.ctx.interp.ext.glob_verify.clone() {
@@ -2475,6 +2503,67 @@ pub fn is_in_build_system(target: &Target) -> bool {
 }
 
 impl<'a> NinjaGenerator<'a> {
+    /// `cmNinjaTargetGenerator::EnsureDirectoryExists`: relative paths are
+    /// taken under the top binary directory minus the output path prefix.
+    fn ensure_directory_exists(&self, path: &str) {
+        if util::is_full_path(path) {
+            let _ = std::fs::create_dir_all(path);
+        } else {
+            let mut full = format!("{}/", self.home_binary);
+            if !self.output_prefix.is_empty() && full.ends_with(&self.output_prefix) {
+                full.truncate(full.len() - self.output_prefix.len());
+            }
+            full.push_str(path);
+            let _ = std::fs::create_dir_all(full);
+        }
+    }
+
+    /// `cmNinjaTargetGenerator::EnsureParentDirectoryExists`.
+    fn ensure_parent_directory_exists(&self, path: &str) {
+        self.ensure_directory_exists(&util::filename_path(path));
+    }
+
+    /// `cmGlobalNinjaGenerator::SupportsCWDDepend`: the detected ninja
+    /// binary understands order-only dependencies on the working
+    /// directory (ninja 1.7+).
+    fn supports_cwd_depend(&self) -> bool {
+        match &self.ctx.interp.langs.ninja_version {
+            Some(version) => !util::version_compare(util::CompareOp::Less, version, "1.7"),
+            None => false,
+        }
+    }
+
+    /// `cmGlobalNinjaGenerator::IsGCCOnWindows`
+    /// (`DetectGCCOnWindows`): GCC-like compilers on a Windows host —
+    /// detected per enabled language when CMake is built for Windows.
+    fn is_gcc_on_windows(&self) -> bool {
+        #[cfg(windows)]
+        {
+            let makefile = 0;
+            self.ctx.interp.langs.enabled.iter().any(|language| {
+                let compiler_id = self
+                    .ctx
+                    .var_safe(makefile, &format!("CMAKE_{language}_COMPILER_ID"));
+                let simulate_id = self
+                    .ctx
+                    .var_safe(makefile, &format!("CMAKE_{language}_SIMULATE_ID"));
+                let frontend_variant = self.ctx.var_safe(
+                    makefile,
+                    &format!("CMAKE_{language}_COMPILER_FRONTEND_VARIANT"),
+                );
+                (compiler_id == "Clang" && frontend_variant == "GNU")
+                    || (simulate_id != "MSVC"
+                        && (compiler_id == "GNU"
+                            || compiler_id == "QCC"
+                            || compiler_id.ends_with("Clang")))
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+
     fn object_dir(&self, target: &Target) -> String {
         // cmNinjaTargetGenerator names objects by their normalized directory.
         gt::support_directory(&self.ctx, target) + &self.ctx.config_directory(&self.config)
@@ -2748,6 +2837,23 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmNinjaNormalTargetGenerator::Generate`.
     fn generate_normal_target(&mut self, target: &'a Target) {
         let config = self.config.clone();
+        // The cmNinjaNormalTargetGenerator constructor ensures the output
+        // directory exists for every config (needed at compile time on
+        // Windows, e.g. the OutDir test).
+        if target.kind != TargetKind::ObjectLibrary {
+            for cfg in self.ctx.configs.clone() {
+                let directory = gt::directory(
+                    &self.ctx.for_config(&cfg),
+                    target,
+                    &cfg,
+                    ArtifactType::Runtime,
+                );
+                self.ensure_directory_exists(&directory);
+            }
+        }
+        // cmNinjaTargetGenerator::Configs[config] state for this target.
+        self.mac_content_folders.clear();
+        self.extra_files.clear();
         let link_language = gt::linker_language(&self.ctx, target, &config);
         if link_language.is_empty() {
             // cmSystemTools::Error marks the generation failed.
@@ -2910,8 +3016,14 @@ impl<'a> NinjaGenerator<'a> {
                 custom_outputs.extend(evaluated.byproducts);
             }
         }
+        // cmOSXBundleGenerator::GenerateMacOSXContentStatements over the
+        // header and extra sources, writing COPY_OSX_CONTENT_* builds to
+        // this file config's stream.
+        self.write_mac_osx_content_statements(&mut out, target, sources);
         let object_dir = self.object_dir(target);
-        let _ = std::fs::create_dir_all(&object_dir);
+        if !self.supports_cwd_depend() {
+            self.ensure_directory_exists(&object_dir);
+        }
         let order_target = self.ctx.order_depends_name(&target.name, &config);
         let mut object_order_target = order_target.clone();
         {
@@ -2924,11 +3036,20 @@ impl<'a> NinjaGenerator<'a> {
             // CMP0154 NEW, outputs outside the target's interface file sets
             // are private to its own compilations.
             let (public, private) = self.split_private_outputs(target, custom_outputs);
+            // Order-only dependencies on other files associated with the
+            // target (`Configs[config].ExtraFiles`: bundle content copies).
+            order.extend(self.extra_files.iter().cloned());
             order.extend(public.iter().map(|path| self.ninja_path(path)));
             order.sort();
             order.dedup();
             if order.is_empty() {
-                order.push(self.output_path("."));
+                // The phony target must have at least one input.
+                if self.supports_cwd_depend() {
+                    order.push(self.ninja_path("."));
+                } else {
+                    // Any path that always exists will work here.
+                    order.push(self.ninja_path(&self.object_dir(target)));
+                }
             }
             build.order_only_deps = order;
             write_build(&mut out, &build, 0);
@@ -3203,6 +3324,112 @@ impl<'a> NinjaGenerator<'a> {
         self.out().push_str(&out);
         objects
     }
+
+    /// `cmOSXBundleGenerator::GenerateMacOSXContentStatements` driven over
+    /// the target's header and extra source kinds, and the copy-build
+    /// emission of `MacOSXContentGeneratorType::operator()` +
+    /// `cmGlobalNinjaGenerator::WriteMacOSXContentBuild`.
+    fn write_mac_osx_content_statements(
+        &mut self,
+        out: &mut String,
+        target: &'a Target,
+        sources: &[gt::SourceInfo],
+    ) {
+        // GenerateMacOSXContentStatements::MustSkip
+        // (HaveWellDefinedOutputFiles).
+        if !matches!(
+            target.kind,
+            TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+                | TargetKind::Executable
+        ) {
+            return;
+        }
+        let config = self.config.clone();
+        let file_config = self.file_config.clone();
+        // Upstream iterates the header sources and then the extra sources
+        // as two separate lists.
+        for kind in [SourceKind::Header, SourceKind::Extra] {
+            for source in sources.iter().filter(|source| source.kind == kind) {
+                let flags =
+                    osx_bundle::target_source_file_flags(&self.ctx, target, &source.path, None);
+                if flags.kind == SourceFileType::Normal {
+                    continue;
+                }
+                // MacOSXContentGeneratorType::operator(): skip content when
+                // not building a framework or bundle.
+                if !target.is_bundle_on_apple() {
+                    continue;
+                }
+                let mut folders = std::mem::take(&mut self.mac_content_folders);
+                let macdir = osx_bundle::init_mac_osx_content_directory(
+                    &self.ctx,
+                    target,
+                    &flags.mac_folder,
+                    &config,
+                    &mut folders,
+                );
+                // Reject files that collide with files from the Ninja
+                // file's native config.
+                if config != file_config {
+                    let native = osx_bundle::init_mac_osx_content_directory(
+                        &self.ctx,
+                        target,
+                        &flags.mac_folder,
+                        &file_config,
+                        &mut folders,
+                    );
+                    if macdir == native {
+                        self.mac_content_folders = folders;
+                        continue;
+                    }
+                }
+                self.mac_content_folders = folders;
+                let input = self.ninja_path(&source.path);
+                let output =
+                    self.ninja_path(&format!("{}/{}", macdir, util::filename_name(&input)));
+                // cmGlobalNinjaGenerator::AddMacOSXContentRule +
+                // WriteMacOSXContentBuild.
+                self.add_mac_osx_content_rules();
+                let rule = if std::path::Path::new(&source.path).is_dir() {
+                    "COPY_OSX_CONTENT_DIR"
+                } else {
+                    "COPY_OSX_CONTENT_FILE"
+                };
+                let mut build = Build::new(rule);
+                build.outputs.push(output.clone());
+                build.explicit_deps.push(input);
+                write_build(out, &build, 0);
+                // `Configs[config].ExtraFiles`.
+                self.extra_files.push(output);
+            }
+        }
+    }
+
+    /// `cmGlobalNinjaGenerator::AddMacOSXContentRule`.
+    fn add_mac_osx_content_rules(&mut self) {
+        for (name, command) in [
+            ("COPY_OSX_CONTENT_FILE", "copy"),
+            ("COPY_OSX_CONTENT_DIR", "copy_directory"),
+        ] {
+            self.add_rule(&Rule {
+                name: name.into(),
+                command: format!("{} -E {command} $in $out", self.cmake_cmd),
+                description: "Copying OS X Content $out".into(),
+                comment: format!(
+                    "Rule for copying OS X bundle content {}, with style.",
+                    if name.ends_with("FILE") {
+                        "file"
+                    } else {
+                        "dir"
+                    }
+                ),
+                ..Rule::default()
+            });
+        }
+    }
     /// `cmNinjaTargetGenerator::SetMsvcTargetPdbVariable`. The gate is the
     /// mere definition of `MSVC_<LANG>_ARCHITECTURE_ID`: compiler
     /// identification raises it (possibly empty) into the enabling scope.
@@ -3251,9 +3478,34 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmNinjaNormalTargetGenerator::ComputeLinkCmd` for host link rules.
     fn link_commands(&self, target: &Target, language: &str) -> Vec<String> {
         let create = match target.kind {
-            TargetKind::Executable => "LINK_EXECUTABLE",
+            // cmGeneratorTarget::GetCreateRuleVariable.
+            TargetKind::Executable => {
+                let with_exports = format!("CMAKE_{language}_LINK_EXECUTABLE_WITH_EXPORTS");
+                if target.is_executable_with_exports()
+                    && self.ctx.var(target.makefile, &with_exports).is_some()
+                {
+                    return self
+                        .ctx
+                        .var(target.makefile, &with_exports)
+                        .map(|commands| util::expand_list(&commands, false))
+                        .unwrap_or_default();
+                }
+                "LINK_EXECUTABLE"
+            }
             TargetKind::StaticLibrary => "CREATE_STATIC_LIBRARY",
-            TargetKind::SharedLibrary => "CREATE_SHARED_LIBRARY",
+            TargetKind::SharedLibrary => {
+                if target.is_archived_aix_shared_library() {
+                    return self
+                        .ctx
+                        .var(
+                            target.makefile,
+                            &format!("CMAKE_{language}_CREATE_SHARED_LIBRARY_ARCHIVE"),
+                        )
+                        .map(|commands| util::expand_list(&commands, false))
+                        .unwrap_or_default();
+                }
+                "CREATE_SHARED_LIBRARY"
+            }
             TargetKind::ModuleLibrary => "CREATE_SHARED_MODULE",
             _ => return Vec::new(),
         };
@@ -3268,6 +3520,16 @@ impl<'a> NinjaGenerator<'a> {
             self.ctx.var(target.makefile, &var)
         };
         if let Some(commands) = rule(create) {
+            let mut commands = commands;
+            if gt::has_implib_gnu_to_ms(&self.ctx, target, &self.config) {
+                let rule_var = format!(
+                    "CMAKE_{}_GNUtoMS_RULE",
+                    gt::linker_language(&self.ctx, target, &self.config)
+                );
+                if let Some(extra) = self.ctx.var(target.makefile, &rule_var) {
+                    commands.push_str(&extra);
+                }
+            }
             return util::expand_list(&commands, false);
         }
         if target.kind != TargetKind::StaticLibrary {
@@ -3375,7 +3637,13 @@ impl<'a> NinjaGenerator<'a> {
                 if !flag.is_empty() {
                     rule.rspfile = "$RSP_FILE".into();
                     objects = format!("{flag}$RSP_FILE");
-                    rule.rspcontent = "$in_newline".into();
+                    rule.rspcontent = if self.is_gcc_on_windows() {
+                        // ar.exe can't handle backslashes in rsp files
+                        // (implicitly used by gcc).
+                        "$in".into()
+                    } else {
+                        "$in_newline".into()
+                    };
                     if self
                         .ctx
                         .var(
@@ -3405,6 +3673,7 @@ impl<'a> NinjaGenerator<'a> {
                 ("FLAGS", "$FLAGS".into()),
                 ("LINK_FLAGS", "$LINK_FLAGS".into()),
                 ("MANIFESTS", "$MANIFESTS".into()),
+                ("AIX_EXPORTS", "$AIX_EXPORTS".into()),
                 ("CONFIG", "$CONFIG".into()),
                 (
                     "TARGET_LABELS",
@@ -3433,7 +3702,7 @@ impl<'a> NinjaGenerator<'a> {
             expanded.insert(0, "$PRE_LINK".into());
             expanded.push("$POST_BUILD".into());
             rule.command = self.build_command_line(&expanded);
-            let visible = visible_type_name(target.kind);
+            let visible = visible_type_name(target);
             rule.comment = format!("Rule for linking {language} {visible}.");
             let prelink = pre_link_comments.join("; ");
             let postbuild = post_build_comments.join("; ");
@@ -3482,9 +3751,41 @@ impl<'a> NinjaGenerator<'a> {
                 ..Rule::default()
             });
         }
+        if target.platform.apple && gt::has_import_library(&self.ctx, target, &self.config) {
+            let names = gt::names(&self.ctx, target, &self.config);
+            let mut rule = Rule {
+                name: self.text_stubs_rule_name(target),
+                ..Rule::default()
+            };
+            rule.comment = format!(
+                "Rule for generating text-based stubs for {}.",
+                visible_type_name(target)
+            );
+            rule.description = "Creating text-based stubs $out".into();
+            let mut command = self
+                .ctx
+                .var_safe(target.makefile, "CMAKE_CREATE_TEXT_STUBS");
+            // vars.Target = "$in"; SetTargetImpLib("$out").
+            command = command.replace("<TARGET>", "$in");
+            command = command.replace("<TARGET_IMPLIB>", "$out");
+            rule.command = self.build_command_line(&[command]);
+            self.add_rule(&rule);
+            if names.import_output != names.import_real && !target.is_framework_on_apple() {
+                self.add_rule(&Rule {
+                    name: "CMAKE_SYMLINK_IMPORT_LIBRARY".into(),
+                    command: format!(
+                        "{} -E cmake_symlink_library $in $SONAME $out",
+                        self.cmake_cmd
+                    ),
+                    description: "Creating import library symlink $out".into(),
+                    comment: "Rule for creating import library symlink.".into(),
+                    ..Rule::default()
+                });
+            }
+        }
     }
 
-    /// cmNinjaNormalTargetGenerator::WriteLinkStatement (no device link, no Apple).
+    /// `cmNinjaNormalTargetGenerator::WriteLinkStatement` (no device link).
     fn write_link_statement(
         &mut self,
         target: &'a Target,
@@ -3497,8 +3798,15 @@ impl<'a> NinjaGenerator<'a> {
         let makefile = target.makefile;
         let names = gt::names(&self.ctx, target, &config);
         let directory = gt::directory(&self.ctx, target, &config, ArtifactType::Runtime);
-        let target_output = self.ninja_path(&format!("{directory}/{}", names.output));
-        let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
+        let mut target_output = self.ninja_path(&format!("{directory}/{}", names.output));
+        let mut target_real = self.ninja_path(&format!("{directory}/{}", names.real));
+        let target_output_implib = self.ninja_path(&gt::full_path(
+            &self.ctx,
+            target,
+            &config,
+            ArtifactType::Import,
+            false,
+        ));
         if config != file_config {
             // A cross-config link whose outputs coincide with the file
             // config's own (no per-config output directory) is skipped.
@@ -3517,10 +3825,63 @@ impl<'a> NinjaGenerator<'a> {
                 ArtifactType::Runtime,
                 true,
             ));
-            if target_output == file_output || target_real == file_real {
+            let file_implib = self.ninja_path(&gt::full_path(
+                &file_ctx,
+                target,
+                &file_config,
+                ArtifactType::Import,
+                false,
+            ));
+            if target_output == file_output
+                || target_real == file_real
+                || (!gt::full_name(&self.ctx, target, &config, ArtifactType::Import).is_empty()
+                    && !gt::full_name(&file_ctx, target, &file_config, ArtifactType::Import)
+                        .is_empty()
+                    && target_output_implib == file_implib)
+            {
                 return;
             }
         }
+
+        // cmOSXBundleGenerator: create the bundle layout at generate time.
+        if target.is_app_bundle_on_apple() {
+            let outpath = osx_bundle::create_app_bundle(
+                &self.ctx,
+                target,
+                &names.output,
+                &directory,
+                &config,
+            );
+            target_output = self.ninja_path(&format!("{outpath}/{}", names.output));
+            target_real = self.ninja_path(&format!("{outpath}/{}", names.real));
+        } else if target.is_framework_on_apple() {
+            let mut skip = SkipParts::default();
+            if self.ctx.multi_config {
+                // Skip creating Info.plist when there are multiple
+                // configurations and this one has a postfix; the
+                // non-postfix configuration's plist serves all.
+                if !gt::postfix(&self.ctx, target, &config).is_empty() {
+                    skip.info_plist = true;
+                }
+            }
+            if gt::has_import_library(&self.ctx, target, &config) {
+                skip.text_stubs = false;
+            }
+            let mut folders = std::mem::take(&mut self.mac_content_folders);
+            osx_bundle::create_framework(
+                &self.ctx,
+                target,
+                &names.output,
+                &directory,
+                &config,
+                skip,
+                &mut folders,
+            );
+            self.mac_content_folders = folders;
+        } else if target.is_cf_bundle_on_apple() {
+            osx_bundle::create_cf_bundle(&self.ctx, target, &names.output, &directory, &config);
+        }
+
         let rule_name = self.linker_rule_name(language, target);
         let link_depfile = flags::link_dependency_file(&self.ctx, target, language);
         let has_depfile = link_depfile.is_some();
@@ -3533,7 +3894,7 @@ impl<'a> NinjaGenerator<'a> {
             target.name
         );
         let mut build = Build::new(&rule_name);
-        let visible = visible_type_name(target.kind);
+        let visible = visible_type_name(target);
         build.comment = format!("Link the {visible} {}", target_real);
         build.outputs.push(target_real.clone());
         // GetByproductsForCleanTarget(config) (firstForConfig: always,
@@ -3545,6 +3906,7 @@ impl<'a> NinjaGenerator<'a> {
         let link_vars = flags::link_flag_vars(&self.ctx, target, &config, language);
         let mut shared_symlinks: Vec<String> = Vec::new();
         let object_dir = self.ninja_path(&self.object_dir(target));
+        let mut link_flags = link_vars.link_flags;
         if target.kind != TargetKind::StaticLibrary {
             let line = link::link_line(&self.ctx, target, &config, language);
             build
@@ -3562,12 +3924,11 @@ impl<'a> NinjaGenerator<'a> {
                 .map(|dep| self.ninja_path(dep))
                 .collect();
             // cmNinjaTargetGenerator::ComputeLinkDeps: the module
-            // definition sources, then user-specified manifest sources
-            // (GetManifests).
-            if let Some(info) = flags::module_definition_info(&self.ctx, target, &config) {
-                build
-                    .implicit_deps
-                    .extend(info.sources.iter().map(|source| self.ninja_path(source)));
+            // definition sources and user-specified manifest sources.
+            if let Some(mdi) = gt::module_definition_info(&self.ctx, target, &config) {
+                for source in &mdi.sources {
+                    build.implicit_deps.push(self.ninja_path(source));
+                }
             }
             for source in gt::sources(&self.ctx, target, &config).iter() {
                 if source.kind == SourceKind::Manifest {
@@ -3582,6 +3943,14 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .map(|dep| self.ninja_path(dep))
                 .collect();
+        }
+        // cmCommonTargetGenerator::AppendOSXVerFlag: MACHO version flags.
+        if matches!(
+            target.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
+            self.append_osx_ver_flag(&mut link_flags, language, "COMPATIBILITY", true, target);
+            self.append_osx_ver_flag(&mut link_flags, language, "CURRENT", false, target);
         }
         if target.kind == TargetKind::Executable {
             build.variables.insert("FLAGS".into(), link_vars.flags);
@@ -3602,19 +3971,109 @@ impl<'a> NinjaGenerator<'a> {
             }
             build.variables.insert("DEP_FILE".into(), depfile_shell);
         }
+        build.variables.insert("LINK_FLAGS".into(), link_flags);
+        // cmCommonTargetGenerator::GetManifests + GetAIXExports.
+        let manifest_flag = self
+            .ctx
+            .var_safe(makefile, &format!("CMAKE_{language}_LINKER_MANIFEST_FLAG"));
+        let manifests: Vec<String> = gt::sources(&self.ctx, target, &config)
+            .iter()
+            .filter(|source| source.kind == SourceKind::Manifest)
+            .map(|source| {
+                format!(
+                    "{manifest_flag}{}",
+                    self.shell(&self.ninja_path(&source.path))
+                )
+            })
+            .collect();
         build
             .variables
-            .insert("LINK_FLAGS".into(), link_vars.link_flags);
+            .insert("MANIFESTS".into(), manifests.join(" "));
+        if target.platform.aix
+            && target
+                .props
+                .get("AIX_EXPORT_ALL_SYMBOLS")
+                .is_some_and(|value| !util::is_on(value))
+        {
+            build.variables.insert("AIX_EXPORTS".into(), "-n".into());
+        }
         build.variables.insert("CONFIG".into(), config.clone());
+        // cmNinjaTargetGenerator::addPoolNinjaVariable("JOB_POOL_LINK").
+        if let Some(pool) = target.props.get("JOB_POOL_LINK") {
+            build.variables.insert("pool".into(), pool.to_owned());
+        }
+        if (matches!(
+            target.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) && gt::has_soname(&self.ctx, target, &config))
+            || target.is_archived_aix_shared_library()
+        {
+            build.variables.insert(
+                "SONAME_FLAG".into(),
+                self.ctx.var_safe(
+                    makefile,
+                    &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG"),
+                ),
+            );
+            build
+                .variables
+                .insert("SONAME".into(), self.shell(&names.shared_object));
+            if target.kind == TargetKind::SharedLibrary {
+                let install_dir =
+                    install_name::install_name_dir_for_build_tree(&self.ctx, target, &config);
+                if !install_dir.is_empty() {
+                    build
+                        .variables
+                        .insert("INSTALLNAME_DIR".into(), self.shell(&install_dir));
+                }
+            }
+        }
+        let mut byproducts = CcOutputs::default();
+        // TARGET_IMPLIB: the import library exists on non-Apple platforms
+        // (on Apple it is a text-based stub generated by its own rule).
+        if !target.platform.apple && !names.import_library.is_empty() {
+            build
+                .variables
+                .insert("TARGET_IMPLIB".into(), self.shell(&target_output_implib));
+            self.ensure_parent_directory_exists(&target_output_implib);
+            if gt::has_import_library(&self.ctx, target, &config) {
+                // Some linkers may update a binary without touching its
+                // import library.
+                byproducts.explicit.push(target_output_implib.clone());
+                clean_outputs.push(target_output_implib.clone());
+            }
+        }
+        if !self.set_msvc_target_pdb_variable(target, &mut build.variables) {
+            // It is common to place debug symbols at a specific place, so a
+            // plain target name is made available to the rule.
+            let parts = gt::full_name_components(&self.ctx, target, &config, ArtifactType::Runtime);
+            let suffix = self
+                .ctx
+                .var(makefile, "CMAKE_DEBUG_SYMBOL_SUFFIX")
+                .unwrap_or_else(|| ".dbg".to_owned());
+            build.variables.insert(
+                "TARGET_PDB".into(),
+                format!("{}{}{suffix}", parts.base, parts.suffix),
+            );
+        }
         build
             .variables
             .insert("OBJECT_DIR".into(), self.shell(&object_dir));
+        self.ensure_directory_exists(&self.object_dir(target));
         build
             .variables
             .insert("TARGET_FILE".into(), self.shell(&target_real));
+        // GCC-on-Windows linkers cannot consume backslashes in the response
+        // file or library paths.
+        if self.is_gcc_on_windows() {
+            for name in ["LINK_LIBRARIES", "LINK_PATH"] {
+                if let Some(value) = build.variables.get_mut(name) {
+                    *value = value.replace('\\', "/");
+                }
+            }
+        }
         // Build-event commands: PRE_BUILD and PRE_LINK run before the link,
         // POST_BUILD after it.
-        let mut byproducts = CcOutputs::default();
         let mut pre_link: Vec<String> = Vec::new();
         let mut post_build: Vec<String> = Vec::new();
         for stage in [
@@ -3663,6 +4122,43 @@ impl<'a> NinjaGenerator<'a> {
         if !pre_link.is_empty() {
             pre_link.push(format!("cd {}", self.shell(&self.home_binary)));
         }
+        // Maybe create a .def file from the list of objects
+        // (GetModuleDefinitionInfo with DefFileGenerated).
+        if let Some(mdi) = gt::module_definition_info(&self.ctx, target, &config)
+            && mdi.def_file_generated
+        {
+            let obj_list_file = format!("{}.objs", mdi.def_file);
+            let mut command = format!(
+                "{} -E __create_def {} {}",
+                self.cmake_cmd,
+                self.shell(&mdi.def_file),
+                self.shell(&obj_list_file)
+            );
+            let nm = self.ctx.var_safe(makefile, "CMAKE_NM");
+            if !nm.is_empty() {
+                command.push_str(&format!(" --nm={}", flags::shell(&nm)));
+            }
+            pre_link.push(command);
+            // The list of object files and definition sources that
+            // __create_def reads.
+            let mut list = String::new();
+            if mdi.windows_export_all_symbols {
+                for object in objects {
+                    if object.ends_with(".obj") {
+                        list.push_str(object);
+                        list.push('\n');
+                    }
+                }
+            }
+            for source in &mdi.sources {
+                list.push_str(source);
+                list.push('\n');
+            }
+            let _ = crate::fsutil::write_generated(
+                std::path::Path::new(&obj_list_file),
+                list.as_bytes(),
+            );
+        }
         build.variables.insert(
             "PRE_LINK".into(),
             self.build_command_line_step(
@@ -3682,7 +4178,9 @@ impl<'a> NinjaGenerator<'a> {
             &config,
             &file_config,
         );
-        let symlink_needed = names.output != names.real;
+        let symlink_needed = names.output != names.real
+            && !target.is_framework_on_apple()
+            && !target.is_archived_aix_shared_library();
         build.variables.insert(
             "POST_BUILD".into(),
             if symlink_needed {
@@ -3691,59 +4189,17 @@ impl<'a> NinjaGenerator<'a> {
                 post_build_line.clone()
             },
         );
-        if matches!(
-            target.kind,
-            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-        ) && gt::has_soname(&self.ctx, target, &config)
-        {
-            build.variables.insert(
-                "SONAME_FLAG".into(),
-                self.ctx.var_safe(
-                    makefile,
-                    &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG"),
-                ),
-            );
-            build
-                .variables
-                .insert("SONAME".into(), self.shell(&names.shared_object));
-        }
-        if !names.import_library.is_empty() {
-            let implib = gt::full_path(&self.ctx, target, &config, ArtifactType::Import, false);
-            build.variables.insert(
-                "TARGET_IMPLIB".into(),
-                self.shell(&self.ninja_path(&implib)),
-            );
-        }
-        // cmCommonTargetGenerator::GetAIXExports.
-        if target.platform.aix
-            && target
-                .props
-                .get("AIX_EXPORT_ALL_SYMBOLS")
-                .is_some_and(|value| !util::is_on(value))
-        {
-            build.variables.insert("AIX_EXPORTS".into(), "-n".into());
-        }
-        if !self.set_msvc_target_pdb_variable(target, &mut build.variables) {
-            // It is common to place debug symbols at a specific place, so a
-            // plain target name is made available to the rule.
-            let parts = gt::full_name_components(&self.ctx, target, &config, ArtifactType::Runtime);
-            let suffix = self
-                .ctx
-                .var(makefile, "CMAKE_DEBUG_SYMBOL_SUFFIX")
-                .unwrap_or_else(|| ".dbg".to_owned());
-            build.variables.insert(
-                "TARGET_PDB".into(),
-                format!("{}{}{suffix}", parts.base, parts.suffix),
-            );
-        }
         // Order-only deps: other targets' outputs.
         let mut order = Vec::new();
         self.append_target_depends(target, &mut order, DependOn::TargetArtifact);
-        // Order-only dependencies on versioning symlinks of linked shared
-        // libraries (runtime binaries only).
-        for lib in shared_symlinks {
-            if !build.implicit_deps.contains(&lib) {
-                order.push(lib);
+        // Order-only dependencies on versioning symlinks of shared libs we
+        // link. If our target is not producing a runtime binary, it does
+        // not need the symlinks.
+        if !target.platform.dll && gt::is_runtime_binary(target) {
+            for lib in shared_symlinks {
+                if !build.implicit_deps.contains(&lib) {
+                    order.push(lib);
+                }
             }
         }
         build.order_only_deps = order;
@@ -3775,11 +4231,11 @@ impl<'a> NinjaGenerator<'a> {
             target,
             language,
             has_depfile,
-            names.output != names.real,
+            names.output != names.real && !target.is_framework_on_apple(),
             use_rsp,
         );
         // Symlinks.
-        if names.output != names.real {
+        if symlink_needed {
             let mut symlink = Build::new(if target.kind == TargetKind::Executable {
                 "CMAKE_SYMLINK_EXECUTABLE"
             } else {
@@ -3807,6 +4263,36 @@ impl<'a> NinjaGenerator<'a> {
                 .insert("POST_BUILD".into(), post_build_line);
             write_build(&mut out, &symlink, 0);
         }
+        // On Apple the import library is a text-based stub generated from
+        // the linked binary.
+        if target.platform.apple && gt::has_import_library(&self.ctx, target, &config) {
+            let dir_tbd = gt::directory(&self.ctx, target, &config, ArtifactType::Import);
+            let target_tbd = self.ninja_path(&format!("{dir_tbd}/{}", names.import_real));
+            self.ensure_parent_directory_exists(&target_tbd);
+            let mut build = Build::new(&self.text_stubs_rule_name(target));
+            build.comment = format!("Generate the text-based stubs file {target_tbd}");
+            build.outputs.push(target_tbd.clone());
+            build.explicit_deps.push(target_real.clone());
+            write_build(&mut out, &build, 0);
+            if names.import_output != names.import_real && !target.is_framework_on_apple() {
+                let output_tbd = self.ninja_path(&format!("{dir_tbd}/{}", names.import_output));
+                let soname_tbd = self.ninja_path(&format!("{dir_tbd}/{}", names.import_library));
+                let mut build = Build::new("CMAKE_SYMLINK_IMPORT_LIBRARY");
+                build.comment = format!("Create import library symlink {output_tbd}");
+                if target_tbd == soname_tbd || output_tbd == soname_tbd {
+                    build
+                        .variables
+                        .insert("SONAME".into(), self.shell(&soname_tbd));
+                } else {
+                    build.outputs.push(soname_tbd.clone());
+                    clean_outputs.push(soname_tbd);
+                }
+                build.outputs.push(output_tbd.clone());
+                clean_outputs.push(output_tbd);
+                build.explicit_deps.push(target_tbd);
+                write_build(&mut out, &build, 0);
+            }
+        }
         self.out().push_str(&out);
         if first_for_config {
             self.config_byproducts_for_clean
@@ -3817,6 +4303,51 @@ impl<'a> NinjaGenerator<'a> {
         // Add aliases for the file name and the target name.
         self.add_target_alias(&names.output.clone(), target);
         self.add_target_alias(&target.name.clone(), target);
+        // Add an alias for the import file name (text-based stubs on
+        // Apple, import library elsewhere).
+        if target.platform.apple && gt::has_import_library(&self.ctx, target, &config) {
+            self.add_target_alias(&names.import_output.clone(), target);
+        }
+    }
+
+    /// `cmCommonTargetGenerator::AppendOSXVerFlag`: append the
+    /// `CMAKE_<lang>_OSX_<name>_VERSION_FLAG` + MACHO version flag when a
+    /// non-zero version is specified.
+    fn append_osx_ver_flag(
+        &self,
+        flags_text: &mut String,
+        language: &str,
+        name: &str,
+        so: bool,
+        target: &Target,
+    ) {
+        let flag = self.ctx.var(
+            target.makefile,
+            &format!("CMAKE_{language}_OSX_{name}_VERSION_FLAG"),
+        );
+        let Some(flag) = flag.filter(|flag| !flag.is_empty()) else {
+            return;
+        };
+        let (major, minor, patch) = gt::target_version_fallback(
+            target,
+            &format!("MACHO_{name}_VERSION"),
+            if so { "SOVERSION" } else { "VERSION" },
+        );
+        if major > 0 || minor > 0 || patch > 0 {
+            if !flags_text.is_empty() {
+                flags_text.push(' ');
+            }
+            flags_text.push_str(&format!("{flag}{major}.{minor}.{patch}"));
+        }
+    }
+
+    /// `cmNinjaNormalTargetGenerator::TextStubsGeneratorRule`.
+    fn text_stubs_rule_name(&self, target: &Target) -> String {
+        format!(
+            "TEXT_STUBS_GENERATOR__{}_{}",
+            encode_rule_name(&target.name),
+            self.config
+        )
     }
 
     /// `cmNinjaTargetGenerator::ExportObjectCompileCommand` +
@@ -4643,10 +5174,12 @@ fn target_version(target: &Target) -> (String, String) {
 }
 
 /// `cmNinjaNormalTargetGenerator::GetVisibleTypeName`.
-fn visible_type_name(kind: TargetKind) -> &'static str {
-    match kind {
+/// `cmNinjaNormalTargetGenerator::GetVisibleTypeName`.
+fn visible_type_name(target: &Target) -> &'static str {
+    match target.kind {
         TargetKind::StaticLibrary => "static library",
         TargetKind::SharedLibrary => "shared library",
+        TargetKind::ModuleLibrary if target.is_cf_bundle_on_apple() => "CFBundle shared module",
         TargetKind::ModuleLibrary => "shared module",
         TargetKind::Executable => "executable",
         _ => "",

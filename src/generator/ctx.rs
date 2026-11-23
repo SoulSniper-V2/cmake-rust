@@ -89,6 +89,16 @@ pub struct GenCtx<'a> {
     pub(super) link_information: Rc<RefCell<LinkInformationCache>>,
     /// `cmGlobalGenerator::DirectoryContentMap`, once computed.
     pub(super) directory_contents: Rc<RefCell<Option<Rc<RefCell<super::link::DirectoryContents>>>>>,
+    /// `cmGlobalGenerator::CMP0068WarnTargets`: targets that tripped the
+    /// OLD-behavior CMP0068 checks during generation.
+    pub cmp0068_warn_targets: Rc<RefCell<BTreeSet<String>>>,
+    /// `cmMakefile::ListFiles` appended at generation time
+    /// (`AddCMakeDependFile` from generated `Info.plist` configuration).
+    pub cmake_depend_files: Rc<RefCell<Vec<String>>>,
+    /// `cmMakefile::OutputFiles` appended at generation time
+    /// (`AddCMakeOutputFile`); recorded for parity though only the Makefile
+    /// generators consult them.
+    pub cmake_output_files: Rc<RefCell<Vec<String>>>,
 }
 
 /// The memoized computations of a [`GenCtx`].
@@ -140,6 +150,9 @@ impl<'a> GenCtx<'a> {
             dep_graph: Rc::default(),
             link_information: Rc::default(),
             directory_contents: Rc::default(),
+            cmp0068_warn_targets: Rc::new(RefCell::new(BTreeSet::new())),
+            cmake_depend_files: Rc::new(RefCell::new(Vec::new())),
+            cmake_output_files: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -882,6 +895,19 @@ impl<'a> GenCtx<'a> {
         // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
         // validation of the link structures memoized during generation.
         super::link::check_link_libraries(self);
+        // cmGlobalGenerator::Generate: the CMP0068 warning names every
+        // target whose install_name was still affected by RPATH settings.
+        let warn_targets = std::mem::take(&mut *self.cmp0068_warn_targets.borrow_mut());
+        if !warn_targets.is_empty() {
+            let mut text = format!(
+                "{}\nFor compatibility with older versions of CMake, the install_name fields for the following targets are still affected by RPATH settings:\n",
+                crate::policy::policy_warning(crate::policy::index_of("CMP0068").unwrap())
+            );
+            for name in &warn_targets {
+                text.push_str(&format!(" {name}\n"));
+            }
+            self.warning(Vec::new(), text);
+        }
         std::mem::take(&mut *self.errors.borrow_mut())
     }
 }

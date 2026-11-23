@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(aix_shared C)
+add_library(s SHARED lib.c)
+set_target_properties(s PROPERTIES AIX_EXPORT_ALL_SYMBOLS OFF VERSION 2.0)
+add_executable(app main.c)
+set_target_properties(app PROPERTIES ENABLE_EXPORTS ON)
+target_link_libraries(app PRIVATE s)

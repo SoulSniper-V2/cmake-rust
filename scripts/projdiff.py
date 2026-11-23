@@ -70,6 +70,12 @@ def gather(build_dir):
         if "CMakeFiles/CMakeScratch" in rel or "/4.1.0/" in rel or rel.startswith("CMakeFiles/4.1.0"):
             continue
         name = path.name
+        if path.is_symlink():
+            # Apple bundle/framework layouts create symlinks at generate
+            # time (Versions/Current, content folder links); compare their
+            # targets.
+            files[rel] = "symlink -> " + os.readlink(path)
+            continue
         if not path.is_file():
             continue
         if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
@@ -79,6 +85,9 @@ def gather(build_dir):
                 or name.endswith((".mk", ".cps")) or rel.startswith("CMakeFiles/Export/")
                 # Extra generator outputs (CodeBlocks, CodeLite, Eclipse CDT4,
                 # Kate, Sublime Text 2).
+                # Bundle Info.plist, generated module definitions and the
+                # __create_def object lists written at generate time.
+                or name.endswith((".plist", ".def", ".def.objs"))
                 or name.endswith((".cbp", ".workspace", ".project", ".cproject", ".sublime-project"))
                 or name.startswith(("cmake_pch", "unity_", ".kateproject")) or rel.startswith(".settings/")):
             files[rel] = path.read_text(errors="replace")
