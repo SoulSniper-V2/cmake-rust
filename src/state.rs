@@ -374,6 +374,8 @@ pub struct Ext {
     pub configure_dependencies: std::collections::BTreeSet<String>,
     pub configure_outputs: std::collections::BTreeSet<String>,
     pub glob_dependencies: Vec<crate::commands::file::GlobDependency>,
+    /// `cmGlobVerificationManager` VerifyScript / VerifyStamp once saved.
+    pub glob_verify: Option<(String, String)>,
     pub file_locks: crate::commands::file::LockPool,
     /// `cmMakefile::GetOrCreateConfigureLog` state (created lazily).
     pub configure_log: std::cell::RefCell<Option<crate::configure_log::ConfigureLog>>,

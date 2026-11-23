@@ -5,6 +5,7 @@
 
 mod fortran;
 
+use crate::messages::MessageType;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -37,6 +38,7 @@ fn remove_unknown_tidy_fixes(dir: &std::path::Path, known: &BTreeSet<String>) {
 /// A custom command attached to source `index` of directory `dir`.
 pub type CcRef = (usize, usize);
 const REQUIRED_NINJA_VERSION_CONSOLE_POOL: &str = "1.5";
+const REQUIRED_NINJA_VERSION_MANIFEST_RESTAT: &str = "1.8";
 
 /// `cmGeneratorTarget::Cxx20SupportLevel`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -739,11 +741,17 @@ impl<'a> NinjaGenerator<'a> {
             // WriteBuildFileTop
             let mut top = String::new();
             self.write_project_header(&mut top, 0);
+            // cmLocalNinjaGenerator::WriteNinjaRequiredVersion
+            let required = if self.supports_manifest_restat()
+                && self.ctx.interp.ext.glob_verify.is_some()
+                && !self.regeneration_suppressed()
+            {
+                REQUIRED_NINJA_VERSION_MANIFEST_RESTAT
+            } else {
+                REQUIRED_NINJA_VERSION_CONSOLE_POOL
+            };
             write_comment(&mut top, "Minimal version of Ninja required by this file");
-            let _ = write!(
-                top,
-                "ninja_required_version = {REQUIRED_NINJA_VERSION_CONSOLE_POOL}\n\n"
-            );
+            let _ = write!(top, "ninja_required_version = {required}\n\n");
             write_variable(
                 &mut top,
                 "CONFIGURATION",
@@ -1391,12 +1399,30 @@ impl<'a> NinjaGenerator<'a> {
         self.build.push_str(&out);
     }
 
-    fn write_rebuild_manifest(&mut self, out: &mut String) {
-        if self
-            .ctx
+    fn regeneration_suppressed(&self) -> bool {
+        self.ctx
             .var(0, "CMAKE_SUPPRESS_REGENERATION")
             .is_some_and(|value| util::is_on(&value))
-        {
+    }
+
+    /// `cmGlobalNinjaGenerator::SupportsManifestRestat`.
+    fn supports_manifest_restat(&self) -> bool {
+        self.ctx
+            .interp
+            .langs
+            .ninja_version
+            .as_deref()
+            .is_none_or(|version| {
+                !util::version_compare(
+                    util::CompareOp::Less,
+                    version,
+                    REQUIRED_NINJA_VERSION_MANIFEST_RESTAT,
+                )
+            })
+    }
+
+    fn write_rebuild_manifest(&mut self, out: &mut String) {
+        if self.regeneration_suppressed() {
             return;
         }
         let rule = Rule {
@@ -1490,6 +1516,9 @@ impl<'a> NinjaGenerator<'a> {
         }
         deps.push(self.output_path("CMakeCache.txt"));
         rebuild.variables.insert("pool".into(), "console".into());
+        if let Some((script, stamp)) = self.ctx.interp.ext.glob_verify.clone() {
+            self.write_verify_globs(out, &mut rebuild, &mut deps, &script, &stamp);
+        }
         deps.sort();
         deps.dedup();
         rebuild.implicit_deps = deps.clone();
@@ -1501,6 +1530,59 @@ impl<'a> NinjaGenerator<'a> {
             .filter(|dep| !self.custom_command_outputs.contains(dep))
             .collect();
         write_build(out, &phony, 0);
+    }
+
+    /// The `file(GLOB CONFIGURE_DEPENDS)` part of
+    /// `cmGlobalNinjaGenerator::WriteTargetRebuildManifest`.
+    fn write_verify_globs(
+        &mut self,
+        out: &mut String,
+        rebuild: &mut Build,
+        deps: &mut Vec<String>,
+        script: &str,
+        stamp: &str,
+    ) {
+        if !self.supports_manifest_restat() {
+            let version = self
+                .ctx
+                .interp
+                .langs
+                .ninja_version
+                .clone()
+                .unwrap_or_default();
+            self.ctx.message(
+                MessageType::AuthorWarning,
+                Vec::new(),
+                format!(
+                    "The detected version of Ninja:\n  {version}\nis less than the version of Ninja required by CMake for adding restat dependencies to the build.ninja manifest regeneration target:\n  1.8\nAny pre-check scripts, such as those generated for file(GLOB CONFIGURE_DEPENDS), will not be run by Ninja."
+                ),
+            );
+            return;
+        }
+        let rule = Rule {
+            name: "VERIFY_GLOBS".into(),
+            command: format!("{} -P {}", self.cmake_cmd, self.shell(script)),
+            description: "Re-checking globbed directories...".into(),
+            comment: "Rule for re-checking globbed directories.".into(),
+            generator: true,
+            ..Rule::default()
+        };
+        write_rule(&mut self.rules, &rule);
+        self.rule_names.insert(rule.name.clone());
+        let mut phony = Build::new("phony");
+        phony.comment = "Phony target to force glob verification run.".into();
+        phony.outputs.push(format!("{script}_force"));
+        write_build(out, &phony, 0);
+        let stamp = self.output_path(stamp);
+        let mut verify = Build::new("VERIFY_GLOBS");
+        verify.comment = "Re-run CMake to check if globbed directories changed.".into();
+        verify.outputs.push(stamp.clone());
+        verify.implicit_deps = phony.outputs;
+        verify.variables = rebuild.variables.clone();
+        verify.variables.insert("restat".into(), "1".into());
+        write_build(out, &verify, 0);
+        deps.push(self.output_path(script));
+        rebuild.explicit_deps.push(stamp);
     }
 
     /// `cmGlobalNinjaGenerator::AddRebuildManifestOutputs`: build.ninja then

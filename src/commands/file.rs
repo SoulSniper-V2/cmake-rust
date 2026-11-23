@@ -11,7 +11,7 @@ mod rpath;
 mod runtime_deps;
 mod strings;
 
-pub use glob::GlobDependency;
+pub use glob::{GlobDependency, save_verification_script};
 pub use lock::LockPool;
 
 use std::ffi::CString;

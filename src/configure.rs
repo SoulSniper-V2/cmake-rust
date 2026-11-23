@@ -935,6 +935,10 @@ fn actual_configure(
             &[],
         );
     }
+    match crate::commands::file::save_verification_script(interp, &binary) {
+        Ok(verify) => interp.ext.glob_verify = verify,
+        Err(message) => system_error(Some(interp), &message),
+    }
     // `cmCacheManager::OutputNewlineTruncationWarning` issues the
     // messenger warning while saving the cache.
     let newline_keys: Vec<String> = interp
