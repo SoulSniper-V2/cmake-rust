@@ -141,6 +141,27 @@ pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<S
     target_graph::dependencies(ctx, target, config)
 }
 
+/// `cmGlobalGenerator::CheckTargetLinkLibraries` +
+/// `cmGeneratorTarget::CheckLinkLibraries`: verify the memoized link
+/// structures at the end of generation. Implementation items are verified
+/// when a target's link implementation is computed (`implementation`); the
+/// remaining check is the forced `GetLinkInterfaceLibraries(config, this,
+/// UseTo::Link)` evaluation for targets with LINK_LIBRARIES_ONLY_TARGETS
+/// enabled, which verifies the interface even when nothing consumes it.
+pub(crate) fn check_link_libraries(ctx: &GenCtx<'_>) {
+    let keys = ctx.interp.ext.target_order.clone();
+    for key in keys {
+        let Some(target) = ctx.interp.ext.targets.get(&key) else {
+            continue;
+        };
+        if target.kind == TargetKind::GlobalTarget || !on(target, "LINK_LIBRARIES_ONLY_TARGETS") {
+            continue;
+        }
+        let query = Query::new(ctx, &ctx.config, "");
+        interface(&query, target, target);
+    }
+}
+
 /// `cmGlobalGenerator::GetTargetDirectDepends`: final dependency edges with
 /// their edge backtraces, in target creation order (File API codemodel).
 pub fn codemodel_target_dependencies<'i>(
@@ -356,6 +377,16 @@ impl<'a, 'i> Query<'a, 'i> {
         self.error_at(Vec::new(), message);
     }
 
+    /// `AUTHOR_WARNING` diagnostic carrying a list-file backtrace
+    /// (cmComputeLinkDepends `IssueMessage(AUTHOR_WARNING, ...)` sites).
+    fn warn(&self, backtrace: Vec<crate::messages::Frame>, message: impl Into<String>) {
+        self.ctx.message(
+            crate::messages::MessageType::AuthorWarning,
+            backtrace,
+            message,
+        );
+    }
+
     /// The diagnostic deduplication of `error` with an explicit
     /// `cmListFileBacktrace` (target-creation or property-entry origin).
     fn error_at(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
@@ -472,17 +503,21 @@ struct Interface<'a> {
 
 fn plain_items<'i>(query: &Query<'_, 'i>, owner: &Target, value: &str) -> Vec<Item<'i>> {
     let mut directory = owner.makefile;
-    plain_items_bt(query, owner, value, &[], &mut directory)
+    plain_items_bt(query, owner, value, &[], &mut directory, None)
 }
 
 /// `plain_items` tagging each produced item with `backtrace`; `directory`
 /// persists across calls so `::@` markers in earlier entries keep applying.
+/// `self_check` is `Some(head)` while scanning head's own LINK_LIBRARIES
+/// entries, where cmGeneratorTarget::ComputeLinkImplementationLibraries
+/// raises the "links to itself" diagnostic.
 fn plain_items_bt<'i>(
     query: &Query<'_, 'i>,
     owner: &Target,
     value: &str,
     backtrace: &[crate::messages::Frame],
     directory: &mut usize,
+    self_check: Option<&Target>,
 ) -> Vec<Item<'i>> {
     let mut feature = DEFAULT.to_owned();
     let mut items = Vec::new();
@@ -517,7 +552,26 @@ fn plain_items_bt<'i>(
             query.error_at(owner.backtrace.clone(), format!("Target \"{}\" links to item \"{}\" which has leading or trailing whitespace.  This is now an error according to policy CMP0004.", owner.name, entry));
         }
         if !name.is_empty() {
-            let target = query.resolve(*directory, name).filter(|target| {
+            let target = query.resolve(*directory, name);
+            if let Some(head) = self_check {
+                // ComputeLinkImplementationLibraries: under CMP0108 NEW the
+                // name is alias-resolved (FindTargetToUse) before comparing
+                // to the target's own name. The diagnostic carries the
+                // target's backtrace and aborts the computation.
+                let self_link = if query.policy(head, "CMP0108") == PolicyStatus::New {
+                    target.is_some_and(|target| std::ptr::eq(target, head)) || name == head.name
+                } else {
+                    name == head.name
+                };
+                if self_link {
+                    query.error_at(
+                        head.backtrace.clone(),
+                        format!("Target \"{}\" links to itself.", head.name),
+                    );
+                    return items;
+                }
+            }
+            let target = target.filter(|target| {
                 target.kind != TargetKind::Executable || on(target, "ENABLE_EXPORTS")
             });
             // cmGeneratorTarget::ResolveLinkItem: deprecation warning at
@@ -541,13 +595,7 @@ fn plain_items_bt<'i>(
     items
 }
 
-fn validate_items(
-    query: &Query<'_, '_>,
-    owner: &Target,
-    head: &Target,
-    items: &[Item<'_>],
-    interface: bool,
-) {
+fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], interface: bool) {
     const REASONS: &str = "Possible reasons include:\n  * There is a typo in the target name.\n  * A find_package call is missing for an IMPORTED target.\n  * An ALIAS target is missing.\n";
     let only_targets = on(owner, "LINK_LIBRARIES_ONLY_TARGETS");
     for item in items.iter().filter(|item| item.target.is_none()) {
@@ -555,8 +603,10 @@ fn validate_items(
         if name.starts_with("<LINK_GROUP:") || name.starts_with("</LINK_GROUP:") {
             continue;
         }
+        // cmGeneratorTarget::VerifyLinkItem*: the item's own backtrace,
+        // falling back to the target's creation backtrace.
         let backtrace = if item.backtrace.is_empty() {
-            head.backtrace.clone()
+            owner.backtrace.clone()
         } else {
             item.backtrace.clone()
         };
@@ -602,6 +652,7 @@ fn provenanced_items<'i>(
     };
     let mut items = Vec::new();
     let mut directory = owner.makefile;
+    let self_check = (property == "LINK_LIBRARIES" && std::ptr::eq(owner, head)).then_some(head);
     for (value, backtrace) in entries {
         let evaluated = query.eval_entry(&value, owner, head, property, &backtrace);
         items.extend(plain_items_bt(
@@ -610,6 +661,7 @@ fn provenanced_items<'i>(
             &evaluated,
             &backtrace,
             &mut directory,
+            self_check,
         ));
     }
     items
@@ -638,7 +690,7 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
         item.target
             .is_none_or(|target| !std::ptr::eq(target, owner))
     });
-    validate_items(query, owner, head, &libraries, true);
+    validate_items(query, owner, &libraries, true);
     Interface {
         libraries,
         include: provenanced_items(query, owner, head, "INTERFACE_LINK_LIBRARIES_DIRECT"),
@@ -652,20 +704,7 @@ fn interface<'i>(query: &Query<'_, 'i>, owner: &Target, head: &Target) -> Interf
 }
 
 fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
-    let mut original = provenanced_items(query, head, head, "LINK_LIBRARIES");
-    original.retain(|item| {
-        if item.target.is_some_and(|target| std::ptr::eq(target, head)) || item.text == head.name {
-            // cmGeneratorTarget::ComputeLinkImplementationLibraries:
-            // FATAL_ERROR at the target's creation backtrace.
-            query.error_at(
-                head.backtrace.clone(),
-                format!("Target \"{}\" links to itself.", head.name),
-            );
-            false
-        } else {
-            true
-        }
-    });
+    let original = provenanced_items(query, head, head, "LINK_LIBRARIES");
     let mut direct = DirectLinks {
         query,
         head,
@@ -681,7 +720,7 @@ fn implementation<'i>(query: &Query<'_, 'i>, head: &Target) -> Vec<Item<'i>> {
     direct
         .items
         .retain(|item| !direct.excluded.contains(&item.identity()));
-    validate_items(query, head, head, &direct.items, false);
+    validate_items(query, head, &direct.items, false);
     direct.items
 }
 

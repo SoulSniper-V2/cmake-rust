@@ -3492,7 +3492,10 @@ fn rule_launcher(ctx: &GenCtx, target: &Target, property: &str) -> String {
         })
         .or_else(|| ctx.interp.global_props.get(property).map(str::to_owned));
     match value {
-        Some(value) if !value.is_empty() => format!("{value} "),
+        // cmGeneratorExpression::Evaluate(*value, lg, config, target).
+        Some(value) if !value.is_empty() => {
+            format!("{} ", ctx.genex(&value, Some(target), None))
+        }
         _ => String::new(),
     }
 }

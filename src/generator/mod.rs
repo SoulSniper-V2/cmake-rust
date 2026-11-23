@@ -172,15 +172,54 @@ fn finalize_target_configuration(interp: &mut Interp) {
         let Some(target) = interp.ext.targets.get(&key) else {
             continue;
         };
-        if target.imported || target.kind == TargetKind::GlobalTarget {
+        if target.kind == TargetKind::GlobalTarget {
             continue;
         }
+        // cmTarget::FinalizeTargetConfiguration: CheckLinkLibraryPattern —
+        // a raw internal tag (<LINK_LIBRARY:...>, </LINK_LIBRARY:...>,
+        // <LINK_GROUP:...>, </LINK_GROUP:...>) appearing as a whole item in
+        // LINK_LIBRARIES, INTERFACE_LINK_LIBRARIES or
+        // INTERFACE_LINK_LIBRARIES_DIRECT is a FATAL_ERROR at the entry's
+        // backtrace, and the target's remaining finalize work is skipped.
+        let mut issues = Vec::new();
+        for property in [
+            "LINK_LIBRARIES",
+            "INTERFACE_LINK_LIBRARIES",
+            "INTERFACE_LINK_LIBRARIES_DIRECT",
+        ] {
+            let Some(entries) = target.provenance.get(property) else {
+                continue;
+            };
+            for (value, backtrace) in entries {
+                for item in crate::util::expand_list(value, false) {
+                    let Some(kind) = link_tag(&item) else {
+                        continue;
+                    };
+                    issues.push((
+                        format!("Property {property} contains the invalid item \"{item}\". The {property} property may contain the generator-expression \"$<LINK_{kind}:...>\" which may be used to specify how the libraries are linked."),
+                        backtrace.clone(),
+                    ));
+                }
+            }
+        }
+        let invalid = !issues.is_empty();
+        let imported = target.imported;
         let dir = target.makefile;
         let kind = target.kind;
         let exports = target
             .props
             .get("ENABLE_EXPORTS")
             .is_some_and(crate::util::is_on);
+        for (message, backtrace) in issues {
+            interp.issue_at(
+                crate::messages::MessageType::FatalError,
+                &message,
+                &backtrace,
+            );
+        }
+        if invalid || imported {
+            continue;
+        }
         // AppendBuildInterfaceIncludes
         let interface_includes = matches!(
             kind,
@@ -230,6 +269,23 @@ fn finalize_target_configuration(interp: &mut Interp) {
                 .or_default()
                 .push((value, backtrace));
         }
+    }
+}
+
+/// `CheckLinkLibraryPattern`'s tag shape: `</?LINK_(LIBRARY|GROUP):[^;>]*>`
+/// as a whole list item (entries are expanded first, so `;` cannot occur).
+/// Returns the `LIBRARY`/`GROUP` kind used by the diagnostic.
+fn link_tag(item: &str) -> Option<&'static str> {
+    let body = item.strip_prefix('<')?.strip_suffix('>')?;
+    let body = body.strip_prefix('/').unwrap_or(body);
+    let (kind, rest) = body.strip_prefix("LINK_")?.split_once(':')?;
+    if rest.contains('>') {
+        return None;
+    }
+    match kind {
+        "LIBRARY" => Some("LIBRARY"),
+        "GROUP" => Some("GROUP"),
+        _ => None,
     }
 }
 

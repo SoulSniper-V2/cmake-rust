@@ -103,6 +103,11 @@ pub trait GenexHost {
             })
             .collect()
     }
+    /// cmGeneratorTarget::GetBacktrace (the target's creation backtrace),
+    /// for diagnostics upstream anchors there rather than at the entry.
+    fn target_backtrace(&self, _target: &str) -> Option<Backtrace> {
+        None
+    }
     /// cmLocalGenerator::FindGeneratorTargetToUse in the named target's directory.
     fn resolve_target(&self, name: &str, _current_target: Option<&str>) -> Option<String> {
         self.resolve_alias(name)
@@ -217,11 +222,6 @@ pub trait GenexHost {
         self.variable(&format!("CMAKE_{language}_COMPILER_LOADED"))
             .as_deref()
             .is_some_and(util::is_on)
-    }
-    /// The backtrace recorded when the target was created
-    /// (`cmTarget::GetBacktrace`).
-    fn creation_backtrace(&self, _target: &str) -> Option<Backtrace> {
-        None
     }
     /// cmTarget::GetSystemIncludeDirectories: the raw entries recorded by
     /// target_include_directories(SYSTEM) for the target itself.
