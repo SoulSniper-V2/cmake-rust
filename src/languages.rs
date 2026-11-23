@@ -638,12 +638,15 @@ fn resolve_language_compiler(interp: &mut Interp, lang: &str, optional: bool) {
         .get(&lang_comp)
         .filter(|entry| entry.initialized)
         .map(|entry| entry.value.clone())
-        .filter(|value| !value.is_empty())
         .map(|value| {
-            util::expand_list(&value, false)
-                .into_iter()
-                .next()
-                .unwrap_or_default()
+            if value.is_empty() {
+                value
+            } else {
+                util::expand_list(&value, false)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+            }
         });
     let Some(cname) = cname else {
         return;
