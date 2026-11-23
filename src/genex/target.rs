@@ -372,14 +372,37 @@ impl Evaluator<'_, '_> {
                             name
                         };
                         if canonical == target {
-                            return Err(
-                                self.error("", format!("Target \"{target}\" links to itself."))
-                            );
+                            // `cmGeneratorTarget::ComputeLinkImplementationLibraries`:
+                            // FATAL_ERROR at the head target's backtrace.
+                            return Err(GenexError {
+                                backtrace: self
+                                    .host
+                                    .creation_backtrace(target)
+                                    .or(self.ctx.backtrace),
+                                ..self.error("", format!("Target \"{target}\" links to itself."))
+                            });
                         }
                     } else if !direct && name == target {
                         continue;
                     }
                     if let Some(dependency) = resolved {
+                        // cmGeneratorTarget::ResolveLinkItem: warn when the
+                        // linked target is marked DEPRECATED, at the link
+                        // item's backtrace.
+                        if let Some(message) = self
+                            .host
+                            .target_property_raw(&dependency, "DEPRECATION")
+                            .filter(|message| !message.is_empty())
+                        {
+                            let name = self.host.display_name(&dependency);
+                            self.ctx.warnings.push(GenexWarning {
+                                backtrace: entry.backtrace,
+                                dev: true,
+                                text: format!(
+                                    "The library that is being linked to, {name}, is marked as being deprecated by the owner.  The message provided by the developer is: \n{message}\n"
+                                ),
+                            });
+                        }
                         // ResolveLinkItem: executables without exports are
                         // linked by name, not as targets. EvaluateInterfaceProperty
                         // and the closures never follow a target listed in
@@ -898,17 +921,23 @@ impl Evaluator<'_, '_> {
             for value in &mut entry.values {
                 if from_imported && !self.host.path_exists(value) {
                     return Err(self.usage_error(format!(
-                        "Imported target \"{}\" includes non-existent path\n  \"{value}\"\nin its INTERFACE_INCLUDE_DIRECTORIES. Possible reasons include:\n* The path was deleted, renamed, or moved to another location.\n* An install or uninstall procedure did not complete successfully.\n* The installation package was faulty and references files it does not provide.\n",
-                        entry.link_item.as_deref().unwrap_or_default()
+                        "Imported target \"{}\" includes non-existent path\n  \"{value}\"\nin its INTERFACE_INCLUDE_DIRECTORIES.  Possible reasons include:\n* The path was deleted, renamed, or moved to another location.\n* An install or uninstall procedure did not complete successfully.\n* The installation package was faulty and references files it does not provide.\n",
+                        entry
+                            .link_item
+                            .as_deref()
+                            .map(|item| self.host.display_name(item))
+                            .unwrap_or_default()
                     )));
                 }
                 if !path::file_is_full_path(value) {
                     return Err(self.usage_error(match &entry.link_item {
                         Some(item) => format!(
-                            "Target \"{item}\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n  \"{value}\""
+                            "Target \"{}\" contains relative path in its INTERFACE_INCLUDE_DIRECTORIES:\n  \"{value}\"",
+                            self.host.display_name(item)
                         ),
                         None => format!(
-                            "Found relative path while evaluating include directories of \"{target}\":\n  \"{value}\"\n"
+                            "Found relative path while evaluating include directories of \"{}\":\n  \"{value}\"\n",
+                            self.host.display_name(target)
                         ),
                     }));
                 }
@@ -942,12 +971,14 @@ impl Evaluator<'_, '_> {
                     match &entry.link_item {
                         Some(item) => {
                             return Err(self.usage_error(format!(
-                                "Target \"{item}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\""
+                                "Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"",
+                                self.host.display_name(item)
                             )));
                         }
                         None => {
                             let message = format!(
-                                "Found relative path while evaluating link directories of \"{target}\":\n  \"{value}\"\n"
+                                "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
+                                self.host.display_name(target)
                             );
                             match self.host.policy_status(target, "CMP0081") {
                                 PolicyStatus::New => return Err(self.usage_error(message)),

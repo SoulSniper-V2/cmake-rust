@@ -505,6 +505,7 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     let mut unknown = None;
     let mut extra = None;
     let mut unsupported = None;
+    let mut find_package_mode = false;
     let mut bad_generator = false;
     let mut trace_file_failed = false;
     let mut preset_name = String::new();
@@ -677,7 +678,8 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     options.ignore_link_warning_as_error = true;
                 }
                 "-O" | "--warn-unused-vars" => {}
-                "--system-information" | "--find-package" | "--debugger" => unsupported = Some(arg),
+                "--system-information" | "--debugger" => unsupported = Some(arg),
+                "--find-package" => find_package_mode = true,
                 "--explain" => {
                     let Some(target) = args.get(index + 1) else {
                         cmcmd::error("--explain requires a target and flag");
@@ -713,6 +715,9 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         }
         cmcmd::error(format!("{flag} is not supported"));
         return Ok(1);
+    }
+    if find_package_mode {
+        return Ok(run_find_package_mode(args, &cache_args, cwd));
     }
 
     // The end of cmake::SetArgs.
@@ -1273,6 +1278,64 @@ fn apply_cache_view_args(
     result
 }
 
+/// `cmake::FindPackage`: run CMakeFindPackageMode.cmake in a script-mode
+/// interpreter and report the result for MODE=EXIST (COMPILE/LINK flag
+/// computation is not implemented).
+fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i32 {
+    let Some(root) = configure::find_cmake_root() else {
+        eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
+        return 1;
+    };
+    let Some(mut interp) = make_script_interp(argv, cwd) else {
+        return 1;
+    };
+    interp.mode = crate::interp::Mode::FindPackage;
+    for CacheArg { name, value } in args {
+        if *name == "-D" {
+            match cache_definition(value) {
+                Ok(definition) => add_definition(&mut interp.cache, &definition),
+                Err(error) => {
+                    cmcmd::error(error);
+                    return cli_failure();
+                }
+            }
+        }
+    }
+    let result = read_script(
+        &mut interp,
+        &format!("{root}/Modules/CMakeFindPackageMode.cmake"),
+        cwd,
+        false,
+    );
+    if result != 0 {
+        return result;
+    }
+    let name = interp
+        .get_def("NAME")
+        .map(str::to_owned)
+        .unwrap_or_default();
+    let mode = interp
+        .get_def("MODE")
+        .map(str::to_owned)
+        .unwrap_or_default();
+    let found = interp.get_def("PACKAGE_FOUND").is_some_and(util::is_on);
+    let quiet = interp.get_def("PACKAGE_QUIET").is_some_and(util::is_on);
+    if !found {
+        if !quiet {
+            println!("{name} not found.");
+        }
+        return 1;
+    }
+    if mode == "EXIST" {
+        if !quiet {
+            println!("{name} found.");
+        }
+        return 0;
+    }
+    eprintln!("CMake Error: --find-package MODE={mode} is not supported");
+    1
+}
+
 fn run_script_mode(
     argv: &[String],
     cwd: &str,
@@ -1296,6 +1359,22 @@ fn run_script_mode(
             .ext
             .misc
             .insert("log-context".to_owned(), "1".to_owned());
+    }
+    // `cmake::SetCacheArgs` seeds CMAKE_POLICY_VERSION_MINIMUM from the
+    // environment before processing -D/-U/-C arguments.
+    if interp.cache.value("CMAKE_POLICY_VERSION_MINIMUM").is_none()
+        && let Ok(value) = std::env::var("CMAKE_POLICY_VERSION_MINIMUM")
+        && !value.is_empty()
+    {
+        interp.cache.add(
+            "CMAKE_POLICY_VERSION_MINIMUM",
+            Some(&value),
+            Some("Override policy version for cmake_minimum_required calls."),
+            crate::cache::CacheType::String,
+        );
+        if let Some(entry) = interp.cache.entries.get_mut("CMAKE_POLICY_VERSION_MINIMUM") {
+            entry.properties.insert("ADVANCED".into(), "1".into());
+        }
     }
     let mut result = 0;
     for CacheArg { name, value } in args {

@@ -138,6 +138,11 @@ impl GenexHost for CtxHost<'_, '_> {
             .collect()
     }
 
+    fn creation_backtrace(&self, name: &str) -> Option<crate::genex::Backtrace> {
+        self.find(name)
+            .map(|target| self.ctx.intern_backtrace(target.backtrace.clone()))
+    }
+
     /// `cmTarget::GetSystemIncludeDirectories`.
     fn system_include_directories(&self, name: &str) -> Vec<String> {
         self.find(name)
@@ -163,6 +168,12 @@ impl GenexHost for CtxHost<'_, '_> {
 
     fn alias_global(&self, name: &str) -> bool {
         self.ctx.interp.ext.aliases.contains_key(name)
+    }
+
+    fn display_name(&self, target: &str) -> String {
+        self.find(target)
+            .map(|target| target.name.clone())
+            .unwrap_or_else(|| target.to_owned())
     }
 
     fn resolve_target(&self, name: &str, current: Option<&str>) -> Option<String> {

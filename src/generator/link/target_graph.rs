@@ -516,10 +516,15 @@ impl<'i> Collector<'_, '_, 'i> {
                 if let Some(dependee) = self.query.resolve(target.makefile, &name) {
                     self.add(dependee, true, backtrace);
                 } else if report_missing && target.kind != TargetKind::GlobalTarget {
-                    self.query.error(format!(
-                        "The dependency target \"{name}\" of target \"{}\" does not exist.",
-                        target.name
-                    ));
+                    // cmComputeTargetDepends::CheckTarget uses the
+                    // dependee name's recorded add_dependencies backtrace.
+                    self.query.error_at(
+                        (*backtrace).clone(),
+                        format!(
+                            "The dependency target \"{name}\" of target \"{}\" does not exist.",
+                            target.name
+                        ),
+                    );
                 }
             }
         }

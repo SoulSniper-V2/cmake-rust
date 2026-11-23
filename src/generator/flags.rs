@@ -133,6 +133,30 @@ impl Flags<'_, '_> {
                     Vec::new()
                 }
             };
+        if property == "INCLUDE_DIRECTORIES"
+            && expand_list(
+                &self
+                    .ctx
+                    .var_safe(self.target.makefile, "CMAKE_DEBUG_TARGET_PROPERTIES"),
+                false,
+            )
+            .iter()
+            .any(|item| item == "INCLUDE_DIRECTORIES")
+        {
+            // `processIncludeDirectories`: the LOG message groups each
+            // property entry's newly used includes at the entry's backtrace.
+            for group in items.chunk_by(|a, b| a.backtrace == b.backtrace) {
+                let mut text = format!("Used includes for target {}:\n", self.target.name);
+                for item in group {
+                    text.push_str(&format!(" * {}\n", item.value));
+                }
+                self.ctx.message(
+                    MessageType::Log,
+                    self.ctx.backtrace(group[0].backtrace),
+                    text,
+                );
+            }
+        }
         self.ctx
             .usage
             .borrow_mut()
@@ -191,6 +215,8 @@ impl Flags<'_, '_> {
         }
     }
 
+    /// `cmGeneratorTarget::IsIPOOn`: CMP0069 gating with the same
+    /// warn-once and error diagnostics as upstream.
     fn ipo_enabled(&self) -> bool {
         let configured = format!(
             "INTERPROCEDURAL_OPTIMIZATION_{}",
@@ -200,18 +226,67 @@ impl Flags<'_, '_> {
             .prop(&configured)
             .filter(|_| !self.config.is_empty())
             .or_else(|| self.prop("INTERPROCEDURAL_OPTIMIZATION"));
-        crate::util::is_on_opt(enabled)
-            && matches!(self.lang, "C" | "CXX" | "CUDA" | "Fortran")
-            && self
-                .var(&format!("_CMAKE_{}_IPO_SUPPORTED_BY_CMAKE", self.lang))
-                .is_some_and(|value| crate::util::is_on(&value))
-            && self
-                .var(&format!(
-                    "_CMAKE_{}_IPO_MAY_BE_SUPPORTED_BY_COMPILER",
-                    self.lang
-                ))
-                .is_some_and(|value| crate::util::is_on(&value))
-            && self.policy(69) == PolicyStatus::New
+        if !crate::util::is_on_opt(enabled)
+            || !matches!(self.lang, "C" | "CXX" | "CUDA" | "Fortran")
+        {
+            return false;
+        }
+        let memo_key = format!("cmp0069:{}:{}", self.target.makefile, self.target.name);
+        match self.policy(69) {
+            PolicyStatus::Old | PolicyStatus::Warn => {
+                if self
+                    .var(&format!("_CMAKE_{}_IPO_LEGACY_BEHAVIOR", self.lang))
+                    .is_some_and(|value| crate::util::is_on(&value))
+                {
+                    return true;
+                }
+                if self.ctx.memo.borrow().contains_key(&memo_key) {
+                    return false;
+                }
+                if self.policy(69) == PolicyStatus::Warn && !self.ctx.interp.in_try_compile {
+                    self.ctx.memo.borrow_mut().insert(memo_key, String::new());
+                    self.ctx.warning(
+                        self.target.backtrace.clone(),
+                        format!(
+                            "{}\nINTERPROCEDURAL_OPTIMIZATION property will be ignored for target '{}'.",
+                            crate::commands::target::policy_warning("CMP0069"),
+                            self.target.name,
+                        ),
+                    );
+                }
+                false
+            }
+            PolicyStatus::New => {
+                // The Ninja generator is always IPO-capable
+                // (`cmGlobalNinjaGenerator::IsIPOSupported`).
+                let message = if !self
+                    .var(&format!("_CMAKE_{}_IPO_SUPPORTED_BY_CMAKE", self.lang))
+                    .is_some_and(|value| crate::util::is_on(&value))
+                {
+                    Some("CMake doesn't support IPO for current compiler")
+                } else if !self
+                    .var(&format!(
+                        "_CMAKE_{}_IPO_MAY_BE_SUPPORTED_BY_COMPILER",
+                        self.lang
+                    ))
+                    .is_some_and(|value| crate::util::is_on(&value))
+                {
+                    Some("Compiler doesn't support IPO")
+                } else {
+                    None
+                };
+                let Some(message) = message else {
+                    return true;
+                };
+                if self.ctx.memo.borrow().contains_key(&memo_key) {
+                    return false;
+                }
+                self.ctx.memo.borrow_mut().insert(memo_key, String::new());
+                self.ctx
+                    .error(self.target.backtrace.clone(), message.to_owned());
+                false
+            }
+        }
     }
 
     fn pic(&self) -> Option<bool> {

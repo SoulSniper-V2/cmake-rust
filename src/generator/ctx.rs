@@ -176,13 +176,7 @@ impl<'a> GenCtx<'a> {
     /// `cmLocalGenerator::IssueMessage`'s backtrace: the directory scope of
     /// `dir`'s list file, rendered as `in <dir>/CMakeLists.txt`.
     pub fn dir_backtrace(&self, dir: usize) -> Vec<Frame> {
-        let source = &self.interp.makefiles[dir].source_dir;
-        vec![Frame {
-            file: format!("{source}/CMakeLists.txt").into(),
-            line: 0,
-            name: None,
-            deferred: false,
-        }]
+        super::target::directory_backtrace(self, dir)
     }
 
     /// True when any collected diagnostic sets the error flag.

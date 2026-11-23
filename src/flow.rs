@@ -291,6 +291,10 @@ pub struct BlockOptions {
 }
 
 /// Parses `block([SCOPE_FOR [POLICIES] [VARIABLES]] [PROPAGATE <var>...])`.
+///
+/// Mirrors `cmBlockCommand`'s cmArgumentParser use: `SCOPE_FOR` is a
+/// non-empty multi-value keyword (unrecognized scopes are reported as
+/// `SCOPE_FOR unsupported scope`), `PROPAGATE` a possibly-empty list.
 pub fn parse_block(args: &[String]) -> Result<BlockOptions, String> {
     let mut options = BlockOptions {
         variables: true,
@@ -298,23 +302,22 @@ pub fn parse_block(args: &[String]) -> Result<BlockOptions, String> {
         propagate: Vec::new(),
     };
     let mut index = 0;
-    let mut scope_for: Option<(bool, bool)> = None;
+    let mut scope_for: Option<Vec<String>> = None;
     while index < args.len() {
         match args[index].as_str() {
             "SCOPE_FOR" => {
-                let mut variables = false;
-                let mut policies = false;
                 index += 1;
-                while index < args.len() && matches!(args[index].as_str(), "VARIABLES" | "POLICIES")
-                {
-                    if args[index] == "VARIABLES" {
-                        variables = true;
-                    } else {
-                        policies = true;
-                    }
+                let mut values = Vec::new();
+                while index < args.len() && args[index] != "PROPAGATE" {
+                    values.push(args[index].clone());
                     index += 1;
                 }
-                scope_for = Some((variables, policies));
+                if values.is_empty() {
+                    return Err(
+                        "Error after keyword \"SCOPE_FOR\":\n  missing required value\n".into(),
+                    );
+                }
+                scope_for = Some(values);
                 continue;
             }
             "PROPAGATE" => {
@@ -328,9 +331,16 @@ pub fn parse_block(args: &[String]) -> Result<BlockOptions, String> {
             other => return Err(format!("called with unsupported argument \"{other}\"")),
         }
     }
-    if let Some((variables, policies)) = scope_for {
-        options.variables = variables;
-        options.policies = policies;
+    if let Some(scopes) = scope_for {
+        options.variables = false;
+        options.policies = false;
+        for scope in scopes {
+            match scope.as_str() {
+                "VARIABLES" => options.variables = true,
+                "POLICIES" => options.policies = true,
+                other => return Err(format!("SCOPE_FOR unsupported scope \"{other}\"")),
+            }
+        }
     }
     if !options.variables && !options.propagate.is_empty() {
         return Err("PROPAGATE cannot be specified without a new scope for VARIABLES".into());

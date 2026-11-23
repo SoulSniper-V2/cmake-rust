@@ -197,6 +197,8 @@ pub struct Deferred {
 pub enum Mode {
     Project,
     Script,
+    /// `cmStateEnums::FIND_PACKAGE` (`cmake --find-package`).
+    FindPackage,
 }
 
 /// `cmake::SetDebugOutputOn`, `SetDebugFindOutput`,
@@ -943,6 +945,18 @@ impl Interp {
         self.mf_mut().policies.push(PolicyFrame { map, weak });
     }
 
+    /// `cmStateSnapshot::CanPopPolicyScope`: whether `cmake_policy(POP)`
+    /// could pop a non-barrier policy frame in the current scope.
+    pub fn can_pop_policy_scope(&self) -> bool {
+        let minimum = self
+            .policy_barriers
+            .iter()
+            .rev()
+            .find(|(dir, _)| *dir == self.mf_index())
+            .map_or(1, |(_, depth)| *depth);
+        self.mf().policies.len() > minimum
+    }
+
     pub fn pop_policy(&mut self) -> bool {
         let minimum = self
             .policy_barriers
@@ -995,12 +1009,24 @@ impl Interp {
     }
 
     pub fn issue_at(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
+        // `cmake::SetCacheArgs` syncs these messenger flags on every cache
+        // write, so read the cache entries live here.
+        let suppress_dev = self
+            .cache
+            .value("CMAKE_SUPPRESS_DEVELOPER_WARNINGS")
+            .map(crate::util::is_on)
+            .unwrap_or(self.suppress_dev_warnings);
+        let dev_as_errors = self
+            .cache
+            .value("CMAKE_SUPPRESS_DEVELOPER_ERRORS")
+            .map(crate::util::is_off)
+            .unwrap_or(self.dev_warnings_as_errors);
         let kind = match kind {
             MessageType::AuthorWarning | MessageType::AuthorError => {
-                if self.dev_warnings_as_errors {
+                if dev_as_errors {
                     MessageType::AuthorError
                 } else {
-                    if self.suppress_dev_warnings {
+                    if suppress_dev {
                         return;
                     }
                     MessageType::AuthorWarning
@@ -1812,6 +1838,10 @@ impl Interp {
     }
 
     fn command_failed(&mut self) {
+        // cmake::CommandFailureAction::EXIT_CODE applies in NORMAL_MODE
+        // (project configure): a command returning false reports an error
+        // but the current list file keeps running. Only SCRIPT_MODE
+        // (-P) and explicit SetFatalErrorOccurred sites stop it.
         if self.mode == Mode::Script {
             self.set_fatal();
         }
@@ -2147,6 +2177,22 @@ impl Interp {
                 if values.is_empty() {
                     return (true, Ctl::Return(None));
                 }
+                // `cmReturnCommand`: CMP0140 gates argument checking;
+                // under OLD/WARN the arguments are ignored and no return
+                // is invoked at all.
+                match self.policy_status("CMP0140") {
+                    PolicyStatus::Warn => {
+                        let index = crate::policy::index_of("CMP0140").unwrap();
+                        let text = format!(
+                            "{}\nreturn() checks its arguments when the policy is set to NEW. Since the policy is not set the OLD behavior will be used so the arguments will be ignored.",
+                            crate::policy::policy_warning(index)
+                        );
+                        self.issue(MessageType::AuthorWarning, &text);
+                        return (true, Ctl::Normal);
+                    }
+                    PolicyStatus::Old => return (true, Ctl::Normal),
+                    _ => {}
+                }
                 if values[0] != "PROPAGATE" {
                     let text = format!(
                         "{} called with unsupported argument \"{}\"",
@@ -2155,9 +2201,6 @@ impl Interp {
                     self.issue(MessageType::FatalError, &text);
                     self.command_failed();
                     return (false, Ctl::Normal);
-                }
-                if self.policy_status("CMP0140") != PolicyStatus::New {
-                    return (true, Ctl::Return(None));
                 }
                 (true, Ctl::Return(Some(values[1..].to_vec())))
             }
@@ -2319,7 +2362,13 @@ impl Interp {
         };
         let (result, error) = crate::condition::evaluate(self, &args);
         if let Some((kind, message)) = error {
-            let mut text = format!("{name} given arguments:\n ");
+            // `cmIfCommand` prepends "if " to the condition error;
+            // `cmIfFunctionBlocker` reports elseif's error bare.
+            let mut text = if name == "if" {
+                "if given arguments:\n ".to_string()
+            } else {
+                "given arguments:\n ".to_owned()
+            };
             for (value, _) in &args {
                 text.push(' ');
                 text.push_str(&util::escape_for_cmake(value));
@@ -2589,9 +2638,19 @@ impl Interp {
         let options = match crate::flow::parse_block(&values) {
             Ok(options) => options,
             Err(message) => {
-                let text = format!("{} {}", command.name, message);
+                // `Error after keyword` is issued by
+                // ParseResult::MaybeReportError (no command prefix); other
+                // failures go through status.SetError (command name
+                // prepended). Both paths call SetFatalErrorOccurred, so the
+                // body and endblock() never run.
+                let text = if message.starts_with("Error after keyword") {
+                    message
+                } else {
+                    format!("{} {}", command.name, message)
+                };
                 self.issue(MessageType::FatalError, &text);
                 self.command_failed();
+                self.set_fatal();
                 self.backtrace.pop();
                 return (false, Ctl::Normal);
             }
@@ -2614,6 +2673,13 @@ impl Interp {
                 for name in &options.propagate {
                     let value = self.get_normal_def(name).map(str::to_owned);
                     self.raise_scope(name, value.as_deref());
+                }
+                // `cmBlockFunctionBlocker::Replay`: a `return(PROPAGATE)`
+                // raises the named variables out of the block scope (still
+                // on top) before the scope closes.
+                if let Ctl::Return(Some(vars)) = &ctl {
+                    let vars = vars.clone();
+                    self.propagate(&vars);
                 }
             }
             self.pop_scope();

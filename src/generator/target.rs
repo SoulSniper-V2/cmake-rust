@@ -792,7 +792,7 @@ pub fn import_info<'a>(target: &'a Target, config: &str) -> Option<ImportInfo<'a
 /// created (cmTarget's PolicyMap).
 const TARGET_POLICIES: &[usize] = &[
     3, 4, 8, 20, 21, 22, 27, 37, 38, 41, 42, 46, 52, 60, 63, 65, 68, 69, 73, 76, 81, 83, 95, 99,
-    104, 105, 108, 112, 113, 119, 131, 142, 154, 155, 156, 157, 160, 162, 179, 181, 182, 195,
+    104, 105, 108, 111, 112, 113, 119, 131, 142, 154, 155, 156, 157, 160, 162, 179, 181, 182, 195,
 ];
 
 /// `cmGeneratorTarget::GetPolicyStatus*`: target policies come from the
@@ -802,7 +802,12 @@ pub fn target_policy(ctx: &GenCtx, target: &Target, index: usize) -> PolicyStatu
         return PolicyStatus::New;
     }
     if TARGET_POLICIES.contains(&index) {
-        return target.policies.get(index).unwrap_or(PolicyStatus::Warn);
+        // `cmMakefile::RecordPolicies` fills every entry at target
+        // creation; a missing entry only occurs for synthetic targets.
+        return target
+            .policies
+            .get(index)
+            .unwrap_or_else(|| directory_policy(ctx, target.makefile, index));
     }
     directory_policy(ctx, target.makefile, index)
 }
@@ -906,26 +911,16 @@ pub(crate) fn imported_full_path(
                 "{property} not set for imported target \"{}\"{configuration}.",
                 target.name
             );
-            // INTEGRATION: the target's creation backtrace.
+            // cmTarget::GetFullPathInternal issues through the target's
+            // owning makefile: its DirectoryBacktrace at generate time.
+            let backtrace = ctx.dir_backtrace(target.makefile);
             match target_policy(ctx, target, 111) {
-                PolicyStatus::New => ctx.error(
-                    vec![Frame {
-                        file: format!(
-                            "{}/CMakeLists.txt",
-                            ctx.interp.makefiles[target.makefile].source_dir
-                        )
-                        .into(),
-                        line: 0,
-                        name: None,
-                        deferred: false,
-                    }],
-                    message,
-                ),
+                PolicyStatus::New => ctx.error(backtrace, message),
                 PolicyStatus::Warn => warning(
                     ctx,
                     MessageType::AuthorWarning,
                     &format!("{}\n{message}", policy::policy_warning(111)),
-                    &[],
+                    &backtrace,
                 ),
                 PolicyStatus::Old => {}
             }
@@ -1115,7 +1110,14 @@ fn resolve_source(
                 let candidate = format!("{full}.{extension}");
                 let generated = check_registry && generated_files.contains(&candidate);
                 if generated || Path::new(&candidate).exists() {
-                    if cmp0115 == PolicyStatus::Warn {
+                    if cmp0115 == PolicyStatus::Warn
+                        && ctx
+                            .interp
+                            .ext
+                            .reported_source_warnings
+                            .borrow_mut()
+                            .insert(format!("{makefile}:{source}"))
+                    {
                         warning(
                             ctx,
                             MessageType::AuthorWarning,

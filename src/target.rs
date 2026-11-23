@@ -602,7 +602,7 @@ pub fn create_target(
 /// duplicates allowed by ALLOW_DUPLICATE_CUSTOM_TARGETS) get the key
 /// `[<dir>]<name>` and are reachable through `scoped_targets` from their
 /// directory and the subdirectories created after them.
-pub fn register_target(interp: &mut Interp, target: Target) -> String {
+pub fn register_target(interp: &mut Interp, mut target: Target) -> String {
     let dir = target.makefile;
     let name = target.name.clone();
     let key =
@@ -619,6 +619,9 @@ pub fn register_target(interp: &mut Interp, target: Target) -> String {
         } else {
             name
         };
+    // `cmTarget::cmTarget`: INITIALIZE_FROM_VARIABLE definitions apply to
+    // every target at construction.
+    crate::properties::initialize_target(interp, &mut target);
     if !target.imported {
         interp.makefiles[dir].targets.push(key.clone());
     }
@@ -1005,21 +1008,37 @@ pub fn write_target_property(
         }
     }
     if prop == "IMPORTED_GLOBAL" {
+        // `cmTarget::SetProperty` issues through the target's owning
+        // makefile; `cmTarget::CheckProperty` (`CheckIMPORTED_GLOBAL`)
+        // uses the calling context's backtrace.
+        let owner_backtrace = interp.directory_backtrace(owner);
         if how != PropertyWrite::Set {
-            return report(
-                interp,
+            interp.issue_at(
+                MessageType::FatalError,
                 &format!(
                     "IMPORTED_GLOBAL property can't be appended, only set on imported targets (\"{name}\")\n"
                 ),
+                &owner_backtrace,
             );
+            return Err(CmdErr::Reported);
         }
         if !value.is_some_and(is_on) {
-            return report(
-                interp,
+            interp.issue_at(
+                MessageType::FatalError,
                 &format!(
                     "IMPORTED_GLOBAL property can't be set to FALSE on targets (\"{name}\")\n"
                 ),
+                &owner_backtrace,
             );
+            if owner != interp.mf_index() {
+                interp.issue(
+                    MessageType::FatalError,
+                    &format!(
+                        "Attempt to promote imported target \"{name}\" to global scope (by setting IMPORTED_GLOBAL) which is not built in this directory."
+                    ),
+                );
+            }
+            return Err(CmdErr::Reported);
         }
         if owner != interp.mf_index() {
             return report(
@@ -1659,6 +1678,11 @@ pub fn create_alias(interp: &mut Interp, alias: &str, name: &str, executable: bo
             .scoped_aliases
             .insert((interp.mf_index(), alias.to_owned()), key);
     }
+    interp.ext.alias_backtraces.push((
+        interp.mf_index(),
+        alias.to_owned(),
+        interp.backtrace.clone(),
+    ));
     Ok(())
 }
 

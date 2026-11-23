@@ -511,8 +511,80 @@ impl<'a> NinjaGenerator<'a> {
     // Top-level generation
 
     /// `cmGlobalNinjaGenerator::Generate` (single config).
+    /// `cmGlobalGenerator::CheckTargetProperties`: reports variables used
+    /// in link libraries or include directories that resolve to
+    /// `<var>-NOTFOUND`.
+    fn check_target_properties(&mut self) {
+        let interp = self.ctx.interp;
+        let mut not_found: BTreeMap<String, String> = BTreeMap::new();
+        for target in self.ctx.targets_in_order() {
+            if target.kind == TargetKind::InterfaceLibrary {
+                continue;
+            }
+            let dir = &interp.makefiles[target.makefile].source_dir;
+            let mark = |uses: &mut Vec<(String, String)>, item: &str, usage: &str| {
+                if item.len() > 9 && item.ends_with("-NOTFOUND") {
+                    let mut var = item[..item.len() - 9].to_owned();
+                    if interp
+                        .cache
+                        .entries
+                        .get(&var)
+                        .and_then(|entry| entry.properties.get("ADVANCED"))
+                        .is_some_and(|value| util::is_on(value))
+                    {
+                        var.push_str(" (ADVANCED)");
+                    }
+                    uses.push((var, usage.to_owned()));
+                }
+            };
+            let mut uses: Vec<(String, String)> = Vec::new();
+            if let Some(libs) = target.props.get("LINK_LIBRARIES") {
+                for lib in util::expand_list(libs, false) {
+                    let name = target.name.clone();
+                    mark(
+                        &mut uses,
+                        &lib,
+                        &format!("linked by target \"{name}\" in directory {dir}"),
+                    );
+                }
+            }
+            if let Some(directories) = target.props.get("INCLUDE_DIRECTORIES") {
+                let stripped = crate::genex::preprocess(
+                    directories,
+                    crate::genex::PreprocessContext::Strip,
+                    "",
+                );
+                for dir_item in util::expand_list(&stripped, false) {
+                    mark(
+                        &mut uses,
+                        &dir_item,
+                        &format!("used as include directory in directory {dir}"),
+                    );
+                }
+            }
+            for (var, usage) in uses {
+                not_found
+                    .entry(var)
+                    .or_default()
+                    .push_str(&format!("\n   {usage}"));
+            }
+        }
+        if !not_found.is_empty() {
+            let mut body = String::new();
+            for (var, uses) in &not_found {
+                body.push_str(var);
+                body.push_str(uses);
+                body.push('\n');
+            }
+            self.ctx.system_error(format!(
+                "The following variables are used in this project, but they are set to NOTFOUND.\nPlease set them or make sure they are set and tested correctly in the CMake files:\n{body}"
+            ));
+        }
+    }
+
     pub fn generate(&mut self) -> std::io::Result<()> {
         let interp = self.ctx.interp;
+        self.check_target_properties();
         // cmGlobalGenerator::ApplyCXXStdTargets: a fatal CXX_MODULE_STD
         // diagnostic aborts generation before any target is generated.
         let errors = self.ctx.errors.borrow().len();
@@ -786,6 +858,20 @@ impl<'a> NinjaGenerator<'a> {
                     );
                     return false;
                 }
+                // Upstream records an `cmTarget` for each ALIAS, so
+                // `FindTarget` also sees alias names.
+                if let Some((_, _, backtrace)) = interp
+                    .ext
+                    .alias_backtraces
+                    .iter()
+                    .find(|(_, alias, _)| alias == name)
+                {
+                    ctx.error(
+                        backtrace.clone(),
+                        format!("The target name \"{name}\" is reserved {reason}."),
+                    );
+                    return false;
+                }
             }
             true
         };
@@ -838,6 +924,7 @@ impl<'a> NinjaGenerator<'a> {
             .ctx
             .var(0, "CMAKE_TESTING_ENABLED")
             .is_some_and(|value| util::is_on(&value))
+            && reserved_free(&["test", "RUN_TESTS"], "when CTest testing is enabled")
         {
             let mut line = vec![ctest];
             if let Some(args) = self.ctx.var(0, "CMAKE_CTEST_ARGUMENTS") {
@@ -1810,6 +1897,28 @@ impl<'a> NinjaGenerator<'a> {
             // cmSystemTools::Error marks the generation failed.
             self.ctx.report_unknown_linker_language(target);
             return;
+        }
+        // `EntriesProcessing` constructor in cmComputeLinkDepends::Compute:
+        // the CMP0156 warning is emitted by the first GetLinkInformation
+        // for each target, in target generation order.
+        if target
+            .policies
+            .get(crate::policy::index_of("CMP0156").unwrap())
+            == Some(crate::policy::PolicyStatus::Warn)
+            && !self.ctx.interp.in_try_compile
+            && self.ctx.interp.policy_optional_warning(
+                self.ctx
+                    .var(target.makefile, "CMAKE_POLICY_WARNING_CMP0156")
+                    .as_deref(),
+            )
+        {
+            self.ctx.warning(
+                target.backtrace.clone(),
+                format!(
+                    "{}\nSince the policy is not set, legacy libraries de-duplication strategy will be applied.",
+                    crate::policy::policy_warning(crate::policy::index_of("CMP0156").unwrap())
+                ),
+            );
         }
         let sources = gt::sources(self.ctx, target, &config);
         self.check_cxx_module_status(target, &sources);
