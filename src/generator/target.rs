@@ -426,12 +426,19 @@ fn output_directory(
         },
         || {
             let property = format!("{kind}_OUTPUT_DIRECTORY");
-            let out = if let Some(value) = target
-                .props
-                .get(&format!("{property}_{config_upper}"))
-                .or_else(|| target.props.get(&property))
-            {
+            // cmGeneratorTarget::ComputeOutputDir.
+            let mut append_config = true;
+            let out = if let Some(value) = target.props.get(&format!("{property}_{config_upper}")) {
+                // A per-configuration directory skips the config subdirectory.
+                append_config = false;
                 evaluate(value)
+            } else if let Some(value) = target.props.get(&property) {
+                let out = evaluate(value);
+                // So does a value containing a generator expression.
+                if out != value {
+                    append_config = false;
+                }
+                out
             } else {
                 let legacy = match target.kind {
                     TargetKind::Executable => "EXECUTABLE_OUTPUT_PATH",
@@ -442,10 +449,23 @@ fn output_directory(
                 };
                 ctx.var_safe(target.makefile, legacy)
             };
-            // AppendDirectoryForConfig is a no-op for the single-config Ninja generator.
-            collapse_full_path(&out, &ctx.interp.makefiles[target.makefile].binary_dir)
+            let mut out =
+                collapse_full_path(&out, &ctx.interp.makefiles[target.makefile].binary_dir);
+            if append_config {
+                append_directory_for_config(ctx, "/", config, &mut out);
+            }
+            out
         },
     )
+}
+
+/// `cmGlobalGenerator::AppendDirectoryForConfig`: only the multi-config
+/// Ninja generator appends `<prefix><config>`.
+pub fn append_directory_for_config(ctx: &GenCtx, prefix: &str, config: &str, dir: &mut String) {
+    if !config.is_empty() && ctx.multi_config {
+        dir.push_str(prefix);
+        dir.push_str(config);
+    }
 }
 
 /// `cmGeneratorTarget::GetFullName(config, artifact)`.
@@ -460,24 +480,30 @@ pub fn full_name(ctx: &GenCtx, target: &Target, config: &str, artifact: Artifact
 /// when no `<kind>_OUTPUT_DIRECTORY[_<CONFIG>]` property selects one.
 fn pdb_output_dir(ctx: &GenCtx, target: &Target, config: &str, kind: &str) -> Option<String> {
     let config_upper = config.to_ascii_uppercase();
+    let mut append_config = true;
     let out = if let Some(value) = target
         .props
         .get(&format!("{kind}_OUTPUT_DIRECTORY_{config_upper}"))
     {
+        append_config = false;
         ctx.genex(value, None, None)
     } else if let Some(value) = target.props.get(&format!("{kind}_OUTPUT_DIRECTORY")) {
-        ctx.genex(value, None, None)
+        let out = ctx.genex(value, None, None);
+        if out != value {
+            append_config = false;
+        }
+        out
     } else {
         String::new()
     };
     if out.is_empty() {
         return None;
     }
-    // AppendDirectoryForConfig is a no-op for the single-config Ninja generator.
-    Some(collapse_full_path(
-        &out,
-        &ctx.interp.makefiles[target.makefile].binary_dir,
-    ))
+    let mut out = collapse_full_path(&out, &ctx.interp.makefiles[target.makefile].binary_dir);
+    if append_config {
+        append_directory_for_config(ctx, "/", config, &mut out);
+    }
+    Some(out)
 }
 
 /// `cmGeneratorTarget::GetPDBDirectory`.
@@ -548,6 +574,10 @@ pub fn target_compile_pdb(ctx: &GenCtx, target: &Target, config: &str) -> String
         return path;
     }
     let mut path = support_directory(ctx, target);
+    if ctx.multi_config {
+        path.push('/');
+        path.push_str(config);
+    }
     path.push('/');
     if target.kind == TargetKind::StaticLibrary {
         path.push_str(&target.name);
@@ -557,11 +587,18 @@ pub fn target_compile_pdb(ctx: &GenCtx, target: &Target, config: &str) -> String
 }
 
 /// `cmGeneratorTarget::GetObjectDirectory` (absolute, with trailing '/').
-pub fn object_directory(ctx: &GenCtx, target: &Target, _config: &str) -> String {
+/// The Ninja generators' `ComputeTargetObjectDirectory` gives
+/// `<support dir>/${CONFIGURATION}/` under Ninja Multi-Config, which
+/// `ExpandCFGIntDir` replaces with the configuration.
+pub fn object_directory(ctx: &GenCtx, target: &Target, config: &str) -> String {
     let binary_dir = ctx.interp.makefiles[target.makefile]
         .binary_dir
         .trim_end_matches('/');
-    format!("{binary_dir}/CMakeFiles/{}.dir/", target.name)
+    if ctx.multi_config && !config.is_empty() {
+        format!("{binary_dir}/CMakeFiles/{}.dir/{config}/", target.name)
+    } else {
+        format!("{binary_dir}/CMakeFiles/{}.dir/", target.name)
+    }
 }
 
 /// `cmGeneratorTarget::HasSOName`.

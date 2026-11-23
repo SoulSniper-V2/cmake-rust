@@ -370,10 +370,15 @@ pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Op
     }
     // INTEGRATION: Use target.rs's support/object directory when available.
     let directory = &ctx.interp.makefiles[target.makefile].binary_dir;
-    let path = Path::new(directory)
+    // cmLocalNinjaGenerator::GetLinkDependencyFile: the support directory
+    // plus `ConfigDirectory(config)`.
+    let mut path = Path::new(directory)
         .join("CMakeFiles")
-        .join(format!("{}.dir", target.name))
-        .join("link.d");
+        .join(format!("{}.dir", target.name));
+    if ctx.multi_config && !ctx.config.is_empty() {
+        path = path.join(&ctx.config);
+    }
+    let path = path.join("link.d");
     let relative = path
         .strip_prefix(&ctx.interp.home_binary)
         .unwrap_or(&path)

@@ -93,6 +93,59 @@ pub(super) fn config_test(variable: &str, configs: &[String]) -> String {
     out
 }
 
+/// `cmLocalGenerator::GenerateInstallRules`: the default install
+/// configuration (`CMAKE_BUILD_TYPE` for single-config generators, else
+/// the first of Release, MinSizeRel, RelWithDebInfo and Debug among the
+/// configuration types, else the first type).
+fn default_install_config(ctx: &GenCtx) -> String {
+    if !ctx.multi_config {
+        return ctx.config.clone();
+    }
+    for wanted in ["RELEASE", "MINSIZEREL", "RELWITHDEBINFO", "DEBUG"] {
+        if let Some(config) = ctx
+            .configs
+            .iter()
+            .find(|config| config.to_ascii_uppercase() == wanted)
+        {
+            return config.clone();
+        }
+    }
+    ctx.configs.first().cloned().unwrap_or_default()
+}
+
+/// `cmScriptGenerator::GeneratesForConfig`.
+pub(super) fn generates_for_config(configurations: &[String], config: &str) -> bool {
+    configurations.is_empty()
+        || configurations
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case(config))
+}
+
+/// `cmScriptGenerator::ActionsPerConfig` of the install generator a rule
+/// creates.
+fn actions_per_config(rule: &InstallRule) -> bool {
+    let has_genex = |text: &str| {
+        text.split_once("$<")
+            .is_some_and(|(_, tail)| tail.contains('>'))
+    };
+    match &rule.action {
+        InstallAction::Copy { paths, .. } => {
+            has_genex(&rule.options.destination)
+                || has_genex(&rule.options.rename)
+                || paths.iter().any(|path| has_genex(path))
+        }
+        InstallAction::Script { text, .. } => has_genex(text),
+        InstallAction::Target { .. }
+        | InstallAction::LegacyTarget(_)
+        | InstallAction::Bmi(_)
+        | InstallAction::FileSet { .. }
+        | InstallAction::RuntimeDependencies { .. } => true,
+        InstallAction::Export(_)
+        | InstallAction::PackageInfo { .. }
+        | InstallAction::LegacyFiles { .. } => false,
+    }
+}
+
 pub fn install_script(ctx: &GenCtx, index: usize) -> std::io::Result<String> {
     let mf = &ctx.interp.makefiles[index];
     let binary = &mf.binary_dir;
@@ -121,7 +174,7 @@ if(NOT DEFINED CMAKE_INSTALL_CONFIG_NAME)
 endif()
 
 "#,
-        ctx.config
+        default_install_config(ctx)
     ));
     out.push_str(
         r#"# Set the component getting installed.
@@ -383,17 +436,61 @@ fn render_rule(
         )
         .unwrap();
     }
-    let mut indent = if all { "" } else { "  " };
-    let config = !opts.configurations.is_empty();
-    if config {
-        writeln!(
-            out,
-            "{indent}if({})",
-            config_test("CMAKE_INSTALL_CONFIG_NAME", &opts.configurations)
-        )
-        .unwrap();
-        indent = if all { "  " } else { "    " };
+    let base_indent = if all { "" } else { "  " };
+    if ctx.multi_config && actions_per_config(rule) {
+        // cmScriptGenerator::GenerateScriptActionsPerConfig.
+        let mut first = true;
+        for config in &ctx.configs {
+            if !generates_for_config(&opts.configurations, config) {
+                continue;
+            }
+            writeln!(
+                out,
+                "{base_indent}{}({})",
+                if first { "if" } else { "elseif" },
+                config_test("CMAKE_INSTALL_CONFIG_NAME", std::slice::from_ref(config))
+            )
+            .unwrap();
+            let config_ctx = ctx.for_config(config);
+            render_action(&config_ctx, out, index, rule, &format!("{base_indent}  "))?;
+            first = false;
+        }
+        if !first {
+            writeln!(out, "{base_indent}endif()").unwrap();
+        }
+    } else {
+        let mut indent = base_indent.to_owned();
+        let config = !opts.configurations.is_empty();
+        if config {
+            writeln!(
+                out,
+                "{indent}if({})",
+                config_test("CMAKE_INSTALL_CONFIG_NAME", &opts.configurations)
+            )
+            .unwrap();
+            indent.push_str("  ");
+        }
+        render_action(ctx, out, index, rule, &indent)?;
+        if config {
+            writeln!(out, "{base_indent}endif()").unwrap();
+        }
     }
+    if conditional {
+        out.push_str("endif()\n\n");
+    }
+    Ok(())
+}
+
+/// The install generator's script actions for one configuration
+/// (`GenerateScriptForConfig`, or `GenerateScriptActions`).
+fn render_action(
+    ctx: &GenCtx,
+    out: &mut String,
+    index: usize,
+    rule: &InstallRule,
+    indent: &str,
+) -> std::io::Result<()> {
+    let opts = &rule.options;
     match &rule.action {
         InstallAction::Copy {
             kind,
@@ -537,12 +634,6 @@ fn render_rule(
             }
         }
         InstallAction::RuntimeDependencies { .. } => unreachable!(),
-    }
-    if config {
-        writeln!(out, "{}endif()", if all { "" } else { "  " }).unwrap();
-    }
-    if conditional {
-        out.push_str("endif()\n\n");
     }
     Ok(())
 }

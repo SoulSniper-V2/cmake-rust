@@ -454,6 +454,13 @@ pub(super) fn write_build(
     export: &BuildExport,
     package: &PackageInfoArguments,
 ) -> std::io::Result<()> {
+    if ctx.multi_config {
+        ctx.error(
+            export.backtrace.clone(),
+            "cmake-rust does not implement per-configuration CPS package information export (export(PACKAGE_INFO)) for the \"Ninja Multi-Config\" generator.",
+        );
+        return Ok(());
+    }
     let inst = &ctx.interp.ext.install;
     let set = export
         .set
@@ -566,6 +573,13 @@ pub(super) fn write_install(
     package: &PackageInfoArguments,
     indent: &str,
 ) -> std::io::Result<()> {
+    if ctx.multi_config {
+        ctx.error(
+            rule.backtrace.clone(),
+            "cmake-rust does not implement per-configuration CPS package information export (install(PACKAGE_INFO)) for the \"Ninja Multi-Config\" generator.",
+        );
+        return Ok(());
+    }
     let set = ctx.interp.ext.install.export_sets.get(set_name);
     if set.is_none_or(|set| set.targets.is_empty()) {
         ctx.error(
@@ -733,7 +747,7 @@ pub(super) fn write_install(
             Path::new(&config_file),
             write_json_indent2(&Json::Object(cfg_root)).as_bytes(),
         )?;
-        write_config_copy(ctx, out, indent, &opts, dest, config_file);
+        write_config_copy(&ctx.config, out, indent, &opts, dest, config_file);
     }
     Ok(())
 }

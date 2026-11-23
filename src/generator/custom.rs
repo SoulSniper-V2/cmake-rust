@@ -302,7 +302,12 @@ pub fn evaluate_spec_cfg(
             ctx.interp.cmake_command.clone(),
             "-E".to_owned(),
             "cmake_transform_depfile".to_owned(),
-            "Ninja".to_owned(),
+            if ctx.multi_config {
+                "Ninja Multi-Config"
+            } else {
+                "Ninja"
+            }
+            .to_owned(),
             "gccdepfile".to_owned(),
             ctx.interp.home_source.clone(),
             directory.source_dir.clone(),

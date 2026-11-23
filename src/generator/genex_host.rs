@@ -155,6 +155,13 @@ impl GenexHost for CtxHost<'_, '_> {
         self.find(name).is_some_and(|target| target.imported)
     }
 
+    fn generator_name(&self) -> &str {
+        if self.ctx.multi_config {
+            "Ninja Multi-Config"
+        } else {
+            "Ninja"
+        }
+    }
     fn resolve_alias(&self, name: &str) -> Option<String> {
         let interp = self.ctx.interp;
         let mut dir = Some(self.dir);

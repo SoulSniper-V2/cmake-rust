@@ -376,14 +376,21 @@ fn defines(inputs: &Flags<'_, '_>, properties: &Props) -> String {
 
     // CMP0043's OLD behavior was removed. Target and directory per-config
     // definitions are ignored, but Ninja still reads per-config source defs.
-    let source = [
-        "COMPILE_DEFINITIONS".to_owned(),
-        format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
-    ]
-    .iter()
-    .filter_map(|name| properties.get(name))
-    .flat_map(|value| expand_list(&inputs.eval(value), false))
-    .collect();
+    // cmNinjaTargetGenerator::ComputeDefines: multi-config generators
+    // define CMAKE_INTDIR in the source-level set.
+    let mut source: Vec<String> = Vec::new();
+    if inputs.ctx.multi_config {
+        source.push(format!("CMAKE_INTDIR=\"{}\"", inputs.config));
+    }
+    source.extend(
+        [
+            "COMPILE_DEFINITIONS".to_owned(),
+            format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
+        ]
+        .iter()
+        .filter_map(|name| properties.get(name))
+        .flat_map(|value| expand_list(&inputs.eval(value), false)),
+    );
     let prefix = inputs
         .lang_var("DEFINE_FLAG")
         .filter(|s| !s.is_empty())

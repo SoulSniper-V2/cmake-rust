@@ -1293,8 +1293,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
     }
 
     /// `GenerateImportTargetsConfig` — per-configuration properties.
-    fn config_targets(&mut self, out: &mut String, records: &[Record<'_>]) {
-        let config = &self.ctx.config;
+    fn config_targets(&mut self, out: &mut String, records: &[Record<'_>], config: &str) {
         let upper = config_suffix(config).to_ascii_uppercase();
         let suffix = format!("_{upper}");
         for record in records {
@@ -2029,28 +2028,50 @@ fn build_module_files(
     name: &str,
     records: &[Record<'_>],
 ) -> std::io::Result<()> {
-    let config = config_suffix(&ex.ctx.config);
-    let main = dir.join(format!("cxx-modules-{name}.cmake"));
-    write_if_different(
-        &main,
-        format!("include(\"${{CMAKE_CURRENT_LIST_DIR}}/cxx-modules-{name}-{config}.cmake\")\n")
-            .as_bytes(),
-    )?;
-    let mut content = String::new();
-    for record in records {
-        if ex.have_cxx20_module_sources(record.target) {
-            let fs_name = filesystem_export_name(record.target);
-            writeln!(
-                content,
-                "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs_name}-{config}.cmake\")"
-            )
-            .unwrap();
-        }
+    // GenerateCxxModuleConfigInformation: with more than one configuration
+    // each per-config file is optional.
+    let configs = export_configs(ex.ctx);
+    let optional = if configs.len() > 1 { " OPTIONAL" } else { "" };
+    let mut main_content = String::new();
+    for config in &configs {
+        let config = config_suffix(config);
+        writeln!(
+            main_content,
+            "include(\"${{CMAKE_CURRENT_LIST_DIR}}/cxx-modules-{name}-{config}.cmake\"{optional})"
+        )
+        .unwrap();
     }
-    write_if_different(
-        &dir.join(format!("cxx-modules-{name}-{config}.cmake")),
-        content.as_bytes(),
-    )
+    write_if_different(&dir.join(format!("cxx-modules-{name}.cmake")), main_content.as_bytes())?;
+    // GenerateImportCxxModuleConfigTargetInclusion.
+    for config in &configs {
+        let config = config_suffix(config);
+        let mut content = String::new();
+        for record in records {
+            if ex.have_cxx20_module_sources(record.target) {
+                let fs_name = filesystem_export_name(record.target);
+                writeln!(
+                    content,
+                    "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs_name}-{config}.cmake\")"
+                )
+                .unwrap();
+            }
+        }
+        write_if_different(
+            &dir.join(format!("cxx-modules-{name}-{config}.cmake")),
+            content.as_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+/// `cmMakefile::GetGeneratorConfigs(IncludeEmptyConfig)`: the
+/// configurations an export file generator is given.
+pub(super) fn export_configs(ctx: &GenCtx) -> Vec<String> {
+    if ctx.multi_config {
+        ctx.configs.clone()
+    } else {
+        vec![ctx.config.clone()]
+    }
 }
 
 /// `cmGeneratorTarget::GetFilesystemExportName`.
@@ -2191,7 +2212,9 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
         module_include(&mut body, module_dir, &cxx_modules_name);
     }
     // Per-config target import code (inline for build exports).
-    ex.config_targets(&mut body, &records);
+    for config in export_configs(ctx) {
+        ex.config_targets(&mut body, &records, &config);
+    }
     missing_targets(&mut body, &ex.missing);
     // Assemble the file: policy header + import header + find deps + body +
     // import footer + policy footer.
@@ -2486,11 +2509,10 @@ pub(super) fn write_install_export(
     let has_config = records
         .iter()
         .any(|r| r.kind != TargetKind::InterfaceLibrary);
-    let suffix = config_suffix(&ctx.config);
+    // cmExportInstallCMakeConfigGenerator: one import file per
+    // configuration, installed in ConfigImportFiles (std::map) order.
+    let mut config_files: BTreeMap<String, String> = BTreeMap::new();
     if has_config {
-        let config_file = format!("{temp}/{stem}-{suffix}.cmake");
-        let mut config_out = String::new();
-        import_header(&mut config_out, &ctx.config);
         // `GenerateImportTargetsConfig` iterates all exports including
         // namelink-only entries.
         let all: Vec<Record<'_>> = set
@@ -2511,16 +2533,25 @@ pub(super) fn write_install_export(
                 })
             })
             .collect();
-        ex.config_targets(&mut config_out, &all);
-        config_out.push_str(IMPORT_FOOTER);
-        write_if_different(Path::new(&config_file), config_out.as_bytes())?;
-        if opts.configurations.is_empty()
-            || opts
-                .configurations
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(&ctx.config))
-        {
-            write_config_copy(ctx, out, indent, &opts, dest, config_file);
+        for config in export_configs(ctx) {
+            let suffix = config_suffix(&config);
+            let config_file = format!("{temp}/{stem}-{suffix}.cmake");
+            let mut config_out = String::new();
+            import_header(&mut config_out, &config);
+            ex.config_targets(&mut config_out, &all, &config);
+            config_out.push_str(IMPORT_FOOTER);
+            write_if_different(Path::new(&config_file), config_out.as_bytes())?;
+            config_files.insert(config, config_file);
+        }
+        for (config, config_file) in &config_files {
+            if opts.configurations.is_empty()
+                || opts
+                    .configurations
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(config))
+            {
+                write_config_copy(config, out, indent, &opts, dest, config_file.clone());
+            }
         }
     }
     // C++ module include files.
@@ -2551,34 +2582,41 @@ pub(super) fn write_install_export(
             CopyRule::new(&module_destination, CopyKind::File, &[main]),
         );
         if has_config {
-            let mut content = String::new();
-            for record in &records {
-                if ex.have_cxx20_module_sources(record.target) {
-                    let fs = filesystem_export_name(record.target);
-                    writeln!(
-                        content,
-                        "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs}-{suffix}.cmake\")"
-                    )
-                    .unwrap();
+            let mut module_files: BTreeMap<String, String> = BTreeMap::new();
+            for config in export_configs(ctx) {
+                let suffix = config_suffix(&config);
+                let mut content = String::new();
+                for record in &records {
+                    if ex.have_cxx20_module_sources(record.target) {
+                        let fs = filesystem_export_name(record.target);
+                        writeln!(
+                            content,
+                            "include(\"${{CMAKE_CURRENT_LIST_DIR}}/target-{fs}-{suffix}.cmake\")"
+                        )
+                        .unwrap();
+                    }
                 }
+                let per_config = modules.join(format!("cxx-modules-{set_name}-{suffix}.cmake"));
+                write_if_different(&per_config, content.as_bytes())?;
+                module_files.insert(config, per_config.to_string_lossy().into_owned());
             }
-            let per_config = modules.join(format!("cxx-modules-{set_name}-{suffix}.cmake"));
-            write_if_different(&per_config, content.as_bytes())?;
-            write_config_copy(
-                ctx,
-                out,
-                indent,
-                &opts,
-                &module_destination,
-                per_config.to_string_lossy().into_owned(),
-            );
+            for (config, per_config) in module_files {
+                write_config_copy(
+                    &config,
+                    out,
+                    indent,
+                    &opts,
+                    &module_destination,
+                    per_config,
+                );
+            }
         }
     }
     Ok(())
 }
 
 pub(super) fn write_config_copy(
-    ctx: &GenCtx,
+    config: &str,
     out: &mut String,
     indent: &str,
     opts: &crate::install_model::InstallOptions,
@@ -2588,10 +2626,7 @@ pub(super) fn write_config_copy(
     writeln!(
         out,
         "{indent}if({})",
-        config_test(
-            "CMAKE_INSTALL_CONFIG_NAME",
-            std::slice::from_ref(&ctx.config)
-        )
+        config_test("CMAKE_INSTALL_CONFIG_NAME", &[config.to_owned()])
     )
     .unwrap();
     write_copy(

@@ -147,15 +147,18 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
     // cmMakefile::EnableLanguage: cmGlobalGenerator::GetCMakeCFGIntDir is "."
     // for single-configuration generators and "${CONFIGURATION}" for
     // multi-configuration generators.
-    if interp.get_def("CMAKE_GENERATOR").as_deref() == Some("Ninja Multi-Config") {
+    let multi_config = interp.ext.multi_config;
+    if multi_config {
         interp.set_def("CMAKE_CFG_INTDIR", "${CONFIGURATION}");
-        interp.set_def("CMAKE_BUILD_TYPE", "Debug");
+        // cmGlobalNinjaGenerator::EnableLanguage ->
         // cmMakefile::InitCMAKE_CONFIGURATION_TYPES.
         if interp.get_def("CMAKE_CONFIGURATION_TYPES").is_none() {
-            let def = std::env::var("CMAKE_CONFIGURATION_TYPES")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "Debug;Release;RelWithDebInfo;MinSizeRel".to_owned());
+            let env = if interp.in_try_compile {
+                None
+            } else {
+                std::env::var("CMAKE_CONFIGURATION_TYPES").ok()
+            };
+            let def = env.unwrap_or_else(|| "Debug;Release;RelWithDebInfo".to_owned());
             interp.add_cache_def(
                 "CMAKE_CONFIGURATION_TYPES",
                 Some(&def),
@@ -166,6 +169,7 @@ pub fn enable_language(interp: &mut Interp, languages: &[String], optional: bool
         }
     } else {
         interp.set_def("CMAKE_CFG_INTDIR", ".");
+        // cmGlobalGenerator::EnableLanguage (single-config only).
         if !interp.in_try_compile
             && interp.get_def("CMAKE_BUILD_TYPE").is_none()
             && let Ok(build_type) = std::env::var("CMAKE_BUILD_TYPE")

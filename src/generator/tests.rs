@@ -111,6 +111,39 @@ fn need_to_quote_test_name(ctx: &GenCtx, index: usize, name: &str) -> bool {
 
 fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
     let configs = &test.configurations;
+    // cmTestGenerator::ActionsPerConfig: modern tests evaluate per
+    // configuration; multi-config generators write one block per
+    // configuration (cmScriptGenerator::GenerateScriptActionsPerConfig).
+    if ctx.multi_config && !test.old_style {
+        let mut first = true;
+        for config in &ctx.configs {
+            if !super::install::generates_for_config(configs, config) {
+                continue;
+            }
+            writeln!(
+                out,
+                "{}({})",
+                if first { "if" } else { "elseif" },
+                config_test("CTEST_CONFIGURATION_TYPE", std::slice::from_ref(config))
+            )
+            .unwrap();
+            write_test_actions(&ctx.for_config(config), out, index, test, "  ");
+            first = false;
+        }
+        if !first {
+            // NeedsScriptNoConfig / GenerateScriptNoConfig.
+            if configs.is_empty() {
+                let name = if need_to_quote_test_name(ctx, index, &test.name) {
+                    quote_name(&test.name)
+                } else {
+                    test.name.clone()
+                };
+                writeln!(out, "else()\n  add_test({name} NOT_AVAILABLE)").unwrap();
+            }
+            writeln!(out, "endif()").unwrap();
+        }
+        return;
+    }
     let indent = if configs.is_empty() { "" } else { "  " };
     if !configs.is_empty() {
         writeln!(
@@ -120,6 +153,14 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
         )
         .unwrap();
     }
+    write_test_actions(ctx, out, index, test, indent);
+    if !configs.is_empty() {
+        writeln!(out, "endif()").unwrap();
+    }
+}
+
+/// `cmTestGenerator::GenerateScriptForConfig` / `GenerateOldStyle`.
+fn write_test_actions(ctx: &GenCtx, out: &mut String, index: usize, test: &Test, indent: &str) {
     let name = if need_to_quote_test_name(ctx, index, &test.name) {
         quote_name(&test.name)
     } else {
@@ -231,7 +272,4 @@ fn write_test(ctx: &GenCtx, out: &mut String, index: usize, test: &Test) {
         write!(out, " _BACKTRACE_TRIPLES \"{}\"", frames.join(";")).unwrap();
     }
     writeln!(out, ")").unwrap();
-    if !configs.is_empty() {
-        writeln!(out, "endif()").unwrap();
-    }
 }

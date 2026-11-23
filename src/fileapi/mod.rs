@@ -784,7 +784,7 @@ fn build_cmake(interp: &Interp) -> Json {
         "name",
         jstr(interp.cache.value("CMAKE_GENERATOR").unwrap_or("Ninja")),
     );
-    generator.set("multiConfig", Json::Bool(false));
+    generator.set("multiConfig", Json::Bool(interp.ext.multi_config));
     cmake.set("generator", generator);
     cmake
 }
