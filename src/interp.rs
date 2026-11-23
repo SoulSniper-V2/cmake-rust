@@ -16,7 +16,10 @@ use crate::util;
 
 pub const VERSION: (u32, u32, u32) = (4, 1, 0);
 
-type ParseKey = (String, u64, i64, i64);
+/// Parse-cache key: the path and the exact file bytes.  Size+mtime is not
+/// enough: a file rewritten with same-length content within one filesystem
+/// timestamp tick (coarse-grained on ext4) keeps its mtime.
+type ParseKey = (String, Vec<u8>);
 
 thread_local! {
     static PARSE_CACHE: std::cell::RefCell<HashMap<ParseKey, Rc<ParsedFile>>> =
@@ -1194,15 +1197,14 @@ impl Interp {
 
     fn parse_file(&mut self, path: &str) -> Option<Rc<ParsedFile>> {
         // Cache parses across interpreter instances (try_compile projects
-        // re-read the same modules), keyed by path, size and mtime so that
-        // rewritten files are re-parsed.
-        let meta = std::fs::metadata(path).ok()?;
-        use std::os::unix::fs::MetadataExt;
-        let key = (path.to_owned(), meta.len(), meta.mtime(), meta.mtime_nsec());
+        // re-read the same modules), keyed by path and content so that
+        // rewritten files are always re-parsed.
+        let bytes = std::fs::read(path).ok()?;
+        let key = (path.to_owned(), bytes);
         if let Some(parsed) = PARSE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
             return Some(parsed);
         }
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = &key.1;
         // `cmListFileLexer_SetFileName`/`cmListFileLexer_ReadBOM`: only a
         // UTF-8 BOM is accepted (and skipped); UTF-16/32 BOMs are rejected
         // before parsing with a file-level error that does not set the
