@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.30)
+project(inner C)
+message(CONFIGURE_LOG "from the inner project")
+try_compile(HAVE SOURCE_FROM_CONTENT t.c "int main(void){return 0;}")
+try_run(RAN BUILT SOURCE_FROM_CONTENT u.c "int main(void){return 3;}")
+find_program(NOPE_PROGRAM no-such-program)
+message(STATUS "inner ${HAVE} ${BUILT} ${RAN}")
+add_executable(e e.c)

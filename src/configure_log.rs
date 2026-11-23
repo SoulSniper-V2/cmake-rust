@@ -31,6 +31,23 @@ pub struct ConfigureLog {
     sink: Option<Sink>,
 }
 
+/// `cmake::GetConfigureLog`: the log exists while configuring a project,
+/// outside try_compile.
+pub fn exists(interp: &crate::interp::Interp) -> bool {
+    interp.mode != crate::interp::Mode::Script && !interp.in_try_compile
+}
+
+/// `cmake::GetConfigureLog`.
+pub fn get(interp: &crate::interp::Interp) -> Option<std::cell::RefMut<'_, ConfigureLog>> {
+    exists(interp).then(|| {
+        std::cell::RefMut::map(interp.ext.configure_log.borrow_mut(), |slot| {
+            slot.get_or_insert_with(|| {
+                ConfigureLog::new(format!("{}/CMakeFiles", interp.home_binary), Vec::new())
+            })
+        })
+    })
+}
+
 impl ConfigureLog {
     /// `cmConfigureLog(logDir, logVersions)`. `log_dir` is the directory
     /// holding `CMakeConfigureLog.yaml` (`<bindir>/CMakeFiles`).

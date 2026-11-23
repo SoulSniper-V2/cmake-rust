@@ -248,13 +248,9 @@ impl LogLevel {
 
 /// `WriteMessageEvent`: a `message-v1` event in CMakeConfigureLog.yaml.
 fn configure_log(interp: &mut Interp, message: &str) {
-    if interp.mode == crate::interp::Mode::Script {
+    let Some(mut log) = crate::configure_log::get(interp) else {
         return;
-    }
-    let log_dir = format!("{}/CMakeFiles", interp.home_binary);
-    let mut slot = interp.ext.configure_log.borrow_mut();
-    let log =
-        slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+    };
     if !log.is_any_log_version_enabled(&[1]) {
         return;
     }

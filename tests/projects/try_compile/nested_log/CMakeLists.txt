@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.30)
+project(nested_log C)
+try_compile(OK PROJECT inner SOURCE_DIR ${CMAKE_SOURCE_DIR}/inner
+  BINARY_DIR ${CMAKE_BINARY_DIR}/inner-build OUTPUT_VARIABLE out)
+message(STATUS "OK=${OK}")
+string(REGEX MATCHALL "-- inner[^\n]*" lines "${out}")
+message(STATUS "${lines}")
+# A nested configuration has no configure log.
+foreach(f CMakeFiles inner-build/CMakeFiles)
+  if(EXISTS ${CMAKE_BINARY_DIR}/${f}/CMakeConfigureLog.yaml)
+    message(STATUS "${f} has a log")
+  else()
+    message(STATUS "${f} has no log")
+  endif()
+endforeach()

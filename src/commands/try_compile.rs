@@ -2452,20 +2452,11 @@ fn write_try_compile_event_fields(
     log.end_object();
 }
 
-/// `cmMakefile::GetOrCreateConfigureLog` equivalent — lazily creates the
-/// configure log for this project (used on first event write).
-fn configure_log<'a>(
-    interp: &'a Interp,
-) -> std::cell::RefMut<'a, crate::configure_log::ConfigureLog> {
-    let log_dir = format!("{}/CMakeFiles", interp.home_binary);
-    std::cell::RefMut::map(interp.ext.configure_log.borrow_mut(), |slot| {
-        slot.get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()))
-    })
-}
-
 /// `WriteTryCompileEvent` (`LogVersionsWithTryCompileV1`).
 fn write_try_compile_event(interp: &mut Interp, result: &TryCompileResult) {
-    let mut log = configure_log(interp);
+    let Some(mut log) = crate::configure_log::get(interp) else {
+        return;
+    };
     if !log.is_any_log_version_enabled(&[1]) {
         return;
     }
@@ -2546,7 +2537,9 @@ fn write_try_run_event(
     compile_result: &TryCompileResult,
     run_result: &TryRunResult,
 ) {
-    let mut log = configure_log(interp);
+    let Some(mut log) = crate::configure_log::get(interp) else {
+        return;
+    };
     if !log.is_any_log_version_enabled(&[1]) {
         return;
     }

@@ -1124,7 +1124,7 @@ impl Package {
     /// `cmFindCommonDebugState::Write` with
     /// `cmFindPackageDebugState::ShouldImplicitlyLogEvents`.
     fn write_debug_state(&self, interp: &Interp) {
-        if !self.debug_state || !super::configure_log_exists(interp) {
+        if !self.debug_state || !crate::configure_log::exists(interp) {
             return;
         }
         let found_mode = self
@@ -1146,10 +1146,10 @@ impl Package {
 
     /// `cmFindPackageDebugState::WriteEvent`.
     fn write_event(&self, interp: &Interp) {
-        let log_dir = format!("{}/CMakeFiles", interp.home_binary);
-        let mut slot = interp.ext.configure_log.borrow_mut();
-        let log = slot
-            .get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+        let Some(mut log) = crate::configure_log::get(interp) else {
+            return;
+        };
+        let log = &mut *log;
         log.begin_event("find_package-v1", interp);
         log.write_value_str("name", &self.name);
         if !self.components.is_empty() {

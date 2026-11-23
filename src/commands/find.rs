@@ -150,7 +150,7 @@ impl Find {
         // debugging or when the configure log exists.
         let debug_state =
             debug_wanted || !interp.is_on("CMAKE_FIND_DEBUG_MODE_NO_IMPLICIT_CONFIGURE_LOG");
-        let track = debug_state && (debug_wanted || configure_log_exists(interp));
+        let track = debug_state && (debug_wanted || crate::configure_log::exists(interp));
         let mut cache_type = if kind == Kind::Path {
             CacheType::Path
         } else {
@@ -420,7 +420,7 @@ impl Find {
             return;
         }
         let found = result.is_some();
-        if configure_log_exists(interp)
+        if crate::configure_log::exists(interp)
             && (self.debug_mode
                 || self.initial == InitialState::Undefined
                 || (self.initial == InitialState::Found) != found)
@@ -434,10 +434,10 @@ impl Find {
 
     /// `cmFindBaseDebugState::WriteEvent`.
     fn write_event(&self, interp: &Interp, result: Option<&str>) {
-        let log_dir = format!("{}/CMakeFiles", interp.home_binary);
-        let mut slot = interp.ext.configure_log.borrow_mut();
-        let log = slot
-            .get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+        let Some(mut log) = crate::configure_log::get(interp) else {
+            return;
+        };
+        let log = &mut *log;
         let command = self.kind.command();
         log.begin_event("find-v1", interp);
         log.write_value_str("mode", &command["find_".len()..]);
@@ -1138,12 +1138,6 @@ fn bundle_executable(path: &str) -> Option<String> {
         CFRelease(executable);
         (found != 0).then(|| normalized(&CStr::from_ptr(buffer.as_ptr().cast()).to_string_lossy()))
     }
-}
-
-/// `cmake::GetConfigureLog`: the log exists while configuring a project,
-/// outside try_compile.
-pub(super) fn configure_log_exists(interp: &Interp) -> bool {
-    interp.mode != crate::interp::Mode::Script && !interp.in_try_compile
 }
 
 /// `cmFindCommonDebugState::WriteSearchVariables`.
