@@ -515,6 +515,36 @@ pub struct Ext {
     /// whose outputs are per-config (created by `CreateUtilityOutput` in
     /// `cmLocalNinjaGenerator`).
     pub per_config_utility_targets: BTreeSet<String>,
+    /// `cmGlobalGenerator::PerConfigModuleDbs`: configuration -> language ->
+    /// build-database paths, registered as each generator target is created
+    /// (`cmGeneratorTarget`'s constructor).
+    pub per_config_module_dbs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// `cmGlobalGenerator::PerLanguageModuleDbs`: language -> paths.
+    pub per_language_module_dbs: BTreeMap<String, Vec<String>>,
+    /// `cmMakefile::GeneratorActions` recorded with
+    /// `GeneratorActionWhen::AfterGeneratorTargets`: the
+    /// `cmake_build_database*` merge commands resolve their input lists
+    /// after synthetic targets are discovered.
+    pub build_database_merges: Vec<BuildDatabaseMerge>,
+}
+
+/// Input selector for a `cmake_build_database*` merge command
+/// (`ModuleCompilationDatabaseCommandAction`'s input closure).
+#[derive(Debug)]
+pub enum BuildDatabaseInputs {
+    /// `PerConfigModuleDbs[config][lang]`.
+    PerConfig { config: String, lang: String },
+    /// `PerLanguageModuleDbs[lang]`.
+    PerLanguage { lang: String },
+    /// A fixed list (the per-config aggregate outputs).
+    List(Vec<String>),
+}
+
+#[derive(Debug)]
+pub struct BuildDatabaseMerge {
+    pub comment: String,
+    pub output: String,
+    pub inputs: BuildDatabaseInputs,
 }
 
 #[derive(Debug)]

@@ -155,6 +155,7 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         "cmake_transform_depfile" if args.len() == 8 => depfile::transform(args),
         "__run_co_compile" => cocompile::run_co_compile(args),
         "cmake_llvm_rc" => cocompile::run_llvm_rc(args),
+        "cmake_module_compile_db" => crate::build_database::module_compile_db(args),
         "cmake_ninja_depends" | "cmake_ninja_dyndep" => match dyndep::run(command, args) {
             Ok(()) => 0,
             Err(message) => {

@@ -12,6 +12,7 @@ pub(crate) use compile::{
     BtFrag, compile_definitions, define_items, flag_fragments, include_directories, include_items,
     interface_values, pch_items, standard_option,
 };
+pub(crate) use compile::{FlagCls, classified_flags_for_source};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{link_dependency_file, link_flag_vars};
 pub(super) use rule::expand_placeholders;

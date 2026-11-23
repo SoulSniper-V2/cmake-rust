@@ -1079,6 +1079,16 @@ fn codepoint_to_utf8(cp: u32) -> Vec<u8> {
     }
 }
 
+/// Parse a document with the jsoncpp-compatible reader. On failure the error
+/// message is `getFormattedErrorMessages`-compatible.
+pub(crate) fn parse_jsoncpp(doc: &[u8]) -> Result<Json, String> {
+    let mut reader = Reader::new(doc);
+    match reader.parse() {
+        Some(json) => Ok(json),
+        None => Err(reader.formatted_error_messages()),
+    }
+}
+
 fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
     let mut reader = Reader::new(jsonstr.as_bytes());
     match reader.parse() {

@@ -1,6 +1,7 @@
 //! cmake-rust: an independent implementation of CMake in Rust.
 
 mod apple;
+mod build_database;
 mod cache;
 mod carchive;
 mod cli;

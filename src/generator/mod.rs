@@ -176,6 +176,10 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     let start = std::time::Instant::now();
     finalize_target_configuration(interp);
+    // Generator-added targets (build-database merge targets, header-set
+    // verification targets, autogen) emit after each directory's global
+    // targets; this boundary is the end of configure-time target creation.
+    interp.ext.generated_targets_start = Some(interp.ext.target_order.len());
     if !check_build_database_targets(interp) {
         return -1;
     }
@@ -189,7 +193,6 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
     // become generated sources before target source resolution runs.
     evaluation_files::create_outputs(interp);
-    interp.ext.generated_targets_start = Some(interp.ext.target_order.len());
     if !verify_header_sets::add_targets(interp) {
         return -1;
     }
@@ -203,6 +206,11 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let mut module_diagnostics = ninja::modules::finalize_cxx_module_targets(interp);
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
+    // cmMakefile::GenerateAfterGeneratorTargets: the build-database merge
+    // commands attach once every generator target has registered its
+    // database path, and before TraceDependencies resolves their produced
+    // `.rule` sources into the merge utility targets.
+    run_build_database_actions(interp, &mut expand_output_genex);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
     let (computed, mut diagnostics) = {
@@ -454,31 +462,294 @@ fn expand_output_genex(
     Ok(paths)
 }
 
-/// `cmGlobalGenerator::AddBuildDatabaseTargets`. The `cmake_build_database*`
-/// merge targets are not ported: when the top-level directory enables
-/// `CMAKE_EXPORT_BUILD_DATABASE` with the experimental feature active,
-/// generation stops with an explicit error rather than omitting them.
+/// `cmGlobalGenerator::AddBuildDatabaseTargets` +
+/// `cmGlobalGenerator::AddMergeTarget`: the reserved-name checks, utility
+/// targets, and merge commands for `CMAKE_EXPORT_BUILD_DATABASE`. The merge
+/// commands are `GeneratorActionWhen::AfterGeneratorTargets` actions —
+/// recorded in `ext.build_database_merges` and resolved by
+/// [`run_build_database_actions`] once every generator target (including
+/// synthetic C++ module targets) has registered its database path.
 /// Without the experimental gate upstream fails generation silently
 /// (`return {};`), which is mirrored.
 fn check_build_database_targets(interp: &mut Interp) -> bool {
-    let (ok, diagnostics) = {
+    enum Gate {
+        Skip,
+        Fail,
+        Run,
+    }
+    let (gate, configs) = {
         let ctx = ctx::GenCtx::new(interp);
         let requested = ctx
             .var(0, "CMAKE_EXPORT_BUILD_DATABASE")
             .is_some_and(|value| crate::util::is_on(&value));
-        if requested && ctx.experimental_enabled(0, "ExportBuildDatabase") {
-            ctx.error(
-                ctx.dir_backtrace(0),
-                "CMAKE_EXPORT_BUILD_DATABASE is not supported by this implementation: the \"cmake_build_database\" merge targets are not implemented.".to_owned(),
-            );
-        }
-        let ok = !requested;
-        (ok, ctx.errors.take())
+        let gate = if !requested {
+            Gate::Skip
+        } else if !ctx.experimental_enabled(0, "ExportBuildDatabase") {
+            Gate::Fail
+        } else {
+            Gate::Run
+        };
+        // cmMakefile::GetGeneratorConfigs(ExcludeEmptyConfig).
+        let configs = ctx
+            .configs
+            .iter()
+            .filter(|config| !config.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        (gate, configs)
     };
-    for diagnostic in diagnostics {
-        if let ctx::Diagnostic::Message(kind, backtrace, message) = diagnostic {
-            interp.issue_at(kind, &message, &backtrace);
+    match gate {
+        Gate::Skip => return true,
+        Gate::Fail => return false,
+        Gate::Run => {}
+    }
+
+    // cmGlobalGenerator::CheckReservedTargetName{,Prefix}.  The search index
+    // contains aliases too (upstream aliases are real cmTargets).
+    const REASON: &str = "when exporting build databases are enabled";
+    let mut ok = true;
+    let mut reserved: Vec<(String, Vec<crate::messages::Frame>)> = Vec::new();
+    for target in interp.ext.targets.values() {
+        if target.name.starts_with("cmake_build_database-") {
+            reserved.push((target.name.clone(), target.backtrace.clone()));
         }
     }
-    ok
+    for (_dir, alias, backtrace) in &interp.ext.alias_backtraces {
+        if alias.starts_with("cmake_build_database-") {
+            reserved.push((alias.clone(), backtrace.clone()));
+        }
+    }
+    if let Some((_, target)) = crate::state::find_target_entry(interp, "cmake_build_database") {
+        reserved.push(("cmake_build_database".to_owned(), target.backtrace.clone()));
+    }
+    reserved.sort_by(|(a, _), (b, _)| a.cmp(b));
+    for (name, backtrace) in reserved {
+        interp.issue_at(
+            crate::messages::MessageType::FatalError,
+            &format!("The target name \"{name}\" is reserved {REASON}."),
+            &backtrace,
+        );
+        ok = false;
+    }
+    if !ok {
+        return false;
+    }
+
+    let home_binary = interp.home_binary.clone();
+
+    // cmGlobalGenerator::AddMergeTarget.
+    let add_merge_target = |interp: &mut Interp,
+                            name: &str,
+                            comment: String,
+                            output: String,
+                            inputs: crate::state::BuildDatabaseInputs| {
+        // ModuleCompilationDatabaseCommandAction: the merge runs after
+        // generator targets so its input list sees every registered path.
+        crate::commands::target::mark_generated(interp, 0, &output);
+        interp
+            .ext
+            .build_database_merges
+            .push(crate::state::BuildDatabaseMerge {
+                comment,
+                output: output.clone(),
+                inputs,
+            });
+
+        // ModuleCompilationDatabaseTargetAction: a utility target whose
+        // custom command only depends on the merge output.
+        let mut target = crate::state::Target::new(name, crate::state::TargetKind::Utility, 0);
+        target.props.set("EXCLUDE_FROM_ALL", "TRUE".to_owned());
+        let key = crate::state::register_target(interp, target);
+        let mut command = crate::state::CustomCommand::default();
+        command.makefile = 0;
+        command.depends = vec![output];
+        command.working_directory = home_binary.clone();
+        interp
+            .ext
+            .generator_actions
+            .push(crate::state::GeneratorAction::Utility {
+                target: key,
+                command,
+            });
+    };
+
+    // Per-configuration targets, per language.
+    for config in &configs {
+        let mut all_config_paths = Vec::new();
+        for lang in ["CXX"] {
+            let comment = format!("Combining module command databases for {lang} and {config}");
+            let output = format!("{home_binary}/build_database_{lang}_{config}.json");
+            add_merge_target(
+                interp,
+                &format!("cmake_build_database-{lang}-{config}"),
+                comment,
+                output.clone(),
+                crate::state::BuildDatabaseInputs::PerConfig {
+                    config: config.clone(),
+                    lang: lang.to_owned(),
+                },
+            );
+            all_config_paths.push(output);
+        }
+        let comment = format!("Combining module command databases for {config}");
+        let output = format!("{home_binary}/build_database_{config}.json");
+        add_merge_target(
+            interp,
+            &format!("cmake_build_database-{config}"),
+            comment,
+            output,
+            crate::state::BuildDatabaseInputs::List(all_config_paths),
+        );
+    }
+
+    // Per-language targets across all configurations.
+    let mut all_config_paths = Vec::new();
+    for lang in ["CXX"] {
+        let comment = format!("Combining module command databases for {lang}");
+        let output = format!("{home_binary}/build_database_{lang}.json");
+        add_merge_target(
+            interp,
+            &format!("cmake_build_database-{lang}"),
+            comment,
+            output.clone(),
+            crate::state::BuildDatabaseInputs::PerLanguage {
+                lang: lang.to_owned(),
+            },
+        );
+        all_config_paths.push(output);
+    }
+
+    // The overall target.
+    add_merge_target(
+        interp,
+        "cmake_build_database",
+        "Combining all module command databases".to_owned(),
+        format!("{home_binary}/build_database.json"),
+        crate::state::BuildDatabaseInputs::List(all_config_paths),
+    );
+
+    true
+}
+
+/// The `GeneratorActionWhen::AfterGeneratorTargets` pass: each generator
+/// target's constructor registers its build-database path
+/// (`cmGeneratorTarget::BuildDatabasePath` +
+/// `cmGlobalGenerator::AddBuildDatabaseFile`), then the merge command
+/// actions attach their custom commands.
+fn run_build_database_actions(
+    interp: &mut Interp,
+    expand: &mut crate::commands::custom_actions::ExpandOutputGenex,
+) {
+    let mut registrations: Vec<(usize, String, String)> = Vec::new();
+    {
+        let ctx = ctx::GenCtx::new(interp);
+        let configs: Vec<&String> = ctx
+            .configs
+            .iter()
+            .filter(|config| !config.is_empty())
+            .collect();
+        for key in &interp.ext.target_order {
+            let Some(target) = interp.ext.targets.get(key) else {
+                continue;
+            };
+            // cmGeneratorTarget::BuildDatabasePath for the CXX language.
+            if !target
+                .props
+                .get("EXPORT_BUILD_DATABASE")
+                .is_some_and(crate::util::is_on)
+                || !ctx.experimental_enabled(target.makefile, "ExportBuildDatabase")
+            {
+                continue;
+            }
+            for config in &configs {
+                let object_dir = target::object_directory(&ctx, target, config);
+                registrations.push((
+                    target.makefile,
+                    (*config).clone(),
+                    format!(
+                        "{}/CXX_build_database.json",
+                        object_dir.trim_end_matches('/')
+                    ),
+                ));
+            }
+        }
+    }
+    for (dir, config, path) in registrations {
+        crate::commands::target::mark_generated(interp, dir, &path);
+        interp
+            .ext
+            .per_config_module_dbs
+            .entry(config)
+            .or_default()
+            .entry("CXX".to_owned())
+            .or_default()
+            .push(path.clone());
+        interp
+            .ext
+            .per_language_module_dbs
+            .entry("CXX".to_owned())
+            .or_default()
+            .push(path);
+    }
+
+    // ModuleCompilationDatabaseCommandAction for each merge target.
+    let merges = std::mem::take(&mut interp.ext.build_database_merges);
+    let cmake = interp.cmake_command.clone();
+    let home_binary = interp.home_binary.clone();
+    for merge in merges {
+        let inputs = match merge.inputs {
+            crate::state::BuildDatabaseInputs::PerConfig { config, lang } => interp
+                .ext
+                .per_config_module_dbs
+                .get(&config)
+                .and_then(|langs| langs.get(&lang))
+                .cloned()
+                .unwrap_or_default(),
+            crate::state::BuildDatabaseInputs::PerLanguage { lang } => interp
+                .ext
+                .per_language_module_dbs
+                .get(&lang)
+                .cloned()
+                .unwrap_or_default(),
+            crate::state::BuildDatabaseInputs::List(list) => list,
+        };
+        let mut command = crate::state::CustomCommand::default();
+        command.makefile = 0;
+        command.command_lines = vec![
+            [
+                cmake.clone(),
+                "-E".to_owned(),
+                "cmake_module_compile_db".to_owned(),
+                "merge".to_owned(),
+                "-o".to_owned(),
+                merge.output.clone(),
+            ]
+            .into_iter()
+            .chain(inputs.iter().cloned())
+            .collect(),
+        ];
+        command.outputs = vec![merge.output];
+        if !inputs.is_empty() {
+            command.main_dependency = inputs[0].clone();
+        }
+        // cmCustomCommand::SetDepends re-inserts the existing main
+        // dependency at the head of the list, so `inputs[0]` is duplicated.
+        command.depends = inputs
+            .iter()
+            .take(1)
+            .cloned()
+            .chain(inputs.iter().cloned())
+            .collect();
+        command.working_directory = home_binary.clone();
+        command.comment = Some(merge.comment);
+        command.depends_explicit_only = true;
+        crate::commands::custom_actions::run_action(
+            interp,
+            expand,
+            crate::state::GeneratorAction::Output {
+                command,
+                replace: false,
+            },
+        );
+    }
 }

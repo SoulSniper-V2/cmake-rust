@@ -1,7 +1,9 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-use super::{Flags, append, append_options, cmake_space, shell, shell_with_make_vars};
+use super::{
+    Flags, append, append_options, cmake_space, shell, shell_with_make_vars, unix_command_line,
+};
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
@@ -366,7 +368,9 @@ fn windows_command_line(raw: &str) -> Vec<String> {
     args
 }
 
-fn defines(inputs: &Flags<'_, '_>, properties: &Props) -> String {
+/// `cmLocalGenerator::GetTargetDefines`: target-level definitions only (the
+/// export macro plus `COMPILE_DEFINITIONS` usage requirements).
+fn target_define_names(inputs: &Flags<'_, '_>) -> Vec<String> {
     let mut direct = inputs.usage("COMPILE_DEFINITIONS");
     if matches!(
         inputs.target.kind,
@@ -394,32 +398,20 @@ fn defines(inputs: &Flags<'_, '_>, properties: &Props) -> String {
             });
         direct.extend(expand_list(&symbol, false));
     }
+    direct
+}
 
-    // CMP0043's OLD behavior was removed. Target and directory per-config
-    // definitions are ignored, but Ninja still reads per-config source defs.
-    // cmNinjaTargetGenerator::ComputeDefines: multi-config generators
-    // define CMAKE_INTDIR in the source-level set.
-    let mut source: Vec<String> = Vec::new();
-    if inputs.ctx.multi_config {
-        source.push(format!("CMAKE_INTDIR=\"{}\"", inputs.config));
-    }
-    source.extend(
-        [
-            "COMPILE_DEFINITIONS".to_owned(),
-            format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
-        ]
-        .iter()
-        .filter_map(|name| properties.get(name))
-        .flat_map(|value| expand_list(&inputs.eval(value), false)),
-    );
+/// `cmLocalGenerator::JoinDefines`: one group renders sorted with the
+/// language's `-D` prefix.
+fn render_defines(inputs: &Flags<'_, '_>, groups: &[Vec<String>]) -> String {
     let prefix = inputs
         .lang_var("DEFINE_FLAG")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "-D".to_owned());
     let mut result = String::new();
-    for definitions in [direct, source] {
+    for definitions in groups {
         let mut sorted = BTreeSet::new();
-        for definition in &definitions {
+        for definition in definitions {
             if check_definition(definition) {
                 sorted.insert(definition.strip_prefix("-D").unwrap_or(definition));
             }
@@ -439,6 +431,28 @@ fn defines(inputs: &Flags<'_, '_>, properties: &Props) -> String {
     result
 }
 
+fn defines(inputs: &Flags<'_, '_>, properties: &Props) -> String {
+    let direct = target_define_names(inputs);
+    // CMP0043's OLD behavior was removed. Target and directory per-config
+    // definitions are ignored, but Ninja still reads per-config source defs.
+    // cmNinjaTargetGenerator::ComputeDefines: multi-config generators
+    // define CMAKE_INTDIR in the source-level set.
+    let mut source: Vec<String> = Vec::new();
+    if inputs.ctx.multi_config {
+        source.push(format!("CMAKE_INTDIR=\"{}\"", inputs.config));
+    }
+    source.extend(
+        [
+            "COMPILE_DEFINITIONS".to_owned(),
+            format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
+        ]
+        .iter()
+        .filter_map(|name| properties.get(name))
+        .flat_map(|value| expand_list(&inputs.eval(value), false)),
+    );
+    render_defines(inputs, &[direct, source])
+}
+
 fn check_definition(definition: &str) -> bool {
     let reason = if definition
         .find(['(', '='])
@@ -456,7 +470,9 @@ fn check_definition(definition: &str) -> bool {
     false
 }
 
-fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> String {
+/// The `system` set `cmTarget::GetSystemIncludeDirectories` and
+/// `FinalizeTargetConfiguration` produce; it is independent of the source.
+fn system_include_dirs(inputs: &Flags<'_, '_>) -> HashSet<String> {
     let mut system: HashSet<_> = inputs
         .usage("SYSTEM_INCLUDE_DIRECTORIES")
         .iter()
@@ -484,6 +500,11 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
     // (INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, imported targets, SYSTEM and
     // their frameworks): cmGeneratorTarget::IsSystemIncludeDirectory.
     system.extend(inputs.system_include_cache().iter().cloned());
+    system
+}
+
+fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> String {
+    let system = system_include_dirs(inputs);
     let mut source_dirs = Vec::new();
     let mut seen = HashSet::new();
     if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
@@ -1121,4 +1142,281 @@ pub(crate) fn pch_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str)
         .into_iter()
         .map(|item| (item.value, ctx.backtrace(item.backtrace)))
         .collect()
+}
+
+/// `cmGeneratorTarget::FlagClassification`. `FlagKind` only affects
+/// classification upstream, not the build-database output.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlagCls {
+    Execution,
+    Private,
+    Baseline,
+    Location,
+}
+
+/// `cmGeneratorTarget::GetClassifiedFlagsForSource`. Only CXX is a supported
+/// classified-flags language; other sources get an empty flag list.
+///
+/// `object_dir` is `gg->ConvertToOutputPath(support_dir + configdir)` — the
+/// Ninja-relative object directory.
+pub(crate) fn classified_flags_for_source(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+    object_dir: &str,
+) -> Vec<(FlagCls, String)> {
+    let lang = source.language.as_str();
+    if lang != "CXX" {
+        return Vec::new();
+    }
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    let mut flags: Vec<(FlagCls, String)> = Vec::new();
+    let mut define_flags: Vec<(FlagCls, String)> = Vec::new();
+    let mut incl_flags: Vec<(FlagCls, String)> = Vec::new();
+    let mut compile_flags: Vec<(FlagCls, String)> = Vec::new();
+
+    // Compiler launchers are all execution flags.
+    let launcher = super::rule::compiler_launcher_list(ctx, target, lang);
+    for flag in unix_command_line(&launcher) {
+        flags.push((FlagCls::Execution, flag));
+    }
+
+    // SourceVariables: object and dependency paths.
+    let object_file_path = format!("{object_dir}/{}", source.object_name);
+    let object_dir_shell = shell(object_dir);
+    let object_file_dir = shell(&object_file_path);
+    let (dependency_flags, dependency_file, dependency_target) = {
+        let format = inputs
+            .var(&format!("CMAKE_{lang}_DEPFILE_FORMAT"))
+            .unwrap_or_default();
+        let dep_flags = inputs
+            .var(&format!("CMAKE_DEPFILE_FLAGS_{lang}"))
+            .unwrap_or_default();
+        if format != "msvc" && !dep_flags.is_empty() {
+            let replace_ext = inputs
+                .var(&format!("CMAKE_{lang}_DEPFILE_EXTENSION_REPLACE"))
+                .is_some_and(|value| is_on(&value));
+            let dep_path = if replace_ext {
+                let name = source
+                    .object_name
+                    .rsplit_once('/')
+                    .map_or(source.object_name.as_str(), |(_, name)| name);
+                let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+                format!("{object_dir}/{stem}.d")
+            } else {
+                format!("{object_file_path}.d")
+            };
+            (dep_flags, shell(&dep_path), object_file_dir.clone())
+        } else {
+            (String::new(), String::new(), String::new())
+        }
+    };
+
+    // Explicit language flags (AddExplicitLanguageFlags, CMP0119 NEW).
+    let mut mf_flags = String::new();
+    if let Some(language) = properties.get("LANGUAGE")
+        && inputs.policy(119) == PolicyStatus::New
+    {
+        Flags {
+            lang: language,
+            ..inputs
+        }
+        .append_feature(&mut mf_flags, "EXPLICIT_LANGUAGE");
+    }
+    for flag in unix_command_line(&mf_flags) {
+        flags.push((FlagCls::Baseline, flag));
+    }
+
+    // The PCH sources per architecture; the target flags of a PCH source
+    // are filtered to its architecture.
+    let mut pch_sources: Vec<(String, String)> = Vec::new();
+    let mut filter_arch = String::new();
+    for arch in crate::generator::pch::pch_archs(ctx, target, config, lang) {
+        let pch_source = crate::generator::pch::pch_source(ctx, target, config, lang, &arch);
+        if pch_source == source.path {
+            filter_arch = arch.clone();
+        }
+        if !pch_source.is_empty() && !pch_sources.iter().any(|(path, _)| *path == pch_source) {
+            pch_sources.push((pch_source, arch));
+        }
+    }
+
+    // Target compile flags.
+    for flag in unix_command_line(&target_flags(&inputs, &filter_arch)) {
+        compile_flags.push((FlagCls::Baseline, flag));
+    }
+    // Define flags.
+    for flag in unix_command_line(&render_defines(&inputs, &[target_define_names(&inputs)])) {
+        define_flags.push((FlagCls::Baseline, flag));
+    }
+    // Include flags.
+    for flag in unix_command_line(&include_flags(
+        &inputs,
+        &target_includes(&inputs),
+        &system_include_dirs(&inputs),
+    )) {
+        incl_flags.push((FlagCls::Baseline, flag));
+    }
+
+    // Source-specific flags.
+    let mut source_flags = String::new();
+    if let Some(raw) = properties.get("COMPILE_FLAGS") {
+        append(&mut source_flags, &inputs.eval(raw));
+    }
+    if let Some(options) = properties.get("COMPILE_OPTIONS") {
+        append_options(&mut source_flags, expand_list(&inputs.eval(options), false));
+    }
+    for flag in unix_command_line(&source_flags) {
+        compile_flags.push((FlagCls::Private, flag));
+    }
+
+    // Dependency tracking flags.
+    if !dependency_flags.is_empty() {
+        let expanded = super::rule::expand_rule_for_step(
+            ctx,
+            target,
+            lang,
+            super::rule::RuleStep::Compile,
+            &dependency_flags,
+            &[
+                ("DEP_FILE", dependency_file.clone()),
+                ("DEP_TARGET", dependency_target.clone()),
+            ],
+        );
+        for flag in unix_command_line(&expanded) {
+            compile_flags.push((FlagCls::Location, flag));
+        }
+    }
+
+    // Precompiled headers.
+    {
+        let mut pch_flags = String::new();
+        if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+            let options = match pch_sources.iter().find(|(path, _)| *path == source.path) {
+                Some((_, arch)) => {
+                    crate::generator::pch::pch_create_options(ctx, target, config, lang, arch)
+                }
+                None => crate::generator::pch::pch_use_options(ctx, target, config, lang, ""),
+            };
+            append_options(&mut pch_flags, expand_list(&inputs.eval(&options), false));
+        }
+        for flag in unix_command_line(&pch_flags) {
+            compile_flags.push((FlagCls::Private, flag));
+        }
+    }
+
+    // C++ module flags (BMI-only sources on non-normal targets).
+    if target.synthetic || target.imported {
+        let mut bmi_flags = String::new();
+        if file_set_contains(ctx, target, config, &source.path, "CXX_MODULES") {
+            if let Some(flag) = inputs
+                .ctx
+                .var(target.makefile, "CMAKE_CXX_MODULE_BMI_ONLY_FLAG")
+            {
+                let expanded = super::rule::expand_rule_for_step(
+                    ctx,
+                    target,
+                    lang,
+                    super::rule::RuleStep::Compile,
+                    &flag,
+                    &[("OBJECT", object_file_dir.clone())],
+                );
+                append_options(&mut bmi_flags, expand_list(&expanded, false));
+            }
+        }
+        for flag in unix_command_line(&bmi_flags) {
+            compile_flags.push((FlagCls::Location, flag));
+        }
+    }
+
+    // The base compiler command line: placeholders mark where the flag
+    // groups are spliced in.
+    const PLACEHOLDER_DEFINES: &str = "__CMAKE_DEFINES";
+    const PLACEHOLDER_INCLUDES: &str = "__CMAKE_INCLUDES";
+    const PLACEHOLDER_FLAGS: &str = "__CMAKE_FLAGS";
+    const PLACEHOLDER_SOURCE: &str = "__CMAKE_SOURCE";
+    let source_path = shell(&source.path);
+    let rule = inputs
+        .var(&format!("CMAKE_{lang}_COMPILE_OBJECT"))
+        .unwrap_or_default();
+    let command = expand_list(&rule, false)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let expanded = super::rule::expand_rule_for_step(
+        ctx,
+        target,
+        lang,
+        super::rule::RuleStep::Compile,
+        &command,
+        &[
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            ("TARGET_LABELS", target_labels(target)),
+            ("LANGUAGE", lang.to_owned()),
+            ("DEFINES", PLACEHOLDER_DEFINES.to_owned()),
+            ("INCLUDES", PLACEHOLDER_INCLUDES.to_owned()),
+            ("FLAGS", PLACEHOLDER_FLAGS.to_owned()),
+            ("SOURCE", PLACEHOLDER_SOURCE.to_owned()),
+            ("TARGET_PDB", String::new()),
+            ("TARGET_COMPILE_PDB", String::new()),
+            ("OBJECT", object_file_dir.clone()),
+            ("OBJECT_DIR", object_dir_shell),
+            ("OBJECT_FILE_DIR", object_file_dir),
+            ("DEP_FILE", dependency_file),
+            ("DEP_TARGET", dependency_target),
+        ],
+    );
+    for flag in unix_command_line(&expanded) {
+        match flag.as_str() {
+            PLACEHOLDER_DEFINES => flags.extend(define_flags.iter().cloned()),
+            PLACEHOLDER_INCLUDES => flags.extend(incl_flags.iter().cloned()),
+            PLACEHOLDER_FLAGS => flags.extend(compile_flags.iter().cloned()),
+            PLACEHOLDER_SOURCE => flags.push((FlagCls::Location, source_path.clone())),
+            _ => {
+                flags.push((FlagCls::Execution, flag));
+            }
+        }
+    }
+
+    flags
+}
+
+/// `cmGeneratorTarget::GetTargetLabelsString`.
+fn target_labels(target: &Target) -> String {
+    target
+        .props
+        .get("LABELS")
+        .map_or_else(String::new, |v| expand_list(v, false).join(" "))
+}
+
+/// Whether the source's full path is a member of a file set of `kind`.
+pub(crate) fn file_set_contains(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    path: &str,
+    kind: &str,
+) -> bool {
+    let _ = config;
+    for set in target.file_sets.values() {
+        if set.kind != kind {
+            continue;
+        }
+        for (file, _relative, _backtrace) in
+            crate::generator::target::evaluate_file_set(ctx, target, set)
+        {
+            if crate::util::collapse_full_path(&file, "") == path {
+                return true;
+            }
+        }
+    }
+    false
 }

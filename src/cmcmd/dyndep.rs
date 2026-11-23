@@ -852,38 +852,25 @@ fn write_dyndep_metadata(
         exports.push((path, e));
     }
 
-    let mut build_db: Option<(Value, BTreeMap<String, usize>, String)> =
-        if let Some((tmpl, out)) = export.database_info {
-            match std::fs::read_to_string(tmpl) {
-                Ok(text) => match serde_json::from_str::<Value>(&text) {
-                    Ok(db) => {
-                        let mut lookup = BTreeMap::new();
-                        if let Some(tus) = db["translation-units"].as_array() {
-                            for (i, tu) in tus.iter().enumerate() {
-                                if let Some(src) = tu["source"].as_str() {
-                                    lookup.insert(src.to_owned(), i);
-                                }
-                            }
-                        }
-                        Some((db, lookup, out.to_owned()))
-                    }
-                    Err(e) => {
-                        errors.push_str(&format!(
-                            "Failed to read the template build database {tmpl}: {e}\n"
-                        ));
-                        None
-                    }
-                },
-                Err(e) => {
-                    errors.push_str(&format!(
-                        "Failed to read the template build database {tmpl}: {e}\n"
-                    ));
-                    None
-                }
+    // cmBuildDatabase::Load and GenerateLookupTable.
+    let mut build_db: Option<(
+        crate::build_database::BuildDatabase,
+        BTreeMap<String, (usize, usize)>,
+        String,
+    )> = None;
+    if let Some((tmpl, out)) = export.database_info {
+        match crate::build_database::BuildDatabase::load(tmpl) {
+            Some(db) => {
+                let lookup = db.generate_lookup_table();
+                build_db = Some((db, lookup, out.to_owned()));
             }
-        } else {
-            None
-        };
+            None => {
+                errors.push_str(&format!(
+                    "Failed to read the template build database {tmpl}\n"
+                ));
+            }
+        }
+    }
 
     let mut bmi_script = String::new();
     let install_destination = |dest: &str| -> (bool, String) {
@@ -905,12 +892,9 @@ fn write_dyndep_metadata(
         if let (Some(src), Some((db, lookup, _))) =
             (export.object_to_source.get(output_path), build_db.as_mut())
         {
-            if let Some(&i) = lookup.get(*src) {
-                if let Some(tu) = db["translation-units"][i].as_object_mut() {
-                    let reqs: Vec<Value> =
-                        object.requires.iter().map(|r| json!(r.logical)).collect();
-                    tu.insert("requires".to_owned(), Value::Array(reqs));
-                }
+            if let Some(&index) = lookup.get(*src) {
+                db.unit_mut(index).requires =
+                    object.requires.iter().map(|r| r.logical.clone()).collect();
             } else {
                 errors.push_str(&format!("Failed to find module database entry for {src}\n"));
             }
@@ -929,26 +913,21 @@ fn write_dyndep_metadata(
         let has_provides = !object.provides.is_empty();
 
         if let Some((db, lookup, _)) = build_db.as_mut() {
-            if let Some(&i) = lookup.get(file_set.source) {
-                if let Some(tu) = db["translation-units"][i].as_object_mut() {
-                    if has_provides {
-                        let mut provides_map = serde_json::Map::new();
-                        for p in &object.provides {
-                            if let Some((bmi, _)) = mod_files.get(&p.logical) {
-                                provides_map.insert(p.logical.clone(), json!(bmi));
-                            } else {
-                                errors.push_str(&format!(
-                                    "Failed to find BMI location for {}\n",
-                                    p.logical
-                                ));
-                            }
-                        }
-                        tu.insert("provides".to_owned(), Value::Object(provides_map));
-                    }
-                    let reqs: Vec<Value> =
-                        object.requires.iter().map(|r| json!(r.logical)).collect();
-                    tu.insert("requires".to_owned(), Value::Array(reqs));
+            if let Some(&index) = lookup.get(file_set.source) {
+                let tu = db.unit_mut(index);
+                // Clear the provides mapping; it is re-initialized here.
+                if has_provides {
+                    tu.provides.clear();
                 }
+                for p in &object.provides {
+                    if let Some((bmi, _)) = mod_files.get(&p.logical) {
+                        tu.provides.insert(p.logical.clone(), bmi.clone());
+                    } else {
+                        errors
+                            .push_str(&format!("Failed to find BMI location for {}\n", p.logical));
+                    }
+                }
+                tu.requires = object.requires.iter().map(|r| r.logical.clone()).collect();
             } else {
                 errors.push_str(&format!(
                     "Failed to find module database entry for {}\n",
@@ -1119,7 +1098,11 @@ fn write_dyndep_metadata(
     }
 
     if let Some((db, _, out)) = &build_db {
-        write_file(out, &stream_value(db), false)?;
+        if db.has_placeholder_names() {
+            errors.push_str("Module compilation database still contains placeholders\n");
+        } else {
+            db.write(out);
+        }
     }
 
     if errors.is_empty() {

@@ -784,16 +784,79 @@ impl<'a> NinjaGenerator<'a> {
         ))
     }
 
+    /// `cmGeneratorTarget::GetFamilyName`.
+    fn family_name(&self, target: &Target) -> String {
+        let template = target
+            .template_name
+            .clone()
+            .unwrap_or_else(|| target.name.clone());
+        if !target.imported && !target.synthetic {
+            return template;
+        }
+        let dir = &self.ctx.interp.makefiles[target.makefile].binary_dir;
+        let hash = |input: &str| {
+            let digest = <sha3::Sha3_512 as sha3::Digest>::digest(input.as_bytes());
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let dirhash = hash(dir);
+        let ident = hash(&format!("@d_{dirhash}"));
+        format!("{template}@{}", &ident[..12])
+    }
+
     /// `cmBuildDatabase::ForTarget` + `Write`: the `<path>.in` template the
     /// dyndep collator filters into the final build database.
     fn write_build_database(&mut self, target: &Target, path: &str) {
         let config = self.config.clone();
-        let compiler = self.ctx.var_safe(target.makefile, "CMAKE_CXX_COMPILER");
-        let mut translation_units = Vec::new();
-        for source in gt::sources(&self.ctx, target, &config).iter() {
-            if source.language != "CXX" || source.kind != SourceKind::ObjectSource {
-                continue;
+        let mut db = crate::build_database::BuildDatabase::default();
+        let mut set = crate::build_database::DatabaseSet::default();
+        set.name = format!("{}@{config}", target.name);
+        set.family_name = self.family_name(target);
+
+        // Linked targets with C++20 module sources are visible sets.
+        {
+            let lang = gt::linker_language(&self.ctx, target, &config);
+            let mut emitted: Vec<String> = Vec::new();
+            for (dep, _objects) in link::module_link_targets(&self.ctx, target, &lang) {
+                if gt::have_cxx20_module_sources(dep) && !dep.imported {
+                    let name = format!("{}@{config}", dep.name);
+                    if !emitted.contains(&name) {
+                        emitted.push(name.clone());
+                        set.visible_sets.push(name);
+                    }
+                }
             }
+        }
+
+        // cmGeneratorTarget::BuildFileSetInfoCache: full path -> file set.
+        let mut file_set_map: HashMap<String, (&str, crate::state::Scope)> = HashMap::new();
+        for (name, set) in &target.file_sets {
+            for (file, _relative, _backtrace) in gt::evaluate_file_set(&self.ctx, target, set) {
+                file_set_map
+                    .entry(util::collapse_full_path(&file, ""))
+                    .or_insert((set.kind.as_str(), set.scope));
+            }
+            let _ = name;
+        }
+
+        // objectDir is `gg->ConvertToOutputPath` — relative to the
+        // top binary directory.
+        let object_dir = self.ninja_path(&self.object_dir(target));
+        let work_directory = self.ctx.interp.makefiles[target.makefile]
+            .binary_dir
+            .clone();
+        for source in gt::sources(&self.ctx, target, &config).iter() {
+            let (is_cxx_module, is_private) = if source.language == "CXX" {
+                match file_set_map.get(&source.path) {
+                    Some(("CXX_MODULES", scope)) => (true, !scope.interface()),
+                    _ => (false, true),
+                }
+            } else {
+                (false, true)
+            };
+
             let source_props = crate::commands::target::find_known_source(
                 self.ctx.interp,
                 target.makefile,
@@ -805,65 +868,48 @@ impl<'a> NinjaGenerator<'a> {
                     .clone()
             })
             .unwrap_or_default();
-            let vars = flags::compile_vars_with_source_props(
+
+            let mut tu = crate::build_database::TranslationUnit::default();
+            tu.work_directory = work_directory.clone();
+            tu.source = source.path.clone();
+            if !target.synthetic {
+                tu.object = Some(format!("{object_dir}/{}", source.object_name));
+            }
+            if is_cxx_module {
+                tu.provides.insert(
+                    crate::build_database::PLACEHOLDER_NAME.to_owned(),
+                    crate::build_database::PLACEHOLDER_NAME.to_owned(),
+                );
+            }
+
+            for (cls, flag) in flags::classified_flags_for_source(
                 &self.ctx,
                 target,
                 &config,
                 source,
                 &source_props,
-            );
-            let mut source_flags = String::new();
-            if let Some(compile_flags) = source_props.get("COMPILE_FLAGS") {
-                flags::append(
-                    &mut source_flags,
-                    &self.ctx.genex(compile_flags, Some(target), None),
-                );
-            }
-            if let Some(options) = source_props.get("COMPILE_OPTIONS") {
-                for option in util::expand_list(&self.ctx.genex(options, Some(target), None), false)
-                {
-                    flags::append(&mut source_flags, &option);
+                &object_dir,
+            ) {
+                match cls {
+                    flags::FlagCls::Baseline => {
+                        tu.baseline_arguments.push(flag.clone());
+                        tu.local_arguments.push(flag.clone());
+                    }
+                    flags::FlagCls::Private => {
+                        tu.local_arguments.push(flag.clone());
+                    }
+                    _ => {}
                 }
+                tu.arguments.push(flag);
             }
-            let split = flags::unix_command_line;
-            let baseline_args: Vec<String> = {
-                let mut v = vec![compiler.clone()];
-                v.extend(split(&vars.flags));
-                v.extend(split(&vars.defines));
-                v.extend(split(&vars.includes));
-                v
-            };
-            let private_args = split(&source_flags);
-            let mut local_args = baseline_args.clone();
-            local_args.extend(private_args.iter().cloned());
-            let object = format!("{}/{}", self.object_dir(target), source.object_name);
-            let mut args = local_args.clone();
-            args.push("-o".into());
-            args.push(object.clone());
-            args.push("-c".into());
-            args.push(source.path.clone());
-            let classified = |arg: &String| {
-                if baseline_args.contains(arg) {
-                    json!({"flag":arg,"classified":["BaselineFlag","LocationFlag","PrivateFlag"]})
-                } else if private_args.contains(arg) {
-                    json!({"flag":arg,"classified":["LocationFlag","PrivateFlag"]})
-                } else {
-                    json!({"flag":arg,"classified":["LocationFlag"]})
-                }
-            };
-            translation_units.push(json!({
-                "arguments": args.iter().map(classified).collect::<Vec<_>>(),
-                "baseline-arguments": baseline_args.iter().map(|arg| json!({"flag":arg})).collect::<Vec<_>>(),
-                "local-arguments": local_args.iter().map(|arg| json!({"flag":arg})).collect::<Vec<_>>(),
-                "private-arguments": private_args.iter().map(|arg| json!({"flag":arg})).collect::<Vec<_>>(),
-                "source": source.path,
-                "work-directory": self.home_binary,
-                "object": object,
-            }));
+            tu.private = is_private;
+
+            set.translation_units.push(tu);
         }
-        let content = json!({"translation-units": translation_units});
+
+        db.sets.push(set);
         if let Err(err) =
-            crate::fsutil::write_generated(Path::new(path), stream_value(&content).as_bytes())
+            crate::fsutil::write_generated(Path::new(path), stream_value(&db.to_value()).as_bytes())
         {
             self.ctx.error(
                 target.backtrace.clone(),
@@ -1088,7 +1134,7 @@ impl<'a> NinjaGenerator<'a> {
             let template = format!("{bdb_path}.in");
             self.write_build_database(target, &template);
             build.implicit_deps.push(template.clone());
-            build.implicit_outs.push(self.ninja_path(&bdb_path));
+            build.implicit_outs.push(bdb_path);
         }
         for files in files {
             if let Some(output) = &files.scanning_output {
