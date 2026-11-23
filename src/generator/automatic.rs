@@ -191,78 +191,101 @@ fn add_pch_dependencies_for_config(
         if count == 0 && !added.contains(language) {
             continue;
         }
-        let pch_source = pch::pch_source(ctx, target, config, language);
-        let pch_header = pch::pch_header(ctx, target, config, language);
-        if pch_source.is_empty() || pch_header.is_empty() {
-            continue;
-        }
-        let pch_extension = ctx.var_safe(dir, "CMAKE_PCH_EXTENSION");
-        if pch_extension.is_empty() {
-            continue;
-        }
-        let reuse_from = target.props.get("PRECOMPILE_HEADERS_REUSE_FROM");
-        // PCH sources cannot contain C++ module references.
-        changes.source_props.push((
-            pch_source.clone(),
-            "CXX_SCAN_FOR_MODULES".into(),
-            "0".into(),
-            false,
-        ));
-        if reuse_from.is_none() {
-            changes.add_sources.push((pch_source.clone(), true));
-            added.insert(language);
-        }
-        if is_on_opt(ctx.var(dir, "CMAKE_LINK_PCH").as_deref()) {
-            let pch_file = pch::pch_file(ctx, target, config, language);
-            match reuse_from {
-                None => changes.source_props.push((
-                    pch_source.clone(),
-                    "OBJECT_OUTPUTS".into(),
-                    format!("$<$<CONFIG:{config}>:{pch_file}>"),
-                    true,
-                )),
-                Some(reuse_name) => {
-                    if is_on_opt(ctx.var(dir, "CMAKE_PCH_COPY_COMPILE_PDB").as_deref()) {
-                        changes.errors.push((gt::directory_backtrace(ctx, dir), format!(
-                            "PRECOMPILE_HEADERS_REUSE_FROM \"{reuse_name}\" requires copying the compiler program database (CMAKE_PCH_COPY_COMPILE_PDB), which cmake-rust does not support."
-                        )));
-                        continue;
-                    }
-                    let Some(reuse) = pch::reuse_target(ctx, target) else {
-                        continue;
-                    };
-                    let object = pch::pch_file_object(ctx, reuse, config, language);
-                    let config_upper = config.to_ascii_uppercase();
-                    if target.kind != TargetKind::ObjectLibrary {
-                        let property = if target.kind == TargetKind::StaticLibrary {
-                            format!("STATIC_LIBRARY_FLAGS_{config_upper}")
-                        } else {
-                            format!("LINK_FLAGS_{config_upper}")
-                        };
-                        let escaped =
-                            crate::outconv::escape_for_shell(&object, crate::outconv::NINJA_UNIX);
-                        changes
-                            .target_appends
-                            .push((property, format!(" {escaped}"), true));
-                    } else if reuse.kind == TargetKind::ObjectLibrary {
-                        changes.target_appends.push((
-                            "INTERFACE_LINK_LIBRARIES".into(),
-                            format!("$<$<CONFIG:{config}>:$<LINK_ONLY:{object}>>"),
-                            false,
-                        ));
-                    }
+        let archs = pch::pch_archs(ctx, target, config, language);
+        // Multi-arch PCH: the use options carry every architecture's
+        // -Xarch_-prefixed include flag via the USE_PCH property.
+        if archs.len() > 1 {
+            let mut use_multi_arch_pch = String::new();
+            for arch in &archs {
+                let pch_header = pch::pch_header(ctx, target, config, language, arch);
+                if !pch_header.is_empty() {
+                    use_multi_arch_pch += &format!(";-Xarch_{arch};-include{pch_header}");
                 }
             }
-        } else {
+            if !use_multi_arch_pch.is_empty() {
+                changes.target_appends.push((
+                    format!("{language}_COMPILE_OPTIONS_USE_PCH"),
+                    format!("$<$<CONFIG:{config}>:{use_multi_arch_pch}>"),
+                    false,
+                ));
+            }
+        }
+        for arch in &archs {
+            let pch_source = pch::pch_source(ctx, target, config, language, arch);
+            let pch_header = pch::pch_header(ctx, target, config, language, arch);
+            if pch_source.is_empty() || pch_header.is_empty() {
+                continue;
+            }
+            let pch_extension = ctx.var_safe(dir, "CMAKE_PCH_EXTENSION");
+            if pch_extension.is_empty() {
+                continue;
+            }
+            let reuse_from = target.props.get("PRECOMPILE_HEADERS_REUSE_FROM");
+            // PCH sources cannot contain C++ module references.
             changes.source_props.push((
                 pch_source.clone(),
-                "PCH_EXTENSION".into(),
-                pch_extension,
+                "CXX_SCAN_FOR_MODULES".into(),
+                "0".into(),
                 false,
             ));
+            if reuse_from.is_none() {
+                changes.add_sources.push((pch_source.clone(), true));
+                added.insert(language);
+            }
+            if is_on_opt(ctx.var(dir, "CMAKE_LINK_PCH").as_deref()) {
+                let pch_file = pch::pch_file(ctx, target, config, language, arch);
+                match reuse_from {
+                    None => changes.source_props.push((
+                        pch_source.clone(),
+                        "OBJECT_OUTPUTS".into(),
+                        format!("$<$<CONFIG:{config}>:{pch_file}>"),
+                        true,
+                    )),
+                    Some(reuse_name) => {
+                        if is_on_opt(ctx.var(dir, "CMAKE_PCH_COPY_COMPILE_PDB").as_deref()) {
+                            changes.errors.push((gt::directory_backtrace(ctx, dir), format!(
+                            "PRECOMPILE_HEADERS_REUSE_FROM \"{reuse_name}\" requires copying the compiler program database (CMAKE_PCH_COPY_COMPILE_PDB), which cmake-rust does not support."
+                        )));
+                            continue;
+                        }
+                        let Some(reuse) = pch::reuse_target(ctx, target) else {
+                            continue;
+                        };
+                        let object = pch::pch_file_object(ctx, reuse, config, language, arch);
+                        let config_upper = config.to_ascii_uppercase();
+                        if target.kind != TargetKind::ObjectLibrary {
+                            let property = if target.kind == TargetKind::StaticLibrary {
+                                format!("STATIC_LIBRARY_FLAGS_{config_upper}")
+                            } else {
+                                format!("LINK_FLAGS_{config_upper}")
+                            };
+                            let escaped = crate::outconv::escape_for_shell(
+                                &object,
+                                crate::outconv::NINJA_UNIX,
+                            );
+                            changes
+                                .target_appends
+                                .push((property, format!(" {escaped}"), true));
+                        } else if reuse.kind == TargetKind::ObjectLibrary {
+                            changes.target_appends.push((
+                                "INTERFACE_LINK_LIBRARIES".into(),
+                                format!("$<$<CONFIG:{config}>:$<LINK_ONLY:{object}>>"),
+                                false,
+                            ));
+                        }
+                    }
+                }
+            } else {
+                changes.source_props.push((
+                    pch_source.clone(),
+                    "PCH_EXTENSION".into(),
+                    pch_extension,
+                    false,
+                ));
+            }
+            // The header is grouped as "Precompile Header File".
+            changes.add_sources.push((pch_header, false));
         }
-        // The header is grouped as "Precompile Header File".
-        changes.add_sources.push((pch_header, false));
     }
 }
 

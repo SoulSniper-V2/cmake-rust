@@ -143,6 +143,21 @@ pub(super) fn implementation_library_targets<'i>(
         .collect()
 }
 
+/// `GetLinkImplementationLibraries(config)` entries for compile-side
+/// consumers (framework include directories, -F flags): each item's raw
+/// text and resolved target, so non-target items remain visible.
+pub(super) fn implementation_items<'i>(
+    ctx: &GenCtx<'i>,
+    target: &'i Target,
+    config: &str,
+    language: &str,
+) -> Vec<(String, Option<&'i Target>)> {
+    implementation(&Query::new(ctx, config, language), target)
+        .into_iter()
+        .map(|item| (item.text, item.target))
+        .collect()
+}
+
 /// The targets of `ComputeLinkImplementationLibraries(config, UseTo::Link)`,
 /// for any kind of head target.
 pub(super) fn implementation_targets<'i>(
@@ -515,25 +530,7 @@ impl<'a, 'i> Query<'a, 'i> {
     }
 
     fn ninja_path(&self, path: &str) -> String {
-        let path = Path::new(path);
-        let relative = match path.strip_prefix(self.top_binary()) {
-            Ok(relative) if relative.as_os_str().is_empty() => ".".into(),
-            Ok(relative) => relative.to_string_lossy().into_owned(),
-            Err(_) => path.to_string_lossy().into_owned(),
-        };
-        // cmGlobalNinjaGenerator::NinjaOutputPath (via ConvertToNinjaPath).
-        let mut prefix = self
-            .ctx
-            .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
-            .unwrap_or_default();
-        if !prefix.is_empty() && !prefix.ends_with('/') {
-            prefix.push('/');
-        }
-        if !prefix.is_empty() && !crate::util::is_full_path(&relative) {
-            format!("{prefix}{relative}")
-        } else {
-            relative
-        }
+        ninja_path(self.ctx, path)
     }
 }
 
@@ -937,4 +934,28 @@ fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
         .into_iter()
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+/// `cmGlobalNinjaGenerator::ConvertToNinjaPath`, which
+/// `cmNinjaLinkLineComputer::ConvertToLinkReference` applies.
+pub(crate) fn ninja_path(ctx: &GenCtx, path: &str) -> String {
+    let top_binary = ctx.interp.makefiles[0].binary_dir.as_str();
+    let path = Path::new(path);
+    let relative = match path.strip_prefix(top_binary) {
+        Ok(relative) if relative.as_os_str().is_empty() => ".".into(),
+        Ok(relative) => relative.to_string_lossy().into_owned(),
+        Err(_) => path.to_string_lossy().into_owned(),
+    };
+    // cmGlobalNinjaGenerator::NinjaOutputPath (via ConvertToNinjaPath).
+    let mut prefix = ctx
+        .var(0, "CMAKE_NINJA_OUTPUT_PATH_PREFIX")
+        .unwrap_or_default();
+    if !prefix.is_empty() && !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+    if !prefix.is_empty() && !crate::util::is_full_path(&relative) {
+        format!("{prefix}{relative}")
+    } else {
+        relative
+    }
 }

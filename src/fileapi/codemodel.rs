@@ -1018,12 +1018,19 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         }
         // PCH options.
         if !lang.is_empty() && !is_on_opt(prop("SKIP_PRECOMPILE_HEADERS").as_deref()) {
-            let pch_source = pch::pch_source(self.ctx, target, &self.config, lang);
-            if !pch_source.is_empty() {
-                let options = if source.path == pch_source {
-                    pch::pch_create_options(self.ctx, target, &self.config, lang)
-                } else {
-                    pch::pch_use_options(self.ctx, target, &self.config, lang)
+            let mut pch_sources = std::collections::HashMap::new();
+            for arch in pch::pch_archs(self.ctx, target, &self.config, lang) {
+                let pch_source = pch::pch_source(self.ctx, target, &self.config, lang, &arch);
+                if !pch_source.is_empty() {
+                    pch_sources.insert(pch_source, arch);
+                }
+            }
+            if !pch_sources.is_empty() {
+                let options = match pch_sources.get(&source.path) {
+                    Some(arch) => {
+                        pch::pch_create_options(self.ctx, target, &self.config, lang, arch)
+                    }
+                    None => pch::pch_use_options(self.ctx, target, &self.config, lang, ""),
                 };
                 let evaluated = self.ctx.genex(&options, Some(target), Some(lang));
                 let mut tmp = String::new();

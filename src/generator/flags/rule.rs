@@ -168,6 +168,9 @@ fn replacement(
                 format!("{launcher} {escaped}")
             };
         }
+        // cmNinjaNormalTargetGenerator::WriteLinkStatement sets
+        // vars.AIXExports to the "$AIX_EXPORTS" ninja variable.
+        "AIX_EXPORTS" if step == RuleStep::Link => return "$AIX_EXPORTS".to_owned(),
         "CONFIG"
         | "ROLE"
         | "TARGET_LABELS"

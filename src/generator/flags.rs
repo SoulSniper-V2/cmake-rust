@@ -13,6 +13,7 @@ pub(crate) use compile::{
     interface_values, pch_items, standard_option,
 };
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
+pub(crate) use link::module_definition_info;
 pub use link::{link_dependency_file, link_flag_vars};
 pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
@@ -208,10 +209,348 @@ impl Flags<'_, '_> {
         {
             standard::append_standard(self, &mut flags);
         }
+        self.language_flags_tail(&mut flags);
         if self.ipo_enabled() {
             self.append_feature(&mut flags, "IPO");
         }
         flags
+    }
+
+    /// The `AddLanguageFlags` tail after the language standard option:
+    /// compiler-ABI flag additions (Clang VFS overlay, MSVC runtime
+    /// library/checks/debug format, Watcom runtime library).
+    fn language_flags_tail(&self, flags: &mut String) {
+        let mut compiler_id = self.lang_var("COMPILER_ID").unwrap_or_default();
+        let mut simulate_id = self.lang_var("SIMULATE_ID").unwrap_or_default();
+        if self.lang == "RC"
+            && self
+                .var("CMAKE_RC_COMPILER")
+                .is_some_and(|rc| rc.contains("llvm-rc"))
+        {
+            let c_id = self.var("CMAKE_C_COMPILER_ID").unwrap_or_default();
+            if !c_id.is_empty() {
+                compiler_id = c_id;
+                simulate_id = self.var("CMAKE_C_SIMULATE_ID").unwrap_or_default();
+            } else {
+                compiler_id = self.var("CMAKE_CXX_COMPILER_ID").unwrap_or_default();
+                simulate_id = self.var("CMAKE_CXX_SIMULATE_ID").unwrap_or_default();
+            }
+        }
+        let msvc_abi = compiler_id == "MSVC" || simulate_id == "MSVC";
+        let watcom_abi = compiler_id == "OpenWatcom" || simulate_id == "OpenWatcom";
+
+        // CMAKE_CLANG_VFS_OVERLAY for Clang compilers.
+        if compiler_id == "Clang"
+            && let Some(overlay) = self.var("CMAKE_CLANG_VFS_OVERLAY")
+        {
+            if simulate_id == "MSVC" {
+                append_options(
+                    flags,
+                    [
+                        "-Xclang".to_owned(),
+                        "-ivfsoverlay".to_owned(),
+                        "-Xclang".to_owned(),
+                        overlay,
+                    ],
+                );
+            } else {
+                append_options(flags, ["-ivfsoverlay".to_owned(), overlay]);
+            }
+        }
+
+        // MSVC runtime library selection, activated by a default.
+        if self
+            .var("CMAKE_MSVC_RUNTIME_LIBRARY_DEFAULT")
+            .is_some_and(|value| !value.is_empty())
+        {
+            let value = self
+                .prop("MSVC_RUNTIME_LIBRARY")
+                .map(str::to_owned)
+                .or_else(|| self.var("CMAKE_MSVC_RUNTIME_LIBRARY_DEFAULT"))
+                .unwrap_or_default();
+            let value = self.eval(&value);
+            if !value.is_empty() {
+                if let Some(options) =
+                    self.lang_var(&format!("COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_{value}"))
+                {
+                    append_options(flags, expand_list(&options, false));
+                } else if msvc_abi {
+                    self.local_error(format!(
+                        "MSVC_RUNTIME_LIBRARY value '{value}' not known for this {} compiler.",
+                        self.lang
+                    ));
+                }
+            }
+        }
+
+        // Watcom runtime library selection, activated by a default.
+        if self
+            .var("CMAKE_WATCOM_RUNTIME_LIBRARY_DEFAULT")
+            .is_some_and(|value| !value.is_empty())
+        {
+            let value = self
+                .prop("WATCOM_RUNTIME_LIBRARY")
+                .map(str::to_owned)
+                .or_else(|| self.var("CMAKE_WATCOM_RUNTIME_LIBRARY_DEFAULT"))
+                .unwrap_or_default();
+            let value = self.eval(&value);
+            if !value.is_empty() {
+                if let Some(options) =
+                    self.lang_var(&format!("COMPILE_OPTIONS_WATCOM_RUNTIME_LIBRARY_{value}"))
+                {
+                    append_options(flags, expand_list(&options, false));
+                } else if watcom_abi {
+                    self.local_error(format!(
+                        "WATCOM_RUNTIME_LIBRARY value '{value}' not known for this {} compiler.",
+                        self.lang
+                    ));
+                }
+            }
+        }
+
+        // MSVC runtime checks, activated by a default.
+        if self
+            .var("CMAKE_MSVC_RUNTIME_CHECKS_DEFAULT")
+            .is_some_and(|value| !value.is_empty())
+        {
+            let value = self
+                .prop("MSVC_RUNTIME_CHECKS")
+                .map(str::to_owned)
+                .or_else(|| self.var("CMAKE_MSVC_RUNTIME_CHECKS_DEFAULT"))
+                .unwrap_or_default();
+            let mut checks = expand_list(&self.eval(&value), false);
+            checks.sort_unstable();
+            checks.dedup();
+            // RTC1/RTCsu VS GUI workaround.
+            if checks.iter().any(|c| c == "RTCsu")
+                || (checks.iter().any(|c| c == "StackFrameErrorCheck")
+                    && checks.iter().any(|c| c == "UninitializedVariable"))
+            {
+                checks.retain(|c| {
+                    !matches!(
+                        c.as_str(),
+                        "StackFrameErrorCheck" | "UninitializedVariable" | "RTCsu"
+                    )
+                });
+                checks.push("RTCsu".to_owned());
+            }
+            for check in checks {
+                if let Some(options) =
+                    self.lang_var(&format!("COMPILE_OPTIONS_MSVC_RUNTIME_CHECKS_{check}"))
+                {
+                    append_options(flags, expand_list(&options, false));
+                } else if msvc_abi {
+                    self.local_error(format!(
+                        "MSVC_RUNTIME_CHECKS value '{check}' not known for this {} compiler.",
+                        self.lang
+                    ));
+                }
+            }
+        }
+
+        // MSVC debug information format (CMP0141-activated by a default).
+        if let Some(format_name) = self.msvc_debug_format_name()
+            && !format_name.is_empty()
+        {
+            if let Some(options) = self.lang_var(&format!(
+                "COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_{format_name}"
+            )) {
+                append_options(flags, expand_list(&options, false));
+            } else if msvc_abi {
+                self.local_error(format!(
+                    "MSVC_DEBUG_INFORMATION_FORMAT value '{format_name}' not known for this {} compiler.",
+                    self.lang
+                ));
+            }
+        }
+    }
+
+    /// `cmLocalGenerator::GetMSVCDebugFormatName`.
+    fn msvc_debug_format_name(&self) -> Option<String> {
+        let default = self.var("CMAKE_MSVC_DEBUG_INFORMATION_FORMAT_DEFAULT")?;
+        if default.is_empty() {
+            return None;
+        }
+        let value = self
+            .prop("MSVC_DEBUG_INFORMATION_FORMAT")
+            .map(str::to_owned)
+            .unwrap_or(default);
+        Some(self.eval(&value))
+    }
+
+    /// `cmGeneratorTarget::GetAppleArchs` (EmitUniversalBinaryFlags is
+    /// always on for the Ninja generators).
+    fn apple_archs(&self) -> Vec<String> {
+        if !self.target.platform.apple {
+            return Vec::new();
+        }
+        let archs = if self.config.is_empty() {
+            self.prop("OSX_ARCHITECTURES")
+        } else {
+            self.prop(&format!(
+                "OSX_ARCHITECTURES_{}",
+                self.config.to_ascii_uppercase()
+            ))
+            .or_else(|| self.prop("OSX_ARCHITECTURES"))
+        };
+        let archs = archs
+            .map(|archs| expand_list(archs, false))
+            .unwrap_or_default();
+        // Fall back to a default architecture if no compiler target is set.
+        if !archs.is_empty()
+            || self
+                .lang_var("COMPILER_TARGET")
+                .is_some_and(|target| !target.is_empty())
+        {
+            return archs;
+        }
+        self.var("_CMAKE_APPLE_ARCHS_DEFAULT")
+            .map(|archs| expand_list(&archs, false))
+            .unwrap_or_default()
+    }
+
+    /// `cmLocalGenerator`'s `AppleArchSysroots` map from its constructor.
+    fn apple_arch_sysroots(&self) -> std::collections::BTreeMap<String, String> {
+        let mut map = std::collections::BTreeMap::new();
+        let Some(sysroots) = self.var("CMAKE_APPLE_ARCH_SYSROOTS") else {
+            return map;
+        };
+        let archs_text = self.var("CMAKE_OSX_ARCHITECTURES").unwrap_or_default();
+        let archs = expand_list(&archs_text, false);
+        let roots = expand_list(&sysroots, true);
+        if archs.len() == roots.len() {
+            for (arch, root) in archs.into_iter().zip(roots) {
+                map.insert(arch, root);
+            }
+        } else {
+            // The constructor issues this once per directory.
+            let key = format!("apple-arch-sysroots:{}", self.target.makefile);
+            if self
+                .ctx
+                .memo
+                .borrow_mut()
+                .insert(key, String::new())
+                .is_none()
+            {
+                self.local_error(format!(
+                    "CMAKE_APPLE_ARCH_SYSROOTS:\n  {sysroots}\nis not the same length as CMAKE_OSX_ARCHITECTURES:\n  {archs_text}"
+                ));
+            }
+        }
+        map
+    }
+
+    /// `cmLocalGenerator::AllAppleArchSysrootsAreTheSame`.
+    fn all_apple_arch_sysroots_same(
+        sysroots: &std::collections::BTreeMap<String, String>,
+        archs: &[String],
+        sysroot: Option<&str>,
+    ) -> bool {
+        let Some(sysroot) = sysroot else {
+            return false;
+        };
+        archs.iter().all(|arch| {
+            let arch_sysroot = sysroots.get(arch.as_str()).map_or("", String::as_str);
+            crate::util::is_off(arch_sysroot) || sysroot == arch_sysroot
+        })
+    }
+
+    /// `cmLocalGenerator::AddArchitectureFlags`.
+    fn add_architecture_flags(&self, flags: &mut String, filter_arch: &str) {
+        // Only add Apple specific flags on Apple platforms
+        // (EmitUniversalBinaryFlags is always true for Ninja).
+        if !self.target.platform.apple {
+            return;
+        }
+        let archs = self.apple_archs();
+        if !archs.is_empty() && matches!(self.lang, "C" | "CXX" | "OBJC" | "OBJCXX" | "ASM") {
+            for arch in &archs {
+                if filter_arch.is_empty() || filter_arch == arch {
+                    append(flags, &format!("-arch {arch}"));
+                }
+            }
+        }
+
+        let mut sysroot = self.var("CMAKE_OSX_SYSROOT");
+        if sysroot.as_deref().is_none_or(str::is_empty)
+            && self
+                .lang_var("COMPILER_APPLE_SYSROOT_REQUIRED")
+                .is_some_and(|value| crate::util::is_on(&value))
+        {
+            sysroot = self.var("_CMAKE_OSX_SYSROOT_PATH");
+        }
+        if sysroot.as_deref() == Some("/") {
+            sysroot = None;
+        }
+        if let Some(sysroot_flag) = self
+            .lang_var("SYSROOT_FLAG")
+            .filter(|flag| !flag.is_empty())
+        {
+            let arch_sysroots = self.apple_arch_sysroots();
+            if !arch_sysroots.is_empty()
+                && !Self::all_apple_arch_sysroots_same(&arch_sysroots, &archs, sysroot.as_deref())
+            {
+                for arch in &archs {
+                    let arch_sysroot = arch_sysroots.get(arch.as_str()).map_or("", String::as_str);
+                    if crate::util::is_off(arch_sysroot) {
+                        continue;
+                    }
+                    if filter_arch.is_empty() || filter_arch == arch {
+                        // Combine sysroot flag and path to work with -Xarch.
+                        append(
+                            flags,
+                            &format!(
+                                "-Xarch_{arch} {}",
+                                shell_with_make_vars(&format!("{sysroot_flag}{arch_sysroot}"))
+                            ),
+                        );
+                    }
+                }
+            } else if let Some(sysroot) = sysroot.as_deref().filter(|value| !value.is_empty()) {
+                append(
+                    flags,
+                    &format!("{sysroot_flag} {}", shell_with_make_vars(sysroot)),
+                );
+            }
+        }
+
+        if let Some(deployment_target) = self
+            .var("CMAKE_OSX_DEPLOYMENT_TARGET")
+            .filter(|value| !value.is_empty())
+            && let Some(flag) = self
+                .lang_var("OSX_DEPLOYMENT_TARGET_FLAG")
+                .filter(|value| !value.is_empty())
+            // CMAKE_<LANG>_COMPILER_TARGET overrides a --target= for
+            // CMAKE_OSX_DEPLOYMENT_TARGET, e.g., for visionOS.
+            && (!deployment_target.starts_with("--target=")
+                || self
+                    .lang_var("COMPILER_TARGET")
+                    .is_none_or(|value| value.is_empty()))
+        {
+            let mut flag = flag;
+            // Add the deployment target architecture to the flag, if needed.
+            // This placeholder is meant for visionOS, so default to arm64
+            // unless only non-arm64 archs are given.
+            if let Some(pos) = flag.find("<ARCH>") {
+                let arch = if archs.is_empty() || archs.iter().any(|arch| arch == "arm64") {
+                    "arm64"
+                } else {
+                    archs[0].as_str()
+                };
+                flag = format!("{}{arch}{}", &flag[..pos], &flag[pos + "<ARCH>".len()..]);
+            }
+            // Add the deployment target version to the flag.
+            if let Some(pos) = flag.find("<VERSION_MIN>") {
+                flag = format!(
+                    "{}{deployment_target}{}",
+                    &flag[..pos],
+                    &flag[pos + "<VERSION_MIN>".len()..]
+                );
+            } else {
+                flag.push_str(&deployment_target);
+            }
+            append(flags, &flag);
+        }
     }
 
     fn append_feature(&self, flags: &mut String, feature: &str) {
@@ -436,4 +775,16 @@ pub(crate) fn usage_item_fragments(
     .into_iter()
     .map(|item| (item.value, ctx.backtrace(item.backtrace)))
     .collect()
+}
+
+/// `cmGeneratorTarget::GetAppleArchs` for a single language, used by the
+/// per-architecture PCH machinery.
+pub(crate) fn apple_archs(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<String> {
+    Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    }
+    .apple_archs()
 }

@@ -42,6 +42,20 @@ pub fn compile_vars_with_source_props(
         config,
         lang: &source.language,
     };
+    // Precompile headers compile options (cmNinjaTargetGenerator::
+    // ComputeFlagsForObject).
+    let mut filter_arch = String::new();
+    let mut pch_sources = std::collections::HashMap::new();
+    for arch in crate::generator::pch::pch_archs(ctx, target, config, &source.language) {
+        let pch_source =
+            crate::generator::pch::pch_source(ctx, target, config, &source.language, &arch);
+        if pch_source == source.path {
+            filter_arch = arch.clone();
+        }
+        if !pch_source.is_empty() {
+            pch_sources.insert(pch_source, arch);
+        }
+    }
     let mut flags = String::new();
     if let Some(language) = properties.get("LANGUAGE")
         && inputs.policy(119) == PolicyStatus::New
@@ -52,7 +66,7 @@ pub fn compile_vars_with_source_props(
         }
         .append_feature(&mut flags, "EXPLICIT_LANGUAGE");
     }
-    append(&mut flags, &target_flags(&inputs));
+    append(&mut flags, &target_flags(&inputs, &filter_arch));
     if inputs.lang == "Fortran" {
         let format = |value: &str| {
             value.split(';').rev().find_map(|f| match f {
@@ -90,12 +104,18 @@ pub fn compile_vars_with_source_props(
     }
     // Precompile headers compile options (cmNinjaTargetGenerator::
     // ComputeFlagsForObject).
-    let pch_source = crate::generator::pch::pch_source(ctx, target, config, &source.language);
-    if !pch_source.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
-        let options = if source.path == pch_source {
-            crate::generator::pch::pch_create_options(ctx, target, config, &source.language)
-        } else {
-            crate::generator::pch::pch_use_options(ctx, target, config, &source.language)
+    if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+        let options = match pch_sources.get(&source.path) {
+            Some(arch) => crate::generator::pch::pch_create_options(
+                ctx,
+                target,
+                config,
+                &source.language,
+                arch,
+            ),
+            None => {
+                crate::generator::pch::pch_use_options(ctx, target, config, &source.language, "")
+            }
         };
         append_options(&mut flags, expand_list(&inputs.eval(&options), false));
     }
@@ -162,14 +182,15 @@ pub(crate) fn fortran_module_dir(ctx: &GenCtx, target: &Target) -> Option<String
     Some(dir)
 }
 
-fn target_flags(inputs: &Flags<'_, '_>) -> String {
-    let mut flags = flags_blob(inputs);
+fn target_flags(inputs: &Flags<'_, '_>, filter_arch: &str) -> String {
+    let mut flags = flags_blob(inputs, filter_arch);
     append_compile_options_tail(&mut flags, inputs);
     flags
 }
 
-fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
+fn target_flags_prefix(inputs: &Flags<'_, '_>, filter_arch: &str) -> String {
     let mut flags = inputs.language_flags(false);
+    inputs.add_architecture_flags(&mut flags, filter_arch);
     if inputs.lang == "Fortran" {
         append(
             &mut flags,
@@ -272,8 +293,8 @@ fn target_flags_prefix(inputs: &Flags<'_, '_>) -> String {
 
 /// `cmLocalGenerator::GetTargetCompileFlags`: the `compileFlags` blob
 /// (everything before `AddCompileOptions`'s per-entry appends).
-fn flags_blob(inputs: &Flags<'_, '_>) -> String {
-    target_flags_prefix(inputs)
+fn flags_blob(inputs: &Flags<'_, '_>, filter_arch: &str) -> String {
+    target_flags_prefix(inputs, filter_arch)
 }
 
 /// The `AddCompileOptions` tail: COMPILE_FLAGS/regex-filtered options plus
@@ -600,7 +621,63 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     for dir in &standard {
         emit(dir);
     }
+    for dir in framework_includes(inputs) {
+        emit(&dir);
+    }
     result
+}
+
+/// `cmGeneratorTarget::GetIncludeDirectories`: the framework include
+/// directories appended on Apple platforms.
+fn framework_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
+    if !inputs.target.platform.apple {
+        return Vec::new();
+    }
+    let mut dirs = Vec::new();
+    for (text, lib_target) in
+        crate::generator::link::implementation_items(inputs.ctx, inputs.target, inputs.config, "")
+    {
+        let lib_dir = match lib_target {
+            None => crate::util::collapse_full_path(&text, &inputs.ctx.interp.home_binary),
+            Some(lib_target)
+                if lib_target.is_framework_on_apple()
+                    || is_imported_framework_folder(inputs, lib_target) =>
+            {
+                crate::generator::target::full_path(
+                    inputs.ctx,
+                    lib_target,
+                    inputs.config,
+                    crate::generator::target::ArtifactType::Runtime,
+                    false,
+                )
+            }
+            Some(_) => continue,
+        };
+        let Some(fw) =
+            crate::apple::split_framework_path(&lib_dir, crate::apple::FrameworkFormat::Relaxed)
+        else {
+            continue;
+        };
+        dirs.push(fw.framework_path());
+    }
+    dirs
+}
+
+/// `cmGeneratorTarget::IsImportedFrameworkFolderOnApple`.
+fn is_imported_framework_folder(inputs: &Flags<'_, '_>, target: &Target) -> bool {
+    target.platform.apple
+        && target.imported
+        && matches!(
+            target.kind,
+            TargetKind::StaticLibrary | TargetKind::SharedLibrary | TargetKind::UnknownLibrary
+        )
+        && crate::apple::is_path_to_framework(&crate::generator::target::full_path(
+            inputs.ctx,
+            target,
+            inputs.config,
+            crate::generator::target::ArtifactType::Runtime,
+            false,
+        ))
 }
 
 fn include_flags(inputs: &Flags<'_, '_>, dirs: &[String], system: &HashSet<String>) -> String {
@@ -618,21 +695,49 @@ fn include_flags(inputs: &Flags<'_, '_>, dirs: &[String], system: &HashSet<Strin
         .then(|| inputs.var(&format!("CMAKE_INCLUDE_SYSTEM_FLAG_{}", inputs.lang)))
         .flatten();
     let quote_paths = inputs.var("CMAKE_QUOTE_INCLUDE_PATHS").is_some();
+    let fw_flag = if is_on_opt(inputs.var("APPLE").as_deref()) {
+        inputs
+            .lang_var("FRAMEWORK_SEARCH_FLAG")
+            .filter(|flag| !flag.is_empty())
+    } else {
+        None
+    };
+    let sys_fw_flag = fw_flag
+        .as_ref()
+        .and_then(|_| inputs.lang_var("SYSTEM_FRAMEWORK_SEARCH_FLAG"));
 
     let mut flags = String::new();
+    let mut flag_used = false;
     let mut used_system = false;
+    let mut emitted = HashSet::new();
     let sorted = dirs
         .iter()
         .filter(|dir| !system_dir(dir))
         .chain(dirs.iter().filter(|dir| system_dir(dir)));
-    for (index, dir) in sorted.enumerate() {
-        if index == 0 || repeat {
+    for dir in sorted {
+        if let Some(fw_flag) = fw_flag.as_deref()
+            && crate::apple::is_path_to_framework(dir)
+        {
+            let fw_dir = crate::util::filename_path(dir);
+            if emitted.insert(fw_dir.clone()) {
+                if let Some(sys_fw) = sys_fw_flag.as_deref().filter(|_| system_dir(&fw_dir)) {
+                    flags.push_str(sys_fw);
+                } else {
+                    flags.push_str(fw_flag);
+                }
+                flags.push_str(&shell_with_make_vars(&fw_dir));
+                flags.push(' ');
+            }
+            continue;
+        }
+        if !flag_used || repeat {
             if let Some(flag) = system_prefix.as_ref().filter(|_| system_dir(dir)) {
                 used_system = true;
                 flags.push_str(flag);
             } else {
                 flags.push_str(&prefix);
             }
+            flag_used = true;
         }
         let path = shell_with_make_vars(dir);
         if quote_paths && !path.starts_with('"') {
@@ -700,7 +805,7 @@ pub(crate) fn flag_fragments(
         lang,
     };
     let mut out = Vec::new();
-    let blob = flags_blob(&inputs);
+    let blob = flags_blob(&inputs, "");
     if !blob.is_empty() {
         out.push((blob, Vec::new()));
     }

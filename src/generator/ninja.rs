@@ -2995,13 +2995,34 @@ impl<'a> NinjaGenerator<'a> {
             let source_abs = self.ninja_abs_path(&source.path);
             build.explicit_deps.push(source_abs.clone());
             // Precompiled header dependencies.
-            let pch_source = super::pch::pch_source(&self.ctx, target, &config, &source.language);
-            if !pch_source.is_empty() && source_props.get("SKIP_PRECOMPILE_HEADERS").is_none() {
-                let header = super::pch::pch_header(&self.ctx, target, &config, &source.language);
-                build.implicit_deps.push(self.ninja_path(&header));
-                if source.path != pch_source {
-                    let file = super::pch::pch_file(&self.ctx, target, &config, &source.language);
-                    build.implicit_deps.push(self.ninja_path(&file));
+            let pch_archs = super::pch::pch_archs(&self.ctx, target, &config, &source.language);
+            let mut pch_sources = std::collections::HashSet::new();
+            for arch in &pch_archs {
+                let pch_source =
+                    super::pch::pch_source(&self.ctx, target, &config, &source.language, arch);
+                if !pch_source.is_empty() {
+                    pch_sources.insert(pch_source);
+                }
+            }
+            if !pch_sources.is_empty() && source_props.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+                for arch in &pch_archs {
+                    let header =
+                        super::pch::pch_header(&self.ctx, target, &config, &source.language, arch);
+                    if !header.is_empty() {
+                        build.implicit_deps.push(self.ninja_path(&header));
+                    }
+                    if !pch_sources.contains(&source.path) {
+                        let file = super::pch::pch_file(
+                            &self.ctx,
+                            target,
+                            &config,
+                            &source.language,
+                            arch,
+                        );
+                        if !file.is_empty() {
+                            build.implicit_deps.push(self.ninja_path(&file));
+                        }
+                    }
                 }
             }
             if let Some(depends) = source_props.get("OBJECT_DEPENDS") {
@@ -3540,6 +3561,14 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .map(|dep| self.ninja_path(dep))
                 .collect();
+            // cmNinjaTargetGenerator::ComputeLinkDeps: the module
+            // definition sources, then user-specified manifest sources
+            // (GetManifests).
+            if let Some(info) = flags::module_definition_info(&self.ctx, target, &config) {
+                build
+                    .implicit_deps
+                    .extend(info.sources.iter().map(|source| self.ninja_path(source)));
+            }
             for source in gt::sources(&self.ctx, target, &config).iter() {
                 if source.kind == SourceKind::Manifest {
                     build.implicit_deps.push(self.ninja_path(&source.path));
@@ -3684,6 +3713,15 @@ impl<'a> NinjaGenerator<'a> {
                 "TARGET_IMPLIB".into(),
                 self.shell(&self.ninja_path(&implib)),
             );
+        }
+        // cmCommonTargetGenerator::GetAIXExports.
+        if target.platform.aix
+            && target
+                .props
+                .get("AIX_EXPORT_ALL_SYMBOLS")
+                .is_some_and(|value| !util::is_on(value))
+        {
+            build.variables.insert("AIX_EXPORTS".into(), "-n".into());
         }
         if !self.set_msvc_target_pdb_variable(target, &mut build.variables) {
             // It is common to place debug symbols at a specific place, so a

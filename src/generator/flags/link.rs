@@ -84,7 +84,15 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
                 );
                 raw.push(' ');
             }
+            // `cmLocalGenerator::GetExeExportFlags`.
             if is_on_opt(inputs.prop("ENABLE_EXPORTS"))
+                && is_on_opt(
+                    inputs
+                        .ctx
+                        .interp
+                        .global_props
+                        .get("TARGET_SUPPORTS_SHARED_LIBS"),
+                )
                 && let Some(export) =
                     inputs.var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
                 && !export.is_empty()
@@ -151,8 +159,10 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         {
             append_options(&mut extra, expand_list(&options, false));
         }
+        append_module_definition_flag(&inputs, &mut extra);
         append(&mut flags, &encode_literal(&extra));
         append_depfile_flag(&inputs, &mut flags);
+        append_osx_ver_flags(&inputs, &mut flags);
         if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
             && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
         {
@@ -165,9 +175,12 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         .trim_matches(cmake_space)
         .to_owned();
     if target.kind == TargetKind::Executable {
-        result.flags = language_flags;
+        let mut flags = language_flags;
+        inputs.add_architecture_flags(&mut flags, "");
+        result.flags = flags;
     } else {
         result.language_compile_flags = language_flags;
+        inputs.add_architecture_flags(&mut result.arch_flags, "");
     }
     result.link_flags = flags.trim_matches(cmake_space).to_owned();
     result
@@ -271,6 +284,73 @@ fn warning_as_error(inputs: &Flags<'_, '_>, flags: &mut String) {
             inputs.target.name
         ));
     }
+}
+
+/// `cmGeneratorTarget::ModuleDefinitionInfo`.
+pub(crate) struct ModuleDefinitionInfo {
+    /// The full paths of the target's `.def` sources.
+    pub sources: Vec<String>,
+    /// The `.def` file used when linking; empty without one.
+    pub def_file: String,
+}
+
+/// `cmGeneratorTarget::GetModuleDefinitionInfo`: `None` for target types
+/// on which a module definition file makes no sense.
+pub(crate) fn module_definition_info(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+) -> Option<ModuleDefinitionInfo> {
+    if !matches!(
+        target.kind,
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) && !target.is_executable_with_exports()
+    {
+        return None;
+    }
+    // ComputeModuleDefinitionInfo.
+    let sources: Vec<String> = crate::generator::target::sources(ctx, target, config)
+        .iter()
+        .filter(|source| source.kind == crate::generator::target::SourceKind::ModuleDefinition)
+        .map(|source| source.path.clone())
+        .collect();
+    let windows_export_all_symbols = ctx
+        .var(target.makefile, "CMAKE_SUPPORT_WINDOWS_EXPORT_ALL_SYMBOLS")
+        .is_some_and(|value| crate::util::is_on(&value))
+        && is_on_opt(target.props.get("WINDOWS_EXPORT_ALL_SYMBOLS"));
+    // DefFileGenerated: `__create_def` writes exports.def before linking.
+    let def_file_generated = windows_export_all_symbols || sources.len() > 1;
+    let def_file = if def_file_generated {
+        format!(
+            "{}exports.def",
+            crate::generator::target::object_directory(ctx, target, config)
+        )
+    } else {
+        sources.first().cloned().unwrap_or_default()
+    };
+    Some(ModuleDefinitionInfo { sources, def_file })
+}
+
+/// `cmLocalGenerator::AppendModuleDefinitionFlag`: the `/DEF:` or bare
+/// `.def` path from `cmGeneratorTarget::GetModuleDefinitionInfo`.
+fn append_module_definition_flag(inputs: &Flags<'_, '_>, flags: &mut String) {
+    let Some(info) = module_definition_info(inputs.ctx, inputs.target, inputs.config) else {
+        return;
+    };
+    if info.def_file.is_empty() {
+        return;
+    }
+    let def_file = info.def_file;
+    let flag = inputs
+        .lang_var("LINK_DEF_FILE_FLAG")
+        .or_else(|| inputs.var("CMAKE_LINK_DEF_FILE_FLAG"));
+    let Some(flag) = flag else {
+        return;
+    };
+    // ConvertToOutputFormat(ConvertToLinkReference(defFile), SHELL), with
+    // the Ninja link line computer's reference.
+    let reference = crate::generator::link::ninja_path(inputs.ctx, &def_file);
+    append(flags, &format!("{flag}{}", shell(&reference)));
 }
 
 /// `cmGeneratorTarget::ResolveLinkerWrapper(items, language, joinItems =
@@ -557,7 +637,15 @@ pub(crate) fn codemodel_link_flags(
                 );
                 raw.push(' ');
             }
+            // `cmLocalGenerator::GetExeExportFlags`.
             if is_on_opt(inputs.prop("ENABLE_EXPORTS"))
+                && is_on_opt(
+                    inputs
+                        .ctx
+                        .interp
+                        .global_props
+                        .get("TARGET_SUPPORTS_SHARED_LIBS"),
+                )
                 && let Some(export) =
                     inputs.var(&format!("CMAKE_SHARED_LIBRARY_LINK_{language}_FLAGS"))
                 && !export.is_empty()
@@ -624,4 +712,65 @@ pub(crate) fn codemodel_link_flags(
         out.push((encode_literal(&extra), Vec::new()));
     }
     (language_flags, out)
+}
+
+/// `cmCommonTargetGenerator::AppendOSXVerFlag`: the
+/// `-compatibility_version` and `-current_version` flags for Apple shared
+/// and module libraries.
+fn append_osx_ver_flags(inputs: &Flags<'_, '_>, flags: &mut String) {
+    if !matches!(
+        inputs.target.kind,
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) {
+        return;
+    }
+    for (name, fallback) in [("COMPATIBILITY", "SOVERSION"), ("CURRENT", "VERSION")] {
+        let Some(flag) = inputs.lang_var(&format!("OSX_{name}_VERSION_FLAG")) else {
+            continue;
+        };
+        let macho = format!("MACHO_{name}_VERSION");
+        let prop = if inputs.prop(&macho).is_some() {
+            macho.as_str()
+        } else {
+            fallback
+        };
+        let (major, minor, patch) = target_version_parts(inputs.prop(prop).unwrap_or_default());
+        if major > 0 || minor > 0 || patch > 0 {
+            append(flags, &format!("{flag}{major}.{minor}.{patch}"));
+        }
+    }
+}
+
+/// `cmGeneratorTarget::GetTargetVersion`: `sscanf("%d.%d.%d")` parsing,
+/// where each conversion that fails leaves the component at zero.
+fn target_version_parts(version: &str) -> (i64, i64, i64) {
+    fn number(text: &str) -> Option<(i64, &str)> {
+        let text = text.trim_start();
+        let bytes = text.as_bytes();
+        let mut len = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+        while bytes.get(len).is_some_and(u8::is_ascii_digit) {
+            len += 1;
+        }
+        if len == 0 || (len == 1 && !bytes[0].is_ascii_digit()) {
+            return None;
+        }
+        Some((text[..len].parse().ok()?, &text[len..]))
+    }
+    let Some((major, mut rest)) = number(version) else {
+        return (0, 0, 0);
+    };
+    let mut minor = 0;
+    let mut patch = 0;
+    if let Some(next) = rest.strip_prefix('.')
+        && let Some((value, after)) = number(next)
+    {
+        minor = value;
+        rest = after;
+        if let Some(next) = rest.strip_prefix('.')
+            && let Some((value, _)) = number(next)
+        {
+            patch = value;
+        }
+    }
+    (major, minor, patch)
 }

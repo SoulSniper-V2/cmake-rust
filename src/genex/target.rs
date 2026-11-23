@@ -1067,6 +1067,18 @@ impl Evaluator<'_, '_> {
             {
                 result.extend(cm_list(&self.dependent(&dirs, scope, Some(&root))?, false));
             }
+            // handleSystemIncludesDep: a framework dep contributes its
+            // directory and framework path to the system include search.
+            if let Some(location) = self.dep_framework_location(&dep)
+                && let Some(fw) = crate::apple::split_framework_path(
+                    &location,
+                    crate::apple::FrameworkFormat::Relaxed,
+                )
+            {
+                let fw_path = fw.framework_path();
+                result.push(fw.directory);
+                result.push(fw_path);
+            }
         }
         for value in &mut result {
             *value = path::unix_slashes(value);
@@ -1081,6 +1093,37 @@ impl Evaluator<'_, '_> {
             .target_property_raw(target, property)
             .as_deref()
             .is_some_and(util::is_on)
+    }
+
+    /// The dep's location when `cmTarget::IsFrameworkOnApple` or
+    /// `cmGeneratorTarget::IsImportedFrameworkFolderOnApple` holds.
+    fn dep_framework_location(&self, dep: &str) -> Option<String> {
+        if !self
+            .host
+            .variable("APPLE")
+            .is_some_and(|value| util::is_on(&value))
+        {
+            return None;
+        }
+        let ty = self.host.target_type(dep);
+        let framework_on_apple = matches!(ty, Some("SHARED_LIBRARY" | "STATIC_LIBRARY"))
+            && self.bool_property(dep, "FRAMEWORK");
+        let imported_folder = self.host.is_imported(dep)
+            && matches!(
+                ty,
+                Some("STATIC_LIBRARY" | "SHARED_LIBRARY" | "UNKNOWN_LIBRARY")
+            );
+        if !framework_on_apple && !imported_folder {
+            return None;
+        }
+        let location = self
+            .host
+            .target_artifact(dep, ArtifactKind::File, self.ctx.config)
+            .ok()?;
+        if !framework_on_apple && !crate::apple::is_path_to_framework(&location) {
+            return None;
+        }
+        Some(location)
     }
 
     fn usage_error(&self, message: String) -> GenexError {
