@@ -366,6 +366,81 @@ SCENARIOS = [
         ],
     },
     {
+        "name": "mc-cross",
+        "files": {
+            "res.qrc": QRC,
+            "a.txt": "hello\n",
+            "main.cpp": '#include "moc_widget.cpp"\nint main() { return 0; }\n',
+            "widget.h": WIDGET_H,
+        },
+        "cmake": "add_executable(t main.cpp widget.h res.qrc)\n",
+        "gen": "Ninja Multi-Config",
+        "props": "AUTOMOC ON AUTORCC ON\n",
+        "args": ["-DCMAKE_CROSS_CONFIGS=all"],
+        "steps": [
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+            ("autogen", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release"),
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+            ("autogen", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release"),
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+        ],
+    },
+    {
+        "name": "mc-better-graph",
+        "files": {
+            "res.qrc": QRC,
+            "a.txt": "hello\n",
+            "main.cpp": '#include "moc_widget.cpp"\nint main() { return 0; }\n',
+            "widget.h": WIDGET_H,
+        },
+        "cmake": "add_executable(t main.cpp widget.h res.qrc)\n",
+        "gen": "Ninja Multi-Config",
+        "props": "AUTOMOC ON AUTORCC ON AUTOGEN_BETTER_GRAPH_MULTI_CONFIG ON\n",
+        "args": [],
+        "steps": [
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+            ("autogen", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release"),
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+            ("autogen", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release"),
+            ("autogen", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug"),
+        ],
+    },
+    {
+        "name": "mc-cross-better-graph",
+        "files": {
+            "res.qrc": QRC,
+            "a.txt": "hello\n",
+            "main.cpp": '#include "moc_widget.cpp"\nint main() { return 0; }\n',
+            "widget.h": WIDGET_H,
+        },
+        "cmake": "add_executable(t main.cpp widget.h res.qrc)\n",
+        "gen": "Ninja Multi-Config",
+        "props": "AUTOMOC ON AUTORCC ON AUTOGEN_BETTER_GRAPH_MULTI_CONFIG ON\n",
+        "args": ["-DCMAKE_CROSS_CONFIGS=all"],
+        "steps": [
+            ("autogen", "Debug", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug", "Debug"),
+            ("autogen", "Release", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release", "Debug"),
+            ("autogen", "Debug", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug", "Release"),
+            ("autogen", "Release", "Release"),
+            ("autorcc", "AutoRcc_*_Info.json", "Release", "Release"),
+            ("autogen", "Debug", "Debug"),
+            ("autorcc", "AutoRcc_*_Info.json", "Debug", "Debug"),
+        ],
+    },
+    {
         "name": "bad-info-missing-key",
         "files": {"main.cpp": "int main() { return 0; }\n"},
         "cmake": "add_executable(t main.cpp)\n",
@@ -389,7 +464,7 @@ def write_tools(tools_dir, fail_moc=False, fail_uic=False, fail_rcc=False):
         path.chmod(0o755)
 
 
-def configure_oracle(oracle, src_dir, build_dir, generator):
+def configure_oracle(oracle, src_dir, build_dir, generator, extra_args=()):
     build_dir.mkdir(parents=True, exist_ok=True)
     args = [
         oracle,
@@ -403,6 +478,7 @@ def configure_oracle(oracle, src_dir, build_dir, generator):
     ]
     if generator == "Ninja Multi-Config":
         args.append("-DCMAKE_CONFIGURATION_TYPES=Debug;Release")
+    args += extra_args
     proc = subprocess.run(args, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(f"oracle configure failed:\n{proc.stdout}\n{proc.stderr}")
@@ -411,10 +487,7 @@ def configure_oracle(oracle, src_dir, build_dir, generator):
 def normalize(text, rewrites):
     for old, new in rewrites:
         text = text.replace(str(old), new)
-    # Settings files embed sha256 hashes over absolute paths, which differ
-    # legitimately between the oracle/candidate copies (verified against
-    # upstream's formula separately); normalize the digest itself.
-    return re.sub(r"\b[0-9a-f]{64}\b", "SHA256", text)
+    return text
 
 
 def collect_tree(root):
@@ -454,7 +527,9 @@ def run_scenario(s, oracle, candidate, work, verbose):
         + "set_target_properties(t PROPERTIES\n  " + s.get("props", "").strip() + ")\n"
     )
     gen_build = oroot / "gen"
-    configure_oracle(oracle, src, gen_build, s.get("gen", "Ninja"))
+    configure_oracle(
+        oracle, src, gen_build, s.get("gen", "Ninja"), s.get("args", ())
+    )
 
     # Authoritative info files from the oracle-configured tree.
     info_files = sorted(
@@ -469,7 +544,10 @@ def run_scenario(s, oracle, candidate, work, verbose):
         raise Failure("no info files produced by oracle configure")
 
     # Prepare two identical runnable copies.
+    # Both run at the same path (the active copy is renamed to `run`), so the
+    # hashes over absolute paths in the settings files are compared as is.
     copies = {}
+    run = oroot / "run"
     for variant in ("oracle", "cand"):
         vroot = oroot / variant
         shutil.copytree(src, vroot / "src")
@@ -482,8 +560,8 @@ def run_scenario(s, oracle, candidate, work, verbose):
             def rewrite(value):
                 if isinstance(value, str):
                     return value.replace(
-                        str(oroot / "gen"), str(vroot / "build")
-                    ).replace(str(src), str(vroot / "src"))
+                        str(oroot / "gen"), str(run / "build")
+                    ).replace(str(src), str(run / "src"))
                 if isinstance(value, list):
                     return [rewrite(v) for v in value]
                 if isinstance(value, dict):
@@ -499,8 +577,10 @@ def run_scenario(s, oracle, candidate, work, verbose):
             # logic while keeping both sides deterministic.
             if "PARALLEL" in data:
                 data["PARALLEL"] = 1
-            # Keep the oracle cmake binary as CMAKE_EXECUTABLE; it exists
-            # on both sides and its file time only gates cache refresh.
+            if "CMAKE_EXECUTABLE" in data:
+                data["CMAKE_EXECUTABLE"] = str(
+                    oracle if variant == "oracle" else candidate
+                )
             target.write_text(json.dumps(data, indent=2))
         copies[variant] = vroot
 
@@ -516,18 +596,18 @@ def run_scenario(s, oracle, candidate, work, verbose):
                         data[key] = value
                 target.write_text(json.dumps(data, indent=2))
 
-    rewrites = [
-        (copies["oracle"], "ROOT"),
-        (copies["cand"], "ROOT"),
-        (oracle, "ORACLE_CMAKE"),
-        (candidate, "CAND_CMAKE"),
-        (work, "WORK"),
-    ]
+    # Each side's own binary only: a candidate output naming the oracle (or
+    # the reverse) must show up as a difference.
+    rewrites = {
+        "oracle": [(oracle, "SELF_CMAKE"), (work, "WORK")],
+        "cand": [(candidate, "SELF_CMAKE"), (work, "WORK")],
+    }
     binaries = {"oracle": oracle, "cand": candidate}
     outputs = {}
 
     for variant in ("oracle", "cand"):
-        vroot = copies[variant]
+        copies[variant].rename(run)
+        vroot = run
         tool = binaries[variant]
         transcript = []
         for i, step in enumerate(s["steps"]):
@@ -545,16 +625,18 @@ def run_scenario(s, oracle, candidate, work, verbose):
                 infos = sorted((vroot / "build").rglob("AutogenInfo.json"))
                 command = "cmake_autogen"
                 config = step[1]
+                extra = list(step[2:])
             else:
                 infos = sorted((vroot / "build").rglob(step[1]))
                 command = "cmake_autorcc"
                 config = step[2]
+                extra = list(step[3:])
             for info in infos:
                 log = vroot / f"toollog-{i}-{info.name}.txt"
                 log.unlink(missing_ok=True)
                 env = dict(os.environ, AUTOGEN_FAKE_LOG=str(log))
                 proc = subprocess.run(
-                    [tool, "-E", command, str(info), config],
+                    [tool, "-E", command, str(info), config, *extra],
                     capture_output=True,
                     text=True,
                     env=env,
@@ -569,10 +651,11 @@ def run_scenario(s, oracle, candidate, work, verbose):
                     f"--- stderr\n{proc.stderr}"
                 )
         outputs[variant] = "\n".join(transcript)
+        run.rename(copies[variant])
 
     # Diff transcripts.
-    oracle_out = normalize(outputs["oracle"], rewrites)
-    cand_out = normalize(outputs["cand"], rewrites)
+    oracle_out = normalize(outputs["oracle"], rewrites["oracle"])
+    cand_out = normalize(outputs["cand"], rewrites["cand"])
     if oracle_out != cand_out:
         diff = "\n".join(
             difflib.unified_diff(
@@ -587,11 +670,11 @@ def run_scenario(s, oracle, candidate, work, verbose):
 
     # Diff generated trees (build dir only; src is input).
     oracle_tree = {
-        k: normalize(v.decode("utf-8", "replace"), rewrites)
+        k: normalize(v.decode("utf-8", "replace"), rewrites["oracle"])
         for k, v in collect_tree(copies["oracle"] / "build").items()
     }
     cand_tree = {
-        k: normalize(v.decode("utf-8", "replace"), rewrites)
+        k: normalize(v.decode("utf-8", "replace"), rewrites["cand"])
         for k, v in collect_tree(copies["cand"] / "build").items()
     }
     if set(oracle_tree) != set(cand_tree):
