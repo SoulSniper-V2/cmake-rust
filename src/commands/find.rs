@@ -34,6 +34,15 @@ enum Kind {
 }
 
 impl Kind {
+    /// `cmFindBase::EnvironmentPath` (set by the subclass constructors).
+    fn environment_path(self) -> &'static str {
+        match self {
+            Kind::Program => "",
+            Kind::Library => "LIB",
+            Kind::Path | Kind::File => "INCLUDE",
+        }
+    }
+
     fn command(self) -> &'static str {
         match self {
             Self::Program => "find_program",
@@ -83,7 +92,25 @@ struct Find {
     names_per_dir: bool,
     required: Option<bool>,
     validator: Option<String>,
-    debug: Option<Vec<String>>,
+    /// `FullDebugMode` (`--debug-find`, CMAKE_FIND_DEBUG_MODE, ...).
+    debug_mode: bool,
+    /// `cmFindBaseDebugState`, when it exists: the failed search locations
+    /// (path, regex name) while `TrackSearchProgress` holds.
+    debug: Option<Vec<(String, String)>>,
+    /// Whether the `cmFindBaseDebugState` exists at all.
+    debug_state: bool,
+    /// `cmFindBase::InitialState`.
+    initial: InitialState,
+    /// `cmFindCommon::SearchPaths`: the final candidate directories.
+    candidates: Vec<String>,
+}
+
+/// `cmFindBase::FindState`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InitialState {
+    Undefined,
+    NotFound,
+    Found,
 }
 
 impl Find {
@@ -112,6 +139,18 @@ impl Find {
         }
         let variable = filtered.remove(0);
         let debug_wanted = interp.find_debug_wanted(Some(&variable));
+        // cmFindBase::GetInitialState.
+        let initial = match interp.get_def(&variable) {
+            None => InitialState::Undefined,
+            Some(value) if is_notfound(value) => InitialState::NotFound,
+            Some(_) => InitialState::Found,
+        };
+        // The InitialPass creates the debug state unless implicit
+        // configure-log events are suppressed; it tracks progress when
+        // debugging or when the configure log exists.
+        let debug_state =
+            debug_wanted || !interp.is_on("CMAKE_FIND_DEBUG_MODE_NO_IMPLICIT_CONFIGURE_LOG");
+        let track = debug_state && (debug_wanted || configure_log_exists(interp));
         let mut cache_type = if kind == Kind::Path {
             CacheType::Path
         } else {
@@ -142,7 +181,11 @@ impl Find {
                 names_per_dir: false,
                 required: None,
                 validator: None,
-                debug: debug_wanted.then(Vec::new),
+                debug_mode: debug_wanted,
+                debug: track.then(Vec::new),
+                debug_state,
+                initial,
+                candidates: Vec::new(),
             },
             filtered,
         ))
@@ -359,9 +402,86 @@ impl Find {
     }
 
     fn failed(&mut self, path: String) {
+        self.failed_regex(path, String::new());
+    }
+
+    /// `cmFindCommonDebugState::FailedAt(path, regexName)`.
+    fn failed_regex(&mut self, path: String, regex: String) {
         if let Some(considered) = &mut self.debug {
-            considered.push(path);
+            considered.push((path, regex));
         }
+    }
+
+    /// `cmFindCommonDebugState::Write`: the configure-log event (when
+    /// debugging, on first definition, or on a found-state transition),
+    /// then the `--debug-find` report.
+    fn write_debug_state(&self, interp: &mut Interp, result: Option<&str>) {
+        if !self.debug_state {
+            return;
+        }
+        let found = result.is_some();
+        if configure_log_exists(interp)
+            && (self.debug_mode
+                || self.initial == InitialState::Undefined
+                || (self.initial == InitialState::Found) != found)
+        {
+            self.write_event(interp, result);
+        }
+        if self.debug_mode {
+            self.debug_result(interp, result);
+        }
+    }
+
+    /// `cmFindBaseDebugState::WriteEvent`.
+    fn write_event(&self, interp: &Interp, result: Option<&str>) {
+        let log_dir = format!("{}/CMakeFiles", interp.home_binary);
+        let mut slot = interp.ext.configure_log.borrow_mut();
+        let log = slot
+            .get_or_insert_with(|| crate::configure_log::ConfigureLog::new(log_dir, Vec::new()));
+        let command = self.kind.command();
+        log.begin_event("find-v1", interp);
+        log.write_value_str("mode", &command["find_".len()..]);
+        log.write_value_str("variable", &self.variable);
+        log.write_value_str("description", &self.doc);
+        let mode = |mode: MacMode| match mode {
+            MacMode::First => "FIRST",
+            MacMode::Last => "LAST",
+            MacMode::Only => "ONLY",
+            MacMode::Never => "NEVER",
+        };
+        log.begin_object("settings");
+        log.write_value_str("SearchFramework", mode(self.options.framework));
+        log.write_value_str("SearchAppBundle", mode(self.options.bundle));
+        for (source, enabled) in SOURCES[CMAKE..].iter().zip(&self.options.enabled[CMAKE..]) {
+            log.write_value_bool(&format!("CMAKE_FIND_USE_{source}"), *enabled);
+        }
+        log.end_object();
+        if !self.names.is_empty() {
+            log.write_value_list("names", &self.names);
+        }
+        if !self.candidates.is_empty() {
+            log.write_value_list("candidate_directories", &self.candidates);
+        }
+        let searched: Vec<String> = self
+            .debug
+            .iter()
+            .flatten()
+            .map(|(path, _)| path.clone())
+            .collect();
+        if !searched.is_empty() {
+            log.write_value_list("searched_directories", &searched);
+        }
+        match result {
+            Some(path) => log.write_value_str("found", path),
+            None => log.write_value_bool("found", false),
+        }
+        write_search_variables(
+            log,
+            interp,
+            self.kind.path_name(),
+            self.kind.environment_path(),
+        );
+        log.end_event();
     }
 
     fn debug_result(&self, interp: &mut Interp, result: Option<&str>) {
@@ -397,8 +517,12 @@ impl Find {
             }
         }
         let _ = writeln!(text, "{command} considered the following locations:");
-        for path in paths {
-            let _ = writeln!(text, "  {path}");
+        for (path, regex) in paths {
+            if regex.is_empty() {
+                let _ = writeln!(text, "  {path}");
+            } else {
+                let _ = writeln!(text, "  {path}/{regex}");
+            }
         }
         if let Some(path) = result {
             let _ = writeln!(text, "The item was found at\n  {path}");
@@ -420,6 +544,7 @@ impl Find {
                 dirs = self.architecture_paths(interp, dirs, &suffix);
             }
         }
+        self.candidates.clone_from(&dirs);
         let mode = if self.kind == Kind::Program {
             self.options.bundle
         } else {
@@ -568,7 +693,7 @@ impl Find {
         for dir in dirs {
             let start = out.len();
             architecture_path(&dir, 0, suffix, true, &mut out);
-            if self.debug.is_some() {
+            if self.debug_mode {
                 for path in &out[start..] {
                     interp.issue(MessageType::Log, &format!(
                         "find_library({}) added replacement path {path} to PATH_SUFFIXES for architecture suffix '{suffix}'", self.variable));
@@ -694,13 +819,13 @@ fn find(interp: &mut Interp, args: &[String], kind: Kind) -> CmdResult {
         .map(str::to_owned)
     {
         let value = find.normalize_result(interp, &value);
-        find.debug_result(interp, Some(&value));
+        find.write_debug_state(interp, Some(&value));
         return Ok(());
     }
     find.parse(interp, &args)?;
     let path = find.search(interp);
     find.store(interp, path.as_deref());
-    find.debug_result(interp, path.as_deref());
+    find.write_debug_state(interp, path.as_deref());
     Ok(())
 }
 
@@ -871,7 +996,7 @@ impl LibraryNames {
                 }
             }
             if find.debug.is_some() {
-                find.failed(format!("{dir}/{}", pattern.debug));
+                find.failed_regex(dir.to_owned(), pattern.debug.clone());
             }
         }
         let insensitive = case_insensitive(dir);
@@ -927,7 +1052,7 @@ impl LibraryNames {
             }
         }
         if best.is_none() && find.debug.is_some() {
-            find.failed(format!("{dir}/{}", pattern.debug));
+            find.failed_regex(dir.to_owned(), pattern.debug.clone());
         }
         best.map(|(_, path)| path)
     }
@@ -1012,4 +1137,98 @@ fn bundle_executable(path: &str) -> Option<String> {
         CFRelease(executable);
         (found != 0).then(|| normalized(&CStr::from_ptr(buffer.as_ptr().cast()).to_string_lossy()))
     }
+}
+
+/// `cmake::GetConfigureLog`: the log exists while configuring a project,
+/// outside try_compile.
+fn configure_log_exists(interp: &Interp) -> bool {
+    interp.mode != crate::interp::Mode::Script && !interp.in_try_compile
+}
+
+/// `cmFindCommonDebugState::WriteSearchVariables`.
+pub(crate) fn write_search_variables(
+    log: &mut crate::configure_log::ConfigureLog,
+    interp: &Interp,
+    path_name: &str,
+    environment_path: &str,
+) {
+    let write_string = |log: &mut crate::configure_log::ConfigureLog, name: &str| {
+        if let Some(value) = interp.get_def(name) {
+            log.write_value_str(name, value);
+        }
+    };
+    let write_list = |log: &mut crate::configure_log::ConfigureLog, name: &str| {
+        if let Some(value) = interp.get_def(name) {
+            let values = expand_list(value, false);
+            if !values.is_empty() {
+                log.write_value_list(name, &values);
+            }
+        }
+    };
+    let write_env = |log: &mut crate::configure_log::ConfigureLog, name: &str| {
+        if let Some(value) = std::env::var_os(name) {
+            // cmSystemTools::SplitEnvPath: raw, non-empty `:` fields.
+            let value = value.to_string_lossy();
+            let values: Vec<String> = value
+                .split(':')
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if !values.is_empty() {
+                log.write_value_list(&format!("ENV{{{name}}}"), &values);
+            }
+        }
+    };
+    log.begin_object("search_context");
+    let stack: Vec<&Vec<String>> = package::root_path_stack(interp).collect();
+    if stack.iter().any(|entry| !entry.is_empty()) {
+        log.begin_object("package_stack");
+        log.begin_array();
+        for paths in stack.iter().rev() {
+            if !paths.is_empty() {
+                log.next_array_element();
+                log.write_value_list("package_paths", paths);
+            }
+        }
+        log.end_array();
+        log.end_object();
+    }
+    let cmake_path = format!("CMAKE_{path_name}_PATH");
+    let extra = if path_name == "PROGRAM" {
+        "APPBUNDLE"
+    } else {
+        "FRAMEWORK"
+    };
+    write_list(log, &cmake_path);
+    write_list(log, "CMAKE_PREFIX_PATH");
+    write_list(log, &format!("CMAKE_{extra}_PATH"));
+    write_env(log, &cmake_path);
+    write_env(log, "CMAKE_PREFIX_PATH");
+    write_env(log, &format!("CMAKE_{extra}_PATH"));
+    write_env(log, "PATH");
+    write_string(log, "CMAKE_INSTALL_PREFIX");
+    write_string(log, "CMAKE_STAGING_PREFIX");
+    write_list(log, "CMAKE_SYSTEM_PREFIX_PATH");
+    write_list(log, &format!("CMAKE_SYSTEM_{path_name}_PATH"));
+    for name in [
+        "CMAKE_SYSROOT",
+        "CMAKE_SYSROOT_COMPILE",
+        "CMAKE_SYSROOT_LINK",
+        "CMAKE_FIND_ROOT_PATH",
+    ] {
+        write_string(log, name);
+    }
+    for name in [
+        "CMAKE_IGNORE_PATH",
+        "CMAKE_IGNORE_PREFIX_PATH",
+        "CMAKE_SYSTEM_IGNORE_PATH",
+        "CMAKE_SYSTEM_IGNORE_PREFIX_PATH",
+    ] {
+        write_list(log, name);
+    }
+    write_list(log, &format!("CMAKE_SYSTEM_{extra}_PATH"));
+    if !environment_path.is_empty() {
+        write_env(log, environment_path);
+    }
+    log.end_object();
 }

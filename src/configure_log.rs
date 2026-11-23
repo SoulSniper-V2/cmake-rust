@@ -133,6 +133,27 @@ impl ConfigureLog {
         self.indent += 1;
     }
 
+    /// `cmConfigureLog::BeginArray`.
+    pub fn begin_array(&mut self) {
+        self.indent += 1;
+    }
+
+    /// `cmConfigureLog::NextArrayElement`.
+    pub fn next_array_element(&mut self) {
+        assert!(self.indent > 0);
+        self.indent -= 1;
+        self.begin_line();
+        self.out("-");
+        self.end_line();
+        self.indent += 1;
+    }
+
+    /// `cmConfigureLog::EndArray`.
+    pub fn end_array(&mut self) {
+        assert!(self.indent > 0);
+        self.indent -= 1;
+    }
+
     /// `cmConfigureLog::EndObject`.
     pub fn end_object(&mut self) {
         assert!(self.indent > 0);

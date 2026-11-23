@@ -65,6 +65,16 @@ impl PackageState {
     }
 }
 
+/// `cmMakefile::FindPackageRootPathStack`, outermost first.
+pub(super) fn root_path_stack(interp: &Interp) -> impl Iterator<Item = &Vec<String>> {
+    interp
+        .ext
+        .find_package
+        .get(&interp.mf_index())
+        .into_iter()
+        .flat_map(|state| state.roots.iter())
+}
+
 pub(super) fn root_paths(interp: &Interp) -> impl Iterator<Item = &String> {
     interp
         .ext
