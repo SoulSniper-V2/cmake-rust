@@ -2337,16 +2337,6 @@ pub fn have_cxx20_module_sources(target: &Target) -> bool {
         .any(|set| set.kind == "CXX_MODULES")
 }
 
-/// `cmGeneratorTarget::GetCxxModuleSources`: BMI-only C++ module sources
-/// (CXX_MODULES members of a synthetic target).
-pub fn cxx_module_sources(ctx: &GenCtx, target: &Target, config: &str) -> Vec<SourceInfo> {
-    sources(ctx, target, config)
-        .iter()
-        .filter(|source| source.kind == SourceKind::CxxModuleSource)
-        .cloned()
-        .collect()
-}
-
 /// `cmTarget::CanCompileSources`.
 pub fn can_compile_sources(target: &Target) -> bool {
     !target.imported

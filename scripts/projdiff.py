@@ -120,10 +120,11 @@ def run_side(binary, case, work):
                           if p.is_file() and "CMakeFiles" not in p.parts and not p.name.startswith(".ninja"))
         result["build.outputs"] = "\n".join(produced)
         # Compare the actual module edges, not just the final binary names.
-        for tdi in build.rglob("FortranDependInfo.json"):
+        for tdi in build.rglob("*DependInfo.json"):
             for path in tdi.parent.rglob("*"):
                 scan_dep = path.suffix == ".d" and ("-pp." in path.name or path.name.endswith(".ddi.d"))
-                if path.name in ("Fortran.dd", "FortranModules.json") or path.suffix == ".ddi" or scan_dep:
+                if (path.name in ("Fortran.dd", "FortranModules.json", "CXX.dd", "CXXModules.json")
+                        or path.suffix in (".ddi", ".modmap") or scan_dep):
                     result[f"file:{path.relative_to(build)}"] = path.read_text()
     if (case / "ctest.txt").exists() and proc.returncode == 0:
         ctest_args = [line for line in (case / "ctest.txt").read_text().splitlines() if line.strip()]

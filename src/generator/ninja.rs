@@ -289,6 +289,23 @@ pub enum Stream {
     Default,
 }
 
+/// `cmNinjaTargetGenerator::ScanningFiles`: one entry per scanned object or
+/// BMI build, collated into the language's dyndep build statement.  The
+/// `.ddi` scanning output is recorded only for the first `fileConfig`;
+/// the module-map output is recorded for every `fileConfig`.
+#[derive(Clone, Default)]
+struct ScanningFiles {
+    scanning_output: Option<String>,
+    module_map_file: Option<String>,
+}
+
+impl ScanningFiles {
+    /// `ScanningFiles::IsEmpty`.
+    fn is_empty(&self) -> bool {
+        self.scanning_output.is_none() && self.module_map_file.is_none()
+    }
+}
+
 pub struct NinjaGenerator<'a> {
     pub ctx: std::rc::Rc<GenCtx<'a>>,
     pub build: String,
@@ -329,6 +346,10 @@ pub struct NinjaGenerator<'a> {
     /// `cmGlobalNinjaGenerator::AssumedSourceDependencies` (std::map:
     /// sorted by absolute source path).
     assumed_source_dependencies: BTreeMap<String, BTreeSet<String>>,
+    /// `cmNinjaTargetGenerator::Configs[config].ScanningInfo` for the
+    /// target currently being generated (std::map: sorted by language).
+    /// Accumulates across the `fileConfig` loop of one `Generate(config)`.
+    scanning_info: BTreeMap<String, Vec<ScanningFiles>>,
     pub cmake_cmd: String,
     pub ninja_cmd: String,
     home_binary: String,
@@ -385,6 +406,7 @@ impl<'a> NinjaGenerator<'a> {
             tidy_fixes_dirs: BTreeSet::new(),
             tidy_fixes_files: BTreeSet::new(),
             assumed_source_dependencies: BTreeMap::new(),
+            scanning_info: BTreeMap::new(),
             cmake_cmd: cmake,
             ninja_cmd: ninja,
             home_binary: interp.home_binary.clone(),
@@ -2491,10 +2513,12 @@ impl<'a> NinjaGenerator<'a> {
             ..Rule::default()
         };
         let mut flags_text = "$FLAGS".to_owned();
+        // `cmNinjaTargetGenerator::NeedExplicitPreprocessing`.
+        let compilation_preprocesses = language != "Fortran" && language != "Swift";
         let depfile_format = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_{language}_DEPFILE_FORMAT"));
-        if language == "Fortran" {
+        if !compilation_preprocesses {
             // The explicit scan step owns the preprocessing dependencies.
         } else if depfile_format == "msvc" {
             rule.deptype = "msvc".into();
@@ -2533,7 +2557,7 @@ impl<'a> NinjaGenerator<'a> {
         let depfile_flags = self
             .ctx
             .var_safe(makefile, &format!("CMAKE_DEPFILE_FLAGS_{language}"));
-        if language != "Fortran" && !depfile_flags.is_empty() {
+        if compilation_preprocesses && !depfile_flags.is_empty() {
             let expanded = flags::expand_rule(
                 &self.ctx,
                 target,
@@ -2753,7 +2777,6 @@ impl<'a> NinjaGenerator<'a> {
             );
         }
         let sources = gt::sources(&self.ctx, target, &config);
-        self.check_cxx_module_status(target, &sources);
         // WriteLanguagesRules: compile rules for every object language.
         let mut languages: Vec<String> = Vec::new();
         for source in sources.iter() {
@@ -2808,18 +2831,10 @@ impl<'a> NinjaGenerator<'a> {
         }
         // WriteObjectBuildStatements for each file config whose cross
         // configs include this config (only the config's own file without
-        // cross-config builds).
+        // cross-config builds).  `Configs[config].ScanningInfo` is fresh
+        // per (target, config) and accumulates over the loop.
         let file_configs = self.file_configs_for(&config);
-        if file_configs.len() > 1 && self.has_fortran_sources(target) {
-            self.ctx.error(
-                target.backtrace.clone(),
-                format!(
-                    "cmake-rust does not implement Fortran module scanning for cross-configuration builds (CMAKE_CROSS_CONFIGS) with the \"Ninja Multi-Config\" generator (target \"{}\").",
-                    target.name
-                ),
-            );
-            return;
-        }
+        self.scanning_info.clear();
         let saved_stream = self.stream.clone();
         let saved_file_config = self.file_config.clone();
         let mut objects = Vec::new();
@@ -2870,6 +2885,7 @@ impl<'a> NinjaGenerator<'a> {
         first_for_config: bool,
     ) -> Vec<String> {
         let config = self.config.clone();
+        self.check_cxx_module_status(target, sources);
         // WriteObjectBuildStatements
         let mut out = String::new();
         write_divider(&mut out);
@@ -2881,11 +2897,6 @@ impl<'a> NinjaGenerator<'a> {
         );
         // GetCustomCommands: register each attached command with this target.
         let mut custom_outputs: Vec<String> = Vec::new();
-        let mut fortran_ddis = Vec::new();
-        // `ScanningInfo["CXX"]`: `.ddi` outputs and module-map files of the
-        // scanned C++ object builds, collated into the `CXX.dd` statement.
-        let mut cxx_ddis = Vec::new();
-        let mut cxx_modmaps = Vec::new();
         let module_ctx = self.ctx.clone();
         let modules = ModuleSupport::new(&module_ctx, target, &config);
         for source in sources.iter() {
@@ -3085,18 +3096,28 @@ impl<'a> NinjaGenerator<'a> {
                 }
             }
             if scanned && source.language == "Fortran" {
-                fortran_ddis.push(self.write_fortran_scan(
-                    &mut out,
-                    target,
-                    source,
-                    &source_props,
-                    &mut build,
-                ));
+                let ddi =
+                    self.write_fortran_scan(&mut out, target, source, &source_props, &mut build);
+                if first_for_config {
+                    self.scanning_info
+                        .entry("Fortran".to_owned())
+                        .or_default()
+                        .push(ScanningFiles {
+                            scanning_output: Some(ddi),
+                            ..ScanningFiles::default()
+                        });
+                }
             } else if scanned && source.language == "CXX" {
                 let (ddi, modmap) = self.write_cxx_scan(&mut out, target, &mut build);
-                cxx_ddis.push(ddi);
-                if let Some(mm) = modmap {
-                    cxx_modmaps.push(mm);
+                let files = ScanningFiles {
+                    scanning_output: first_for_config.then_some(ddi),
+                    module_map_file: modmap,
+                };
+                if !files.is_empty() {
+                    self.scanning_info
+                        .entry("CXX".to_owned())
+                        .or_default()
+                        .push(files);
                 }
             }
             build.rsp_file = format!("{object}.rsp");
@@ -3111,20 +3132,51 @@ impl<'a> NinjaGenerator<'a> {
                 objects.push(object);
             }
         }
-        // `Configs[config].ScanningInfo` is a std::map (sorted): "CXX" comes
-        // before "Fortran" in the dyndep build statements.
-        if !cxx_ddis.is_empty() {
-            self.write_cxx_dyndep(&mut out, target, sources, cxx_ddis, cxx_modmaps);
-        }
-        if !fortran_ddis.is_empty()
-            || (self.ctx.interp.langs.enabled.iter().any(|l| l == "Fortran")
-                && self.has_fortran_sources(target))
+        // `GetCxxModuleSources`: BMI-only C++ module sources (CXX_MODULES
+        // file-set members of a non-normal target) get a scan build and a
+        // BMI compile in every file config.
+        for source in sources
+            .iter()
+            .filter(|s| s.kind == SourceKind::CxxModuleSource)
         {
-            if fortran_ddis.is_empty() {
-                self.write_fortran_scan_rules(target);
-                self.write_compile_rule("Fortran", target, true);
+            let (ddi, modmap) =
+                self.write_cxx_bmi_build(&mut out, target, source, &order_target, first_for_config);
+            let files = ScanningFiles {
+                scanning_output: first_for_config.then_some(ddi),
+                module_map_file: modmap,
+            };
+            if !files.is_empty() {
+                self.scanning_info
+                    .entry("CXX".to_owned())
+                    .or_default()
+                    .push(files);
             }
-            self.write_fortran_dyndep(&mut out, target, sources, fortran_ddis);
+        }
+        // Check if there are Fortran objects which need to participate in
+        // forwarding module requirements.
+        if self.has_fortran_sources(target) && !self.scanning_info.contains_key("Fortran") {
+            self.scanning_info
+                .entry("Fortran".to_owned())
+                .or_default()
+                .push(ScanningFiles::default());
+            self.write_fortran_scan_rules(target);
+            self.write_compile_rule("Fortran", target, true);
+        }
+        // `Configs[config].ScanningInfo` is a std::map (sorted): "CXX" comes
+        // before "Fortran" in the dyndep build statements.  It accumulates
+        // across file configs, so later configs' dyndep builds repeat the
+        // `.ddi` inputs and re-list module-map outputs.
+        let scanning: Vec<(String, Vec<ScanningFiles>)> = self
+            .scanning_info
+            .iter()
+            .map(|(language, files)| (language.clone(), files.clone()))
+            .collect();
+        for (language, files) in scanning {
+            match language.as_str() {
+                "CXX" => self.write_cxx_dyndep(&mut out, target, sources, &files),
+                "Fortran" => self.write_fortran_dyndep(&mut out, target, sources, &files),
+                _ => {}
+            }
         }
         out.push('\n');
         self.out().push_str(&out);

@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+project(CxxModulesSubset CXX)
+add_library(libm STATIC)
+target_sources(libm PUBLIC FILE_SET fs TYPE CXX_MODULES FILES libm.cxx)
+target_compile_features(libm PUBLIC cxx_std_20)
+add_executable(mapp mapp.cxx)
+target_link_libraries(mapp PRIVATE libm)

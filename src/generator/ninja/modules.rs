@@ -588,12 +588,13 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmNinjaTargetGenerator::WriteCxxModuleBmiBuildStatement`.  Emits the
     /// `.ddi` scan build and the BMI compile build; returns
     /// `(ddi, Option<modmap>)`.
-    fn write_cxx_bmi_build(
+    pub(super) fn write_cxx_bmi_build(
         &mut self,
         out: &mut String,
         target: &Target,
         source: &gt::SourceInfo,
         order_target: &str,
+        first_for_config: bool,
     ) -> (String, Option<String>) {
         if source.language != "CXX" {
             self.ctx.error(
@@ -677,7 +678,9 @@ impl<'a> NinjaGenerator<'a> {
         self.set_msvc_target_pdb_variable(target, &mut build.variables);
         let mut export_vars = build.variables.clone();
         export_vars.insert("FLAGS".into(), vars_map.flags_untrimmed.clone());
-        self.export_object_compile_command_scanned(target, source, &bmi_file, &export_vars);
+        if first_for_config {
+            self.export_object_compile_command_scanned(target, source, &bmi_file, &export_vars);
+        }
         let object_dir_rel = self.ninja_path(&self.object_dir(target));
         build
             .variables
@@ -1061,8 +1064,7 @@ impl<'a> NinjaGenerator<'a> {
         out: &mut String,
         target: &Target,
         sources: &[gt::SourceInfo],
-        ddis: Vec<String>,
-        modmaps: Vec<String>,
+        files: &[ScanningFiles],
     ) {
         if self.module_order.is_empty() {
             self.module_target_order();
@@ -1077,16 +1079,24 @@ impl<'a> NinjaGenerator<'a> {
         build
             .implicit_outs
             .push(self.ninja_path(&format!("{object_dir}/CXXModules.json")));
-        build.explicit_deps = ddis;
         build.implicit_deps.push(tdi_path.clone());
         if let Some(bdb_path) = self.build_database_path(target) {
+            // Upstream lists the build-database output twice: once in the
+            // ImplicitOuts block preceding `cmBuildDatabase::Write` and once
+            // right after it.
+            build.implicit_outs.push(self.ninja_path(&bdb_path));
             let template = format!("{bdb_path}.in");
             self.write_build_database(target, &template);
             build.implicit_deps.push(template.clone());
             build.implicit_outs.push(self.ninja_path(&bdb_path));
         }
-        for mm in &modmaps {
-            build.implicit_outs.push(mm.clone());
+        for files in files {
+            if let Some(output) = &files.scanning_output {
+                build.explicit_deps.push(output.clone());
+            }
+            if let Some(modmap) = &files.module_map_file {
+                build.implicit_outs.push(modmap.clone());
+            }
         }
         build.implicit_deps.extend(
             direct
@@ -1102,63 +1112,48 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     /// `cmNinjaNormalTargetGenerator::Generate` for a synthetic interface
-    /// library with C++ module sources: language rules, BMI builds, dyndep,
-    /// and the module library phony — no link statement.
+    /// library with C++ module sources: language rules, the per-fileConfig
+    /// `WriteObjectBuildStatements` (order phony, BMI builds, dyndep), and
+    /// per-fileConfig `WriteCxxModuleLibraryStatement` — no link statement.
     pub(super) fn generate_synthetic_target(&mut self, target: &'a Target) {
         self.write_cxx_scan_rules(target);
         self.write_compile_rule("CXX", target, true);
         self.write_compile_rule("CXX", target, false);
-        let mut out = String::new();
-        write_divider(&mut out);
-        let _ = write!(
-            out,
-            "# Object build statements for {} target {}\n\n",
-            target.kind.type_name(),
-            target.name
-        );
-        let order_target = format!("cmake_object_order_depends_target_{}", target.name);
-        {
+        let config = self.config.clone();
+        let sources = gt::sources(&self.ctx, target, &config);
+        let file_configs = self.file_configs_for(&config);
+        self.scanning_info.clear();
+        let saved_stream = self.stream.clone();
+        let saved_file_config = self.file_config.clone();
+        for (index, file_config) in file_configs.iter().enumerate() {
+            self.file_config = file_config.clone();
+            self.stream = Stream::Impl(file_config.clone());
+            self.write_object_build_statements(target, &sources, index == 0);
+        }
+        self.file_config = saved_file_config;
+        self.stream = saved_stream;
+        // `WriteCxxModuleLibraryStatement(config, fileConfig,
+        // firstForConfig)`: the phony goes to the common stream once per
+        // file config (upstream ignores `fileConfig` otherwise).
+        for (index, _file_config) in file_configs.iter().enumerate() {
             let mut build = Build::new("phony");
-            build.comment = format!("Order-only phony target for {}", target.name);
-            build.outputs.push(order_target.clone());
-            let mut order = Vec::new();
-            self.append_target_depends(target, &mut order, DependOn::TargetOrdering);
-            order.sort();
-            order.dedup();
-            if order.is_empty() {
-                order.push(self.output_path("."));
+            build.comment = format!("Imported C++ module library {}", target.name);
+            self.append_target_outputs(target, &mut build.outputs, DependOn::TargetArtifact);
+            if index == 0 {
+                self.config_byproducts_for_clean
+                    .entry(config.clone())
+                    .or_default()
+                    .extend(build.outputs.iter().cloned());
             }
-            build.order_only_deps = order;
-            write_build(&mut out, &build, 0);
+            build
+                .explicit_deps
+                .push(self.ninja_path(&self.cxx_dyndep_path(target)));
+            self.write_build_to(&Stream::Common, &build);
         }
-        let sources = gt::cxx_module_sources(&self.ctx, target, &self.config);
-        let mut ddis = Vec::new();
-        let mut modmaps = Vec::new();
-        for source in &sources {
-            let (ddi, modmap) = self.write_cxx_bmi_build(&mut out, target, source, &order_target);
-            ddis.push(ddi);
-            if let Some(mm) = modmap {
-                modmaps.push(mm);
-            }
-        }
-        // Upstream emits the dyndep collation whenever scanning info exists.
-        if !ddis.is_empty() {
-            self.write_cxx_dyndep(&mut out, target, &sources, ddis, modmaps);
-        } else {
-            // The phony still needs its dyndep edge input to exist upstream;
-            // with no BMI sources there is nothing to collate.
-        }
-        out.push('\n');
-        self.build.push_str(&out);
-        // WriteCxxModuleLibraryStatement.
-        let mut build = Build::new("phony");
-        build.comment = format!("Imported C++ module library {}", target.name);
-        self.append_target_outputs(target, &mut build.outputs, DependOn::TargetArtifact);
-        build
-            .explicit_deps
-            .push(self.ninja_path(&self.cxx_dyndep_path(target)));
-        self.write_build(&build);
         self.add_target_alias(&target.name.clone(), target);
+        if self.cross_enabled() {
+            self.add_target_alias_cfg(&target.name.clone(), target, "all");
+        }
     }
 
     /// `cmNinjaTargetGenerator::ExportObjectCompileCommand` for a scanned
