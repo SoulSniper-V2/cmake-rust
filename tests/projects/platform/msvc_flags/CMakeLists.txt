@@ -9,3 +9,12 @@ target_include_directories(app SYSTEM PRIVATE /opt/sys)
 set_target_properties(app PROPERTIES MSVC_DEBUG_INFORMATION_FORMAT ProgramDatabase COMPILE_WARNING_AS_ERROR ON LINK_WARNING_AS_ERROR ON)
 add_executable(con main.cxx)
 set_target_properties(con PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON MSVC_RUNTIME_CHECKS "StackFrameErrorCheck;UninitializedVariable")
+target_precompile_headers(con PRIVATE <vector>)
+add_library(sh SHARED a.c a.def)
+set_target_properties(sh PROPERTIES VERSION 1.2)
+add_library(sh2 SHARED a.c)
+set_target_properties(sh2 PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# Each target depends on at most one other: the file API lists dependencies
+# in std::set<cmTargetDepend> pointer order.
+add_executable(user main.cxx)
+target_link_libraries(user PRIVATE sh)

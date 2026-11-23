@@ -151,7 +151,6 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
         append_module_definition_flag(&inputs, &mut extra);
         append(&mut flags, &encode_literal(&extra));
         append_depfile_flag(&inputs, &mut flags);
-        append_osx_ver_flags(&inputs, &mut flags);
         if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
             && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
         {
@@ -671,65 +670,4 @@ pub(crate) fn codemodel_link_flags(
         out.push((encode_literal(&extra), Vec::new()));
     }
     (language_flags, out)
-}
-
-/// `cmCommonTargetGenerator::AppendOSXVerFlag`: the
-/// `-compatibility_version` and `-current_version` flags for Apple shared
-/// and module libraries.
-fn append_osx_ver_flags(inputs: &Flags<'_, '_>, flags: &mut String) {
-    if !matches!(
-        inputs.target.kind,
-        TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-    ) {
-        return;
-    }
-    for (name, fallback) in [("COMPATIBILITY", "SOVERSION"), ("CURRENT", "VERSION")] {
-        let Some(flag) = inputs.lang_var(&format!("OSX_{name}_VERSION_FLAG")) else {
-            continue;
-        };
-        let macho = format!("MACHO_{name}_VERSION");
-        let prop = if inputs.prop(&macho).is_some() {
-            macho.as_str()
-        } else {
-            fallback
-        };
-        let (major, minor, patch) = target_version_parts(inputs.prop(prop).unwrap_or_default());
-        if major > 0 || minor > 0 || patch > 0 {
-            append(flags, &format!("{flag}{major}.{minor}.{patch}"));
-        }
-    }
-}
-
-/// `cmGeneratorTarget::GetTargetVersion`: `sscanf("%d.%d.%d")` parsing,
-/// where each conversion that fails leaves the component at zero.
-fn target_version_parts(version: &str) -> (i64, i64, i64) {
-    fn number(text: &str) -> Option<(i64, &str)> {
-        let text = text.trim_start();
-        let bytes = text.as_bytes();
-        let mut len = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
-        while bytes.get(len).is_some_and(u8::is_ascii_digit) {
-            len += 1;
-        }
-        if len == 0 || (len == 1 && !bytes[0].is_ascii_digit()) {
-            return None;
-        }
-        Some((text[..len].parse().ok()?, &text[len..]))
-    }
-    let Some((major, mut rest)) = number(version) else {
-        return (0, 0, 0);
-    };
-    let mut minor = 0;
-    let mut patch = 0;
-    if let Some(next) = rest.strip_prefix('.')
-        && let Some((value, after)) = number(next)
-    {
-        minor = value;
-        rest = after;
-        if let Some(next) = rest.strip_prefix('.')
-            && let Some((value, _)) = number(next)
-        {
-            patch = value;
-        }
-    }
-    (major, minor, patch)
 }

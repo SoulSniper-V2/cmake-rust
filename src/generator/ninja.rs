@@ -3130,7 +3130,9 @@ impl<'a> NinjaGenerator<'a> {
                     let header =
                         super::pch::pch_header(&self.ctx, target, &config, &source.language, arch);
                     if !header.is_empty() {
-                        build.implicit_deps.push(self.ninja_path(&header));
+                        build
+                            .implicit_deps
+                            .push(self.ninja_path(&util::collapse_full_path(&header, "")));
                     }
                     if !pch_sources.contains(&source.path) {
                         let file = super::pch::pch_file(
@@ -3141,7 +3143,10 @@ impl<'a> NinjaGenerator<'a> {
                             arch,
                         );
                         if !file.is_empty() {
-                            build.implicit_deps.push(self.ninja_path(&file));
+                            // Full paths in the dependency list are collapsed.
+                            build
+                                .implicit_deps
+                                .push(self.ninja_path(&util::collapse_full_path(&file, "")));
                         }
                     }
                 }
@@ -3265,6 +3270,19 @@ impl<'a> NinjaGenerator<'a> {
             build.rsp_file = format!("{object}.rsp");
             let limit = self.compile_command_limit(target, &source.language);
             write_build(&mut out, &build, limit);
+            if let Some(outputs) = source_props.get("OBJECT_OUTPUTS") {
+                let evaluated = self.ctx.genex(outputs, None, None);
+                if !evaluated.is_empty() {
+                    let mut extra = Build::new("phony");
+                    extra.comment = "Additional output files.".into();
+                    extra.outputs = util::expand_list(&evaluated, false)
+                        .iter()
+                        .map(|output| self.ninja_path(output))
+                        .collect();
+                    extra.explicit_deps = build.outputs.clone();
+                    write_build(&mut out, &extra, 0);
+                }
+            }
             // PCH objects are not linked.
             let is_pch = self
                 .ctx

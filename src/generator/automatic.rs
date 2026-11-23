@@ -26,6 +26,10 @@ struct Changes {
     target_appends: Vec<(String, String, bool)>,
     /// Diagnostics with their backtraces.
     errors: Vec<(Vec<crate::messages::Frame>, String)>,
+    /// `OBJECT_OUTPUTS` of PCH sources: (source, config, language, arch).
+    /// `GetPchFile` names the object of the PCH source, so the C++ computes
+    /// it after `AddSource`; these are evaluated once the sources are added.
+    pch_object_outputs: Vec<(String, String, String, String)>,
 }
 
 /// `cmTarget::CanCompileSources`.
@@ -144,6 +148,26 @@ fn apply(interp: &mut Interp, key: &str, changes: Changes) {
             target.insert_entry("SOURCES", &path, &backtrace, before);
         }
     }
+    if changes.pch_object_outputs.is_empty() {
+        return;
+    }
+    let outputs: Vec<(String, String)> = {
+        let ctx = GenCtx::new(interp);
+        let target = &ctx.interp.ext.targets[key];
+        changes
+            .pch_object_outputs
+            .iter()
+            .map(|(source, config, language, arch)| {
+                let ctx = ctx.for_config(config);
+                let pch_file = pch::pch_file(&ctx, target, config, language, arch);
+                (source.clone(), format!("$<$<CONFIG:{config}>:{pch_file}>"))
+            })
+            .collect()
+    };
+    for (path, value) in outputs {
+        let source = crate::commands::target::get_or_create_source(interp, dir, &path);
+        source.props.append("OBJECT_OUTPUTS", &value, false);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -233,13 +257,12 @@ fn add_pch_dependencies_for_config(
                 added.insert(language);
             }
             if is_on_opt(ctx.var(dir, "CMAKE_LINK_PCH").as_deref()) {
-                let pch_file = pch::pch_file(ctx, target, config, language, arch);
                 match reuse_from {
-                    None => changes.source_props.push((
+                    None => changes.pch_object_outputs.push((
                         pch_source.clone(),
-                        "OBJECT_OUTPUTS".into(),
-                        format!("$<$<CONFIG:{config}>:{pch_file}>"),
-                        true,
+                        config.to_owned(),
+                        language.to_owned(),
+                        arch.to_owned(),
                     )),
                     Some(reuse_name) => {
                         if is_on_opt(ctx.var(dir, "CMAKE_PCH_COPY_COMPILE_PDB").as_deref()) {
