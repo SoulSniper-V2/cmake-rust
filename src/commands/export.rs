@@ -57,9 +57,6 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(arg) = parsed.unknown.first() {
         return err(format!("Unknown argument: \"{arg}\"."));
     }
-    if parsed.has("ANDROID_MK") {
-        return err("ANDROID_MK is not supported by cmake-rust");
-    }
     let mut package = PackageInfoArguments::from_args(&parsed);
     let mut cps = false;
     if package.package_name.is_empty() {
@@ -76,7 +73,10 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let set = parsed.get("EXPORT");
     let file = parsed.get("FILE");
-    let fname = if file.is_empty() {
+    let android = !parsed.get("ANDROID_MK").is_empty();
+    let fname = if android {
+        parsed.get("ANDROID_MK").to_owned()
+    } else if file.is_empty() {
         if mode != "EXPORT" {
             return err("FILE <filename> option missing.");
         }
@@ -167,6 +167,7 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
         modules_directory: parsed.get("CXX_MODULES_DIRECTORY").into(),
         old_link_interface: parsed.has("EXPORT_LINK_INTERFACE_LIBRARIES"),
         package_dependencies: parsed.has("EXPORT_PACKAGE_DEPENDENCIES"),
+        android,
     };
     interp.ext.install.build_exports.insert(
         path,

@@ -383,7 +383,7 @@ fn install(interp: &mut Interp, args: &[String]) -> CmdResult {
         "EXPORT" => export(interp, args),
         "PACKAGE_INFO" => package_info(interp, args),
         "RUNTIME_DEPENDENCY_SET" => runtime_set(interp, args),
-        "EXPORT_ANDROID_MK" => err("EXPORT_ANDROID_MK is not supported by cmake-rust"),
+        "EXPORT_ANDROID_MK" => export_android_mk(interp, args),
         _ => err(format!("does not recognize sub-command {mode}")),
     }
 }
@@ -1217,6 +1217,7 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
         modules_directory: parsed.get("CXX_MODULES_DIRECTORY").into(),
         old_link_interface: parsed.has("EXPORT_LINK_INTERFACE_LIBRARIES"),
         package_dependencies: parsed.has("EXPORT_PACKAGE_DEPENDENCIES"),
+        android: false,
     };
     interp
         .ext
@@ -1224,6 +1225,63 @@ fn export(interp: &mut Interp, args: &[String]) -> CmdResult {
         .export_sets
         .entry(set.to_owned())
         .or_default();
+    add(
+        interp,
+        opts,
+        InstallAction::Export(InstallExport {
+            set: set.to_owned(),
+            filename,
+            options,
+        }),
+    );
+    Ok(())
+}
+
+/// `HandleExportAndroidMKMode`.
+fn export_android_mk(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let parsed = parse_options(
+        args,
+        &["EXPORT_ANDROID_MK", "NAMESPACE", "FILE"],
+        &[],
+        &["EXPORT_LINK_INTERFACE_LIBRARIES"],
+    );
+    if let Some(arg) = parsed.unknown.first() {
+        return Err(unknown("EXPORT_ANDROID_MK", arg));
+    }
+    let opts = options(interp, &parsed, &defaults(interp));
+    validate_permissions(&opts)?;
+    if opts.destination.is_empty() {
+        return err("EXPORT_ANDROID_MK given no DESTINATION!");
+    }
+    let file = parsed.get("FILE");
+    if file.contains([':', '/', '\\']) {
+        return err(format!(
+            "EXPORT_ANDROID_MK given invalid export file name \"{file}\".  The FILE argument may not contain a path.  Specify the path in the DESTINATION argument."
+        ));
+    }
+    if !file.is_empty() && crate::util::filename_last_extension(file) != ".mk" {
+        return err(format!(
+            "EXPORT_ANDROID_MK given invalid export file name \"{file}\".  The FILE argument must specify a name ending in \".mk\"."
+        ));
+    }
+    let filename = if file.is_empty() {
+        "Android.mk".to_owned()
+    } else {
+        file.to_owned()
+    };
+    let set = parsed.get("EXPORT_ANDROID_MK");
+    interp
+        .ext
+        .install
+        .export_sets
+        .entry(set.to_owned())
+        .or_default();
+    let options = ExportOptions {
+        namespace: parsed.get("NAMESPACE").into(),
+        old_link_interface: parsed.has("EXPORT_LINK_INTERFACE_LIBRARIES"),
+        android: true,
+        ..ExportOptions::default()
+    };
     add(
         interp,
         opts,

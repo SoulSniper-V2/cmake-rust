@@ -583,6 +583,7 @@ pub(super) fn write_install(
             modules_directory: String::new(),
             old_link_interface: false,
             package_dependencies: false,
+            android: false,
         };
     let mut ex = Exporter {
         ctx,

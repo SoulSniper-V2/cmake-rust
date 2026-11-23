@@ -13,8 +13,9 @@ CMakeLists.txt (and sources). Optional files in the case directory:
                the pass/fail summary
 Generated files compared (when present on either side): build.ninja,
 CMakeFiles/rules.ninja, CMakeCache.txt (with volatile entries dropped),
-CTestTestfile.cmake, cmake_install.cmake (all directories), and
-compile_commands.json.
+CTestTestfile.cmake, cmake_install.cmake (all directories),
+compile_commands.json, Android.mk-style `*.mk` exports, and every file under
+CMakeFiles/Export/ (install-tree export files).
 
 Usage: scripts/projdiff.py [--candidate PATH] [-j N] [-v] [--keep DIR] [cases...]
 """
@@ -62,8 +63,11 @@ def gather(build_dir):
         if "CMakeFiles/CMakeScratch" in rel or "/4.1.0/" in rel or rel.startswith("CMakeFiles/4.1.0"):
             continue
         name = path.name
-        if name in ("build.ninja", "rules.ninja", "CMakeCache.txt", "CTestTestfile.cmake",
-                    "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json"):
+        if not path.is_file():
+            continue
+        if (name in ("build.ninja", "rules.ninja", "CMakeCache.txt", "CTestTestfile.cmake",
+                     "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json")
+                or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")):
             files[rel] = path.read_text(errors="replace")
     return files
 

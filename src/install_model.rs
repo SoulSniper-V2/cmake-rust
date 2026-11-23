@@ -117,6 +117,8 @@ pub struct ExportOptions {
     pub modules_directory: String,
     pub old_link_interface: bool,
     pub package_dependencies: bool,
+    /// `cmExport*AndroidMKGenerator`: write an NDK `Android.mk` instead.
+    pub android: bool,
 }
 
 #[derive(Debug)]

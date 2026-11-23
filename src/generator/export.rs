@@ -247,7 +247,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
 
     /// `GetInstallPrefix` / `GetImportPrefix` (`"@prefix@"` for CPS).
     pub fn import_prefix(&self) -> &'static str {
-        if self.package.is_some() {
+        if self.options.android {
+            "$(_IMPORT_PREFIX)"
+        } else if self.package.is_some() {
             "@prefix@"
         } else {
             IMPORT_PREFIX
@@ -256,7 +258,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
 
     /// `GetImportPrefixWithSlash`.
     pub fn import_prefix_slash(&self) -> &'static str {
-        if self.package.is_some() {
+        if self.options.android {
+            "$(_IMPORT_PREFIX)/"
+        } else if self.package.is_some() {
             "@prefix@/"
         } else {
             IMPORT_PREFIX_SLASH
@@ -2132,6 +2136,32 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
     if records.is_empty() && !export.targets.is_empty() {
         return Ok(());
     }
+    if export.options.android {
+        // cmExportBuildAndroidMKGenerator::GenerateMainFile.
+        let mut out = String::new();
+        if !export.append {
+            out.push_str("LOCAL_PATH := $(call my-dir)\n\n");
+        }
+        for record in &records {
+            let path = super::target::full_path(
+                ctx,
+                record.target,
+                "",
+                super::target::ArtifactType::Runtime,
+                false,
+            );
+            write!(
+                out,
+                "include $(CLEAR_VARS)\nLOCAL_MODULE := {}\nLOCAL_SRC_FILES := {}\n",
+                record.name,
+                crate::commands::sysinfo::convert_to_unix_output_path(&path)
+            )
+            .unwrap();
+            let props = ex.populate_interface_props(record);
+            android_interface_properties(&ex, &mut out, record.target, &props);
+        }
+        return write_export_file(file, export.append, &out);
+    }
     let mut body = String::new();
     let names: Vec<String> = records.iter().map(|r| r.name.clone()).collect();
     target_guard(&mut body, &names);
@@ -2183,7 +2213,13 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
         let modules = parent.join(module_dir);
         build_module_files(&ex, &modules, &cxx_modules_name, &records)?;
     }
-    if export.append && Path::new(file).exists() {
+    write_export_file(file, export.append, &out)
+}
+
+/// `cmExportFileGenerator::GenerateImportFile`'s output stream: appended
+/// to in APPEND mode, otherwise copy-if-different.
+fn write_export_file(file: &str, append: bool, out: &str) -> std::io::Result<()> {
+    if append && Path::new(file).exists() {
         use std::io::Write as _;
         std::fs::OpenOptions::new()
             .append(true)
@@ -2192,6 +2228,151 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
     } else {
         write_if_different(Path::new(file), out.as_bytes())?;
     }
+    Ok(())
+}
+
+/// `cmExportAndroidMKGenerator::GenerateInterfaceProperties`.
+fn android_interface_properties(
+    ex: &Exporter<'_, '_>,
+    out: &mut String,
+    tgt: &Target,
+    props: &BTreeMap<String, String>,
+) {
+    let config = &ex.ctx.config;
+    if !props.is_empty() {
+        out.push_str("LOCAL_CPP_FEATURES := rtti exceptions\n");
+        for (key, value) in props {
+            match key.as_str() {
+                "INTERFACE_COMPILE_OPTIONS" => {
+                    writeln!(out, "LOCAL_CPP_FEATURES += {value}").unwrap();
+                }
+                "INTERFACE_LINK_LIBRARIES" => {
+                    let mut static_libs = String::new();
+                    let mut shared_libs = String::new();
+                    let mut ldlibs = String::new();
+                    for (lib, target) in super::link::interface_link_items(ex.ctx, tgt, config) {
+                        if let Some(target) = target {
+                            if matches!(
+                                target.kind,
+                                TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+                            ) {
+                                write!(shared_libs, " {lib}").unwrap();
+                            } else {
+                                write!(static_libs, " {lib}").unwrap();
+                            }
+                        } else if is_full_path(&lib)
+                            || lib.starts_with("-l")
+                            || (ex.installed && lib.starts_with("../"))
+                        {
+                            write!(ldlibs, " {lib}").unwrap();
+                        } else if !lib.is_empty() {
+                            write!(ldlibs, " -l{lib}").unwrap();
+                        }
+                    }
+                    if !shared_libs.is_empty() {
+                        writeln!(out, "LOCAL_SHARED_LIBRARIES :={shared_libs}").unwrap();
+                    }
+                    if !static_libs.is_empty() {
+                        writeln!(out, "LOCAL_STATIC_LIBRARIES :={static_libs}").unwrap();
+                    }
+                    if !ldlibs.is_empty() {
+                        writeln!(out, "LOCAL_EXPORT_LDLIBS :={ldlibs}").unwrap();
+                    }
+                }
+                "INTERFACE_INCLUDE_DIRECTORIES" => {
+                    out.push_str("LOCAL_EXPORT_C_INCLUDES := ");
+                    out.push_str(&expand_list(value, false).join("\\\n"));
+                    out.push('\n');
+                }
+                "INTERFACE_LINK_OPTIONS" => {
+                    writeln!(
+                        out,
+                        "LOCAL_EXPORT_LDFLAGS := {}",
+                        expand_list(value, false).join(" ")
+                    )
+                    .unwrap();
+                }
+                _ => writeln!(out, "# {key} {value}").unwrap(),
+            }
+        }
+    }
+    // Tell the NDK build system if prebuilt static libraries use C++.
+    if tgt.kind == TargetKind::StaticLibrary
+        && target::link_implementation_languages(ex.ctx, tgt, config)
+            .iter()
+            .any(|language| language == "CXX")
+    {
+        out.push_str("LOCAL_HAS_CPP := true\n");
+    }
+    match tgt.kind {
+        TargetKind::SharedLibrary | TargetKind::ModuleLibrary => {
+            out.push_str("include $(PREBUILT_SHARED_LIBRARY)\n");
+        }
+        TargetKind::StaticLibrary => out.push_str("include $(PREBUILT_STATIC_LIBRARY)\n"),
+        _ => {}
+    }
+    out.push('\n');
+}
+
+/// `cmInstallExportGenerator` with `cmExportInstallAndroidMKGenerator`: the
+/// Android.mk under `CMakeFiles/Export/<md5(dest)>/` and its install rule.
+fn write_install_android_mk<'a>(
+    ex: &mut Exporter<'a, '_>,
+    out: &mut String,
+    index: usize,
+    rule: &InstallRule,
+    export: &InstallExport,
+    set: &'a ExportSet,
+    indent: &str,
+) -> std::io::Result<()> {
+    let ctx = ex.ctx;
+    let records = ex.collect(Some(set), &[], index);
+    let dest = &rule.options.destination;
+    let binary = &ctx.interp.makefiles[index].binary_dir;
+    let temp = format!(
+        "{binary}/CMakeFiles/Export/{:x}",
+        Md5::digest(dest.as_bytes())
+    );
+    let file = format!("{temp}/{}", export.filename);
+    // GenerateImportHeaderCode.
+    let depth = dest.matches('/').count() + usize::from(!dest.is_empty());
+    let mut text = format!(
+        "LOCAL_PATH := $(call my-dir)\n_IMPORT_PREFIX := $(LOCAL_PATH){}\n\n",
+        "/..".repeat(depth)
+    );
+    for record in &records {
+        // The `__dest` property: the archive destination, else the library one.
+        let artifact_dest = record
+            .installed
+            .and_then(|item| item.artifact.as_ref())
+            .map(|artifact| artifact.destination.as_str())
+            .unwrap_or_default();
+        let name = super::target::full_name(
+            ctx,
+            record.target,
+            &ctx.config,
+            super::target::ArtifactType::Runtime,
+        );
+        write!(
+            text,
+            "include $(CLEAR_VARS)\nLOCAL_MODULE := {}\nLOCAL_SRC_FILES := $(_IMPORT_PREFIX)/{artifact_dest}/{name}\n",
+            record.name
+        )
+        .unwrap();
+        let props = ex.populate_interface_props(record);
+        android_interface_properties(ex, &mut text, record.target, &props);
+    }
+    write_if_different(Path::new(&file), text.as_bytes())?;
+    let opts = crate::install_model::InstallOptions {
+        optional: false,
+        ..rule.options.clone()
+    };
+    write_copy(
+        out,
+        indent,
+        &opts,
+        CopyRule::new(dest, CopyKind::File, std::slice::from_ref(&file)),
+    );
     Ok(())
 }
 
@@ -2231,6 +2412,9 @@ pub(super) fn write_install_export(
         link_targets: std::collections::HashMap::new(),
         requirements: BTreeMap::new(),
     };
+    if export.options.android {
+        return write_install_android_mk(&mut ex, out, index, rule, export, set, indent);
+    }
     let records = ex.collect(Some(set), &[], index);
     let dest = &rule.options.destination;
     let binary = &ctx.interp.makefiles[index].binary_dir;

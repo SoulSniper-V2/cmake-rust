@@ -137,6 +137,25 @@ pub(super) fn compile_implementation_closure<'i>(
 }
 
 /// Direct target-level dependencies after linearizing static-library cycles.
+/// `cmGeneratorTarget::GetLinkInterfaceLibraries(config, target,
+/// UseTo::Link)`: each item's string and resolved target. Upstream caches
+/// this computation, so its diagnostics have already been issued.
+pub(crate) fn interface_link_items<'i>(
+    ctx: &GenCtx<'i>,
+    target: &Target,
+    config: &str,
+) -> Vec<(String, Option<&'i Target>)> {
+    let reported = ctx.errors.borrow().len();
+    let query = Query::new(ctx, config, "");
+    let items = interface(&query, target, target)
+        .libraries
+        .into_iter()
+        .map(|item| (item.text, item.target))
+        .collect();
+    ctx.errors.borrow_mut().truncate(reported);
+    items
+}
+
 pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
     target_graph::dependencies(ctx, target, config)
 }
