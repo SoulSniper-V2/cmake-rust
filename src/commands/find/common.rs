@@ -86,6 +86,15 @@ impl Options {
         }
     }
 
+    /// `CMAKE_FIND_ROOT_PATH_MODE` as the configure log spells it.
+    pub(super) fn root_mode_name(&self) -> &'static str {
+        match self.root_mode {
+            RootMode::Never => "NEVER",
+            RootMode::Only => "ONLY",
+            RootMode::Both => "BOTH",
+        }
+    }
+
     pub(super) fn uses(&self, source: usize) -> bool {
         !self.no_default && self.enabled[source]
     }

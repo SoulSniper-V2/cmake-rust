@@ -475,12 +475,13 @@ impl Find {
             Some(path) => log.write_value_str("found", path),
             None => log.write_value_bool("found", false),
         }
-        write_search_variables(
-            log,
-            interp,
-            self.kind.path_name(),
-            self.kind.environment_path(),
-        );
+        let environment = self.kind.environment_path();
+        let extras: &[SearchVariable<'_>] = if environment.is_empty() {
+            &[]
+        } else {
+            &[SearchVariable::EnvironmentList(environment)]
+        };
+        write_search_variables(log, interp, self.kind.path_name(), extras);
         log.end_event();
     }
 
@@ -1141,16 +1142,22 @@ fn bundle_executable(path: &str) -> Option<String> {
 
 /// `cmake::GetConfigureLog`: the log exists while configuring a project,
 /// outside try_compile.
-fn configure_log_exists(interp: &Interp) -> bool {
+pub(super) fn configure_log_exists(interp: &Interp) -> bool {
     interp.mode != crate::interp::Mode::Script && !interp.in_try_compile
 }
 
 /// `cmFindCommonDebugState::WriteSearchVariables`.
-pub(crate) fn write_search_variables(
+/// `cmFindCommonDebugState::VariableSource` with its variable name.
+pub(super) enum SearchVariable<'a> {
+    PathList(&'a str),
+    EnvironmentList(&'a str),
+}
+
+pub(super) fn write_search_variables(
     log: &mut crate::configure_log::ConfigureLog,
     interp: &Interp,
     path_name: &str,
-    environment_path: &str,
+    extras: &[SearchVariable<'_>],
 ) {
     let write_string = |log: &mut crate::configure_log::ConfigureLog, name: &str| {
         if let Some(value) = interp.get_def(name) {
@@ -1227,8 +1234,11 @@ pub(crate) fn write_search_variables(
         write_list(log, name);
     }
     write_list(log, &format!("CMAKE_SYSTEM_{extra}_PATH"));
-    if !environment_path.is_empty() {
-        write_env(log, environment_path);
+    for extra in extras {
+        match extra {
+            SearchVariable::PathList(name) => write_list(log, name),
+            SearchVariable::EnvironmentList(name) => write_env(log, name),
+        }
     }
     log.end_object();
 }

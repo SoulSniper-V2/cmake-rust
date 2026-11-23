@@ -422,9 +422,17 @@ impl Package {
             } else {
                 format!("{dir}{suffix}")
             };
-            if !ignored.contains(&path)
-                && let Some(config) = self.find_config_file(interp, &path, kind)
-            {
+            if ignored.contains(&path) {
+                // CheckDirectory: an ignored directory is a considered path.
+                self.considered_paths.push(ConsideredPath {
+                    path: format!("{path}/"),
+                    mode: FoundMode::of(kind),
+                    reason: SearchResult::Ignored,
+                    message: String::new(),
+                });
+                continue;
+            }
+            if let Some(config) = self.find_config_file(interp, &path, kind) {
                 return Some(config);
             }
         }
@@ -445,14 +453,25 @@ impl Package {
             if let Some(debug) = &mut self.debug {
                 let _ = writeln!(debug, "  {file}");
             }
-            if readable_file(&file) && self.check_version(interp, &file) {
+            let reason = if !readable_file(&file) {
+                SearchResult::NoExist
+            } else if self.check_version(interp, &file) {
+                self.accepted_mode = FoundMode::of(cps::config_desc(&config));
                 if interp.is_on("CMAKE_FIND_PACKAGE_RESOLVE_SYMLINKS")
                     && let Ok(real) = fs::canonicalize(&file)
                 {
                     return Some(real.to_string_lossy().into_owned());
                 }
                 return Some(normalized(&file));
-            }
+            } else {
+                SearchResult::InsufficientVersion
+            };
+            self.considered_paths.push(ConsideredPath {
+                path: file,
+                mode: FoundMode::of(kind),
+                reason,
+                message: String::new(),
+            });
         }
         None
     }

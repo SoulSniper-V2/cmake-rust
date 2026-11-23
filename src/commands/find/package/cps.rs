@@ -1119,6 +1119,13 @@ impl Package {
             missing_targets: Vec::new(),
             file_found: String::new(),
             cps: None,
+            considered_paths: Vec::new(),
+            log_found: None,
+            accepted_mode: FoundMode::None,
+            // A nested command never runs InitialPass, so has no debug state.
+            debug_state: false,
+            debug_found: false,
+            initial: InitialState::Undefined,
         }
     }
 
