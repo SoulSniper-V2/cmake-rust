@@ -20,7 +20,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use super::ctx::GenCtx;
-use super::target::{self, ArtifactType, SourceInfo};
+#[cfg(test)]
+use super::target::SourceInfo;
+use super::target::{self, ArtifactType};
 use crate::messages::{Frame, MessageType};
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
