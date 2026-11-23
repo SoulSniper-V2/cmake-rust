@@ -41,19 +41,22 @@ candidate. The pinned Kitware `ctest` is the independent test runner.
   `LLVM_TARGETS_TO_BUILD=X86`, `LLVM_INCLUDE_BENCHMARKS=OFF`):
   - Configure and generate succeed.
   - The configure log, `CMakeCache.txt`, `rules.ninja` and `build.ninja` (41 MB, 21,997 statements) are byte-identical to the oracle's. Tool paths are normalized, and the regeneration-dependency list sorts differently because the prefix paths differ.
-  - `ninja check-clang` on the candidate's build: 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed.
+  - `ninja check-clang` on the candidate's build (configured at `23bb540`, built 4013/4013): 21,156 tests run, 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed, 10 skipped. The separately labeled reference build configured by Kitware CMake reports the identical counts.
   - Times: configure about 5 s, generate about 6 s (oracle 1.8 s).
-- **Kitware CMake 4.1.0**: the configure log, `CMakeCache.txt` and `rules.ninja` are identical to the oracle's, and `build.ninja` differs only in the regeneration-dependency order. One nested try-compile tree still differs: `Tests/CMakeFiles/CheckFortran` records a different `CMakeFortranCompiler.cmake`, because Fortran preprocessing and dyndep scanning in the Ninja generator are not ported yet. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 683/683 passed (re-measured at `7b0e89f` against a reference rebuilt with `BUILD_CursesDialog=OFF`; the oracle-configured tree registers the same 683 tests).
+- **Kitware CMake 4.1.0** (re-measured at `8182257`): `CMakeCache.txt` and `rules.ninja` are identical to the oracle's. The configure log is identical once the try-compile scratch names, compiler temp files and install prefix are normalized. `build.ninja` has 2,129 statements on each side and differs only in the regeneration-dependency order. The nested `Tests/CMakeFiles/CheckFortran` tree now matches too. The build completes (1198/1198 steps), and the upstream CTest suite run by the built `ctest` reports 683/683 passed. The oracle-configured tree registers the same 683 tests.
 - **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
 
-- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 5,370 of 5,638 eligible cases pass (95.25%) at `b593866` (4,504 of 5,592 at `57dd2aa`).
+- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered, each case run against the oracle): 5,621 of 5,638 eligible cases pass (99.70%) at `8182257` (5,370 at `b593866`, 4,504 of 5,592 at `57dd2aa`). Not eligible: the Ninja Multi-Config generator (223 cases), extra generators (5), and standalone tools (8). The 17 eligible non-passes:
+  - 14 `CXXModules` cases. C++ module scanning and collation (`cmDyndepCollation`, `cmCxxModuleMapper`) are not ported, so a target with `CXX_MODULES` file sets fails generation with an explicit error.
+  - 2 `CommandLine` debugger cases. The DAP debugger is not ported, so `--debugger` reports itself as unsupported.
+  - 1 `CommandLine` case, `cmake_depends`. Makefile-generator dependency scanning (`cmDependsC`) is not ported, and it fails with an explicit error.
 
 `file(DOWNLOAD)` and `file(UPLOAD)` run on the host's `libcurl.so.4`, which is loaded at the first transfer. Status and error text come from the `curl_easy_strerror` table of the curl 8.14.1 that CMake vendors, generated from the pinned sources. `LOG` output comes from the host libcurl, so its wording can differ.
 
 Harnesses:
 - `scripts/difftest.py`: script mode, 1247 cases.
-- `scripts/clitest.py`: command line, 400 cases.
-- `scripts/projdiff.py`: project mode, generated files byte-compared, 45 projects.
+- `scripts/clitest.py`: command line, 404 cases.
+- `scripts/projdiff.py`: project mode, generated files byte-compared (including `*.mk` and install-tree export files), 48 projects.
 - `scripts/ninjadiff.py`: structural `build.ninja` comparison.
 - `scripts/llvm-configure.sh` and `scripts/kitware-configure.sh`: oracle/candidate configure runners.
 - `scripts/conformance/`: upstream RunCMake.
