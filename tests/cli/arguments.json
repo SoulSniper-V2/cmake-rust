@@ -802,5 +802,33 @@
   "files": {
    "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.29)\nproject(p C CXX)\n"
   }
+ },
+ {
+  "name": "mark-as-advanced-uninitialized",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja",
+     "-DFOO=1",
+     "-DBAR=2",
+     "-DBAZ=3"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmark_as_advanced(FOO)\nmark_as_advanced(CLEAR BAR)\nmark_as_advanced(NEW1 BAZ)\ncmake_policy(SET CMP0102 NEW)\nmark_as_advanced(NEW2)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^(FOO|BAR|BAZ|NEW1|NEW2)\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
  }
 ]

@@ -842,24 +842,21 @@ fn mark_as_advanced(interp: &mut Interp, args: &[String]) -> CmdResult {
                 ),
             );
         }
-        match interp.cache.entries.get_mut(name) {
-            Some(entry) => {
-                if entry.kind == CacheType::Uninitialized {
-                    entry.kind = CacheType::String;
-                }
-                if overwrite || !entry.properties.contains_key("ADVANCED") {
-                    entry.properties.insert("ADVANCED".into(), value.into());
-                }
-            }
-            None => {
-                if policy == PolicyStatus::New {
-                    continue;
-                }
-                interp.cache.add(name, None, None, CacheType::Uninitialized);
-                if let Some(entry) = interp.cache.entries.get_mut(name) {
-                    entry.properties.insert("ADVANCED".into(), value.into());
-                }
-            }
+        // If it's not in the cache and we're using the new behavior, nothing
+        // to see here.
+        if policy == PolicyStatus::New && !in_cache {
+            continue;
+        }
+        // The old behavior makes a dummy cache entry, and overwrites the
+        // ADVANCED property of every later variable too.
+        if policy != PolicyStatus::New && !in_cache {
+            interp.cache.add(name, None, None, CacheType::Uninitialized);
+            overwrite = true;
+        }
+        if let Some(entry) = interp.cache.entries.get_mut(name)
+            && (overwrite || !entry.properties.contains_key("ADVANCED"))
+        {
+            entry.properties.insert("ADVANCED".into(), value.into());
         }
     }
     Ok(())
