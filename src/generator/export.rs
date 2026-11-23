@@ -1841,7 +1841,7 @@ fn write_target_file_sets(ex: &Exporter<'_, '_>, out: &mut String, record: &Reco
         )
         .unwrap();
     }
-    writeln!(
+    write!(
         out,
         "  )\nelse()\n  set_property(TARGET {target_name}\n    APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES"
     )
@@ -1849,7 +1849,7 @@ fn write_target_file_sets(ex: &Exporter<'_, '_>, out: &mut String, record: &Reco
     for (name, set) in &sets {
         if set.kind == "HEADERS" {
             let (dirs, _) = file_set_dirs_files(ex, tgt, set, name, record);
-            writeln!(out, "      {dirs}").unwrap();
+            write!(out, "\n      {dirs}").unwrap();
         }
     }
     out.push_str("\n  )\nendif()\n\n");
@@ -2142,9 +2142,19 @@ fn write_build_export(ctx: &GenCtx, file: &str, export: &BuildExport) -> std::io
     let cxx_modules_name = if let Some(set_name) = &export.set {
         set_name.clone()
     } else {
-        // SHA3-512 over target names, truncated to 12 hex chars.
-        let joined: String = export.targets.concat();
-        format!("{:x}", md5::Md5::digest(joined.as_bytes()))[..12].to_owned()
+        // cmExportBuildCMakeConfigGenerator::GenerateMainFile: SHA3-512
+        // over the target names, truncated to 12 hex digits.
+        use sha3::Digest as _;
+        let mut hasher = sha3::Sha3_512::new();
+        for target in &export.targets {
+            hasher.update(target.as_bytes());
+        }
+        let digest = hasher.finalize();
+        digest
+            .iter()
+            .take(6)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     };
     let module_dir = &export.options.modules_directory;
     if !module_dir.is_empty() {
