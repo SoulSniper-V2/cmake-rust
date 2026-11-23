@@ -196,7 +196,8 @@ fn capabilities(args: &[String]) -> i32 {
         return 1;
     }
     // cmake::ReportCapabilities uses compact, sorted JSON keys. The generator
-    // array advertises only the implementation's Ninja generator. File API
+    // array advertises the implemented Ninja generators in the factory
+    // registration order (without extra generators). File API
     // versions follow the 4.1 protocol. The debugger flag reflects this build.
     println!(
         "{}",
@@ -210,6 +211,7 @@ fn capabilities(args: &[String]) -> i32 {
                 {"kind": "toolchains", "version": [{"major": 1, "minor": 0}]}
             ] },
             "generators": [
+                {"extraGenerators": [], "name": "Ninja Multi-Config", "platformSupport": false, "toolsetSupport": false},
                 {"extraGenerators": [], "name": "Ninja", "platformSupport": false, "toolsetSupport": false}
             ],
             "serverMode": false,

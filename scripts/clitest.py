@@ -82,11 +82,13 @@ def run(binary, case, *, oracle):
                 )
             if step.get("ninja_capabilities") and oracle:
                 # Project the pinned build onto this implementation's supported
-                # generator and debugger set. Leave the remaining bytes exact.
+                # generators (Ninja Multi-Config, Ninja) and debugger set. Leave the remaining bytes exact.
                 stdout = stdout.replace(b'"debugger":true', b'"debugger":false')
                 stdout = re.sub(
                     rb'"generators":\[.*?\],"serverMode"',
-                    b'"generators":[{"extraGenerators":[],"name":"Ninja",'
+                    b'"generators":[{"extraGenerators":[],"name":"Ninja Multi-Config",'
+                    b'"platformSupport":false,"toolsetSupport":false},'
+                    b'{"extraGenerators":[],"name":"Ninja",'
                     b'"platformSupport":false,"toolsetSupport":false}],"serverMode"',
                     stdout, count=1,
                 )
