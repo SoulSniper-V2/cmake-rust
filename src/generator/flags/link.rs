@@ -273,6 +273,24 @@ fn warning_as_error(inputs: &Flags<'_, '_>, flags: &mut String) {
     }
 }
 
+/// `cmGeneratorTarget::ResolveLinkerWrapper(items, language, joinItems =
+/// true)` for one item, as cmComputeLinkInformation applies it to `LINKER:`
+/// link items and feature fragments.
+pub(crate) fn resolve_linker_wrapper_joined(
+    ctx: &GenCtx,
+    target: &Target,
+    lang: &str,
+    value: &str,
+) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config: &ctx.config,
+        lang,
+    };
+    resolve_wrapper(&inputs, vec![value.to_owned()], "LINKER").join(" ")
+}
+
 fn resolve_wrapper(inputs: &Flags<'_, '_>, options: Vec<String>, prefix: &str) -> Vec<String> {
     let mut wrapper = expand_list(
         &inputs

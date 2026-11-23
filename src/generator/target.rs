@@ -2231,10 +2231,15 @@ fn compute_linker_language(ctx: &GenCtx, target: &Target, config: &str) -> Strin
     let (language, sensitive) = compute();
     ctx.memo.borrow_mut().insert(key, language.clone());
     if sensitive {
+        let pass_key = super::ctx::second_pass_key(&ctx.target_key(target));
+        ctx.memo
+            .borrow_mut()
+            .insert(pass_key.clone(), language.clone());
         let (second, _) = compute();
+        ctx.memo.borrow_mut().remove(&pass_key);
         if second != language {
-            // cmSystemTools::Error (no backtrace).
-            ctx.error(Vec::new(), format!(
+            // cmSystemTools::Error: a bare, unwrapped diagnostic.
+            ctx.system_error(format!(
                 "Evaluation of $<LINK_LANGUAGE:...> or $<LINK_LAND_AND_ID:...> changes\nthe linker language for target \"{}\" (from '{language}' to '{second}') which is invalid.",
                 target.name
             ));

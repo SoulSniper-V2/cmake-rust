@@ -965,48 +965,9 @@ impl<'a, 'q, 'i> Information<'a, 'q, 'i> {
     }
 }
 
-/// Resolve LINKER: fragments using the selected language's compiler wrapper.
+/// `ResolveLinkerWrapper(..., joinItems = true)` in the link language.
 fn linker_wrapper(query: &Query<'_, '_>, head: &Target, value: &str) -> String {
-    let Some(args) = value.strip_prefix("LINKER:") else {
-        return value.to_owned();
-    };
-    let tokens = if let Some(args) = args.strip_prefix("SHELL:") {
-        shlex::split(args).unwrap_or_default()
-    } else {
-        args.split(',')
-            .filter(|arg| !arg.is_empty())
-            .map(str::to_owned)
-            .collect()
-    };
-    let lang = query.language;
-    let mut wrapper = expand_list(
-        &query.var(head, &format!("CMAKE_{lang}_LINKER_WRAPPER_FLAG")),
-        false,
-    );
-    let separate = wrapper.last().is_some_and(|flag| flag == " ");
-    if separate {
-        wrapper.pop();
-    }
-    let separator = query.var(head, &format!("CMAKE_{lang}_LINKER_WRAPPER_FLAG_SEP"));
-    let tokens = if !separator.is_empty() {
-        vec![tokens.join(&separator)]
-    } else {
-        tokens
-    };
-    tokens
-        .into_iter()
-        .map(|token| {
-            let prefix = wrapper.join(" ");
-            if prefix.is_empty() {
-                token
-            } else if separate {
-                format!("{prefix} {token}")
-            } else {
-                format!("{prefix}{token}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::generator::flags::resolve_linker_wrapper_joined(query.ctx, head, query.language, value)
 }
 
 #[derive(Clone, Default)]

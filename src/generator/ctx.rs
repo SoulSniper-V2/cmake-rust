@@ -452,6 +452,14 @@ impl<'a> GenCtx<'a> {
                 | "INTERFACE_LINK_LIBRARIES_DIRECT"
                 | "INTERFACE_LINK_LIBRARIES_DIRECT_EXCLUDE"
         ) || root_property.starts_with("IMPORTED_LINK_INTERFACE_LIBRARIES");
+        // cmGeneratorTarget::ComputeLinkClosure second pass: link-library
+        // expressions see the first pass's linker language.
+        let second_pass_language = if language.is_none() && link {
+            self.memo.borrow().get(&second_pass_key(&head_key)).cloned()
+        } else {
+            None
+        };
+        let language = language.or(second_pass_language.as_deref());
         let host_policy = super::genex_host::CtxHost::new(self, owner.makefile);
         let transitive = link
             && !root_property.starts_with("INTERFACE_LINK_LIBRARIES_DIRECT")
@@ -695,4 +703,10 @@ impl<'a> GenCtx<'a> {
         super::link::check_link_libraries(self);
         std::mem::take(&mut *self.errors.borrow_mut())
     }
+}
+
+/// The memo key under which `ComputeLinkClosure`'s second pass publishes
+/// the first-pass linker language of the head target.
+pub(super) fn second_pass_key(head_key: &str) -> String {
+    format!("linker-language-second-pass\0{head_key}")
 }

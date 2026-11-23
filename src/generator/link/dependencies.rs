@@ -122,6 +122,16 @@ impl<'i> LinkGraph<'_, '_, 'i> {
             if item.text == self.head.name {
                 continue;
             }
+            // AddLinkEntries: an IMPORTED depender's undefined feature.
+            let imported_depender = parent
+                .and_then(|parent| self.entries[parent].item.target)
+                .filter(|target| target.imported);
+            if let Some(depender) = imported_depender
+                && item.feature != DEFAULT
+                && !self.feature_supported("LIBRARY", &item.feature)
+            {
+                self.imported_feature_error(depender, "LIBRARY", &item.feature);
+            }
             if let Some(feature) = item.group() {
                 item.feature = feature.to_owned();
                 let (index, new) = self.allocate(item, Kind::Group);
@@ -193,6 +203,14 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 self.resolve_mismatch(index, &feature);
             }
 
+            if let Some(depender) = imported_depender
+                && let Some((group_index, _, _)) = &group
+            {
+                let group_feature = self.entries[*group_index].item.feature.clone();
+                if !self.feature_supported("GROUP", &group_feature) {
+                    self.imported_feature_error(depender, "GROUP", &group_feature);
+                }
+            }
             if let Some((group_index, _, members)) = &mut group {
                 let group_feature = &self.entries[*group_index].item.feature;
                 for (&other, existing) in &self.groups {
@@ -245,6 +263,42 @@ impl<'i> LinkGraph<'_, '_, 'i> {
                 self.objects.push(index);
             }
         }
+    }
+
+    /// `IsFeatureSupported` (`kind` LIBRARY) / `IsGroupFeatureSupported`
+    /// (`kind` GROUP), read in the head target's directory.
+    fn feature_supported(&self, kind: &str, feature: &str) -> bool {
+        let language = self.query.language;
+        let makefile = self.head.makefile;
+        let per_language = format!("CMAKE_{language}_LINK_{kind}_USING_{feature}_SUPPORTED");
+        if let Some(value) = self.query.ctx.var(makefile, &per_language)
+            && (kind == "LIBRARY" || crate::util::is_on(&value))
+        {
+            return crate::util::is_on(&value);
+        }
+        self.query
+            .ctx
+            .var(
+                makefile,
+                &format!("CMAKE_LINK_{kind}_USING_{feature}_SUPPORTED"),
+            )
+            .is_some_and(|value| crate::util::is_on(&value))
+    }
+
+    /// The AddLinkEntries AUTHOR_ERROR for an IMPORTED target using an
+    /// undefined `$<LINK_LIBRARY>` / `$<LINK_GROUP>` feature, at the head
+    /// target's backtrace.
+    fn imported_feature_error(&self, depender: &Target, kind: &str, feature: &str) {
+        let language = self.query.language;
+        // cmMessenger turns AUTHOR_ERROR into AUTHOR_WARNING unless dev
+        // warnings are errors, which `warn` already handles.
+        self.query.warn(
+            self.head.backtrace.clone(),
+            format!(
+                "The 'IMPORTED' target '{}' uses the generator-expression '$<LINK_{kind}>' with the feature '{feature}', which is undefined or unsupported.\nDid you miss to define it by setting variables \"CMAKE_{language}_LINK_{kind}_USING_{feature}\" and \"CMAKE_{language}_LINK_{kind}_USING_{feature}_SUPPORTED\"?",
+                depender.name
+            ),
+        );
     }
 
     fn legacy_depends(&self, text: &str) -> Option<String> {

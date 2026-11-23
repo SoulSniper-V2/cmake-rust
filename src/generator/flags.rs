@@ -410,7 +410,7 @@ pub(crate) fn link_dir_items(
     .collect()
 }
 
-pub(crate) use link::codemodel_link_flags;
+pub(crate) use link::{codemodel_link_flags, resolve_linker_wrapper_joined};
 pub(crate) use standard::{level, levels};
 
 /// `usage_items` values + backtraces for File API consumers (e.g. the
