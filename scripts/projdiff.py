@@ -7,12 +7,14 @@ after normalizing tool paths.
 Each case is a directory under tests/projects/<area>/<case>/ containing a
 CMakeLists.txt (and sources). Optional files in the case directory:
   args.txt     extra configure arguments, one per line
+  generator.txt  the generator to configure with (default: Ninja)
   build.txt    if present, run `<make-program>` after configure and compare
                the build exit code and the set of produced files
   ctest.txt    if present, run the oracle's ctest in both trees and compare
-               the pass/fail summary
-Generated files compared (when present on either side): build.ninja,
-CMakeFiles/rules.ninja, CMakeCache.txt (with volatile entries dropped),
+               the pass/fail summary; its lines are extra ctest arguments
+Generated files compared (when present on either side): every *.ninja file
+(build.ninja and CMakeFiles/rules.ninja, plus the Ninja Multi-Config
+build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja), CMakeCache.txt (with volatile entries dropped),
 CTestTestfile.cmake, cmake_install.cmake (all directories),
 compile_commands.json, Android.mk-style `*.mk` exports, and every file under
 CMakeFiles/Export/ (install-tree export files).
@@ -65,7 +67,7 @@ def gather(build_dir):
         name = path.name
         if not path.is_file():
             continue
-        if (name in ("build.ninja", "rules.ninja", "CMakeCache.txt", "CTestTestfile.cmake",
+        if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake",
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json")
                 or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")):
             files[rel] = path.read_text(errors="replace")
@@ -87,7 +89,9 @@ def run_side(binary, case, work):
         "LC_ALL": "C",
         "CMAKE_RUST_DATA_ROOT": DATA_ROOT,
     }
-    proc = subprocess.run([str(binary), "-S", str(src), "-B", str(build), "-G", "Ninja", *args],
+    generator_file = case / "generator.txt"
+    generator = generator_file.read_text().strip() if generator_file.exists() else "Ninja"
+    proc = subprocess.run([str(binary), "-S", str(src), "-B", str(build), "-G", generator, *args],
                           cwd=work, env=env, capture_output=True, timeout=600)
     result = {
         "configure.exit": str(proc.returncode),
@@ -112,7 +116,8 @@ def run_side(binary, case, work):
                 if path.name in ("Fortran.dd", "FortranModules.json") or path.suffix == ".ddi" or scan_dep:
                     result[f"file:{path.relative_to(build)}"] = path.read_text()
     if (case / "ctest.txt").exists() and proc.returncode == 0:
-        t = subprocess.run([str(ORACLE_CTEST), "--test-dir", str(build)], cwd=work, env=env,
+        ctest_args = [line for line in (case / "ctest.txt").read_text().splitlines() if line.strip()]
+        t = subprocess.run([str(ORACLE_CTEST), "--test-dir", str(build), *ctest_args], cwd=work, env=env,
                            capture_output=True, timeout=1800)
         summary = [line for line in t.stdout.decode(errors="replace").splitlines()
                    if "tests passed" in line or "Passed" in line or "Failed" in line]

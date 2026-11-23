@@ -69,9 +69,9 @@ pub struct CustomCommandSpec {
     pub verbatim: bool,
     pub escape_allow_make_vars: bool,
     pub command_expand_lists: bool,
-    /// With CMP0116 NEW, the Ninja writer supplies its computed CMakeFiles/d
-    /// path and uses that same path for the Ninja depfile binding.
-    pub internal_depfile: Option<String>,
+    /// `transformDepfile` (CMP0116 NEW): append the
+    /// `cmake_transform_depfile` step writing `internal_depfile_name`.
+    pub transform_depfile: bool,
     /// The command's backtrace (diagnostics).
     pub backtrace: Vec<crate::messages::Frame>,
 }
@@ -294,10 +294,7 @@ pub fn evaluate_spec_cfg(
     if !result.depfile.is_empty() {
         result.full_depfile = unix_full_path(&result.depfile, &directory.binary_dir);
     }
-    if spec.internal_depfile.is_some()
-        && !spec.depfile.is_empty()
-        && !result.command_lines.is_empty()
-    {
+    if spec.transform_depfile && !spec.depfile.is_empty() && !result.command_lines.is_empty() {
         result.command_lines.push(vec![
             ctx.interp.cmake_command.clone(),
             "-E".to_owned(),
@@ -347,14 +344,14 @@ pub fn spec_from_command(
         verbatim: command.verbatim,
         escape_allow_make_vars: command.escape_allow_make_vars,
         command_expand_lists: command.command_expand_lists,
-        internal_depfile: None,
+        transform_depfile: false,
         backtrace: command.backtrace.clone(),
     };
     // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW. The
     // internal depfile path is computed per configuration by evaluate_spec.
     let cmp0116 = crate::policy::index_of("CMP0116").and_then(|index| command.policies.get(index));
     if cmp0116 == Some(crate::policy::PolicyStatus::New) && !command.depfile.is_empty() {
-        spec.internal_depfile = Some(String::new());
+        spec.transform_depfile = true;
     }
     spec
 }
@@ -703,7 +700,7 @@ mod tests {
             working_directory: "../work/./here".to_owned(),
             comment: Some(String::new()),
             depfile: "path/../file.d".to_owned(),
-            internal_depfile: Some("/project/build/CMakeFiles/d/id.d".to_owned()),
+            transform_depfile: true,
             job_pool: "lto".to_owned(),
             uses_terminal: true,
             ..CustomCommandSpec::default()
@@ -751,7 +748,7 @@ mod tests {
                 "/project/build",
                 "/project/build/nested",
                 "/project/build/nested/file.d",
-                "/project/build/CMakeFiles/d/id.d",
+                &internal_depfile_name(&ctx, "/project/build/nested/file.d"),
             ])
         );
         assert_eq!(evaluated.description(&ctx, 1, "fallback"), "");

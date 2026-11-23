@@ -136,7 +136,7 @@ impl<'a> GenCtx<'a> {
     /// `cmGlobalNinjaGenerator::BuildAlias`: `name:config` for a nonempty
     /// config, otherwise `name`.
     pub fn build_alias(&self, alias: &str, config: &str) -> String {
-        if config.is_empty() {
+        if !self.multi_config || config.is_empty() {
             alias.to_owned()
         } else {
             format!("{alias}:{config}")
@@ -146,24 +146,11 @@ impl<'a> GenCtx<'a> {
     /// `cmGlobalNinjaGenerator::ConfigDirectory`: `/<config>` for a
     /// nonempty config, otherwise empty.
     pub fn config_directory(&self, config: &str) -> String {
-        if config.is_empty() {
+        if !self.multi_config || config.is_empty() {
             String::new()
         } else {
             format!("/{config}")
         }
-    }
-
-    /// `cmGlobalNinjaGenerator::GetCrossConfigs`: the file config plus all
-    /// cross configs.
-    pub fn cross_configs_of(&self, file_config: &str) -> Vec<String> {
-        let mut configs = vec![file_config.to_owned()];
-        configs.extend(
-            self.cross_configs
-                .iter()
-                .filter(|c| *c != file_config)
-                .cloned(),
-        );
-        configs
     }
 
     /// `cmGlobalNinjaGenerator::OrderDependsTargetForTarget`: the
@@ -179,26 +166,12 @@ impl<'a> GenCtx<'a> {
         }
     }
 
-    /// `cmTarget::IsPerConfig` for the purposes of generation: ordinary
-    /// and utility targets generate per configuration; INTERFACE_LIBRARY
-    /// and non-per-config GLOBAL_TARGETs generate once.
+    /// `cmTarget::IsPerConfig`: every target created by the project is
+    /// per-config (`cmMakefile::AddNewTarget` passes `PerConfig::Yes`);
+    /// only the generator's own global targets may not be, and those are
+    /// modelled by `ninja::GlobalTarget::per_config`.
     pub fn is_per_config(&self, target: &Target) -> bool {
-        !matches!(
-            target.kind,
-            TargetKind::InterfaceLibrary | TargetKind::GlobalTarget
-        )
-    }
-
-    /// `cmGlobalNinjaGenerator::IsSingleConfigUtility`: a UTILITY target
-    /// whose output is shared by all configurations (not created through
-    /// the per-config utility-output path).
-    pub fn is_single_config_utility(&self, target: &Target) -> bool {
-        target.kind == TargetKind::Utility
-            && !self
-                .interp
-                .ext
-                .per_config_utility_targets
-                .contains(&target.name)
+        target.kind != TargetKind::GlobalTarget
     }
 
     /// An AUTHOR_WARNING issued during generation (cmake::IssueMessage).

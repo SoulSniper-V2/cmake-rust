@@ -2041,7 +2041,10 @@ fn build_module_files(
         )
         .unwrap();
     }
-    write_if_different(&dir.join(format!("cxx-modules-{name}.cmake")), main_content.as_bytes())?;
+    write_if_different(
+        &dir.join(format!("cxx-modules-{name}.cmake")),
+        main_content.as_bytes(),
+    )?;
     // GenerateImportCxxModuleConfigTargetInclusion.
     for config in &configs {
         let config = config_suffix(config);
@@ -2601,14 +2604,7 @@ pub(super) fn write_install_export(
                 module_files.insert(config, per_config.to_string_lossy().into_owned());
             }
             for (config, per_config) in module_files {
-                write_config_copy(
-                    &config,
-                    out,
-                    indent,
-                    &opts,
-                    &module_destination,
-                    per_config,
-                );
+                write_config_copy(&config, out, indent, &opts, &module_destination, per_config);
             }
         }
     }

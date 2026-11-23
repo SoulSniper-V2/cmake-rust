@@ -511,7 +511,7 @@ fn add_target_command(
 
 /// `cmLocalNinjaGenerator::HasUniqueByproducts`: every byproduct contains a
 /// generator expression and evaluates to a distinct path per configuration.
-fn has_unique_byproducts(
+pub(crate) fn has_unique_byproducts(
     interp: &Interp,
     dir: usize,
     byproducts: &[String],

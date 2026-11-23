@@ -51,19 +51,19 @@ use crate::interp::Interp;
 /// `cmake::Generate`: compute and write the build system. Returns 0 on
 /// success.
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
-    let multi_config = interp.get_def("CMAKE_GENERATOR").as_deref() == Some("Ninja Multi-Config");
+    let multi_config = interp.get_def("CMAKE_GENERATOR") == Some("Ninja Multi-Config");
     if multi_config {
         // cmGlobalNinjaMultiGenerator::InspectConfigTypeVariables.
         let mut config_list: Vec<String> = interp
             .get_def("CMAKE_CONFIGURATION_TYPES")
-            .map(|value| crate::util::expand_list(&value, true))
+            .map(|value| crate::util::expand_list(value, true))
             .unwrap_or_default();
         // cmMakefile::GetGeneratorConfigs(IncludeEmptyConfig).
         if config_list.is_empty() {
             config_list.push(String::new());
         }
         let configs: BTreeSet<String> = config_list.iter().cloned().collect();
-        let mut fatal = |interp: &mut Interp, message: String| {
+        let fatal = |interp: &mut Interp, message: String| {
             interp.issue_at(crate::messages::MessageType::FatalError, &message, &[]);
         };
         // cmGlobalNinjaGenerator::ListSubsetWithAll.
@@ -106,7 +106,7 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         }
         let cross_list: Vec<String> = interp
             .get_def("CMAKE_CROSS_CONFIGS")
-            .map(|value| crate::util::expand_list(&value, true))
+            .map(|value| crate::util::expand_list(value, true))
             .unwrap_or_default();
         let Some(cross_configs) = subset_with_all(&configs, &configs, &cross_list) else {
             fatal(
@@ -403,18 +403,24 @@ fn expand_output_genex(
     backtrace: &[crate::messages::Frame],
 ) -> Result<Vec<String>, String> {
     let ctx = ctx::GenCtx::new(interp);
-    // cmLocalGenerator::ExpandCustomCommandOutputPaths evaluates the whole
-    // output as one generator expression (no OUTPUT_CONFIG stripping).
-    let value = ctx.genex_output(output, dir, backtrace);
-    if let Some(message) = ctx.errors.borrow().first().map(|d| d.text().to_owned()) {
-        return Err(message);
-    }
     let binary = &interp.makefiles[dir].binary_dir;
     let mut paths: Vec<String> = Vec::new();
-    for path in crate::util::expand_list(&value, false) {
-        let path = crate::util::collapse_full_path(&path, binary);
-        if !paths.contains(&path) {
-            paths.push(path);
+    // GetGeneratorConfigs(IncludeEmptyConfig): every configuration's paths,
+    // deduplicated in first-seen order.
+    for config in &ctx.configs {
+        let view = ctx.for_config(config);
+        // cmLocalGenerator::ExpandCustomCommandOutputPaths evaluates the
+        // whole output as one generator expression (no OUTPUT_CONFIG
+        // stripping).
+        let value = view.genex_output(output, dir, backtrace);
+        if let Some(message) = view.errors.borrow().first().map(|d| d.text().to_owned()) {
+            return Err(message);
+        }
+        for path in crate::util::expand_list(&value, false) {
+            let path = crate::util::collapse_full_path(&path, binary);
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
         }
     }
     Ok(paths)

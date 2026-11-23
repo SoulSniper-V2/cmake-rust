@@ -328,8 +328,8 @@ fn cmake_4_1_ninja_edges() {
             let mut seen = std::collections::HashSet::new();
             let mut order_only = graph.edges[index]
                 .iter()
-                .filter(|(dep, _)| seen.insert(*dep))
-                .map(|(dep, _)| target_artifact(&query, graph.targets[*dep]))
+                .filter(|(dep, _, _)| seen.insert(*dep))
+                .map(|(dep, _, _)| target_artifact(&query, graph.targets[*dep]))
                 .collect::<Vec<_>>();
             order_only.sort();
             order_only.extend(line.shared_symlinks);

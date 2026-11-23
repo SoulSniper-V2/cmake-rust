@@ -12,12 +12,16 @@ use super::*;
 struct Edge {
     to: usize,
     strong: bool,
+    /// `cmGraphEdge::IsCross`: a cross-configuration dependency (a custom
+    /// command naming the target, evaluated in the command config).
+    cross: bool,
     /// `cmGraphEdge::Backtrace`: the call site that created this dependency.
     backtrace: Rc<Vec<Frame>>,
 }
 
 /// A final dependency edge with its backtrace, for File API consumers.
-pub(crate) type DepEdge = (usize, Rc<Vec<Frame>>);
+/// The third field is `cmGraphEdge::IsCross`.
+pub(crate) type DepEdge = (usize, Rc<Vec<Frame>>, bool);
 
 /// The whole `cmComputeTargetDepends` result: the in-build-system targets in
 /// `cmGlobalGenerator`'s target order plus each one's `FinalGraph` edges.
@@ -47,7 +51,10 @@ pub(crate) fn dep_edges<'i>(
             .collect();
         let mut map = HashMap::new();
         for (index, target) in graph.targets.iter().enumerate() {
-            let mut edges = graph.edges[index].clone();
+            let mut edges: Vec<(usize, Rc<Vec<Frame>>)> = graph.edges[index]
+                .iter()
+                .map(|(to, bt, _)| (*to, bt.clone()))
+                .collect();
             edges.sort_by_key(|(to, _)| *to);
             edges.dedup_by_key(|(to, _)| *to);
             map.insert(
@@ -94,12 +101,46 @@ pub(super) fn dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<Str
     for (target, deps) in graph.targets.iter().zip(&graph.edges) {
         ctx.memo.borrow_mut().insert(
             format!("link:target-dependencies:{config}:{}", target.name),
-            unique(deps.iter().map(|(to, _)| graph.targets[*to].name.clone())).join(";"),
+            unique(
+                deps.iter()
+                    .map(|(to, _, _)| graph.targets[*to].name.clone()),
+            )
+            .join(";"),
+        );
+        // cmComputeTargetDepends::GetTargetDirectDepends: the set keeps one
+        // entry per dependee whose cross flag the last edge sets.
+        let mut cross: Vec<(usize, bool)> = Vec::new();
+        for (to, _, is_cross) in deps {
+            match cross.iter_mut().find(|(dep, _)| dep == to) {
+                Some(entry) => entry.1 = *is_cross,
+                None => cross.push((*to, *is_cross)),
+            }
+        }
+        ctx.memo.borrow_mut().insert(
+            format!("link:target-dependencies-cross:{config}:{}", target.name),
+            cross
+                .into_iter()
+                .filter(|(_, is_cross)| *is_cross)
+                .map(|(to, _)| graph.targets[to].name.clone())
+                .collect::<Vec<_>>()
+                .join(";"),
         );
     }
     ctx.memo
         .borrow()
         .get(&key)
+        .map(|value| expand_list(value, false))
+        .unwrap_or_default()
+}
+
+pub(super) fn cross_dependencies(ctx: &GenCtx, head: &Target, config: &str) -> Vec<String> {
+    dependencies(ctx, head, config);
+    ctx.memo
+        .borrow()
+        .get(&format!(
+            "link:target-dependencies-cross:{config}:{}",
+            head.name
+        ))
         .map(|value| expand_list(value, false))
         .unwrap_or_default()
 }
@@ -224,6 +265,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
                         optimized.push(Edge {
                             to: dep,
                             strong: false,
+                            cross: edge.cross,
                             backtrace: edge.backtrace.clone(),
                         });
                     }
@@ -235,6 +277,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
                                 optimized.push(Edge {
                                     to: dep,
                                     strong: false,
+                                    cross: edge.cross,
                                     backtrace: edge.backtrace.clone(),
                                 });
                             }
@@ -286,7 +329,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         for pair in linear.order.windows(2) {
             // The linking edges that linearize a component carry no
             // backtrace (`cmListFileBacktrace()` in IntraComponent).
-            result[pair[1]].push((pair[0], Rc::new(Vec::new())));
+            result[pair[1]].push((pair[0], Rc::new(Vec::new()), false));
         }
     }
     for (node, edges) in intermediate.iter().enumerate() {
@@ -294,7 +337,7 @@ pub(crate) fn compute<'i>(query: &Query<'_, 'i>) -> DepGraph<'i> {
         for edge in edges {
             let dest = components.index[edge.to];
             if source != dest {
-                result[tails[source]].push((heads[dest], edge.backtrace.clone()));
+                result[tails[source]].push((heads[dest], edge.backtrace.clone(), edge.cross));
             }
         }
     }
@@ -413,7 +456,7 @@ impl LinearComponent<'_> {
             if !edge.strong || self.components.index[edge.to] != self.component {
                 continue;
             }
-            self.result[node].push((edge.to, edge.backtrace.clone()));
+            self.result[node].push((edge.to, edge.backtrace.clone(), edge.cross));
             if !self.visit(edge.to) {
                 return false;
             }
@@ -466,11 +509,16 @@ impl<'i> Collector<'_, '_, 'i> {
     }
 
     fn add(&mut self, target: &Target, strong: bool, backtrace: Rc<Vec<Frame>>) {
+        self.add_edge(target, strong, false, backtrace);
+    }
+
+    fn add_edge(&mut self, target: &Target, strong: bool, cross: bool, backtrace: Rc<Vec<Frame>>) {
         if let Some(&to) = self.indices.get(&(std::ptr::from_ref(target) as usize)) {
             if to != self.head_index {
                 self.edges.push(Edge {
                     to,
                     strong,
+                    cross,
                     backtrace,
                 });
             }
@@ -489,7 +537,9 @@ impl<'i> Collector<'_, '_, 'i> {
         // cmGeneratorTarget::GetUtilityItems: add_dependencies plus the
         // utilities found by dependency tracing.
         {
-            let mut deps: Vec<(String, Rc<Vec<Frame>>)> = expand_list(
+            // std::set<BT<std::pair<std::string, bool>>>: one item per
+            // (name, cross) pair, ordered by name then cross.
+            let mut deps: Vec<(String, bool, Rc<Vec<Frame>>)> = expand_list(
                 target
                     .props
                     .get("MANUALLY_ADDED_DEPENDENCIES")
@@ -503,20 +553,20 @@ impl<'i> Collector<'_, '_, 'i> {
                     .get(&name)
                     .map(|frames| Rc::new(frames.clone()))
                     .unwrap_or_default();
-                (name, backtrace)
+                (name, false, backtrace)
             })
             .collect();
             deps.extend(
                 target
                     .traced_utilities
                     .iter()
-                    .map(|(name, _)| (name.clone(), Rc::new(Vec::new()))),
+                    .map(|(name, cross)| (name.clone(), *cross, Rc::new(Vec::new()))),
             );
-            deps.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-            deps.dedup_by(|(a, _), (b, _)| a == b);
-            for (name, backtrace) in deps {
+            deps.sort_by(|(a, ac, _), (b, bc, _)| (a, ac).cmp(&(b, bc)));
+            deps.dedup_by(|(a, ac, _), (b, bc, _)| a == b && ac == bc);
+            for (name, cross, backtrace) in deps {
                 if let Some(dependee) = self.query.resolve(target.makefile, &name) {
-                    self.add(dependee, true, backtrace);
+                    self.add_edge(dependee, true, cross, backtrace);
                 } else if report_missing && target.kind != TargetKind::GlobalTarget {
                     // cmComputeTargetDepends::CheckTarget uses the
                     // dependee name's recorded add_dependencies backtrace.

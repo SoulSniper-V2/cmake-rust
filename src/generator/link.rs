@@ -160,6 +160,12 @@ pub fn target_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<S
     target_graph::dependencies(ctx, target, config)
 }
 
+/// The dependees of `target_dependencies` whose `cmTargetDepend::IsCross`
+/// is set.
+pub fn target_cross_dependencies(ctx: &GenCtx, target: &Target, config: &str) -> Vec<String> {
+    target_graph::cross_dependencies(ctx, target, config)
+}
+
 /// `cmGlobalGenerator::CheckTargetLinkLibraries` +
 /// `cmGeneratorTarget::CheckLinkLibraries`: verify the memoized link
 /// structures at the end of generation. Implementation items are verified

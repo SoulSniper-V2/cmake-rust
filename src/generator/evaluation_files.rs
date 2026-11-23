@@ -257,81 +257,87 @@ pub fn generate(ctx: &GenCtx) {
         let mut files: BTreeSet<String> = BTreeSet::new();
         for language in &languages {
             let language = Some(language.as_str());
-            // Single-config Ninja: GetGeneratorConfigs(IncludeEmptyConfig)
-            // yields exactly the build type.
-            if !file.condition.is_empty() {
-                let result = ctx.genex_full(
-                    &file.condition,
+            // GetGeneratorConfigs(IncludeEmptyConfig): the build type, or
+            // every multi-config configuration.
+            for config in &ctx.configs {
+                let view = ctx.for_config(config);
+                let ctx = &view;
+                if !file.condition.is_empty() {
+                    let result = ctx.genex_full(
+                        &file.condition,
+                        file.dir,
+                        target.as_deref(),
+                        language,
+                        false,
+                        &file.backtrace,
+                    );
+                    if result == "0" {
+                        continue;
+                    }
+                    if result != "1" {
+                        ctx.error(
+                            dir_backtrace.clone(),
+                            format!(
+                                "Evaluation file condition \"{}\" did not evaluate to valid content. Got \"{result}\".",
+                                file.condition
+                            ),
+                        );
+                        continue;
+                    }
+                }
+                let (output, _) =
+                    output_file_name(ctx, file, target.as_deref(), language, &dir_backtrace);
+                let value = ctx.genex_full(
+                    &content,
                     file.dir,
                     target.as_deref(),
                     language,
                     false,
                     &file.backtrace,
                 );
-                if result == "0" {
+                if let Some(existing) = outputs.get(&output) {
+                    if *existing != value {
+                        ctx.error(
+                            dir_backtrace.clone(),
+                            format!(
+                                "Evaluation file to be written multiple times with different content. This is generally caused by the content evaluating the configuration type, language, or location of object files:\n {output}"
+                            ),
+                        );
+                    }
                     continue;
                 }
-                if result != "1" {
+                files.insert(output.clone());
+                outputs.insert(output.clone(), value.clone());
+                let mut text = String::new();
+                let mut lines: Vec<&str> = value.split('\n').collect();
+                let trailing = lines.last() == Some(&"");
+                if trailing {
+                    lines.pop();
+                }
+                let count = lines.len();
+                for (index, line) in lines.into_iter().enumerate() {
+                    text.push_str(line);
+                    let has_newline = index + 1 < count || trailing;
+                    if !file.newline.is_empty() {
+                        text.push_str(&file.newline);
+                    } else if has_newline {
+                        text.push('\n');
+                    }
+                }
+                let path = std::path::Path::new(&output);
+                if crate::fsutil::write_if_different(path, text.as_bytes()).is_err() {
                     ctx.error(
                         dir_backtrace.clone(),
-                        format!(
-                            "Evaluation file condition \"{}\" did not evaluate to valid content. Got \"{result}\".",
-                            file.condition
-                        ),
+                        format!("Could not open file for write in copy operation {output}"),
                     );
                     continue;
                 }
-            }
-            let (output, _) =
-                output_file_name(ctx, file, target.as_deref(), language, &dir_backtrace);
-            let value = ctx.genex_full(
-                &content,
-                file.dir,
-                target.as_deref(),
-                language,
-                false,
-                &file.backtrace,
-            );
-            if let Some(existing) = outputs.get(&output) {
-                if *existing != value {
-                    ctx.error(
-                        dir_backtrace.clone(),
-                        format!(
-                            "Evaluation file to be written multiple times with different content. This is generally caused by the content evaluating the configuration type, language, or location of object files:\n {output}"
-                        ),
+                if permissions != 0 {
+                    let _ = std::fs::set_permissions(
+                        path,
+                        std::fs::Permissions::from_mode(permissions),
                     );
                 }
-                continue;
-            }
-            files.insert(output.clone());
-            outputs.insert(output.clone(), value.clone());
-            let mut text = String::new();
-            let mut lines: Vec<&str> = value.split('\n').collect();
-            let trailing = lines.last() == Some(&"");
-            if trailing {
-                lines.pop();
-            }
-            let count = lines.len();
-            for (index, line) in lines.into_iter().enumerate() {
-                text.push_str(line);
-                let has_newline = index + 1 < count || trailing;
-                if !file.newline.is_empty() {
-                    text.push_str(&file.newline);
-                } else if has_newline {
-                    text.push('\n');
-                }
-            }
-            let path = std::path::Path::new(&output);
-            if crate::fsutil::write_if_different(path, text.as_bytes()).is_err() {
-                ctx.error(
-                    dir_backtrace.clone(),
-                    format!("Could not open file for write in copy operation {output}"),
-                );
-                continue;
-            }
-            if permissions != 0 {
-                let _ =
-                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions));
             }
         }
         // cmLocalGenerator::ProcessEvaluationFiles: outputs of different

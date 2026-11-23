@@ -272,7 +272,13 @@ pub struct GlobalTarget {
     pub makefile: usize,
     /// `GlobalTargetInfo::WorkingDir` (default: the directory's binary dir).
     pub working_dir: Option<String>,
+    /// `GlobalTargetInfo::PerConfig` (`cmTarget::IsPerConfig`).
+    pub per_config: bool,
 }
+
+/// A `cmGlobalNinjaGenerator::TargetAlias`: the target (by name) and the
+/// configuration whose outputs the alias names; `None` when ambiguous.
+type AliasEntry = Option<(String, String)>;
 
 /// The ninja file a statement is written to under Ninja Multi-Config
 /// (`cmGlobalNinjaMultiGenerator`'s impl/config/default/common streams).
@@ -284,10 +290,8 @@ pub enum Stream {
     /// `CMakeFiles/impl-<config>.ninja`.
     Impl(String),
     /// `build-<config>.ninja`.
-    #[allow(dead_code)]
     Config(String),
     /// `build.ninja`.
-    #[allow(dead_code)]
     Default,
 }
 
@@ -296,28 +300,26 @@ pub struct NinjaGenerator<'a> {
     pub build: String,
     pub rules: String,
     /// Multi-config file buffers keyed by stream; unused single-config.
-    #[allow(
-        dead_code,
-        reason = "multi-config streams land with per-config generation"
-    )]
     streams: std::collections::BTreeMap<Stream, String>,
     /// The stream `self.out()` currently routes to.
-    #[allow(
-        dead_code,
-        reason = "multi-config streams land with per-config generation"
-    )]
     stream: Stream,
     rule_names: HashSet<String>,
     pub custom_command_outputs: BTreeSet<String>,
-    /// alias -> Some(target name) or None when ambiguous.
-    target_aliases: BTreeMap<String, Option<String>>,
+    /// `TargetAliases`: alias -> (target name, config), None when ambiguous.
+    target_aliases: BTreeMap<String, AliasEntry>,
+    /// `Configs[config].TargetAliases` (multi-config `build-<Config>.ninja`).
+    config_target_aliases: BTreeMap<String, BTreeMap<String, AliasEntry>>,
+    /// `DefaultTargetAliases` (multi-config `build.ninja`).
+    default_target_aliases: BTreeMap<String, AliasEntry>,
+    /// `ByproductsForCleanTarget` (multi-config only consumer).
+    byproducts_for_clean: Vec<String>,
+    /// `Configs[config].ByproductsForCleanTarget`.
+    config_byproducts_for_clean: BTreeMap<String, Vec<String>>,
     global_targets: Vec<GlobalTarget>,
-    /// Object files per target for later reuse (`Configs[config].Objects`).
-    objects: HashMap<String, Vec<String>>,
     /// Global dependency postorder used to break static cycles in module lookup.
     module_order: HashMap<String, usize>,
     /// `cmGlobalNinjaGenerator::Configs[config].CustomCommands` (seen).
-    seen_custom_commands: HashSet<CcRef>,
+    seen_custom_commands: HashSet<(CcRef, String)>,
     /// `cmLocalNinjaGenerator::CustomCommands` of the current directory, in
     /// first-use order, with the targets using each (`CustomCommandTargets`).
     local_custom_commands: Vec<(CcRef, Vec<&'a Target>)>,
@@ -335,6 +337,9 @@ pub struct NinjaGenerator<'a> {
     home_binary: String,
     home_source: String,
     config: String,
+    /// The `fileConfig` whose impl file the current statements go to
+    /// (differs from `config` only for cross-config builds).
+    file_config: String,
     install_target_enabled: bool,
     /// `cmGlobalNinjaGenerator::OutputPathPrefix` (with trailing slash).
     output_prefix: String,
@@ -369,8 +374,11 @@ impl<'a> NinjaGenerator<'a> {
             rule_names: HashSet::new(),
             custom_command_outputs: BTreeSet::new(),
             target_aliases: BTreeMap::new(),
+            config_target_aliases: BTreeMap::new(),
+            default_target_aliases: BTreeMap::new(),
+            byproducts_for_clean: Vec::new(),
+            config_byproducts_for_clean: BTreeMap::new(),
             global_targets: Vec::new(),
-            objects: HashMap::new(),
             module_order: HashMap::new(),
             seen_custom_commands: HashSet::new(),
             local_custom_commands: Vec::new(),
@@ -384,6 +392,7 @@ impl<'a> NinjaGenerator<'a> {
             home_binary: interp.home_binary.clone(),
             home_source: interp.home_source.clone(),
             config: ctx.config.clone(),
+            file_config: ctx.config.clone(),
             install_target_enabled: interp.ext.misc.contains_key("install-target-enabled"),
             output_prefix: {
                 // cmGlobalNinjaGenerator::InitOutputPathPrefix
@@ -448,20 +457,12 @@ impl<'a> NinjaGenerator<'a> {
 
     /// The buffer `self.stream` routes to (`build.ninja` when not
     /// multi-config).
-    #[allow(
-        dead_code,
-        reason = "multi-config stream routing lands with per-config generation"
-    )]
     fn out(&mut self) -> &mut String {
         let stream = self.stream.clone();
         self.out_at(&stream)
     }
 
     /// The buffer `stream` routes to (`build.ninja` when not multi-config).
-    #[allow(
-        dead_code,
-        reason = "multi-config stream routing lands with per-config generation"
-    )]
     fn out_at(&mut self, stream: &Stream) -> &mut String {
         if !self.ctx.multi_config {
             return &mut self.build;
@@ -473,10 +474,6 @@ impl<'a> NinjaGenerator<'a> {
         write_build(self.out(), build, 0);
     }
 
-    #[allow(
-        dead_code,
-        reason = "multi-config stream routing lands with per-config generation"
-    )]
     fn write_build_to(&mut self, stream: &Stream, build: &Build) {
         write_build(self.out_at(stream), build, 0);
     }
@@ -503,43 +500,61 @@ impl<'a> NinjaGenerator<'a> {
     // ------------------------------------------------------------------
     // Target outputs/dependencies
 
-    /// `cmGlobalNinjaGenerator::AppendTargetOutputs`.
+    /// `cmGlobalNinjaGenerator::AppendTargetOutputs` for the current
+    /// configuration.
     pub fn append_target_outputs(&self, target: &Target, out: &mut Vec<String>, depend: DependOn) {
         let config = self.config.clone();
+        self.append_target_outputs_cfg(target, out, &config, depend);
+    }
+
+    /// `cmGlobalNinjaGenerator::AppendTargetOutputs(target, outputs, config,
+    /// depends)`.
+    pub fn append_target_outputs_cfg(
+        &self,
+        target: &Target,
+        out: &mut Vec<String>,
+        config: &str,
+        depend: DependOn,
+    ) {
+        let view;
+        let ctx: &GenCtx = if config == self.ctx.config {
+            &self.ctx
+        } else {
+            view = self.ctx.for_config(config);
+            &view
+        };
         match target.kind {
-            TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::ModuleLibrary => {
-                if depend == DependOn::TargetOrdering {
-                    out.push(format!("cmake_object_order_depends_target_{}", target.name));
+            TargetKind::SharedLibrary
+            | TargetKind::StaticLibrary
+            | TargetKind::ModuleLibrary
+            | TargetKind::Executable => {
+                if depend == DependOn::TargetOrdering && target.kind != TargetKind::Executable {
+                    out.push(ctx.order_depends_name(&target.name, config));
                     return;
                 }
                 out.push(self.ninja_path(&gt::full_path(
-                    &self.ctx,
+                    ctx,
                     target,
-                    &config,
+                    config,
                     ArtifactType::Runtime,
                     false,
                 )));
             }
-            TargetKind::Executable => {
-                out.push(self.ninja_path(&gt::full_path(
-                    &self.ctx,
-                    target,
-                    &config,
-                    ArtifactType::Runtime,
-                    false,
-                )));
-            }
-            TargetKind::ObjectLibrary => {
-                if depend == DependOn::TargetOrdering {
-                    out.push(format!("cmake_object_order_depends_target_{}", target.name));
+            TargetKind::ObjectLibrary
+            | TargetKind::Utility
+            | TargetKind::GlobalTarget
+            | TargetKind::InterfaceLibrary => {
+                if depend == DependOn::TargetOrdering && target.kind == TargetKind::ObjectLibrary {
+                    out.push(ctx.order_depends_name(&target.name, config));
                     return;
                 }
                 let dir = self.target_dir_prefix(target.makefile);
-                out.push(self.output_path(&format!("{dir}{}", target.name)));
-            }
-            TargetKind::Utility | TargetKind::GlobalTarget | TargetKind::InterfaceLibrary => {
-                let dir = self.target_dir_prefix(target.makefile);
-                out.push(self.output_path(&format!("{dir}{}", target.name)));
+                let output = self.output_path(&format!("{dir}{}", target.name));
+                if ctx.is_per_config(target) {
+                    out.push(ctx.build_alias(&output, config));
+                } else {
+                    out.push(output);
+                }
             }
             _ => {}
         }
@@ -572,6 +587,7 @@ impl<'a> NinjaGenerator<'a> {
             return;
         }
         let mut outs = Vec::new();
+        let cross = link::target_cross_dependencies(&self.ctx, target, &self.config);
         for dependency in link::target_dependencies(&self.ctx, target, &self.config) {
             let Some(dep) = self.ctx.target(&dependency) else {
                 continue;
@@ -579,7 +595,13 @@ impl<'a> NinjaGenerator<'a> {
             if !is_in_build_system(dep) {
                 continue;
             }
-            self.append_target_outputs(dep, &mut outs, depend);
+            // A cross dependency is built in the file config.
+            let config = if cross.contains(&dependency) {
+                self.file_config.clone()
+            } else {
+                self.config.clone()
+            };
+            self.append_target_outputs_cfg(dep, &mut outs, &config, depend);
         }
         // cmGlobalNinjaGenerator::AppendTargetDepends sorts but keeps
         // duplicates.
@@ -587,18 +609,52 @@ impl<'a> NinjaGenerator<'a> {
         out.extend(outs);
     }
 
+    /// `cmGlobalNinjaGenerator::AddTargetAlias(alias, target, config)` for
+    /// the current configuration.
+    pub fn add_target_alias(&mut self, alias: &str, target: &Target) {
+        let config = self.config.clone();
+        self.add_target_alias_cfg(alias, target, &config);
+    }
+
     /// `cmGlobalNinjaGenerator::AddTargetAlias`: the target's own outputs
     /// are marked ambiguous so no other target aliases them, then the alias
     /// is inserted if absent (the first target to claim a name keeps it).
-    pub fn add_target_alias(&mut self, alias: &str, target: &Target) {
+    pub fn add_target_alias_cfg(&mut self, alias: &str, target: &Target, config: &str) {
+        let output_path = self.output_path(alias);
+        let build_alias = self.ctx.build_alias(&output_path, config);
         let mut outputs = Vec::new();
-        self.append_target_outputs(target, &mut outputs, DependOn::TargetArtifact);
-        for output in outputs {
-            self.target_aliases.insert(output, None);
+        if config != "all" {
+            self.append_target_outputs_cfg(target, &mut outputs, config, DependOn::TargetArtifact);
         }
+        let multi = self.ctx.multi_config;
+        for output in outputs {
+            self.target_aliases.insert(output.clone(), None);
+            if multi {
+                self.default_target_aliases.insert(output.clone(), None);
+                for config2 in self.ctx.configs.clone() {
+                    self.config_target_aliases
+                        .entry(config2)
+                        .or_default()
+                        .insert(output.clone(), None);
+                }
+            }
+        }
+        let entry = Some((target.name.clone(), config.to_owned()));
         self.target_aliases
-            .entry(self.output_path(alias))
-            .or_insert_with(|| Some(target.name.clone()));
+            .entry(build_alias)
+            .or_insert_with(|| entry.clone());
+        if multi {
+            self.config_target_aliases
+                .entry(config.to_owned())
+                .or_default()
+                .entry(output_path.clone())
+                .or_insert_with(|| entry.clone());
+            if self.ctx.default_configs.contains(config) {
+                self.default_target_aliases
+                    .entry(output_path)
+                    .or_insert(entry);
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -701,19 +757,71 @@ impl<'a> NinjaGenerator<'a> {
             self.generate_local(index);
         }
         self.write_assumed_source_dependencies();
+        self.stream = Stream::Common;
         self.write_target_aliases();
         self.write_folder_targets();
         self.write_builtin_targets();
-        let build_path = format!("{}/build.ninja", self.home_binary);
+        // cmGlobalNinjaGenerator::WriteDisclaimer.
+        let disclaimer = format!(
+            "# CMAKE generated file: DO NOT EDIT!\n# Generated by \"{}\" Generator, CMake Version 4.1\n\n",
+            if self.ctx.multi_config {
+                "Ninja Multi-Config"
+            } else {
+                "Ninja"
+            }
+        );
         let rules_path = format!("{}/CMakeFiles/rules.ninja", self.home_binary);
-        let mut rules_file = String::from(
-            "# CMAKE generated file: DO NOT EDIT!\n# Generated by \"Ninja\" Generator, CMake Version 4.1\n\n# This file contains all the rules used to get the outputs files\n# built from the input files.\n# It is included in the main 'build.ninja'.\n\n",
+        let mut rules_file = format!(
+            "{disclaimer}# This file contains all the rules used to get the outputs files\n# built from the input files.\n# It is included in the main 'build.ninja'.\n\n"
         );
         rules_file.push_str(&self.rules);
-        let mut build_file = String::from(
-            "# CMAKE generated file: DO NOT EDIT!\n# Generated by \"Ninja\" Generator, CMake Version 4.1\n\n# This file contains all the build statements describing the\n# compilation DAG.\n\n",
-        );
-        build_file.push_str(&self.build);
+        // OpenBuildFileStreams: (path, content) of every build file.
+        let mut build_files: Vec<(String, String)> = Vec::new();
+        if self.ctx.multi_config {
+            let mut streams = std::mem::take(&mut self.streams);
+            let mut take = |stream: Stream| streams.remove(&stream).unwrap_or_default();
+            build_files.push((
+                format!("{}/CMakeFiles/common.ninja", self.home_binary),
+                format!(
+                    "{disclaimer}# This file contains build statements common to all configurations.\n\n{}",
+                    take(Stream::Common)
+                ),
+            ));
+            let default_config = self.ctx.default_file_config.clone();
+            build_files.push((
+                format!("{}/build.ninja", self.home_binary),
+                format!(
+                    "{disclaimer}# Build using rules for '{default_config}'.\n\ninclude {}\n\n{}",
+                    self.output_path(&format!("CMakeFiles/impl-{default_config}.ninja")),
+                    take(Stream::Default)
+                ),
+            ));
+            for config in self.ctx.configs.clone() {
+                build_files.push((
+                    format!("{}/CMakeFiles/impl-{config}.ninja", self.home_binary),
+                    format!(
+                        "{disclaimer}# This file contains build statements specific to the \"{config}\"\n# configuration.\n\n{}",
+                        take(Stream::Impl(config.clone()))
+                    ),
+                ));
+                build_files.push((
+                    format!("{}/build-{config}.ninja", self.home_binary),
+                    format!(
+                        "{disclaimer}# This file contains aliases specific to the \"{config}\"\n# configuration.\n\ninclude {}\n\n{}",
+                        self.output_path(&format!("CMakeFiles/impl-{config}.ninja")),
+                        take(Stream::Config(config.clone()))
+                    ),
+                ));
+            }
+        } else {
+            build_files.push((
+                format!("{}/build.ninja", self.home_binary),
+                format!(
+                    "{disclaimer}# This file contains all the build statements describing the\n# compilation DAG.\n\n{}",
+                    self.build
+                ),
+            ));
+        }
         // CloseCompileCommandsStream.
         if !self.compile_commands.is_empty() {
             let content = format!("[\n{}\n]\n", self.compile_commands.join(",\n"));
@@ -762,7 +870,9 @@ impl<'a> NinjaGenerator<'a> {
             return Ok(());
         }
         crate::fsutil::write_generated(std::path::Path::new(&rules_path), rules_file.as_bytes())?;
-        crate::fsutil::write_generated(std::path::Path::new(&build_path), build_file.as_bytes())?;
+        for (path, content) in &build_files {
+            crate::fsutil::write_generated(std::path::Path::new(path), content.as_bytes())?;
+        }
         for dir in &self.tidy_fixes_dirs {
             remove_unknown_tidy_fixes(std::path::Path::new(dir), &self.tidy_fixes_files);
         }
@@ -782,13 +892,79 @@ impl<'a> NinjaGenerator<'a> {
     fn write_project_header(&self, out: &mut String, makefile: usize) {
         write_divider(out);
         let _ = writeln!(out, "# Project: {}", self.project_name(makefile));
-        let _ = writeln!(out, "# Configurations: {}", self.config);
+        let _ = writeln!(out, "# Configurations: {}", self.ctx.configs.join(", "));
         write_divider(out);
+    }
+
+    /// Runs `body` with the generator switched to configuration `config`
+    /// (`tg->Generate(config)` under Ninja Multi-Config), writing to that
+    /// configuration's impl file.
+    fn with_config(&mut self, config: &str, body: impl FnOnce(&mut Self)) {
+        let saved_ctx = self.ctx.clone();
+        let saved_config = std::mem::replace(&mut self.config, config.to_owned());
+        let saved_stream = std::mem::replace(&mut self.stream, Stream::Impl(config.to_owned()));
+        let saved_file_config = std::mem::replace(&mut self.file_config, config.to_owned());
+        if self.ctx.config != config {
+            self.ctx = std::rc::Rc::new(self.ctx.for_config(config));
+        }
+        body(self);
+        self.ctx = saved_ctx;
+        self.config = saved_config;
+        self.stream = saved_stream;
+        self.file_config = saved_file_config;
+    }
+
+    /// `cmGlobalNinjaGenerator::EnableCrossConfigBuild`.
+    fn cross_enabled(&self) -> bool {
+        self.ctx.multi_config && !self.ctx.cross_configs.is_empty()
+    }
+
+    /// The file configs whose `GetCrossConfigs(fileConfig)` contain
+    /// `config`, in configuration order.
+    fn file_configs_for(&self, config: &str) -> Vec<String> {
+        if !self.ctx.multi_config {
+            return vec![config.to_owned()];
+        }
+        self.ctx
+            .configs
+            .iter()
+            .filter(|file_config| {
+                file_config.as_str() == config || self.ctx.cross_configs.contains(config)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// `cmGlobalNinjaGenerator::IsSingleConfigUtility`.
+    fn is_single_config_utility(&self, target: &Target) -> bool {
+        target.kind == TargetKind::Utility
+            && !self
+                .ctx
+                .interp
+                .ext
+                .per_config_utility_targets
+                .contains(&target.name)
+    }
+
+    /// `cmLocalNinjaGenerator::WriteNinjaRequiredVersion`.
+    fn write_ninja_required_version(&self, out: &mut String) {
+        let required = if self.supports_manifest_restat()
+            && self.ctx.interp.ext.glob_verify.is_some()
+            && !self.regeneration_suppressed()
+        {
+            REQUIRED_NINJA_VERSION_MANIFEST_RESTAT
+        } else {
+            REQUIRED_NINJA_VERSION_CONSOLE_POOL
+        };
+        write_comment(out, "Minimal version of Ninja required by this file");
+        let _ = write!(out, "ninja_required_version = {required}\n\n");
     }
 
     /// `cmLocalNinjaGenerator::Generate`.
     fn generate_local(&mut self, makefile: usize) {
         let interp = self.ctx.interp;
+        let multi = self.ctx.multi_config;
+        let configs = self.ctx.configs.clone();
         // WriteProcessedMakefile
         let mut header = String::new();
         write_divider(&mut header);
@@ -802,36 +978,57 @@ impl<'a> NinjaGenerator<'a> {
         }
         write_divider(&mut header);
         header.push('\n');
-        self.build.push_str(&header);
+        if multi {
+            for config in &configs {
+                self.out_at(&Stream::Impl(config.clone())).push_str(&header);
+            }
+        }
+        self.out_at(&Stream::Common).push_str(&header);
         if makefile == 0 {
             // WriteBuildFileTop
             let mut top = String::new();
             self.write_project_header(&mut top, 0);
-            // cmLocalNinjaGenerator::WriteNinjaRequiredVersion
-            let required = if self.supports_manifest_restat()
-                && self.ctx.interp.ext.glob_verify.is_some()
-                && !self.regeneration_suppressed()
-            {
-                REQUIRED_NINJA_VERSION_MANIFEST_RESTAT
+            if multi {
+                self.out_at(&Stream::Common).push_str(&top);
+                top.clear();
+                for config in &configs {
+                    let mut stream = String::new();
+                    self.write_project_header(&mut stream, 0);
+                    self.write_ninja_required_version(&mut stream);
+                    write_variable(
+                        &mut stream,
+                        "CONFIGURATION",
+                        config,
+                        "Set configuration variable for custom commands.",
+                        0,
+                    );
+                    // WriteNinjaFilesInclusionConfig
+                    write_divider(&mut stream);
+                    stream.push_str("# Include auxiliary files.\n\n");
+                    write_comment(&mut stream, "Include common file.");
+                    let common = self.output_path("CMakeFiles/common.ninja");
+                    let _ = writeln!(stream, "include {}", encode_path(&common));
+                    stream.push('\n');
+                    self.out_at(&Stream::Impl(config.clone())).push_str(&stream);
+                }
             } else {
-                REQUIRED_NINJA_VERSION_CONSOLE_POOL
-            };
-            write_comment(&mut top, "Minimal version of Ninja required by this file");
-            let _ = write!(top, "ninja_required_version = {required}\n\n");
-            write_variable(
-                &mut top,
-                "CONFIGURATION",
-                &self.config,
-                "Set configuration variable for custom commands.",
-                0,
-            );
+                self.write_ninja_required_version(&mut top);
+                write_variable(
+                    &mut top,
+                    "CONFIGURATION",
+                    &self.config,
+                    "Set configuration variable for custom commands.",
+                    0,
+                );
+            }
+            // WriteNinjaFilesInclusionCommon
             write_divider(&mut top);
             top.push_str("# Include auxiliary files.\n\n");
             write_comment(&mut top, "Include rules file.");
-            // cmLocalNinjaGenerator::WriteNinjaFilesInclusionCommon
             let rules_include = self.output_path("CMakeFiles/rules.ninja");
             let _ = writeln!(top, "include {}", encode_path(&rules_include));
             top.push('\n');
+            // WriteNinjaWorkDir
             write_divider(&mut top);
             write_comment(
                 &mut top,
@@ -843,7 +1040,7 @@ impl<'a> NinjaGenerator<'a> {
                 workdir.truncate(workdir.len() - self.output_prefix.len());
             }
             let _ = writeln!(top, "cmake_ninja_workdir = {}", encode_path(&workdir));
-            self.build.push_str(&top);
+            self.out_at(&Stream::Common).push_str(&top);
             let mut rules_top = String::new();
             self.write_project_header(&mut rules_top, 0);
             // WritePools
@@ -880,20 +1077,12 @@ impl<'a> NinjaGenerator<'a> {
             })
             .collect();
         for target in targets {
-            match target.kind {
-                TargetKind::Executable
-                | TargetKind::StaticLibrary
-                | TargetKind::SharedLibrary
-                | TargetKind::ModuleLibrary
-                | TargetKind::ObjectLibrary => self.generate_normal_target(target),
-                // cmNinjaTargetGenerator::New: INTERFACE libraries in the
-                // build system use the utility generator.
-                // INTEGRATION: C++20 module sources use the normal generator.
-                TargetKind::Utility => self.generate_utility_target(target),
-                TargetKind::InterfaceLibrary if is_in_build_system(target) => {
-                    self.generate_utility_target(target)
+            if multi {
+                for config in &configs {
+                    self.with_config(config, |this| this.generate_target(target));
                 }
-                _ => {}
+            } else {
+                self.generate_target(target);
             }
         }
         let globals: Vec<GlobalTarget> = self
@@ -903,9 +1092,73 @@ impl<'a> NinjaGenerator<'a> {
             .cloned()
             .collect();
         for global in globals {
-            self.generate_global_target(&global);
+            if !multi {
+                self.generate_global_target(&global);
+                continue;
+            }
+            if !global.per_config {
+                self.with_config("", |this| this.generate_global_target(&global));
+                continue;
+            }
+            let prefix = self.target_dir_prefix(global.makefile);
+            let output = self.output_path(&format!("{prefix}{}", global.name));
+            for config in &configs {
+                self.with_config(config, |this| this.generate_global_target(&global));
+                let mut alias = Build::new("phony");
+                alias.outputs.push(output.clone());
+                alias
+                    .explicit_deps
+                    .push(self.ctx.build_alias(&output, config));
+                self.write_build_to(&Stream::Config(config.clone()), &alias);
+            }
+            if !self.ctx.default_configs.is_empty() {
+                let mut alias = Build::new("phony");
+                alias.outputs.push(output.clone());
+                for config in self.ctx.default_configs.clone() {
+                    alias
+                        .explicit_deps
+                        .push(self.ctx.build_alias(&output, &config));
+                }
+                self.write_build_to(&Stream::Default, &alias);
+            }
+            let mut alias = Build::new("phony");
+            alias.outputs.push(self.ctx.build_alias(&output, "all"));
+            for config in &configs {
+                alias
+                    .explicit_deps
+                    .push(self.ctx.build_alias(&output, config));
+            }
+            self.write_build_to(&Stream::Default, &alias);
         }
-        self.write_custom_command_build_statements(makefile);
+        let commands = std::mem::take(&mut self.local_custom_commands);
+        if multi {
+            for config in &configs {
+                self.with_config(config, |this| {
+                    this.write_custom_command_build_statements(&commands)
+                });
+            }
+        } else {
+            self.write_custom_command_build_statements(&commands);
+        }
+    }
+
+    /// `cmNinjaTargetGenerator::New(target)->Generate(config)`.
+    fn generate_target(&mut self, target: &'a Target) {
+        match target.kind {
+            TargetKind::Executable
+            | TargetKind::StaticLibrary
+            | TargetKind::SharedLibrary
+            | TargetKind::ModuleLibrary
+            | TargetKind::ObjectLibrary => self.generate_normal_target(target),
+            // cmNinjaTargetGenerator::New: INTERFACE libraries in the
+            // build system use the utility generator.
+            // INTEGRATION: C++20 module sources use the normal generator.
+            TargetKind::Utility => self.generate_utility_target(target),
+            TargetKind::InterfaceLibrary if is_in_build_system(target) => {
+                self.generate_utility_target(target)
+            }
+            _ => {}
+        }
     }
 
     /// `cmGlobalNinjaGenerator::WriteAssumedSourceDependencies`: for
@@ -925,6 +1178,7 @@ impl<'a> NinjaGenerator<'a> {
                 "",
                 false,
                 true,
+                "",
                 outputs,
                 Vec::new(),
                 deps.into_iter().collect(),
@@ -949,6 +1203,8 @@ impl<'a> NinjaGenerator<'a> {
         let mut working_dirs: HashMap<String, String> = HashMap::new();
         // AddGlobalTarget_Package / AddGlobalTarget_PackageSource.
         let cpack = format!("{}/cpack", util::filename_path(&interp.cmake_command));
+        // GetCMakeCFGIntDir when it is not "." (multi-config only).
+        let cfg_int_dir = self.ctx.multi_config.then_some("${CONFIGURATION}");
         let root_binary = interp.makefiles[0].binary_dir.clone();
         // CheckReservedTargetName: stops at the first reserved name in use.
         let ctx = &self.ctx;
@@ -989,14 +1245,17 @@ impl<'a> NinjaGenerator<'a> {
             {
                 depends.push(self.output_path("all"));
             }
+            let mut line = vec![cpack.clone()];
+            if let Some(cfg_int_dir) = cfg_int_dir {
+                line.push("-C".into());
+                line.push(cfg_int_dir.into());
+            }
+            line.push("--config".into());
+            line.push("./CPackConfig.cmake".into());
             infos.push((
                 "package".into(),
                 "Run CPack packaging tool...".into(),
-                vec![vec![
-                    cpack.clone(),
-                    "--config".into(),
-                    "./CPackConfig.cmake".into(),
-                ]],
+                vec![line],
                 depends,
                 true,
             ));
@@ -1033,7 +1292,13 @@ impl<'a> NinjaGenerator<'a> {
             if let Some(args) = self.ctx.var(0, "CMAKE_CTEST_ARGUMENTS") {
                 line.extend(util::expand_list(&args, false));
             }
-            line.push("$(ARGS)".to_owned());
+            match cfg_int_dir {
+                Some(cfg_int_dir) => {
+                    line.push("-C".to_owned());
+                    line.push(cfg_int_dir.to_owned());
+                }
+                None => line.push("$(ARGS)".to_owned()),
+            }
             let mut depends = Vec::new();
             if self
                 .ctx
@@ -1078,7 +1343,7 @@ impl<'a> NinjaGenerator<'a> {
             .ctx
             .var(0, "CMAKE_SKIP_INSTALL_RULES")
             .is_some_and(|value| util::is_on(&value));
-        if self.install_target_enabled && !skip_install {
+        if self.install_target_enabled && !skip_install && cfg_int_dir.is_none() {
             let components: BTreeSet<String> = interp
                 .ext
                 .misc
@@ -1104,6 +1369,8 @@ impl<'a> NinjaGenerator<'a> {
                 Vec::new(),
                 false,
             ));
+        }
+        if self.install_target_enabled && !skip_install {
             let mut depends = Vec::new();
             if self
                 .ctx
@@ -1124,11 +1391,12 @@ impl<'a> NinjaGenerator<'a> {
             } else {
                 cmake.clone()
             };
-            let base = vec![
-                install_cmake,
-                "-P".to_owned(),
-                "cmake_install.cmake".to_owned(),
-            ];
+            let mut base = vec![install_cmake];
+            if let Some(cfg_int_dir) = cfg_int_dir {
+                base.push(format!("-DBUILD_TYPE={cfg_int_dir}"));
+            }
+            base.push("-P".to_owned());
+            base.push("cmake_install.cmake".to_owned());
             infos.push((
                 "install".into(),
                 "Install the project...".into(),
@@ -1177,6 +1445,8 @@ impl<'a> NinjaGenerator<'a> {
                     uses_terminal: *terminal,
                     makefile,
                     working_dir: working_dirs.get(name).cloned(),
+                    // AddGlobalTarget_EditCache/RebuildCache: PerConfig::No.
+                    per_config: name != "edit_cache" && name != "rebuild_cache",
                 });
             }
         }
@@ -1191,8 +1461,27 @@ impl<'a> NinjaGenerator<'a> {
                 .binary_dir
                 .clone()
         });
-        let output_name = self.output_path(&format!("{prefix}{}", global.name));
-        let util_name = self.output_path(&format!("{prefix}CMakeFiles/{}.util", global.name));
+        // WriteUtilBuildStatements(config, config): per-config global
+        // targets live under CMakeFiles/<Config>/ with `name:Config` aliases.
+        let config = self.config.clone();
+        let config_dir = if global.per_config {
+            self.ctx.config_directory(&config)
+        } else {
+            String::new()
+        };
+        let output_config = if global.per_config {
+            config.clone()
+        } else {
+            String::new()
+        };
+        let output_name = self.ctx.build_alias(
+            &self.output_path(&format!("{prefix}{}", global.name)),
+            &output_config,
+        );
+        let util_name = self.output_path(&format!(
+            "{prefix}CMakeFiles{config_dir}/{}.util",
+            global.name
+        ));
         let mut lines: Vec<String> = Vec::new();
         let real_lines: Vec<&Vec<String>> = global
             .command_lines
@@ -1239,7 +1528,10 @@ impl<'a> NinjaGenerator<'a> {
         let mut depends: Vec<String> = global
             .depends
             .iter()
-            .map(|dep| self.ninja_path(&format!("{directory}/{dep}")))
+            .map(|dep| {
+                self.ctx
+                    .build_alias(&self.ninja_path(&format!("{directory}/{dep}")), &config)
+            })
             .collect();
         depends.sort();
         if lines.is_empty() {
@@ -1247,10 +1539,14 @@ impl<'a> NinjaGenerator<'a> {
             build.comment = format!("Utility command for {}", global.name);
             build.outputs.push(output_name.clone());
             build.explicit_deps = depends;
-            self.write_build(&build);
+            self.write_build_to(&Stream::Common, &build);
             return;
         }
-        let command = self.build_command_line(&lines);
+        let mut command = self.build_command_line(&lines);
+        if self.ctx.multi_config {
+            // cmGlobalNinjaMultiGenerator::ExpandCFGIntDir.
+            command = command.replace("${CONFIGURATION}", &config);
+        }
         self.add_custom_command_rule();
         let mut build = Build::new("CUSTOM_COMMAND");
         build.comment = format!("Utility command for {}", global.name);
@@ -1264,11 +1560,12 @@ impl<'a> NinjaGenerator<'a> {
         if global.uses_terminal {
             build.variables.insert("pool".into(), "console".into());
         }
-        self.write_build(&build);
+        // WriteCustomCommandBuild with an empty ccConfig: the common file.
+        self.write_build_to(&Stream::Common, &build);
         let mut alias = Build::new("phony");
         alias.outputs.push(output_name);
         alias.explicit_deps.push(util_name);
-        self.write_build(&alias);
+        self.write_build_to(&Stream::Common, &alias);
     }
 
     pub fn add_custom_command_rule(&mut self) {
@@ -1284,17 +1581,20 @@ impl<'a> NinjaGenerator<'a> {
     // ------------------------------------------------------------------
     // Aliases, folders, builtins
 
+    /// `cmGlobalNinjaGenerator::WriteTargetAliases`.
     fn write_target_aliases(&mut self) {
         let mut out = String::new();
         write_divider(&mut out);
         out.push_str("# Target aliases.\n\n");
-        let aliases: Vec<(String, Option<String>)> = self
+        self.out_at(&Stream::Common).push_str(&out);
+        let multi = self.ctx.multi_config;
+        let aliases: Vec<(String, AliasEntry)> = self
             .target_aliases
             .iter()
             .map(|(a, t)| (a.clone(), t.clone()))
             .collect();
-        for (alias, target) in aliases {
-            let Some(target) = target else {
+        for (alias, entry) in aliases {
+            let Some((target, config)) = entry else {
                 continue;
             };
             if self.custom_command_outputs.contains(&alias) {
@@ -1305,10 +1605,92 @@ impl<'a> NinjaGenerator<'a> {
             };
             let mut build = Build::new("phony");
             build.outputs.push(alias);
-            self.append_target_outputs(target, &mut build.explicit_deps, DependOn::TargetArtifact);
-            write_build(&mut out, &build, 0);
+            if config == "all" {
+                for cross in self.ctx.cross_configs.clone() {
+                    self.append_target_outputs_cfg(
+                        target,
+                        &mut build.explicit_deps,
+                        &cross,
+                        DependOn::TargetArtifact,
+                    );
+                }
+            } else {
+                self.append_target_outputs_cfg(
+                    target,
+                    &mut build.explicit_deps,
+                    &config,
+                    DependOn::TargetArtifact,
+                );
+            }
+            let stream = if !multi
+                || (self.cross_enabled()
+                    && (config == "all" || self.ctx.cross_configs.contains(&config)))
+            {
+                Stream::Common
+            } else {
+                Stream::Impl(config)
+            };
+            self.write_build_to(&stream, &build);
         }
-        self.build.push_str(&out);
+        if !multi {
+            return;
+        }
+        for config in self.ctx.configs.clone() {
+            let aliases: Vec<(String, AliasEntry)> = self
+                .config_target_aliases
+                .get(&config)
+                .map(|map| map.iter().map(|(a, t)| (a.clone(), t.clone())).collect())
+                .unwrap_or_default();
+            for (alias, entry) in aliases {
+                let Some((target, _)) = entry else {
+                    continue;
+                };
+                if self.custom_command_outputs.contains(&alias) {
+                    continue;
+                }
+                let Some(target) = self.ctx.target(&target) else {
+                    continue;
+                };
+                let mut build = Build::new("phony");
+                build.outputs.push(alias);
+                self.append_target_outputs_cfg(
+                    target,
+                    &mut build.explicit_deps,
+                    &config,
+                    DependOn::TargetArtifact,
+                );
+                self.write_build_to(&Stream::Config(config.clone()), &build);
+            }
+        }
+        if !self.ctx.default_configs.is_empty() {
+            let aliases: Vec<(String, AliasEntry)> = self
+                .default_target_aliases
+                .iter()
+                .map(|(a, t)| (a.clone(), t.clone()))
+                .collect();
+            for (alias, entry) in aliases {
+                let Some((target, _)) = entry else {
+                    continue;
+                };
+                if self.custom_command_outputs.contains(&alias) {
+                    continue;
+                }
+                let Some(target) = self.ctx.target(&target) else {
+                    continue;
+                };
+                let mut build = Build::new("phony");
+                build.outputs.push(alias);
+                for config in self.ctx.default_configs.clone() {
+                    self.append_target_outputs_cfg(
+                        target,
+                        &mut build.explicit_deps,
+                        &config,
+                        DependOn::TargetArtifact,
+                    );
+                }
+                self.write_build_to(&Stream::Default, &build);
+            }
+        }
     }
 
     /// `cmGlobalNinjaGenerator::WriteFolderTargets`: per-directory `all`
@@ -1318,12 +1700,16 @@ impl<'a> NinjaGenerator<'a> {
     /// sorted binary-path order, as std::map iterates).
     fn write_folder_targets(&mut self) {
         let interp = self.ctx.interp;
+        let multi = self.ctx.multi_config;
+        let configs = self.ctx.configs.clone();
         let mut out = String::new();
         write_divider(&mut out);
         out.push_str("# Folder targets.\n\n");
+        self.out_at(&Stream::Common).push_str(&out);
         let count = interp.makefiles.len();
-        // Per directory: (targets that are not excluded, in order).
-        let mut dir_targets: Vec<Vec<&Target>> = vec![Vec::new(); count];
+        // cmGlobalCommonGenerator::ComputeDirectoryTargets: per directory,
+        // its targets with the configurations excluding each from `all`.
+        let mut dir_targets: Vec<Vec<(&Target, Vec<String>)>> = vec![Vec::new(); count];
         for index in 0..count {
             for name in &interp.makefiles[index].targets {
                 let Some(target) = interp.ext.targets.get(name) else {
@@ -1335,100 +1721,167 @@ impl<'a> NinjaGenerator<'a> {
                 {
                     continue;
                 }
-                match target.props.get("EXCLUDE_FROM_ALL") {
-                    Some(value) => {
-                        let value = self.ctx.genex(value, Some(target), None);
-                        if !util::is_on(&value) {
-                            // Explicitly un-excluded: every enclosing
-                            // directory's rule depends on it too.
-                            let mut parent = interp.makefiles[index].parent;
-                            while let Some(dir) = parent {
-                                dir_targets[dir].push(target);
-                                parent = interp.makefiles[dir].parent;
-                            }
-                            dir_targets[index].push(target);
+                let mut excluded: Vec<String> = Vec::new();
+                if let Some(value) = target.props.get("EXCLUDE_FROM_ALL") {
+                    for config in &configs {
+                        let value = if *config == self.ctx.config {
+                            self.ctx.genex(value, Some(target), None)
+                        } else {
+                            self.ctx.for_config(config).genex(value, Some(target), None)
+                        };
+                        if util::is_on(&value) {
+                            excluded.push(config.clone());
                         }
                     }
-                    None => dir_targets[index].push(target),
+                    if excluded.is_empty() {
+                        // Explicitly un-excluded: every enclosing
+                        // directory's rule depends on it too.
+                        let mut parent = interp.makefiles[index].parent;
+                        while let Some(dir) = parent {
+                            dir_targets[dir].push((target, Vec::new()));
+                            parent = interp.makefiles[dir].parent;
+                        }
+                    }
                 }
+                dir_targets[index].push((target, excluded));
             }
         }
+        // cmGlobalCommonGenerator::IsExcludedFromAllInConfig.
+        let excluded_in = |excluded: &Vec<String>, config: &String| {
+            if multi {
+                excluded.contains(config)
+            } else {
+                !excluded.is_empty()
+            }
+        };
         let mut order: Vec<usize> = (0..count).collect();
         order.sort_by(|a, b| {
             interp.makefiles[*a]
                 .binary_dir
                 .cmp(&interp.makefiles[*b].binary_dir)
         });
-        // Codegen targets (CMP0171).
-        if interp.ext.misc.contains_key("allow-global-target-codegen") {
-            for &index in &order {
-                let makefile = &interp.makefiles[index];
-                write_divider(&mut out);
-                let mut build = Build::new("phony");
-                build.comment = format!("Folder: {}", makefile.binary_dir);
-                build
-                    .outputs
-                    .push(self.ninja_path(&format!("{}/codegen", makefile.binary_dir)));
-                for target in &dir_targets[index] {
-                    for source in gt::sources(&self.ctx, target, &self.config).iter() {
-                        if source.kind != SourceKind::CustomCommandOutput {
-                            continue;
-                        }
-                        let Some(cc) = self.attached_command(target.makefile, &source.path) else {
-                            continue;
-                        };
-                        let command = self.command(cc);
-                        if command.codegen {
-                            build.explicit_deps.extend(
-                                command.outputs.iter().map(|output| self.ninja_path(output)),
-                            );
-                        }
-                    }
-                }
-                for &child in &makefile.children {
-                    let excluded = interp.makefiles[child]
+        let included_children = |index: usize| -> Vec<usize> {
+            interp.makefiles[index]
+                .children
+                .iter()
+                .copied()
+                .filter(|&child| {
+                    !interp.makefiles[child]
                         .props
                         .get("EXCLUDE_FROM_ALL")
-                        .is_some_and(util::is_on);
-                    if !excluded {
-                        build.explicit_deps.push(self.ninja_path(&format!(
-                            "{}/codegen",
-                            interp.makefiles[child].binary_dir
-                        )));
+                        .is_some_and(util::is_on)
+                })
+                .collect()
+        };
+        // Codegen targets (CMP0171), then `all`.
+        let codegen = interp.ext.misc.contains_key("allow-global-target-codegen");
+        for kind in ["codegen", "all"] {
+            if kind == "codegen" && !codegen {
+                continue;
+            }
+            for &index in &order {
+                let makefile = &interp.makefiles[index];
+                let mut divider = String::new();
+                write_divider(&mut divider);
+                self.out_at(&Stream::Common).push_str(&divider);
+                let dir_target = self.ninja_path(&format!("{}/{kind}", makefile.binary_dir));
+                let comment = format!("Folder: {}", makefile.binary_dir);
+                for config in &configs {
+                    let mut build = Build::new("phony");
+                    build.comment = comment.clone();
+                    build
+                        .outputs
+                        .push(self.ctx.build_alias(&dir_target, config));
+                    let view = self.ctx.for_config(config);
+                    for (target, excluded) in &dir_targets[index] {
+                        if excluded_in(excluded, config) {
+                            continue;
+                        }
+                        if kind == "all" {
+                            self.append_target_outputs_cfg(
+                                target,
+                                &mut build.explicit_deps,
+                                config,
+                                DependOn::TargetArtifact,
+                            );
+                            continue;
+                        }
+                        for source in gt::sources(&view, target, config).iter() {
+                            if source.kind != SourceKind::CustomCommandOutput {
+                                continue;
+                            }
+                            let Some(cc) = self.attached_command(target.makefile, &source.path)
+                            else {
+                                continue;
+                            };
+                            let command = self.command(cc);
+                            if command.codegen {
+                                build.explicit_deps.extend(
+                                    command.outputs.iter().map(|output| self.ninja_path(output)),
+                                );
+                            }
+                        }
+                    }
+                    for child in included_children(index) {
+                        build.explicit_deps.push(self.ctx.build_alias(
+                            &self.ninja_path(&format!(
+                                "{}/{kind}",
+                                interp.makefiles[child].binary_dir
+                            )),
+                            config,
+                        ));
+                    }
+                    let stream = if !multi
+                        || (self.cross_enabled() && self.ctx.cross_configs.contains(config))
+                    {
+                        Stream::Common
+                    } else {
+                        Stream::Impl(config.clone())
+                    };
+                    self.write_build_to(&stream, &build);
+                }
+                if multi {
+                    // Shortcut targets.
+                    for config in &configs {
+                        let mut build = Build::new("phony");
+                        build.comment = comment.clone();
+                        build.outputs.push(dir_target.clone());
+                        build
+                            .explicit_deps
+                            .push(self.ctx.build_alias(&dir_target, config));
+                        self.write_build_to(&Stream::Config(config.clone()), &build);
+                    }
+                    if !self.ctx.default_file_config.is_empty() {
+                        let mut build = Build::new("phony");
+                        build.comment = comment.clone();
+                        build.outputs.push(dir_target.clone());
+                        for config in &self.ctx.default_configs {
+                            build
+                                .explicit_deps
+                                .push(self.ctx.build_alias(&dir_target, config));
+                        }
+                        self.write_build_to(&Stream::Default, &build);
                     }
                 }
-                write_build(&mut out, &build, 0);
-            }
-        }
-        for index in order {
-            let makefile = &interp.makefiles[index];
-            write_divider(&mut out);
-            let mut build = Build::new("phony");
-            build.comment = format!("Folder: {}", makefile.binary_dir);
-            build
-                .outputs
-                .push(self.ninja_path(&format!("{}/all", makefile.binary_dir)));
-            for target in &dir_targets[index] {
-                self.append_target_outputs(
-                    target,
-                    &mut build.explicit_deps,
-                    DependOn::TargetArtifact,
-                );
-            }
-            for &child in &makefile.children {
-                let excluded = interp.makefiles[child]
-                    .props
-                    .get("EXCLUDE_FROM_ALL")
-                    .is_some_and(util::is_on);
-                if !excluded {
-                    build.explicit_deps.push(
-                        self.ninja_path(&format!("{}/all", interp.makefiles[child].binary_dir)),
+                if self.cross_enabled() {
+                    // Target for all configs (`codegen` names its own).
+                    let mut build = Build::new("phony");
+                    build.comment = comment.clone();
+                    build.outputs.push(
+                        self.ctx.build_alias(
+                            &dir_target,
+                            if kind == "all" { "all" } else { "codegen" },
+                        ),
                     );
+                    for config in &self.ctx.cross_configs {
+                        build
+                            .explicit_deps
+                            .push(self.ctx.build_alias(&dir_target, config));
+                    }
+                    self.write_build_to(&Stream::Common, &build);
                 }
             }
-            write_build(&mut out, &build, 0);
         }
-        self.build.push_str(&out);
     }
 
     fn write_builtin_targets(&mut self) {
@@ -1436,13 +1889,24 @@ impl<'a> NinjaGenerator<'a> {
         write_divider(&mut out);
         out.push_str("# Built-in targets\n\n");
         self.write_rebuild_manifest(&mut out);
-        self.write_target_clean(&mut out);
+        self.out_at(&Stream::Common).push_str(&out);
+        out.clear();
+        self.write_target_clean();
         self.write_target_help(&mut out);
+        self.out_at(&Stream::Common).push_str(&out);
+        out.clear();
         // cmGlobalNinjaGenerator::WriteTargetDefault: no default statement
         // when CMAKE_NINJA_OUTPUT_PATH_PREFIX is used.
         if self.output_prefix.is_empty() {
-            write_comment(&mut out, "Make the all target the default.");
-            out.push_str("default all\n");
+            let mut default = String::new();
+            write_comment(&mut default, "Make the all target the default.");
+            default.push_str("default all\n");
+            for config in self.ctx.configs.clone() {
+                self.out_at(&Stream::Config(config)).push_str(&default);
+            }
+            if self.ctx.multi_config && !self.ctx.default_file_config.is_empty() {
+                self.out_at(&Stream::Default).push_str(&default);
+            }
         }
         if self.install_target_enabled
             && self
@@ -1466,7 +1930,7 @@ impl<'a> NinjaGenerator<'a> {
             }
             write_build(&mut out, &build, 0);
         }
-        self.build.push_str(&out);
+        self.out_at(&Stream::Common).push_str(&out);
     }
 
     fn regeneration_suppressed(&self) -> bool {
@@ -1662,7 +2126,19 @@ impl<'a> NinjaGenerator<'a> {
         // AddRebuildManifestOutputs: build.ninja, then
         // cmGlobalGenerator::AddCMakeFilesToRebuild (install scripts of all
         // directories, then test files of directories with testing on).
-        let mut outputs = vec![self.output_path("build.ninja")];
+        let mut outputs = Vec::new();
+        if self.ctx.multi_config {
+            // cmGlobalNinjaMultiGenerator::AddRebuildManifestOutputs.
+            for config in &self.ctx.configs {
+                outputs.push(self.output_path(&format!("CMakeFiles/impl-{config}.ninja")));
+                outputs.push(self.output_path(&format!("build-{config}.ninja")));
+            }
+            if !self.ctx.default_file_config.is_empty() {
+                outputs.push(self.output_path("build.ninja"));
+            }
+        } else {
+            outputs.push(self.output_path("build.ninja"));
+        }
         let skip_install = self
             .ctx
             .var(0, "CMAKE_SKIP_INSTALL_RULES")
@@ -1691,7 +2167,8 @@ impl<'a> NinjaGenerator<'a> {
         outputs
     }
 
-    fn write_target_clean(&mut self, out: &mut String) {
+    /// `cmGlobalNinjaGenerator::WriteTargetClean`.
+    fn write_target_clean(&mut self) {
         let rule = Rule {
             name: "CLEAN".into(),
             command: format!("{} $FILE_ARG -t clean $TARGETS", self.ninja_cmd),
@@ -1700,10 +2177,94 @@ impl<'a> NinjaGenerator<'a> {
             ..Rule::default()
         };
         write_rule(&mut self.rules, &rule);
-        let mut build = Build::new("CLEAN");
-        build.comment = "Clean all the built files.".into();
-        build.outputs.push(self.output_path("clean"));
-        write_build(out, &build, 0);
+        let multi = self.ctx.multi_config;
+        let configs = self.ctx.configs.clone();
+        let clean = self.output_path("clean");
+        let byproducts = self.output_path("CMakeFiles/cmake_byproducts_for_clean_target");
+        for config in &configs {
+            let mut build = Build::new("CLEAN");
+            build.comment = "Clean all the built files.".into();
+            build.outputs.push(self.ctx.build_alias(&clean, config));
+            if multi {
+                build.variables.insert(
+                    "TARGETS".into(),
+                    format!("{} {byproducts}", self.ctx.build_alias(&byproducts, config)),
+                );
+            }
+            for file_config in &configs {
+                if file_config != config && !self.cross_enabled() {
+                    continue;
+                }
+                if multi {
+                    build.variables.insert(
+                        "FILE_ARG".into(),
+                        format!(
+                            "-f {}",
+                            self.output_path(&format!("CMakeFiles/impl-{file_config}.ninja"))
+                        ),
+                    );
+                }
+                self.write_build_to(&Stream::Impl(file_config.clone()), &build);
+            }
+        }
+        if self.cross_enabled() {
+            let mut build = Build::new("CLEAN");
+            build.comment = "Clean all the built files.".into();
+            build.outputs.push(self.ctx.build_alias(&clean, "all"));
+            let mut targets: Vec<String> = self
+                .ctx
+                .cross_configs
+                .iter()
+                .map(|config| self.ctx.build_alias(&byproducts, config))
+                .collect();
+            targets.push("CMakeFiles/cmake_byproducts_for_clean_target".to_owned());
+            build.variables.insert("TARGETS".into(), targets.join(" "));
+            for file_config in &configs {
+                build.variables.insert(
+                    "FILE_ARG".into(),
+                    format!(
+                        "-f {}",
+                        self.output_path(&format!("CMakeFiles/impl-{file_config}.ninja"))
+                    ),
+                );
+                self.write_build_to(&Stream::Impl(file_config.clone()), &build);
+            }
+        }
+        if multi {
+            for config in &configs {
+                let mut build = Build::new("phony");
+                build.outputs.push(clean.clone());
+                build
+                    .explicit_deps
+                    .push(self.ctx.build_alias(&clean, config));
+                self.write_build_to(&Stream::Config(config.clone()), &build);
+            }
+            if !self.ctx.default_configs.is_empty() {
+                let mut build = Build::new("phony");
+                build.outputs.push(clean.clone());
+                for config in self.ctx.default_configs.clone() {
+                    build
+                        .explicit_deps
+                        .push(self.ctx.build_alias(&clean, &config));
+                }
+                self.write_build_to(&Stream::Default, &build);
+            }
+            // Write byproducts.
+            let mut build = Build::new("phony");
+            build.comment = "Clean byproducts.".into();
+            build.outputs.push(byproducts.clone());
+            build.explicit_deps = self.byproducts_for_clean.clone();
+            self.write_build_to(&Stream::Common, &build);
+            for config in &configs {
+                build.outputs = vec![self.ctx.build_alias(&byproducts, config)];
+                build.explicit_deps = self
+                    .config_byproducts_for_clean
+                    .get(config)
+                    .cloned()
+                    .unwrap_or_default();
+                self.write_build_to(&Stream::Common, &build);
+            }
+        }
     }
 
     fn write_target_help(&mut self, out: &mut String) {
@@ -2250,6 +2811,68 @@ impl<'a> NinjaGenerator<'a> {
             }
             self.write_compile_rule(language, target, false);
         }
+        // WriteObjectBuildStatements for each file config whose cross
+        // configs include this config (only the config's own file without
+        // cross-config builds).
+        let file_configs = self.file_configs_for(&config);
+        if file_configs.len() > 1 && self.has_fortran_sources(target) {
+            self.ctx.error(
+                target.backtrace.clone(),
+                format!(
+                    "cmake-rust does not implement Fortran module scanning for cross-configuration builds (CMAKE_CROSS_CONFIGS) with the \"Ninja Multi-Config\" generator (target \"{}\").",
+                    target.name
+                ),
+            );
+            return;
+        }
+        let saved_stream = self.stream.clone();
+        let saved_file_config = self.file_config.clone();
+        let mut objects = Vec::new();
+        for (index, file_config) in file_configs.iter().enumerate() {
+            self.file_config = file_config.clone();
+            self.stream = Stream::Impl(file_config.clone());
+            let written = self.write_object_build_statements(target, &sources, index == 0);
+            if index == 0 {
+                objects = written;
+            }
+        }
+        if target.kind == TargetKind::ObjectLibrary {
+            self.file_config = saved_file_config;
+            self.stream = saved_stream;
+            // WriteObjectLibStatement: the phony lives in the common file.
+            let mut build = Build::new("phony");
+            build.comment = format!("Object library {}", target.name);
+            self.append_target_outputs(target, &mut build.outputs, DependOn::TargetArtifact);
+            self.config_byproducts_for_clean
+                .entry(config.clone())
+                .or_default()
+                .extend(build.outputs.iter().cloned());
+            build.explicit_deps = objects;
+            self.write_build_to(&Stream::Common, &build);
+            self.add_target_alias(&target.name.clone(), target);
+        } else {
+            for (index, file_config) in file_configs.iter().enumerate() {
+                self.file_config = file_config.clone();
+                self.stream = Stream::Impl(file_config.clone());
+                self.write_link_statement(target, &link_language, &objects, index == 0);
+            }
+            self.file_config = saved_file_config;
+            self.stream = saved_stream;
+        }
+        if self.cross_enabled() {
+            self.add_target_alias_cfg(&target.name.clone(), target, "all");
+        }
+    }
+
+    /// `cmNinjaTargetGenerator::WriteObjectBuildStatements(config,
+    /// fileConfig, firstForConfig)`: returns the target's objects.
+    fn write_object_build_statements(
+        &mut self,
+        target: &'a Target,
+        sources: &[gt::SourceInfo],
+        first_for_config: bool,
+    ) -> Vec<String> {
+        let config = self.config.clone();
         // WriteObjectBuildStatements
         let mut out = String::new();
         write_divider(&mut out);
@@ -2275,7 +2898,7 @@ impl<'a> NinjaGenerator<'a> {
         }
         let object_dir = self.object_dir(target);
         let _ = std::fs::create_dir_all(&object_dir);
-        let order_target = format!("cmake_object_order_depends_target_{}", target.name);
+        let order_target = self.ctx.order_depends_name(&target.name, &config);
         let mut object_order_target = order_target.clone();
         {
             let mut build = Build::new("phony");
@@ -2444,7 +3067,9 @@ impl<'a> NinjaGenerator<'a> {
             self.set_msvc_target_pdb_variable(target, &mut build.variables);
             let mut export_vars = build.variables.clone();
             export_vars.insert("FLAGS".into(), vars.flags_untrimmed.clone());
-            self.export_object_compile_command(target, source, &object, &export_vars);
+            if first_for_config {
+                self.export_object_compile_command(target, source, &object, &export_vars);
+            }
             if scanned {
                 fortran_ddis.push(self.write_fortran_scan(
                     &mut out,
@@ -2474,26 +3099,12 @@ impl<'a> NinjaGenerator<'a> {
                 self.write_fortran_scan_rules(target);
                 self.write_compile_rule("Fortran", target, true);
             }
-            self.write_fortran_dyndep(&mut out, target, &sources, fortran_ddis);
+            self.write_fortran_dyndep(&mut out, target, sources, fortran_ddis);
         }
         out.push('\n');
-        self.build.push_str(&out);
-        self.objects.insert(target.name.clone(), objects.clone());
-        if target.kind == TargetKind::ObjectLibrary {
-            let mut build = Build::new("phony");
-            build.comment = format!("Object library {}", target.name);
-            let prefix = self.target_dir_prefix(target.makefile);
-            build
-                .outputs
-                .push(self.output_path(&format!("{prefix}{}", target.name)));
-            build.explicit_deps = objects;
-            self.write_build(&build);
-            self.add_target_alias(&target.name.clone(), target);
-            return;
-        }
-        self.write_link_statement(target, &link_language, &objects);
+        self.out().push_str(&out);
+        objects
     }
-
     /// `cmNinjaTargetGenerator::SetMsvcTargetPdbVariable`. The gate is the
     /// mere definition of `MSVC_<LANG>_ARCHITECTURE_ID`: compiler
     /// identification raises it (possibly empty) into the enabling scope.
@@ -2776,13 +3387,42 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     /// cmNinjaNormalTargetGenerator::WriteLinkStatement (no device link, no Apple).
-    fn write_link_statement(&mut self, target: &'a Target, language: &str, objects: &[String]) {
+    fn write_link_statement(
+        &mut self,
+        target: &'a Target,
+        language: &str,
+        objects: &[String],
+        first_for_config: bool,
+    ) {
         let config = self.config.clone();
+        let file_config = self.file_config.clone();
         let makefile = target.makefile;
         let names = gt::names(&self.ctx, target, &config);
         let directory = gt::directory(&self.ctx, target, &config, ArtifactType::Runtime);
         let target_output = self.ninja_path(&format!("{directory}/{}", names.output));
         let target_real = self.ninja_path(&format!("{directory}/{}", names.real));
+        if config != file_config {
+            // A cross-config link whose outputs coincide with the file
+            // config's own (no per-config output directory) is skipped.
+            let file_ctx = self.ctx.for_config(&file_config);
+            let file_output = self.ninja_path(&gt::full_path(
+                &file_ctx,
+                target,
+                &file_config,
+                ArtifactType::Runtime,
+                false,
+            ));
+            let file_real = self.ninja_path(&gt::full_path(
+                &file_ctx,
+                target,
+                &file_config,
+                ArtifactType::Runtime,
+                true,
+            ));
+            if target_output == file_output || target_real == file_real {
+                return;
+            }
+        }
         let rule_name = self.linker_rule_name(language, target);
         let link_depfile = flags::link_dependency_file(&self.ctx, target, language);
         let has_depfile = link_depfile.is_some();
@@ -2798,6 +3438,9 @@ impl<'a> NinjaGenerator<'a> {
         let visible = visible_type_name(target.kind);
         build.comment = format!("Link the {visible} {}", target_real);
         build.outputs.push(target_real.clone());
+        // GetByproductsForCleanTarget(config) (firstForConfig: always,
+        // without cross-config builds).
+        let mut clean_outputs = vec![target_real.clone()];
         build.explicit_deps = objects.to_vec();
         let link_vars = flags::link_flag_vars(&self.ctx, target, &config, language);
         let mut shared_symlinks: Vec<String> = Vec::new();
@@ -2870,7 +3513,23 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .filter(|command| command.kind == stage)
             {
-                let evaluated = self.evaluate_command(command);
+                if config != file_config
+                    && !crate::commands::custom_actions::has_unique_byproducts(
+                        self.ctx.interp,
+                        command.makefile,
+                        &command.byproducts,
+                        &command.backtrace,
+                    )
+                {
+                    continue;
+                }
+                // cmCustomCommandGenerator(cc, fileConfig, lg, true, config).
+                let evaluated = custom::evaluate_spec_cfg(
+                    &self.ctx,
+                    &custom::spec_from_command(&self.ctx, command),
+                    &config,
+                    &file_config,
+                );
                 let lines = self.custom_command_lines(&evaluated, makefile);
                 if stage == CustomCommandKind::PostBuild {
                     post_build.extend(lines);
@@ -2878,6 +3537,12 @@ impl<'a> NinjaGenerator<'a> {
                     pre_link.extend(lines);
                 }
                 self.add_cc_outputs(&mut byproducts, &evaluated.byproducts);
+                let cleaned: Vec<String> = evaluated
+                    .byproducts
+                    .iter()
+                    .map(|path| self.ninja_path(path))
+                    .collect();
+                self.byproducts_for_clean.extend(cleaned);
             }
         }
         // After PRE_LINK commands, go back to CMAKE_BINARY_DIR for the link.
@@ -2886,9 +3551,23 @@ impl<'a> NinjaGenerator<'a> {
         }
         build.variables.insert(
             "PRE_LINK".into(),
-            self.build_command_line_step(&pre_link, "pre-link", Some(target)),
+            self.build_command_line_step(
+                &pre_link,
+                "pre-link",
+                Some(target),
+                makefile,
+                &config,
+                &file_config,
+            ),
         );
-        let post_build_line = self.build_command_line_step(&post_build, "post-build", Some(target));
+        let post_build_line = self.build_command_line_step(
+            &post_build,
+            "post-build",
+            Some(target),
+            makefile,
+            &config,
+            &file_config,
+        );
         let symlink_needed = names.output != names.real;
         build.variables.insert(
             "POST_BUILD".into(),
@@ -2952,7 +3631,12 @@ impl<'a> NinjaGenerator<'a> {
         build.outputs.extend(byproducts.explicit);
         build.workdir_outs = byproducts.workdir;
         if language == "Fortran" {
-            build.rsp_file = self.ninja_path(&format!("CMakeFiles/{}.rsp", target.name));
+            let suffix = if self.ctx.multi_config {
+                format!(".{config}")
+            } else {
+                String::new()
+            };
+            build.rsp_file = self.ninja_path(&format!("CMakeFiles/{}{suffix}.rsp", target.name));
         }
         let limit = if language == "Fortran" && self.fortran_rsp_flag(target).is_some() {
             -1
@@ -2977,6 +3661,7 @@ impl<'a> NinjaGenerator<'a> {
             if target.kind == TargetKind::Executable {
                 symlink.comment = format!("Create executable symlink {target_output}");
                 symlink.outputs.push(target_output.clone());
+                clean_outputs.push(target_output.clone());
             } else {
                 symlink.comment = format!("Create library symlink {target_output}");
                 let so = self.ninja_path(&format!("{directory}/{}", names.shared_object));
@@ -2984,8 +3669,10 @@ impl<'a> NinjaGenerator<'a> {
                     symlink.variables.insert("SONAME".into(), self.shell(&so));
                 } else {
                     symlink.outputs.push(so.clone());
+                    clean_outputs.push(so.clone());
                 }
                 symlink.outputs.push(target_output.clone());
+                clean_outputs.push(target_output.clone());
             }
             symlink.explicit_deps.push(target_real.clone());
             symlink
@@ -2993,7 +3680,13 @@ impl<'a> NinjaGenerator<'a> {
                 .insert("POST_BUILD".into(), post_build_line);
             write_build(&mut out, &symlink, 0);
         }
-        self.build.push_str(&out);
+        self.out().push_str(&out);
+        if first_for_config {
+            self.config_byproducts_for_clean
+                .entry(config.clone())
+                .or_default()
+                .extend(clean_outputs);
+        }
         // Add aliases for the file name and the target name.
         self.add_target_alias(&names.output.clone(), target);
         self.add_target_alias(&target.name.clone(), target);
@@ -3232,10 +3925,29 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmNinjaUtilityTargetGenerator::WriteUtilBuildStatements`.
     fn generate_utility_target(&mut self, target: &'a Target) {
         let config = self.config.clone();
+        let saved_stream = self.stream.clone();
+        let saved_file_config = self.file_config.clone();
+        for file_config in self.file_configs_for(&config) {
+            self.file_config = file_config.clone();
+            self.stream = Stream::Impl(file_config);
+            self.write_util_build_statements(target);
+        }
+        self.file_config = saved_file_config;
+        self.stream = saved_stream;
+    }
+
+    /// `cmNinjaUtilityTargetGenerator::WriteUtilBuildStatements(config,
+    /// fileConfig)`.
+    fn write_util_build_statements(&mut self, target: &'a Target) {
+        let config = self.config.clone();
+        let file_config = self.file_config.clone();
         let makefile = target.makefile;
         let binary_dir = self.ctx.interp.makefiles[makefile].binary_dir.clone();
-        let util_command_name =
-            self.ninja_path(&format!("{binary_dir}/CMakeFiles/{}.util", target.name));
+        let config_dir = self.ctx.config_directory(&file_config);
+        let util_command_name = self.ninja_path(&format!(
+            "{binary_dir}/CMakeFiles{config_dir}/{}.util",
+            target.name
+        ));
         let mut commands: Vec<String> = Vec::new();
         let mut deps: Vec<String> = Vec::new();
         let mut util_outputs = CcOutputs::default();
@@ -3248,7 +3960,13 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .filter(|command| command.kind == stage)
             {
-                let evaluated = self.evaluate_command(command);
+                // cmCustomCommandGenerator ccg(ci, fileConfig, lg).
+                let evaluated = custom::evaluate_spec_cfg(
+                    &self.ctx,
+                    &custom::spec_from_command(&self.ctx, command),
+                    &file_config,
+                    &file_config,
+                );
                 deps.extend(evaluated.depends.iter().map(|dep| self.ninja_path(dep)));
                 commands.extend(self.custom_command_lines(&evaluated, makefile));
                 if let Some(comment) = &evaluated.comment {
@@ -3278,13 +3996,25 @@ impl<'a> NinjaGenerator<'a> {
         }
         let mut phony = Build::new("phony");
         self.append_target_outputs(target, &mut phony.outputs, DependOn::TargetArtifact);
+        let mut cleaned = Vec::new();
+        self.append_target_outputs(target, &mut cleaned, DependOn::TargetArtifact);
+        self.byproducts_for_clean.extend(cleaned);
+        self.byproducts_for_clean
+            .extend(util_outputs.explicit.iter().cloned());
         self.append_target_depends(target, &mut deps, DependOn::TargetArtifact);
         if commands.is_empty() {
             phony.comment = format!("Utility command for {}", target.name);
             phony.explicit_deps = deps;
             self.write_build(&phony);
         } else {
-            let mut command = self.build_command_line_step(&commands, "utility", Some(target));
+            let mut command = self.build_command_line_step(
+                &commands,
+                "utility",
+                Some(target),
+                makefile,
+                &config,
+                &file_config,
+            );
             let desc = if let Some(echo) = target.props.get("EchoString") {
                 echo.to_owned()
             } else if !command_desc.is_empty() {
@@ -3296,18 +4026,32 @@ impl<'a> NinjaGenerator<'a> {
                 .replace("$(CMAKE_SOURCE_DIR)", &self.shell(&self.home_source))
                 .replace("$(CMAKE_BINARY_DIR)", &self.shell(&self.home_binary))
                 .replace("$(ARGS)", "");
-            self.write_custom_command_build(
-                &command,
-                &desc,
-                &format!("Utility command for {}", target.name),
-                "",
-                "",
-                uses_terminal,
-                true,
-                util_outputs,
-                deps,
-                Vec::new(),
-            );
+            if self.ctx.multi_config {
+                // cmGlobalNinjaMultiGenerator::ExpandCFGIntDir.
+                command = command.replace("${CONFIGURATION}", &config);
+            }
+            if config == file_config
+                || self
+                    .ctx
+                    .interp
+                    .ext
+                    .per_config_utility_targets
+                    .contains(&target.name)
+            {
+                self.write_custom_command_build(
+                    &command,
+                    &desc,
+                    &format!("Utility command for {}", target.name),
+                    "",
+                    "",
+                    uses_terminal,
+                    true,
+                    &config,
+                    util_outputs,
+                    deps,
+                    Vec::new(),
+                );
+            }
             phony.explicit_deps.push(util_command_name);
             self.write_build(&phony);
         }
@@ -3315,10 +4059,9 @@ impl<'a> NinjaGenerator<'a> {
     }
 
     /// `cmLocalNinjaGenerator::WriteCustomCommandBuildStatements`.
-    fn write_custom_command_build_statements(&mut self, _makefile: usize) {
-        let commands = std::mem::take(&mut self.local_custom_commands);
+    fn write_custom_command_build_statements(&mut self, commands: &[(CcRef, Vec<&'a Target>)]) {
         for (cc, targets) in commands {
-            self.write_custom_command_build_statement(cc, &targets);
+            self.write_custom_command_build_statement(*cc, targets);
         }
     }
 
@@ -3434,6 +4177,9 @@ impl<'a> NinjaGenerator<'a> {
         lines: &[String],
         custom_step: &str,
         target: Option<&Target>,
+        makefile: usize,
+        output_config: &str,
+        command_config: &str,
     ) -> String {
         if lines.is_empty() {
             return SHELL_NOOP.to_owned();
@@ -3441,13 +4187,22 @@ impl<'a> NinjaGenerator<'a> {
         if !custom_step.is_empty() {
             let total: usize = lines.iter().map(|line| line.len() + 6).sum();
             if total as i64 > command_line_length_limit() / 2 {
+                // cmLocalNinjaGenerator::WriteCommandScript.
                 let mut script = match target {
                     Some(target) => gt::support_directory(&self.ctx, target),
-                    None => format!("{}/CMakeFiles", self.home_binary),
+                    None => format!(
+                        "{}/CMakeFiles",
+                        self.ctx.interp.makefiles[makefile].binary_dir
+                    ),
                 };
+                script.push_str(&self.ctx.config_directory(output_config));
                 let _ = std::fs::create_dir_all(&script);
                 script.push('/');
                 script.push_str(custom_step);
+                if self.ctx.multi_config {
+                    script.push('-');
+                    script.push_str(command_config);
+                }
                 script.push_str(".sh");
                 let mut content = String::from("set -e\n\n");
                 for line in lines {
@@ -3496,6 +4251,7 @@ impl<'a> NinjaGenerator<'a> {
         job_pool: &str,
         uses_terminal: bool,
         restat: bool,
+        config: &str,
         outputs: CcOutputs,
         explicit_deps: Vec<String>,
         order_only_deps: Vec<String>,
@@ -3531,16 +4287,33 @@ impl<'a> NinjaGenerator<'a> {
                 build.variables.insert("deps".into(), "gcc".into());
             }
         }
-        self.write_build(&build);
+        let stream = if config.is_empty() {
+            Stream::Common
+        } else {
+            Stream::Impl(config.to_owned())
+        };
+        self.write_build_to(&stream, &build);
     }
 
-    /// `cmGlobalNinjaGenerator::AppendTargetDependsClosure`.
-    fn depends_closure(&mut self, target: &Target, omit_self: bool) -> BTreeSet<String> {
-        let key = format!("{}:{}", target.makefile, target.name);
+    /// `cmGlobalNinjaGenerator::AppendTargetDependsClosure(target, outputs,
+    /// config, fileConfig, genexOutput, omit_self)`.
+    fn depends_closure(
+        &mut self,
+        target: &Target,
+        config: &str,
+        file_config: &str,
+        genex_output: bool,
+        omit_self: bool,
+    ) -> BTreeSet<String> {
+        let key = format!(
+            "{file_config}\0{config}\0{genex_output}\0{}:{}",
+            target.makefile, target.name
+        );
         let cached = match self.depends_closures.get(&key) {
             Some(cached) => cached.clone(),
             None => {
                 let mut outs = BTreeSet::new();
+                let cross = link::target_cross_dependencies(&self.ctx, target, &self.config);
                 for dependency in link::target_dependencies(&self.ctx, target, &self.config) {
                     let Some(dep) = self.ctx.target(&dependency) else {
                         continue;
@@ -3548,7 +4321,23 @@ impl<'a> NinjaGenerator<'a> {
                     if !is_in_build_system(dep) {
                         continue;
                     }
-                    outs.extend(self.depends_closure(dep, false));
+                    let is_cross = cross.contains(&dependency);
+                    if !self.is_single_config_utility(target)
+                        && !self.is_single_config_utility(dep)
+                        && self.cross_enabled()
+                        && !is_cross
+                        && !genex_output
+                    {
+                        continue;
+                    }
+                    let dep_config = if is_cross { file_config } else { config };
+                    outs.extend(self.depends_closure(
+                        dep,
+                        dep_config,
+                        file_config,
+                        genex_output,
+                        false,
+                    ));
                 }
                 self.depends_closures.insert(key, outs.clone());
                 outs
@@ -3557,20 +4346,88 @@ impl<'a> NinjaGenerator<'a> {
         let mut result = cached;
         if !omit_self {
             let mut own = Vec::new();
-            self.append_target_outputs(target, &mut own, DependOn::TargetArtifact);
+            self.append_target_outputs_cfg(target, &mut own, config, DependOn::TargetArtifact);
             result.extend(own);
         }
         result
     }
 
-    /// `cmLocalNinjaGenerator::WriteCustomCommandBuildStatement`.
+    /// `cmLocalNinjaGenerator::WriteCustomCommandBuildStatement` for the
+    /// current file config.
     fn write_custom_command_build_statement(&mut self, cc: CcRef, targets: &[&'a Target]) {
-        if !self.seen_custom_commands.insert(cc) {
+        let file_config = self.file_config.clone();
+        if !self.seen_custom_commands.insert((cc, file_config.clone())) {
             return;
         }
         let command = self.command(cc);
+        // MakeCustomCommandGenerators(cc, fileConfig): the file config,
+        // plus the other cross configs when every output and byproduct is
+        // a generator expression with per-config unique values.
+        let spec = custom::spec_from_command(&self.ctx, command);
+        let mut ccgs: Vec<(String, custom::EvaluatedCommand)> = vec![(
+            file_config.clone(),
+            custom::evaluate_spec_cfg(&self.ctx, &spec, &file_config, &file_config),
+        )];
+        if self.cross_enabled()
+            && command.outputs.iter().all(|output| output.contains("$<"))
+            && command
+                .byproducts
+                .iter()
+                .all(|output| output.contains("$<"))
+        {
+            // GetCrossConfigs(fileConfig): a sorted std::set.
+            let mut cross = self.ctx.cross_configs.clone();
+            cross.insert(file_config.clone());
+            for config in cross {
+                if config != file_config {
+                    let evaluated =
+                        custom::evaluate_spec_cfg(&self.ctx, &spec, &config, &file_config);
+                    ccgs.push((config, evaluated));
+                }
+            }
+            // HasUniqueOutputs.
+            let mut outputs = HashSet::new();
+            let mut byproducts = HashSet::new();
+            let unique = ccgs.iter().all(|(_, evaluated)| {
+                evaluated
+                    .outputs
+                    .iter()
+                    .all(|output| outputs.insert(output.clone()))
+                    && evaluated
+                        .byproducts
+                        .iter()
+                        .all(|byproduct| byproducts.insert(byproduct.clone()))
+            });
+            if !unique {
+                ccgs.truncate(1);
+            }
+        }
+        let genex_output = ccgs.len() > 1;
+        for (output_config, evaluated) in ccgs {
+            self.write_custom_command_ccg(
+                cc,
+                targets,
+                &output_config,
+                &file_config,
+                genex_output,
+                evaluated,
+            );
+        }
+    }
+
+    /// The per-`cmCustomCommandGenerator` body of
+    /// `cmLocalNinjaGenerator::WriteCustomCommandBuildStatement`.
+    fn write_custom_command_ccg(
+        &mut self,
+        cc: CcRef,
+        targets: &[&'a Target],
+        output_config: &str,
+        file_config: &str,
+        genex_output: bool,
+        evaluated: custom::EvaluatedCommand,
+    ) {
+        let command = self.command(cc);
         let makefile = cc.0;
-        let evaluated = self.evaluate_command(command);
         if evaluated.outputs.is_empty() && evaluated.byproducts.is_empty() {
             // Generator expressions evaluate to no output for this config.
             return;
@@ -3581,10 +4438,12 @@ impl<'a> NinjaGenerator<'a> {
             // targets using the command.
             let mut iter = targets.iter();
             if let Some(first) = iter.next() {
-                order_only = self.depends_closure(first, true);
+                order_only =
+                    self.depends_closure(first, output_config, file_config, genex_output, true);
             }
             for target in iter {
-                let deps = self.depends_closure(target, true);
+                let deps =
+                    self.depends_closure(target, output_config, file_config, genex_output, true);
                 order_only.retain(|dep| deps.contains(dep));
             }
         }
@@ -3622,7 +4481,13 @@ impl<'a> NinjaGenerator<'a> {
         }
         let digest = <sha2::Sha256 as sha2::Digest>::digest(main_output.as_bytes());
         let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-        let custom_step = format!("{}-{}", util::filename_name(&main_output), &hash[..7]);
+        let mut custom_step = util::filename_name(&main_output);
+        if self.ctx.multi_config {
+            // fileConfig and ccg.GetOutputConfig() (equal without
+            // cross-config builds).
+            custom_step = format!("{custom_step}-{file_config}-{output_config}");
+        }
+        let custom_step = format!("{custom_step}-{}", &hash[..7]);
         let mut depfile = evaluated.depfile.clone();
         if !depfile.is_empty() {
             let status = crate::policy::index_of("CMP0116")
@@ -3652,7 +4517,14 @@ impl<'a> NinjaGenerator<'a> {
             }
         }
         let description = evaluated.description(&self.ctx, makefile, "");
-        let command_line = self.build_command_line_step(&lines, &custom_step, None);
+        let command_line = self.build_command_line_step(
+            &lines,
+            &custom_step,
+            None,
+            makefile,
+            output_config,
+            file_config,
+        );
         self.write_custom_command_build(
             &command_line,
             &description,
@@ -3661,6 +4533,7 @@ impl<'a> NinjaGenerator<'a> {
             &command.job_pool,
             command.uses_terminal,
             !symbolic || !evaluated.byproducts.is_empty(),
+            file_config,
             outputs,
             ninja_deps,
             order_only,
