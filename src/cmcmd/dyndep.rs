@@ -628,12 +628,15 @@ fn cxx_usage_seed(
     objects: &[CxxObject],
     usages: &mut CxxUsage,
     private_usage_found: &mut bool,
+    top: &str,
 ) -> Result<Vec<String>, String> {
     let mut internal_usages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for object in objects {
         for p in &object.provides {
             if let Some((bmi, false)) = mod_files.get(&p.logical) {
-                cxx_add_reference(usages, &p.logical, bmi, "by-name")?;
+                // `CxxModuleLocations::BmiGeneratorPathForModule` stores the
+                // path as ninja sees it (relative to the build tree top).
+                cxx_add_reference(usages, &p.logical, &ninja_path(top, bmi), "by-name")?;
             }
         }
         for r in &object.requires {
@@ -662,7 +665,7 @@ fn cxx_usage_seed(
                 }
             }
             if let Some((bmi, _)) = known {
-                cxx_add_reference(usages, &r.logical, bmi, r.method)?;
+                cxx_add_reference(usages, &r.logical, &ninja_path(top, bmi), r.method)?;
             }
         }
     }
@@ -779,7 +782,7 @@ fn cxx_modmap_content(
             }
         }
         "gcc" => {
-            mm.push_str(&format!("$root {top}\n"));
+            mm.push_str("$root .\n");
             for p in &obj.provides {
                 if let Some((bmi, _)) = mod_files.get(&p.logical) {
                     mm.push_str(&format!("{} {}\n", p.logical, ninja_path(top, bmi)));
@@ -1259,7 +1262,7 @@ fn collate_cxx(tdi: &Value, dd: &str, paths: &[&String], modmapfmt: &str) -> Res
 
     if modmap_fmt.is_some() {
         let mut private_found = false;
-        let cycles = cxx_usage_seed(&mod_files, &objects, &mut usages, &mut private_found)?;
+        let cycles = cxx_usage_seed(&mod_files, &objects, &mut usages, &mut private_found, top)?;
         if !cycles.is_empty() {
             return Err(format!(
                 "Circular dependency detected in the C++ module import graph. \
