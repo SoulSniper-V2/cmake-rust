@@ -78,6 +78,12 @@ pub struct ConfigureOptions {
     /// A path argument named an existing build tree whose cache was read
     /// (`cmState::IsCacheLoaded` during argument processing).
     pub cache_loaded: bool,
+    /// `--debugger` (cmake::SetDebuggerOn).
+    pub debugger_on: bool,
+    /// `--debugger-pipe` (cmake::DebuggerPipe): Unix socket path, kept as given.
+    pub debugger_pipe: String,
+    /// `--debugger-dap-log` (cmake::DebuggerDapLogFile, normalized).
+    pub debugger_dap_log: String,
 }
 
 impl ConfigureOptions {
@@ -419,6 +425,33 @@ pub fn new_project_interp(options: &ConfigureOptions, root: &str) -> Interp {
     interp
 }
 
+/// `cmake::StartDebuggerIfEnabled`: attach the DAP adapter when `--debugger`
+/// was given. Fails (like upstream) when the pipe path is missing or the
+/// connection cannot be made.
+pub(crate) fn start_debugger(interp: &mut Interp, options: &ConfigureOptions) -> bool {
+    if !options.debugger_on || interp.debugger.is_some() {
+        return true;
+    }
+    if options.debugger_pipe.is_empty() {
+        eprintln!("Error: --debugger-pipe must be set when debugging is enabled.");
+        return false;
+    }
+    match crate::debugger::Debugger::start(
+        &options.debugger_pipe,
+        Some(options.debugger_dap_log.as_str()).filter(|p| !p.is_empty()),
+    ) {
+        Ok(debugger) => {
+            interp.debugger = Some(debugger);
+            true
+        }
+        Err(message) => {
+            eprintln!("Error: Failed to create debugger adapter.");
+            eprintln!("{message}");
+            false
+        }
+    }
+}
+
 /// Runs configure and generate. Returns the process exit code.
 /// `run_configure` returns this sentinel when
 /// `__CMAKE_DELETE_CACHE_CHANGE_VARS_` was set during configure, in place of
@@ -433,14 +466,25 @@ pub fn configure(options: &ConfigureOptions) -> i32 {
     // cmake::Run keeps one SARIF results log (written when Run returns)
     // across the cmake::Configure restart of HandleDeleteCacheVariables.
     let mut sarif_log = crate::sarif::ResultsLog::default();
+    let mut debugger = None;
     loop {
         let mut interp = new_project_interp(options, &root);
+        interp.debugger = debugger.clone();
         interp.sarif_log = std::mem::take(&mut sarif_log);
         let code = run_configure(&mut interp, options);
         if code == RESTART_CONFIGURE {
             handle_delete_cache_variables(&interp, options);
             sarif_log = std::mem::take(&mut interp.sarif_log);
+            // `cmake::DebugAdapter` outlives a HandleDeleteCacheVariables
+            // restart; StopDebuggerIfNeeded runs once, at process end.
+            debugger = interp.debugger.take();
             continue;
+        }
+        // `cmake::StopDebuggerIfNeeded`: report the exit status and end the
+        // debug session (joining its thread on drop).
+        debugger = interp.debugger.take();
+        if let Some(session) = &debugger {
+            session.report_exit_code(i64::from(code != 0));
         }
         if let Some(path) = &options.sarif_output {
             interp.sarif_log.write(path, false);
@@ -569,6 +613,10 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         if std::path::Path::new(&pre_load).exists() {
             read_temporary_list_file(interp, &pre_load);
         }
+    }
+    // cmake::Run starts the debugger between CheckBuildSystem and Configure.
+    if !start_debugger(interp, options) {
+        return -1;
     }
     // cmake::Configure: apply `DiagLevels` (from -W flags and presets) to
     // the cache, then sync the messenger with the cache.

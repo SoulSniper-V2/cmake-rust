@@ -10,6 +10,7 @@ mod commands;
 mod condition;
 mod configure;
 mod configure_log;
+mod debugger;
 mod fileapi;
 mod flow;
 mod fsutil;

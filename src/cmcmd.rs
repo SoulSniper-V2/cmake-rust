@@ -198,11 +198,12 @@ fn capabilities(args: &[String]) -> i32 {
     // cmake::ReportCapabilities uses compact, sorted JSON keys. The generator
     // array advertises the implemented Ninja generators in the factory
     // registration order (without extra generators). File API
-    // versions follow the 4.1 protocol. The debugger flag reflects this build.
+    // versions follow the 4.1 protocol. The debugger flag reflects this build
+    // (cmDebugger support is compiled in).
     println!(
         "{}",
         serde_json::json!({
-            "debugger": false,
+            "debugger": true,
             "fileApi": { "requests": [
                 {"kind": "codemodel", "version": [{"major": 2, "minor": 8}]},
                 {"kind": "configureLog", "version": [{"major": 1, "minor": 0}]},

@@ -166,6 +166,18 @@ pub struct PolicyFrame {
     pub weak: bool,
 }
 
+/// RAII end of `cmMakefile::CallScope` for the debugger
+/// (`cmDebuggerAdapter::OnEndFunctionCall`).
+struct DebugFrameGuard {
+    inner: std::sync::Arc<crate::debugger::Inner>,
+}
+
+impl Drop for DebugFrameGuard {
+    fn drop(&mut self) {
+        self.inner.end_function_call();
+    }
+}
+
 /// A build-system directory (`cmMakefile`).
 #[derive(Debug)]
 pub struct Makefile {
@@ -270,6 +282,9 @@ pub struct Interp {
     pub debug_trycompile: bool,
     /// `--debug-output` and the `--debug-find*` options.
     pub debug: DebugOptions,
+    /// `cmake::DebugAdapter` (cmDebuggerAdapter): present when `--debugger`
+    /// started the DAP session.
+    pub debugger: Option<crate::debugger::Debugger>,
     /// `--compile-no-warning-as-error` / `--link-no-warning-as-error`.
     pub ignore_compile_warning_as_error: bool,
     pub ignore_link_warning_as_error: bool,
@@ -343,6 +358,7 @@ impl Interp {
             in_try_compile: false,
             debug_trycompile: false,
             debug: DebugOptions::default(),
+            debugger: None,
             ignore_compile_warning_as_error: false,
             ignore_link_warning_as_error: false,
             root_check_cmp0000: false,
@@ -1060,22 +1076,26 @@ impl Interp {
         {
             rendered.replace_range(index..index + 4, " at ");
         }
+        let dbg_text = rendered.clone();
         if messages::is_error(kind) {
             self.error = true;
         }
         rendered.push_str(&self.debug_stack());
         self.stderr_line(&rendered);
+        self.debug_message(kind, &dbg_text);
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
         self.sarif_log.message(kind, text, &self.backtrace);
         let mut rendered = messages::render(kind, text, &self.backtrace, self.top_source());
+        let dbg_text = rendered.clone();
         if messages::is_error(kind) {
             self.error = true;
         }
         rendered.push_str(&self.debug_stack());
         self.stderr_line(&rendered);
+        self.debug_message(kind, &dbg_text);
     }
 
     /// Writes one line to stderr (or to `stderr_capture`).
@@ -1112,7 +1132,11 @@ impl Interp {
         // directory's own list file for the duration of the configure;
         // `pop_list_file_vars` then restores the inherited (unset) value.
         self.set_def("CMAKE_PARENT_LIST_FILE", path);
-        if let Some(parsed) = self.parse_file(path) {
+        self.debug_begin_parse(path);
+        let parsed_file = self.parse_file(path);
+        self.debug_end_parse();
+        if let Some(parsed) = parsed_file {
+            self.debug_file_parsed(path, &parsed.commands);
             let mut commands = parsed.commands.clone();
             let has_version = commands.iter().any(|c| c.lname == "cmake_minimum_required");
             if !has_version {
@@ -1298,9 +1322,12 @@ impl Interp {
             self.push_policy(false, PolicyMap::default());
         }
         let saved = self.push_list_file_vars(&path);
+        self.debug_begin_parse(&path);
         let parsed = self.parse_file(&path);
+        self.debug_end_parse();
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
+            self.debug_file_parsed(&path, &parsed.commands);
             self.mf_mut().list_files.push(path.clone());
             self.run_file_body(&parsed);
         }
@@ -1353,9 +1380,12 @@ impl Interp {
         // the directory's own list file for the duration of the configure;
         // `pop_list_file_vars` restores the inherited value afterwards.
         self.set_def("CMAKE_PARENT_LIST_FILE", path);
+        self.debug_begin_parse(path);
         let parsed = self.parse_file(path);
+        self.debug_end_parse();
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
+            self.debug_file_parsed(path, &parsed.commands);
             self.mf_mut().list_files.push(path.to_owned());
             self.ext.file_locks.files.push(Default::default());
             self.run_file_body(&parsed);
@@ -1387,9 +1417,12 @@ impl Interp {
             deferred: false,
         });
         let saved = self.push_list_file_vars(path);
+        self.debug_begin_parse(path);
         let parsed = self.parse_file(path);
+        self.debug_end_parse();
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
+            self.debug_file_parsed(path, &parsed.commands);
             self.mf_mut().list_files.push(path.to_owned());
             self.ext.file_locks.files.push(Default::default());
             self.run_file_body(&parsed);
@@ -1413,6 +1446,7 @@ impl Interp {
         let parsed = self.parse_text(Rc::from(path.as_str()), code);
         let ok = parsed.is_some();
         if let Some(parsed) = parsed {
+            self.debug_file_parsed(&path, &parsed.commands);
             self.run_file_body(&parsed);
         }
         self.pop_list_file_vars(saved);
@@ -1655,6 +1689,73 @@ impl Interp {
         }
     }
 
+    /// The debugger side of `cmMakefile::CallScope`: pushes a stack frame
+    /// and runs the breakpoint/step/pause stop checks
+    /// (`cmDebuggerAdapter::OnBeginFunctionCall`). `None` costs nothing
+    /// when the debugger is off.
+    fn debug_begin_command(
+        &self,
+        file: &Rc<ParsedFile>,
+        command: &Command,
+        subst: Option<&MacroSubst>,
+    ) -> Option<DebugFrameGuard> {
+        let inner = self.debugger.as_ref()?.inner.clone();
+        let args = command
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.delim != Delim::Bracket {
+                    subst.map_or_else(|| arg.value.clone(), |s| s.apply(&arg.value))
+                } else {
+                    arg.value.clone()
+                }
+            })
+            .collect();
+        inner.begin_function_call(
+            self as *const _ as usize,
+            self.mf_index(),
+            &file.path,
+            command.line as i64,
+            &command.name,
+            args,
+        );
+        Some(DebugFrameGuard { inner })
+    }
+
+    /// `OnBeginFileParse`/`OnEndFileParse` around a list-file parse, and
+    /// `OnFileParsedSuccessfully` once it yields commands.
+    fn debug_begin_parse(&self, path: &str) {
+        if let Some(debugger) = &self.debugger {
+            debugger
+                .inner
+                .begin_file_parse(self as *const _ as usize, self.mf_index(), path);
+        }
+    }
+
+    fn debug_end_parse(&self) {
+        if let Some(debugger) = &self.debugger {
+            debugger.inner.end_file_parse();
+        }
+    }
+
+    fn debug_file_parsed(&self, path: &str, commands: &[Command]) {
+        if let Some(debugger) = &self.debugger {
+            let functions: Vec<(i64, i64)> = commands
+                .iter()
+                .map(|command| (command.line as i64, command.line_end as i64))
+                .collect();
+            debugger.inner.file_parsed(path, &functions);
+        }
+    }
+
+    /// `cmDebuggerAdapter::OnMessageOutput` (messenger `DisplayMessage`
+    /// with the rendered text, or `DisplayStatus` with the raw line).
+    pub fn debug_message(&self, kind: MessageType, text: &str) {
+        if let Some(debugger) = &self.debugger {
+            debugger.inner.message_output(kind, text);
+        }
+    }
+
     /// Expands a command's arguments (`cmMakefile::ExpandArguments`),
     /// returning values and whether each was quoted/bracketed.
     pub fn expand_arguments(
@@ -1694,10 +1795,12 @@ impl Interp {
         subst: Option<&MacroSubst>,
     ) -> (bool, Ctl) {
         self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         let profile = self.profile_command(file, command, subst);
         let result = self.execute_inner(file, command, subst);
         drop(profile);
         self.backtrace.pop();
+        drop(dbg);
         result
     }
 
@@ -2050,6 +2153,7 @@ impl Interp {
         let command = &file.commands[index];
         let end = file.jumps[index][0];
         self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         let args = self.expand_arguments(&file.path, &command.args, subst);
         let is_macro = command.lname == "macro";
         let Some(args) = args else {
@@ -2064,6 +2168,7 @@ impl Interp {
             return false;
         }
         let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
+        drop(dbg);
         // Materialize the body if a macro substitution is active.
         let (body_file, start, stop) = match subst {
             Some(subst) => {
@@ -2280,8 +2385,10 @@ impl Interp {
         self.warn_end_args(file, command, end_index, matched, true);
         // Evaluate the `if` condition.
         self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         let mut taken = self.evaluate_if_condition(file, command, subst, "if");
         self.backtrace.pop();
+        drop(dbg);
         if self.fatal {
             return Ctl::Normal;
         }
@@ -2436,6 +2543,7 @@ impl Interp {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
             self.backtrace.pop();
             return (true, Ctl::Normal);
@@ -2443,6 +2551,7 @@ impl Interp {
         let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
         let plan = crate::flow::foreach_plan(self, &values);
         self.backtrace.pop();
+        drop(dbg);
         let Some(plan) = plan else {
             return (false, Ctl::Normal);
         };
@@ -2526,8 +2635,9 @@ impl Interp {
         let command = &file.commands[index];
         // `cmWhileCommand`: no arguments means no blocker was created; the
         // body and `endwhile` then run as ordinary commands.
+        self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         if command.args.is_empty() {
-            self.backtrace.push(self.frame_for(file, command));
             self.issue(
                 MessageType::FatalError,
                 "while called with incorrect number of arguments",
@@ -2536,6 +2646,8 @@ impl Interp {
             self.backtrace.pop();
             return (false, Ctl::Normal);
         }
+        self.backtrace.pop();
+        drop(dbg);
         // `cmWhileFunctionBlocker::ArgumentsMatch`: raw argument equality or
         // no endwhile arguments.
         let end_command = &file.commands[end];
@@ -2638,6 +2750,7 @@ impl Interp {
         let end = file.jumps[index][0];
         let command = &file.commands[index];
         self.backtrace.push(self.frame_for(file, command));
+        let dbg = self.debug_begin_command(file, command, subst);
         let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
             self.backtrace.pop();
             return (true, Ctl::Normal);
@@ -2664,6 +2777,7 @@ impl Interp {
             }
         };
         self.backtrace.pop();
+        drop(dbg);
         // `cmBlockFunctionBlocker`: `endblock` takes no arguments.
         self.warn_end_args(file, command, end, true, false);
         let policy_depth = self.mf().policies.len();

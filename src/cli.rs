@@ -595,11 +595,13 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     println!(".");
                 }
                 "--profiling-output" => profiling_output = normalized_path(&value, cwd),
+                // cmake::DebuggerPipe is stored as given (no normalization).
+                "--debugger-pipe" => options.debugger_pipe = value,
+                "--debugger-dap-log" => {
+                    options.debugger_dap_log = normalized_path(&value, cwd);
+                }
                 "-B" => have_b_arg = true,
                 _ => {}
-            }
-            if matches!(name, "--debugger-pipe" | "--debugger-dap-log") {
-                unsupported = Some(name);
             }
         } else if matches_value(arg, "--list-presets", false) {
             let value = read_value(args, &mut index, "--list-presets", Values::Optional, "")?;
@@ -682,7 +684,11 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     options.ignore_link_warning_as_error = true;
                 }
                 "-O" | "--warn-unused-vars" => {}
-                "--system-information" | "--debugger" => unsupported = Some(arg),
+                "--system-information" => unsupported = Some(arg),
+                "--debugger" => {
+                    println!("Running with debugger on.");
+                    options.debugger_on = true;
+                }
                 "--find-package" => find_package_mode = true,
                 "--explain" => {
                     let Some(target) = args.get(index + 1) else {
@@ -713,10 +719,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         return Ok(cli_failure());
     }
     if let Some(flag) = unsupported {
-        if flag.starts_with("--debugger") {
-            cmcmd::error(format!("CMake was not built with support for {flag}"));
-            return Ok(cli_failure());
-        }
         cmcmd::error(format!("{flag} is not supported"));
         return Ok(1);
     }
@@ -1410,12 +1412,25 @@ fn run_script_mode(
                     false,
                 );
             }
-            "-P" => result = read_script(&mut interp, value, cwd, true),
+            "-P" => {
+                // The -P ScriptLambda starts the debugger before the script
+                // is read (the project path starts it in cmake::Run).
+                if !configure::start_debugger(&mut interp, options) {
+                    result = cli_failure();
+                    break;
+                }
+                result = read_script(&mut interp, value, cwd, true);
+            }
             _ => {}
         }
         if result != 0 || interp.exit_code.is_some() {
             break;
         }
+    }
+    // `cmake::StopDebuggerIfNeeded` reports the exit status and ends the
+    // session (the handle drop joins the adapter thread).
+    if let Some(session) = interp.debugger.take() {
+        session.report_exit_code(i64::from(result));
     }
     if let Some(view) = view {
         view.print(&interp.cache);
