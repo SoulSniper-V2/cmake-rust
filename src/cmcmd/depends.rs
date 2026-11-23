@@ -18,8 +18,7 @@ use crate::cmregex::Regex;
 use crate::interp::{Interp, Makefile, Mode};
 use crate::{configure, pathresolver, util};
 
-const INCLUDE_REGEX_LINE: &str =
-    "^[ \t]*[#%][ \t]*(include|import)[ \t]*[<\"]([^\">]+)([\">])";
+const INCLUDE_REGEX_LINE: &str = "^[ \t]*[#%][ \t]*(include|import)[ \t]*[<\"]([^\">]+)([\">])";
 const INCLUDE_REGEX_LINE_MARKER: &str = "#IncludeRegexLine: ";
 const INCLUDE_REGEX_SCAN_MARKER: &str = "#IncludeRegexScan: ";
 const INCLUDE_REGEX_COMPLAIN_MARKER: &str = "#IncludeRegexComplain: ";
@@ -130,7 +129,8 @@ impl FileTimeCache {
 
 /// `cmSystemTools::GetLineFromStream` with the trailing CR dropped.
 fn lines(text: &str) -> impl Iterator<Item = &str> {
-    text.split('\n').map(|line| line.strip_suffix('\r').unwrap_or(line))
+    text.split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
 }
 
 fn file_exists(path: &str) -> bool {
@@ -273,7 +273,8 @@ struct LocalGen {
     top_binary: String,
     /// `GetCurrentBinaryDirectory()`: the directory being scanned.
     current_binary: String,
-    /// `GetCurrentSourceDirectory()`.
+    /// `GetCurrentSourceDirectory()` (retained for upstream parity).
+    #[allow(dead_code)]
     current_source: String,
     /// `GetSourceDirectory()`/`GetBinaryDirectory()`... unused, kept for clarity.
     global: MakefileGlobal,
@@ -350,6 +351,9 @@ fn write_disclaimer(gen_name: &str) -> String {
 
 /// `cmDepends::DependencyMap`.
 type DependencyMap = BTreeMap<String, Vec<String>>;
+
+/// `CMAKE_DEPENDS_IN_PROJECT_ONLY` path filter.
+type PathFilter = dyn Fn(&str) -> bool;
 
 /// `cmDepends::Check` / `CheckDependencies`: parses the depend.internal
 /// file and decides whether existing dependencies are still valid.
@@ -475,9 +479,13 @@ struct IncludeLines {
 struct DependsC<'a> {
     lg: &'a LocalGen,
     mf: &'a Interp,
+    /// `m_TargetDirectory`/`m_Language`/`m_Verbose` (retained for parity).
+    #[allow(dead_code)]
     target_dir: String,
+    #[allow(dead_code)]
     language: String,
     valid_deps: Option<&'a DependencyMap>,
+    #[allow(dead_code)]
     verbose: bool,
     include_path: Vec<String>,
     include_regex_line: Regex,
@@ -525,11 +533,13 @@ impl<'a> DependsC<'a> {
             complain_regex = value.to_owned();
         }
 
-        let compile = |pattern: &str| Regex::new(pattern).unwrap_or_else(|_| {
-            // An invalid regex never matches (RegularExpression::find
-            // fails on an uncompiled program).
-            Regex::new("^$").unwrap()
-        });
+        let compile = |pattern: &str| {
+            Regex::new(pattern).unwrap_or_else(|_| {
+                // An invalid regex never matches (RegularExpression::find
+                // fails on an uncompiled program).
+                Regex::new("^$").unwrap()
+            })
+        };
 
         let mut scanner = DependsC {
             lg,
@@ -645,14 +655,8 @@ impl<'a> DependsC<'a> {
                 } else if !res {
                     // Marker lines: the cached regexes must still match.
                     for (marker, current) in [
-                        (
-                            INCLUDE_REGEX_LINE_MARKER,
-                            &self.include_regex_line_string,
-                        ),
-                        (
-                            INCLUDE_REGEX_SCAN_MARKER,
-                            &self.include_regex_scan_string,
-                        ),
+                        (INCLUDE_REGEX_LINE_MARKER, &self.include_regex_line_string),
+                        (INCLUDE_REGEX_SCAN_MARKER, &self.include_regex_scan_string),
                         (
                             INCLUDE_REGEX_COMPLAIN_MARKER,
                             &self.include_regex_complain_string,
@@ -731,12 +735,12 @@ impl<'a> DependsC<'a> {
             };
             if let Some(m) = self.include_regex_line.find(&line) {
                 let group = |n: usize| m.groups[n].map(|(s, e)| line[s..e].to_owned());
-                let mut entry = UnscannedEntry::default();
-                entry.file_name =
-                    crate::cache::convert_to_unix_slashes(&group(2).unwrap_or_default());
+                let mut entry = UnscannedEntry {
+                    file_name: crate::cache::convert_to_unix_slashes(&group(2).unwrap_or_default()),
+                    ..UnscannedEntry::default()
+                };
                 if group(3).as_deref() == Some("\"") && !util::is_full_path(&entry.file_name) {
-                    entry.quoted_location =
-                        util::collapse_full_path(&entry.file_name, directory);
+                    entry.quoted_location = util::collapse_full_path(&entry.file_name, directory);
                 }
                 if self.include_regex_scan.find(&entry.file_name).is_some() {
                     new_entries.push(entry.clone());
@@ -803,9 +807,7 @@ impl<'a> DependsC<'a> {
                     && file_is_file(&current.quoted_location)
                 {
                     full_name = current.quoted_location.clone();
-                } else if let Some(location) =
-                    self.header_location_cache.get(&current.file_name)
-                {
+                } else if let Some(location) = self.header_location_cache.get(&current.file_name) {
                     full_name = location.clone();
                 } else {
                     for ipath in &self.include_path {
@@ -820,7 +822,10 @@ impl<'a> DependsC<'a> {
                 }
 
                 if full_name.is_empty()
-                    && self.include_regex_complain.find(&current.file_name).is_some()
+                    && self
+                        .include_regex_complain
+                        .find(&current.file_name)
+                        .is_some()
                 {
                     super::error(format!("Cannot find file \"{}\".", current.file_name));
                     return false;
@@ -879,9 +884,8 @@ impl<'a> DependsC<'a> {
                 make_depends.push(':');
             }
             for dep in &dependencies {
-                let dependee = LocalGen::convert_to_makefile_path(
-                    &self.lg.maybe_relative_to_top_bin_dir(dep),
-                );
+                let dependee =
+                    LocalGen::convert_to_makefile_path(&self.lg.maybe_relative_to_top_bin_dir(dep));
                 if long_lines {
                     make_depends.push(' ');
                     make_depends.push_str(line_continue);
@@ -902,6 +906,7 @@ impl<'a> DependsC<'a> {
 
 /// `cmDepends::Write`: group the `CMAKE_DEPENDS_CHECK_<LANG>` pairs by
 /// object file and run the scanner for each.
+#[allow(clippy::too_many_arguments)]
 fn write_target_dependencies(
     lg: &LocalGen,
     interp: &Interp,
@@ -913,7 +918,9 @@ fn write_target_dependencies(
     internal_depends: &mut String,
 ) -> bool {
     let pairs = util::expand_list(
-        interp.get_def(&format!("CMAKE_DEPENDS_CHECK_{lang}")).unwrap_or(""),
+        interp
+            .get_def(&format!("CMAKE_DEPENDS_CHECK_{lang}"))
+            .unwrap_or(""),
         false,
     );
     let mut dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -935,6 +942,7 @@ fn write_target_dependencies(
 }
 
 /// `cmLocalUnixMakefileGenerator3::ScanDependencies`.
+#[allow(clippy::too_many_arguments)]
 fn scan_dependencies(
     lg: &mut LocalGen,
     gen_name: &str,
@@ -973,7 +981,7 @@ fn scan_dependencies(
     );
     for lang in &langs {
         match lang.as_str() {
-            "C" | "CXX" | "RC" | "ASM" | "OBJC" | "OBJCXX" | "CUDA" | "HIP" | "ISPC" => {
+            "C" | "CXX" | "RC" | "ASM" | "OBJC" | "OBJCXX" | "CUDA" | "HIP" | "ISPC"
                 if !write_target_dependencies(
                     lg,
                     interp,
@@ -983,9 +991,9 @@ fn scan_dependencies(
                     verbose,
                     &mut make_depends,
                     &mut internal_depends,
-                ) {
-                    return false;
-                }
+                ) =>
+            {
+                return false;
             }
             "Fortran" => {
                 super::error(
@@ -1140,11 +1148,7 @@ fn compiler_check_dependencies(
 
 /// `cmReadGccDepfile`: parse a depfile; `prepend_deps` prepends `prefix`
 /// to relative dependency paths (`GccDepfilePrependPaths::Deps`).
-fn read_gcc_depfile(
-    path: &str,
-    prefix: &str,
-    prepend_deps: bool,
-) -> Option<Vec<depfile::Rule>> {
+fn read_gcc_depfile(path: &str, prefix: &str, prepend_deps: bool) -> Option<Vec<depfile::Rule>> {
     let content = std::fs::read(path).ok()?;
     let text = String::from_utf8_lossy(&content);
     let mut rules = depfile::parse(&text)?;
@@ -1173,14 +1177,10 @@ fn compiler_write_dependencies(
     let long_lines = lg.global.supports_long_line_deps;
     let mut phony_targets: BTreeSet<String> = BTreeSet::new();
     for (target, deps) in dependencies {
-        let target = LocalGen::convert_to_makefile_path(
-            &lg.maybe_relative_to_top_bin_dir(target),
-        );
+        let target = LocalGen::convert_to_makefile_path(&lg.maybe_relative_to_top_bin_dir(target));
         let deps: Vec<String> = deps
             .iter()
-            .map(|dep| {
-                LocalGen::convert_to_makefile_path(&lg.maybe_relative_to_top_bin_dir(dep))
-            })
+            .map(|dep| LocalGen::convert_to_makefile_path(&lg.maybe_relative_to_top_bin_dir(dep)))
             .collect();
         let mut first_dep = true;
         if long_lines {
@@ -1263,7 +1263,11 @@ fn update_dependencies(
 
     let target_dir = filename_path(tgt_info).to_owned();
     let mut cache = FileTimeCache::new();
-    if !interp.get_def("CMAKE_DEPENDS_LANGUAGES").unwrap_or("").is_empty() {
+    if !interp
+        .get_def("CMAKE_DEPENDS_LANGUAGES")
+        .unwrap_or("")
+        .is_empty()
+    {
         let internal_depend_file = format!("{target_dir}/depend.internal");
         let depend_file = format!("{target_dir}/depend.make");
 
@@ -1330,21 +1334,24 @@ fn update_dependencies(
         }
     }
 
-    let depends = interp.get_def("CMAKE_DEPENDS_DEPENDENCY_FILES").unwrap_or("");
+    let depends = interp
+        .get_def("CMAKE_DEPENDS_DEPENDENCY_FILES")
+        .unwrap_or("");
     if !depends.is_empty() {
         let dep_files = util::expand_list(depends, true);
         let internal_dep_file = format!("{target_dir}/compiler_depend.internal");
         let dep_file = format!("{target_dir}/compiler_depend.make");
         let mut dependencies = DependencyMap::new();
         let project_only = util::is_on(
-            interp.get_def("CMAKE_DEPENDS_IN_PROJECT_ONLY").unwrap_or(""),
+            interp
+                .get_def("CMAKE_DEPENDS_IN_PROJECT_ONLY")
+                .unwrap_or(""),
         );
         let home_source = lg.relative_top_source.clone();
         let home_binary = lg.top_binary.clone();
-        let is_valid_path: Option<Box<dyn Fn(&str) -> bool>> = if project_only {
+        let is_valid_path: Option<Box<PathFilter>> = if project_only {
             Some(Box::new(move |path: &str| {
-                !(path_eq_or_subdir(path, &home_source)
-                    || path_eq_or_subdir(path, &home_binary))
+                !(path_eq_or_subdir(path, &home_source) || path_eq_or_subdir(path, &home_binary))
             }))
         } else {
             None
@@ -1440,6 +1447,7 @@ pub(super) fn depends(args: &[String]) -> i32 {
         props: crate::props::Props::default(),
         policies: interp.makefiles[0].policies.clone(),
         list_files: Vec::new(),
+        output_files: Vec::new(),
         targets: Vec::new(),
         children: Vec::new(),
         exclude_from_all: false,

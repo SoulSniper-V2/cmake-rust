@@ -864,25 +864,54 @@ fn actual_configure(
     // Generator selection.
     let requested = options.generator.clone();
     let cached = interp.cache.value("CMAKE_GENERATOR").map(str::to_owned);
-    let generator = requested
-        .clone()
-        .or(cached.clone())
-        .unwrap_or_else(|| "Ninja".to_owned());
+    let cached_extra = interp
+        .cache
+        .value("CMAKE_EXTRA_GENERATOR")
+        .filter(|extra| !extra.is_empty())
+        .map(str::to_owned);
+    // `cmExternalMakefileProjectGeneratorFactory` names resolve to a
+    // (extra, global) pair; anything else is a plain global generator name.
+    let resolved = requested.clone().or_else(|| {
+        cached.clone().map(|global| {
+            cached_extra.clone().map_or(global.clone(), |extra| {
+                crate::generator::extra::create_full_generator_name(&global, &extra)
+            })
+        })
+    });
+    let (generator, extra) = resolved
+        .as_deref()
+        .and_then(crate::generator::extra::split_generator_name)
+        .map_or_else(
+            || (resolved.clone().unwrap_or_else(|| "Ninja".to_owned()), None),
+            |(extra, global)| (global, Some(extra)),
+        );
     if generator != "Ninja" && generator != "Ninja Multi-Config" {
-        let message = format!("Could not create named generator {generator}");
+        let name = resolved.as_deref().unwrap_or(&generator);
+        let message = format!("Could not create named generator {name}");
         system_error(Some(interp), &message);
         return -1;
     }
     interp.ext.multi_config = generator == "Ninja Multi-Config";
-    if let (Some(requested), Some(cached)) = (&requested, &cached)
-        && requested != cached
-    {
-        let message = format!(
-            "Error: generator : {requested}\nDoes not match the generator used previously: {cached}\nEither remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory."
+    // cmake::ActualConfigure compares the generator's full name with the
+    // cached CMAKE_GENERATOR/CMAKE_EXTRA_GENERATOR pair.
+    let full_name = crate::generator::extra::create_full_generator_name(
+        &generator,
+        extra.as_deref().unwrap_or(""),
+    );
+    if let Some(cached) = &cached {
+        let previous = crate::generator::extra::create_full_generator_name(
+            cached,
+            cached_extra.as_deref().unwrap_or(""),
         );
-        system_error(Some(interp), &message);
-        return -2;
+        if previous != full_name {
+            let message = format!(
+                "Error: generator : {full_name}\nDoes not match the generator used previously: {previous}\nEither remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory."
+            );
+            system_error(Some(interp), &message);
+            return -2;
+        }
     }
+    interp.ext.extra_generator = extra.clone();
     if cached.is_none() {
         interp.cache.add(
             "CMAKE_GENERATOR",
@@ -892,7 +921,7 @@ fn actual_configure(
         );
         interp.cache.add(
             "CMAKE_EXTRA_GENERATOR",
-            Some(""),
+            Some(extra.as_deref().unwrap_or("")),
             Some("Name of external makefile project generator."),
             CacheType::Internal,
         );
@@ -960,6 +989,16 @@ fn actual_configure(
     let mut api = crate::fileapi::FileApi::new(&binary);
     api.read_queries();
     *file_api = Some(api);
+    // `cmGlobalGenerator::Configure` warns about the deprecated extra
+    // generator before configuring the top-level directory.
+    if let Some(extra) = &interp.ext.extra_generator
+        && !options.in_try_compile
+    {
+        let message = format!(
+            "Support for \"Extra Generators\" like\n  {extra}\nis deprecated and will be removed from a future version of CMake.  IDEs may use the cmake-file-api(7) to view CMake-generated project build trees."
+        );
+        interp.issue_at(MessageType::DeprecationWarning, &message, &[]);
+    }
     let start = Instant::now();
     configure_root(interp, &source_list);
     check_reserved_global_targets(interp);

@@ -2,8 +2,8 @@
 
 mod archive;
 mod cocompile;
-mod depfile;
 mod depends;
+mod depfile;
 mod dyndep;
 mod fortran;
 
@@ -165,7 +165,7 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         // generators scan (cmLocalUnixMakefileGenerator3::UpdateDependencies);
         // other generators' UpdateDependencies succeeds trivially and an
         // unknown generator name fails without a message.
-        "cmake_depends" if args.len() >= 4 => depends::depends(&args),
+        "cmake_depends" if args.len() >= 4 => depends::depends(args),
         "tar" if args.len() >= 2 => archive::tar(args),
         // copy_if_newer is absent from the pinned 4.1.0 cmcmd dispatcher.
         _ => {
@@ -197,8 +197,10 @@ fn capabilities(args: &[String]) -> i32 {
                 {"kind": "toolchains", "version": [{"major": 1, "minor": 0}]}
             ] },
             "generators": [
-                {"extraGenerators": [], "name": "Ninja Multi-Config", "platformSupport": false, "toolsetSupport": false},
-                {"extraGenerators": [], "name": "Ninja", "platformSupport": false, "toolsetSupport": false}
+                {"extraGenerators": ["Kate"], "name": "Ninja Multi-Config", "platformSupport": false, "toolsetSupport": false},
+                {"extraGenerators": [
+                    "CodeBlocks", "CodeLite", "Eclipse CDT4", "Kate", "Sublime Text 2"
+                ], "name": "Ninja", "platformSupport": false, "toolsetSupport": false}
             ],
             "serverMode": false,
             "tls": true,

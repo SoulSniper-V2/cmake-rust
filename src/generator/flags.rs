@@ -8,7 +8,9 @@ mod standard;
 
 pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
-pub(crate) use compile::{BtFrag, define_items, flag_fragments, include_items, pch_items};
+pub(crate) use compile::{
+    BtFrag, compile_definitions, define_items, flag_fragments, include_items, pch_items,
+};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{link_dependency_file, link_flag_vars};
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};

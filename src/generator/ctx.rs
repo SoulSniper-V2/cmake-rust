@@ -786,6 +786,9 @@ impl<'a> GenCtx<'a> {
             if let Err(error) = ninja.generate() {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
+            // cmGlobalGenerator::Generate finishes by invoking the extra
+            // (IDE project file) generator, if one was selected.
+            super::extra::generate(self, ninja.global_targets());
         }
         // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
         // validation of the link structures memoized during generation.

@@ -292,6 +292,9 @@ pub struct EvaluationFile {
 /// Extension state for command implementations.
 #[derive(Debug, Default)]
 pub struct Ext {
+    /// `cmGlobalGenerator::ExtraGenerator`: the selected IDE extra
+    /// generator name (`CodeBlocks`, `Kate`, ...), if any.
+    pub extra_generator: Option<String>,
     pub install: crate::install_model::InstallState,
     pub targets: HashMap<String, Target>,
     /// Target names in creation order.

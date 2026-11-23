@@ -881,6 +881,12 @@ impl<'a> NinjaGenerator<'a> {
         }
         Ok(())
     }
+
+    /// The per-directory copies of the default global targets created by
+    /// `create_global_targets`, for the extra generators.
+    pub fn global_targets(&self) -> &[GlobalTarget] {
+        &self.global_targets
+    }
 }
 
 impl<'a> NinjaGenerator<'a> {

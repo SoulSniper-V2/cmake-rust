@@ -27,6 +27,7 @@ pub mod ctx;
 pub mod custom;
 pub mod evaluation_files;
 pub mod export;
+pub mod extra;
 pub mod flags;
 pub mod genex_host;
 pub mod graphviz;

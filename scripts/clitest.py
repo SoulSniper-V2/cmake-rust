@@ -85,9 +85,10 @@ def run(binary, case, *, oracle):
                 # generators (Ninja Multi-Config, Ninja). Leave the remaining bytes exact.
                 stdout = re.sub(
                     rb'"generators":\[.*?\],"serverMode"',
-                    b'"generators":[{"extraGenerators":[],"name":"Ninja Multi-Config",'
+                    b'"generators":[{"extraGenerators":["Kate"],"name":"Ninja Multi-Config",'
                     b'"platformSupport":false,"toolsetSupport":false},'
-                    b'{"extraGenerators":[],"name":"Ninja",'
+                    b'{"extraGenerators":["CodeBlocks","CodeLite",'
+                    b'"Eclipse CDT4","Kate","Sublime Text 2"],"name":"Ninja",'
                     b'"platformSupport":false,"toolsetSupport":false}],"serverMode"',
                     stdout, count=1,
                 )

@@ -17,8 +17,10 @@ Generated files compared (when present on either side): every *.ninja file
 build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja),
 CMakeCache.txt (with volatile entries dropped), CTestTestfile.cmake,
 cmake_install.cmake (all directories), CMakeFiles/clean_additional.cmake,
-compile_commands.json, Android.mk-style `*.mk` exports, and every file under
-CMakeFiles/Export/ (install-tree export files).
+compile_commands.json, Android.mk-style `*.mk` exports, every file under
+CMakeFiles/Export/ (install-tree export files), and extra generator project
+files (*.cbp, *.workspace, *.project, .project, .cproject, .kateproject*,
+*.sublime-project, .settings/*).
 
 Usage: scripts/projdiff.py [--candidate PATH] [-j N] [-v] [--keep DIR] [cases...]
 """
@@ -70,7 +72,11 @@ def gather(build_dir):
             continue
         if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json")
-                or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")):
+                or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")
+                # Extra generator outputs (CodeBlocks, CodeLite, Eclipse CDT4,
+                # Kate, Sublime Text 2).
+                or name.endswith((".cbp", ".workspace", ".project", ".cproject", ".sublime-project"))
+                or name.startswith(".kateproject") or rel.startswith(".settings/")):
             files[rel] = path.read_text(errors="replace")
     return files
 

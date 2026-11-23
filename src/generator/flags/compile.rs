@@ -742,6 +742,28 @@ pub(crate) fn flag_fragments(
 
 /// `GetTargetDefines` as codemodel "defines" (export macro first, then
 /// usage definitions; std::set<BT> sorts by value, first insertion wins).
+/// `cmGeneratorTarget::GetCompileDefinitions(result, config, language)`:
+/// the evaluated COMPILE_DEFINITIONS usage requirements, in order, without
+/// the generator-added export symbol and without de-duplication.
+pub(crate) fn compile_definitions(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Vec<String> {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    inputs
+        .usage_items("COMPILE_DEFINITIONS")
+        .into_iter()
+        .map(|item| item.value)
+        .collect()
+}
+
 pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
     let inputs = Flags {
         ctx,

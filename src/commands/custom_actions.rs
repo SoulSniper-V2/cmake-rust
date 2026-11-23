@@ -569,13 +569,18 @@ fn add_utility_command(
             interp.ext.per_config_utility_targets.insert(name.clone());
             format!("{base}$<CONFIG>")
         } else {
-            format!("{}/CMakeFiles/{name}", interp.makefiles[dir].binary_dir)
+            // cmLocalGenerator::CreateUtilityOutput: the symbolic output is a
+            // generated source (the multi-config variant above only creates
+            // the per-config ones; the `$<CONFIG>` name never becomes a
+            // cmSourceFile).
+            let force = format!("{}/CMakeFiles/{name}", interp.makefiles[dir].binary_dir);
+            super::target::mark_generated(interp, dir, &force);
+            let index = source_index(interp, dir, &force, false);
+            interp.ext.sources.get_mut(&dir).unwrap()[index]
+                .props
+                .set("SYMBOLIC", "1".to_owned());
+            force
         };
-    super::target::mark_generated(interp, dir, &output);
-    let index = source_index(interp, dir, &output, false);
-    interp.ext.sources.get_mut(&dir).unwrap()[index]
-        .props
-        .set("SYMBOLIC", "1".to_owned());
     command.outputs = vec![output.clone()];
     if add_custom_command(interp, expand, command, false).is_some() {
         add_outputs(
