@@ -1,6 +1,7 @@
 //! Portable commands exposed by `cmake -E` (cmcmd.cxx).
 
 mod archive;
+mod autogen;
 mod cocompile;
 mod depends;
 mod depfile;
@@ -166,6 +167,16 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         // other generators' UpdateDependencies succeeds trivially and an
         // unknown generator name fails without a message.
         "cmake_depends" if args.len() >= 4 => depends::depends(args),
+        "cmake_autogen" if args.len() >= 2 => i32::from(!autogen::moc_uic(
+            &args[0],
+            &args[1],
+            args.get(2).map_or("", String::as_str),
+        )),
+        "cmake_autorcc" if !args.is_empty() => i32::from(!autogen::rcc(
+            &args[0],
+            args.get(1).map_or("", String::as_str),
+            args.get(2).map_or("", String::as_str),
+        )),
         "tar" if args.len() >= 2 => archive::tar(args),
         // copy_if_newer is absent from the pinned 4.1.0 cmcmd dispatcher.
         _ => {
