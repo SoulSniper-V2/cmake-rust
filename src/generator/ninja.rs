@@ -823,18 +823,22 @@ impl<'a> NinjaGenerator<'a> {
         // support directory.
         let mut summary = String::new();
         for index in 0..interp.makefiles.len() {
-            for target in self.ctx.targets_in_order() {
-                if target.makefile == index
-                    && is_in_build_system(target)
-                    && target.kind != TargetKind::GlobalTarget
-                {
-                    let directory = gt::support_directory(&self.ctx, target);
-                    self.write_labels(target, &directory)?;
-                    summary.push_str(&directory);
-                    summary.push('\n');
+            let (before, after) = self.ctx.targets_around_globals();
+            let summarize = |targets: Vec<&Target>, summary: &mut String| {
+                for target in targets {
+                    if target.makefile == index
+                        && is_in_build_system(target)
+                        && target.kind != TargetKind::GlobalTarget
+                    {
+                        let directory = gt::support_directory(&self.ctx, target);
+                        self.write_labels(target, &directory)?;
+                        summary.push_str(&directory);
+                        summary.push('\n');
+                    }
                 }
-            }
-            // The directory's copies of the global targets follow.
+                Ok::<(), std::io::Error>(())
+            };
+            summarize(before, &mut summary)?;
             let binary = &interp.makefiles[index].binary_dir;
             for global in self
                 .global_targets
@@ -843,6 +847,7 @@ impl<'a> NinjaGenerator<'a> {
             {
                 summary.push_str(&format!("{binary}/CMakeFiles/{}.dir\n", global.name));
             }
+            summarize(after, &mut summary)?;
         }
         crate::fsutil::write_generated(
             std::path::Path::new(&format!(
@@ -1094,24 +1099,24 @@ impl<'a> NinjaGenerator<'a> {
             }
             self.rules.push_str(&rules_top);
         }
-        // Targets of this directory in creation order, then global targets.
-        let targets: Vec<&Target> = self
-            .ctx
-            .targets_in_order()
-            .into_iter()
-            .filter(|target| {
-                target.makefile == makefile && !target.imported && target.alias_of.is_none()
-            })
-            .collect();
-        for target in targets {
-            if multi {
-                for config in &configs {
-                    self.with_config(config, |this| this.generate_target(target));
+        // Targets of this directory in creation order, with the global
+        // targets before those the generator added.
+        let (before, after) = self.ctx.targets_around_globals();
+        let generate = |this: &mut Self, targets: Vec<&'a Target>| {
+            for target in targets {
+                if target.makefile != makefile || target.imported || target.alias_of.is_some() {
+                    continue;
                 }
-            } else {
-                self.generate_target(target);
+                if multi {
+                    for config in &configs {
+                        this.with_config(config, |this| this.generate_target(target));
+                    }
+                } else {
+                    this.generate_target(target);
+                }
             }
-        }
+        };
+        generate(self, before);
         let globals: Vec<GlobalTarget> = self
             .global_targets
             .iter()
@@ -1157,6 +1162,7 @@ impl<'a> NinjaGenerator<'a> {
             }
             self.write_build_to(&Stream::Default, &alias);
         }
+        generate(self, after);
         let commands = std::mem::take(&mut self.local_custom_commands);
         if multi {
             for config in &configs {
@@ -4441,48 +4447,7 @@ impl<'a> NinjaGenerator<'a> {
             return;
         }
         let command = self.command(cc);
-        // MakeCustomCommandGenerators(cc, fileConfig): the file config,
-        // plus the other cross configs when every output and byproduct is
-        // a generator expression with per-config unique values.
-        let spec = custom::spec_from_command(&self.ctx, command);
-        let mut ccgs: Vec<(String, custom::EvaluatedCommand)> = vec![(
-            file_config.clone(),
-            custom::evaluate_spec_cfg(&self.ctx, &spec, &file_config, &file_config),
-        )];
-        if self.cross_enabled()
-            && command.outputs.iter().all(|output| output.contains("$<"))
-            && command
-                .byproducts
-                .iter()
-                .all(|output| output.contains("$<"))
-        {
-            // GetCrossConfigs(fileConfig): a sorted std::set.
-            let mut cross = self.ctx.cross_configs.clone();
-            cross.insert(file_config.clone());
-            for config in cross {
-                if config != file_config {
-                    let evaluated =
-                        custom::evaluate_spec_cfg(&self.ctx, &spec, &config, &file_config);
-                    ccgs.push((config, evaluated));
-                }
-            }
-            // HasUniqueOutputs.
-            let mut outputs = HashSet::new();
-            let mut byproducts = HashSet::new();
-            let unique = ccgs.iter().all(|(_, evaluated)| {
-                evaluated
-                    .outputs
-                    .iter()
-                    .all(|output| outputs.insert(output.clone()))
-                    && evaluated
-                        .byproducts
-                        .iter()
-                        .all(|byproduct| byproducts.insert(byproduct.clone()))
-            });
-            if !unique {
-                ccgs.truncate(1);
-            }
-        }
+        let ccgs = custom::make_generators(&self.ctx, command, &file_config);
         let genex_output = ccgs.len() > 1;
         for (output_config, evaluated) in ccgs {
             self.write_custom_command_ccg(

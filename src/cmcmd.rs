@@ -1,7 +1,7 @@
 //! Portable commands exposed by `cmake -E` (cmcmd.cxx).
 
 mod archive;
-mod autogen;
+pub(crate) mod autogen;
 mod cocompile;
 mod depends;
 mod depfile;

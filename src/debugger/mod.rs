@@ -217,7 +217,7 @@ impl J {
     /// `StreamWriterBuilder` default): control and non-ASCII characters are
     /// written as lowercase `\uXXXX` escapes (UTF-16 surrogate pairs above
     /// the BMP); `/` is not escaped.
-    fn quote(s: &str, out: &mut String) {
+    pub(crate) fn quote(s: &str, out: &mut String) {
         out.push('"');
         for c in s.chars() {
             match c {

@@ -459,6 +459,11 @@ pub struct HostInformation {
     physical: usize,
 }
 
+/// `cmsys::SystemInformation::GetNumberOfPhysicalCPU`.
+pub(crate) fn physical_cores() -> usize {
+    HostInformation::read().physical
+}
+
 pub(crate) fn instrumentation_static_info() -> serde_json::Value {
     let info = HostInformation::read();
     let os = |name| info.os.get(name).map_or("", String::as_str);

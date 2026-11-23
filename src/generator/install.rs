@@ -5,14 +5,12 @@ use std::path::Path;
 
 use super::{ctx::GenCtx, export, link, package_info, target};
 use crate::commands::install::{legacy_source, unix_slashes};
-use crate::fsutil::write_if_different;
 use crate::install_model::*;
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
 use crate::util::{escape_for_cmake, expand_list, is_full_path, is_on_opt};
 
 pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
-    let mut files = Vec::new();
     if ctx.interp.ext.install.enabled
         && is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref())
     {
@@ -31,30 +29,51 @@ pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
         // cmGeneratedFileStream without SetCopyIfDifferent: always rewritten,
         // so the RERUN_CMAKE outputs are newer than CMakeCache.txt.
         crate::fsutil::write_generated(Path::new(&file), script.as_bytes())?;
-        files.push(file);
-    }
-    if !is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {
-        let parallel = is_on_opt(ctx.interp.global_props.get("INSTALL_PARALLEL"));
-        let json = install_index(&files, parallel);
-        write_if_different(
-            &Path::new(&ctx.interp.home_binary).join("CMakeFiles/InstallScripts.json"),
-            json.as_bytes(),
-        )?;
     }
     Ok(())
 }
 
-pub fn install_index(files: &[String], parallel: bool) -> String {
-    let files: Vec<_> = files
+/// Writes `CMakeFiles/InstallScripts.json` after a successful generation.
+pub fn write_install_index(ctx: &GenCtx) -> std::io::Result<()> {
+    let files: Vec<String> = ctx
+        .interp
+        .makefiles
         .iter()
-        .map(|path| serde_json::to_string(path).unwrap())
+        .enumerate()
+        .filter(|(index, _)| !is_on_opt(ctx.var(*index, "CMAKE_SKIP_INSTALL_RULES").as_deref()))
+        .map(|(_, mf)| format!("{}/cmake_install.cmake", mf.binary_dir))
         .collect();
-    let files = if files.is_empty() {
-        "[]".into()
-    } else {
-        format!("\n\t[\n\t\t{}\n\t]", files.join(",\n\t\t"))
+    let parallel = is_on_opt(ctx.interp.global_props.get("INSTALL_PARALLEL"));
+    // SupportsDefaultConfigs: Ninja Multi-Config only.
+    let configs: Option<Vec<String>> = ctx
+        .multi_config
+        .then(|| ctx.default_configs.iter().cloned().collect());
+    crate::fsutil::write_generated(
+        &Path::new(&ctx.interp.home_binary).join("CMakeFiles/InstallScripts.json"),
+        install_index(&files, parallel, configs.as_deref()).as_bytes(),
+    )
+}
+
+/// `cmGlobalGenerator::WriteInstallJson`.
+pub fn install_index(files: &[String], parallel: bool, configs: Option<&[String]>) -> String {
+    let array = |values: &[String]| {
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| serde_json::to_string(value).unwrap())
+            .collect();
+        if values.is_empty() {
+            "[]".into()
+        } else {
+            format!("\n\t[\n\t\t{}\n\t]", values.join(",\n\t\t"))
+        }
     };
-    format!("{{\n\t\"InstallScripts\" : {files},\n\t\"Parallel\" : {parallel}\n}}\n")
+    let configs = configs.map_or_else(String::new, |configs| {
+        format!("\t\"Configs\" : {},\n", array(configs))
+    });
+    format!(
+        "{{\n{configs}\t\"InstallScripts\" : {},\n\t\"Parallel\" : {parallel}\n}}\n",
+        array(files)
+    )
 }
 
 pub(super) fn directory_policy(ctx: &GenCtx, index: usize, name: &str) -> PolicyStatus {

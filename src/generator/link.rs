@@ -136,6 +136,21 @@ pub(super) fn compile_implementation_closure<'i>(
     closure
 }
 
+/// The targets of `GetLinkImplementationLibraries(config, UseTo::Link)`.
+pub(super) fn implementation_library_targets<'i>(
+    ctx: &GenCtx<'i>,
+    target: &Target,
+    config: &str,
+) -> Vec<&'i Target> {
+    if !target::can_compile_sources(target) {
+        return Vec::new();
+    }
+    implementation(&Query::new(ctx, config, ""), target)
+        .into_iter()
+        .filter_map(|item| item.target)
+        .collect()
+}
+
 /// Direct target-level dependencies after linearizing static-library cycles.
 /// `cmGeneratorTarget::GetLinkInterfaceLibraries(config, target,
 /// UseTo::Link)`: each item's string and resolved target. Upstream caches

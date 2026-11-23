@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 4.1)
+project(E CXX)
+set(QT_VERSION_MAJOR 6)
+set(QT_VERSION_MINOR 5)
+add_executable(Qt6::moc IMPORTED)
+set_property(TARGET Qt6::moc PROPERTY IMPORTED_LOCATION /nonexistent/moc)
+add_library(t STATIC a.cpp)
+set_property(TARGET t PROPERTY AUTOMOC ON)

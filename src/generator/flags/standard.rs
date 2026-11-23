@@ -82,7 +82,7 @@ pub(super) fn append_standard(inputs: &Flags<'_, '_>, flags: &mut String) {
     }
 }
 
-fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
+pub(super) fn compile_option(inputs: &Flags<'_, '_>) -> Option<String> {
     let lang = inputs.lang;
     let standards = levels(lang);
     let default = inputs

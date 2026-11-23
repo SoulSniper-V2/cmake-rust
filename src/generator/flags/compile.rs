@@ -764,6 +764,39 @@ pub(crate) fn compile_definitions(
         .collect()
 }
 
+/// `AddInterfaceEntries(INTERFACE_<property>)` values of the linked targets.
+pub(crate) fn interface_values(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    property: &str,
+    lang: &str,
+) -> Vec<String> {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    inputs
+        .usage_items(property)
+        .into_iter()
+        .filter(|item| item.link_item.is_some())
+        .map(|item| item.value)
+        .collect()
+}
+
+/// The value of `cmStandardLevelResolver::GetCompileOptionDef`'s variable.
+pub(crate) fn standard_option(ctx: &GenCtx, target: &Target, lang: &str) -> String {
+    super::standard::compile_option(&Flags {
+        ctx,
+        target,
+        config: "",
+        lang,
+    })
+    .unwrap_or_default()
+}
+
 pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> Vec<BtFrag> {
     let inputs = Flags {
         ctx,
@@ -822,6 +855,18 @@ pub(crate) fn include_items(
     config: &str,
     lang: &str,
 ) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
+    include_directories(ctx, target, config, lang, false)
+}
+
+/// `cmLocalGenerator::GetIncludeDirectoriesImplicit` without
+/// `stripImplicitDirs`.
+pub(crate) fn include_directories(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+    append_implicit: bool,
+) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
     let inputs = Flags {
         ctx,
         target,
@@ -850,7 +895,10 @@ pub(crate) fn include_items(
             .map(|dir| unix_slashes(dir)),
         );
     }
-    let implicit: HashSet<String> = implicit.iter().map(|dir| real_path(dir)).collect();
+    let mut implicit_set = HashSet::new();
+    implicit.retain(|dir| implicit_set.insert(real_path(dir)));
+    let implicit_dirs = implicit;
+    let implicit = implicit_set;
     let cpath: HashSet<String> = if matches!(lang, "C" | "CXX") {
         std::env::var_os("CPATH")
             .iter()
@@ -931,6 +979,11 @@ pub(crate) fn include_items(
     for entry in &users {
         if implicit.contains(&real_path(&entry.0)) {
             emit(entry.clone(), &mut result);
+        }
+    }
+    if append_implicit {
+        for dir in implicit_dirs {
+            emit((dir, false, Vec::new(), false), &mut result);
         }
     }
     result

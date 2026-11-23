@@ -1,0 +1,6 @@
+#!/bin/sh
+# Fake Qt uic.
+if [ "$1" = -h ]; then echo "Usage: uic [options] [uifile]"; exit 0; fi
+out= prev=
+for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done
+echo "#define HAVE_UI 1" > "$out"

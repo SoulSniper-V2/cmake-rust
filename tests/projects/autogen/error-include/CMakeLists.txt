@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.1)
+project(E CXX)
+set(QT_VERSION_MAJOR 6)
+set(QT_VERSION_MINOR 5)
+add_library(t STATIC a.cpp)
+set_target_properties(t PROPERTIES AUTOMOC ON AUTOMOC_EXECUTABLE /bin/true AUTOMOC_INCLUDE_DIRECTORIES "relative")

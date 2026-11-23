@@ -186,22 +186,28 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     // cmGlobalGenerator::CreateFileGenerateOutputs: file(GENERATE) outputs
     // become generated sources before target source resolution runs.
     evaluation_files::create_outputs(interp);
+    interp.ext.generated_targets_start = Some(interp.ext.target_order.len());
     if !verify_header_sets::add_targets(interp) {
         return -1;
     }
+    // cmQtAutoGenGlobalInitializer::InitializeCustomTargets.
+    let Some(autogen) = autogen::initialize(interp) else {
+        return -1;
+    };
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
-    let mut diagnostics = {
+    let (computed, mut diagnostics) = {
         // cmGlobalGenerator::Compute: after TraceDependencies and
         // ComputeTargetCompileFeatures (lazy in this implementation) come
         // ApplyCXXStdTargets and DiscoverSyntheticTargets — the last target
         // mutations before the generation context becomes read-only.
         let mut diags = ninja::modules::finalize_cxx_module_targets(interp);
         let ctx = ctx::GenCtx::new(interp);
-        diags.extend(ctx.check_and_generate());
-        diags
+        let (computed, generated) = ctx.check_and_generate(&autogen);
+        diags.extend(generated);
+        (computed, diags)
     };
     for diagnostic in diagnostics.drain(..) {
         match diagnostic {
@@ -215,6 +221,9 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
                 interp.stderr_line(&format!("CMake Error: {message}"));
             }
         }
+    }
+    if !computed {
+        return -1;
     }
     if interp.debug.output && !options.in_try_compile {
         // cmGlobalGenerator::Generate reports progress after each local
@@ -251,6 +260,13 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     }
     // cmake::Generate: "Generating done" precedes the error-flag check.
     if interp.error {
+        return -1;
+    }
+    if let Err(error) = install::write_install_index(&ctx::GenCtx::new(interp)) {
+        crate::configure::system_error(
+            Some(interp),
+            &format!("Unable to write InstallScripts.json: {error}"),
+        );
         return -1;
     }
     0

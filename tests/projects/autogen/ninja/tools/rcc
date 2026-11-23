@@ -1,0 +1,15 @@
+#!/bin/sh
+# Fake Qt rcc.
+case "$1" in -h) echo "Usage: rcc [options] inputs"; echo "  --list  Only list .qrc file entries"; exit 0;; esac
+out= prev= list=0 src=
+for a in "$@"; do
+  case "$a" in --list|-list) list=1;; *.qrc) src=$a;; esac
+  [ "$prev" = -o ] && out=$a
+  prev=$a
+done
+if [ $list = 1 ]; then
+  dir=$(dirname "$src")
+  sed -n 's/.*<file[^>]*>\(.*\)<\/file>.*/\1/p' "$src" | while read -r f; do echo "$dir/$f"; done
+  exit 0
+fi
+echo "// rcc" > "$out"

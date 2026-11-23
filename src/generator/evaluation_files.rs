@@ -114,33 +114,40 @@ pub fn create_outputs(interp: &mut Interp) {
     {
         let ctx = GenCtx::new(interp);
         let languages = interp.langs.enabled.clone();
-        for index in 0..interp.ext.evaluation_files.len() {
-            let file = &interp.ext.evaluation_files[index];
-            let dir_backtrace = ctx.dir_backtrace(file.dir);
-            let target = if file.target.is_empty() {
-                None
-            } else {
-                ctx.target_at(file.dir, &file.target)
-                    .map(|target| ctx.target_key(target))
-            };
-            for language in &languages {
-                let (name, depends) = output_file_name(
-                    &ctx,
-                    file,
-                    target.as_deref(),
-                    Some(language.as_str()),
-                    &dir_backtrace,
-                );
-                marked.push((file.dir, name, depends));
+        // CreateEvaluationFileOutputs: per directory, configuration, file.
+        for config in &ctx.configs {
+            let view = ctx.for_config(config);
+            for file in &interp.ext.evaluation_files {
+                let dir_backtrace = ctx.dir_backtrace(file.dir);
+                let target = if file.target.is_empty() {
+                    None
+                } else {
+                    ctx.target_at(file.dir, &file.target)
+                        .map(|target| ctx.target_key(target))
+                };
+                for language in &languages {
+                    let (name, depends) = output_file_name(
+                        &view,
+                        file,
+                        target.as_deref(),
+                        Some(language.as_str()),
+                        &dir_backtrace,
+                    );
+                    marked.push((file.dir, name, depends));
+                }
             }
+        }
+        for file in &interp.ext.evaluation_files {
             // cmMakefile::AddCMakeDependFile: the input file joins the build
             // system's check files so edits re-run CMake. Resolve it here —
             // silently, since CreateOutputFile does not read the input —
             // where &mut access to the makefile exists.
             if !file.input_is_content {
+                let dir_backtrace = ctx.dir_backtrace(file.dir);
                 depend.push((file.dir, input_file_name(&ctx, file, &dir_backtrace, false)));
             }
         }
+        marked.sort_by_key(|(dir, _, _)| *dir);
         diagnostics.extend(ctx.errors.borrow().iter().cloned());
     }
     for (dir, path) in depend {

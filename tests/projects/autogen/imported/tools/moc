@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fake Qt moc: writes a C++ file and, when asked, a dependency file.
+if [ "$1" = -h ]; then echo "Usage: moc [options] [header-file]"; echo "  --output-dep-file"; exit 0; fi
+out= prev= deps=0 last=
+for a in "$@"; do
+  [ "$prev" = -o ] && out=$a
+  [ "$a" = --output-dep-file ] && deps=1
+  prev=$a last=$a
+done
+{ echo "// moc"; } > "$out"
+[ $deps = 1 ] && echo "$out: $last" > "$out.d"
+exit 0

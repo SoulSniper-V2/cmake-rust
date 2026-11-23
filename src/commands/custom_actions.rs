@@ -86,6 +86,17 @@ pub fn run_generator_actions(interp: &mut Interp, expand: &mut ExpandOutputGenex
     // Stable: keeps configure order within each directory.
     actions.sort_by_key(|action| action.command().makefile);
     for action in actions {
+        run_action(interp, expand, action);
+    }
+}
+
+/// Attaches one command, also for commands the generator itself creates.
+pub(crate) fn run_action(
+    interp: &mut Interp,
+    expand: &mut ExpandOutputGenex,
+    action: GeneratorAction,
+) {
+    {
         match action {
             GeneratorAction::Output { command, replace } => {
                 add_custom_command(interp, expand, command, replace);

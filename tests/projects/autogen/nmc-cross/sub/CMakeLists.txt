@@ -1,0 +1,13 @@
+set(CMAKE_GLOBAL_AUTOGEN_TARGET ON)
+set(CMAKE_GLOBAL_AUTORCC_TARGET ON)
+set(CMAKE_GLOBAL_AUTORCC_TARGET_NAME all_rcc)
+set(CMAKE_AUTOMOC_COMPILER_PREDEFINES OFF)
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+add_library(sub SHARED sub.cpp sub.qrc)
+add_library(subobj OBJECT sub.cpp)
+set_target_properties(subobj PROPERTIES AUTOUIC OFF AUTORCC OFF)
+# Qt too old for dependency files.
+set(QT_VERSION_MINOR 10)
+set(QT_VERSION_MAJOR 5)
+add_library(old MODULE sub.cpp sub.h)
+set_target_properties(old PROPERTIES AUTOGEN_USE_SYSTEM_INCLUDE OFF AUTOMOC_INCLUDE_DIRECTORIES "/inc;$<1:/inc2>")

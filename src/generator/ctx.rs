@@ -313,6 +313,24 @@ impl<'a> GenCtx<'a> {
             .collect()
     }
 
+    /// `targets_in_order`, split where the global targets of each directory
+    /// belong (`cmLocalGenerator::GetGeneratorTargets`).
+    pub fn targets_around_globals(&self) -> (Vec<&'a Target>, Vec<&'a Target>) {
+        let ext = &self.interp.ext;
+        let order = &ext.target_order;
+        let split = ext
+            .generated_targets_start
+            .unwrap_or(order.len())
+            .min(order.len());
+        let find = |names: &[String]| {
+            names
+                .iter()
+                .filter_map(|name| ext.targets.get(name))
+                .collect()
+        };
+        (find(&order[..split]), find(&order[split..]))
+    }
+
     pub fn target(&self, name: &str) -> Option<&'a Target> {
         let real = self
             .interp
@@ -745,27 +763,34 @@ impl<'a> GenCtx<'a> {
         }
     }
 
-    /// Runs the whole generate step; returns the diagnostics it raised.
+    /// Runs the rest of the generate step; returns whether
+    /// `cmGlobalGenerator::Compute` succeeded and the diagnostics raised.
     /// The caller reports them and decides failure from their severity.
-    pub fn check_and_generate(&self) -> Vec<Diagnostic> {
-        // cmGlobalGenerator::Compute: cmQtAutoGenGlobalInitializer precedes
-        // ComputeTargetCompileFeatures.
-        super::autogen::initialize(self);
-        if self.has_error() {
-            return self.errors.take();
-        }
+    pub fn check_and_generate(
+        &self,
+        autogen: &[super::autogen::Initializer],
+    ) -> (bool, Vec<Diagnostic>) {
         if !super::flags::validate_compile_features(self) {
-            return self.errors.take();
+            return (false, self.errors.take());
         }
         // cmGlobalGenerator::Compute: source resolution diagnostics surface
         // during the pre-generation target computations, and
         // CheckTargetsForMissingSources stops generation before any build
         // files are written.
         if super::target::check_targets_for_missing_sources(self) {
-            return std::mem::take(&mut *self.errors.borrow_mut());
+            return (false, self.errors.take());
         }
+        (true, self.generate(autogen))
+    }
+
+    /// `cmGlobalGenerator::Generate`.
+    fn generate(&self, autogen: &[super::autogen::Initializer]) -> Vec<Diagnostic> {
         // cmGlobalGenerator::Generate: evaluation files first.
         super::evaluation_files::generate(self);
+        // cmGlobalGenerator::Generate: QtAutoGen->SetupCustomTargets.
+        if !super::autogen::write_info_files(self, autogen) {
+            return self.errors.take();
+        }
         let failed_before_targets = self.has_error();
         // The local generators' target generation (in directory order)
         // reports targets without a linker language before the build

@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.5)
+project(Warn CXX)
+set(QT_VERSION_MAJOR 5)
+set(QT_VERSION_MINOR 12)
+set(CMAKE_AUTOMOC_EXECUTABLE ${CMAKE_COMMAND})
+set(CMAKE_AUTOUIC_EXECUTABLE ${CMAKE_COMMAND})
+add_custom_command(OUTPUT gen.h gen.hh gen.cpp COMMAND ${CMAKE_COMMAND} -E touch gen.h gen.hh gen.cpp)
+foreach(case moc uic both)
+  add_library(${case} STATIC a.cpp a.hh
+    ${CMAKE_CURRENT_BINARY_DIR}/gen.h ${CMAKE_CURRENT_BINARY_DIR}/gen.hh ${CMAKE_CURRENT_BINARY_DIR}/gen.cpp)
+endforeach()
+set_property(TARGET moc both PROPERTY AUTOMOC ON)
+set_property(TARGET uic both PROPERTY AUTOUIC ON)

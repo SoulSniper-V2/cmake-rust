@@ -494,7 +494,7 @@ fn link_libraries(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-fn normalized_group(name: &str, delimiters: &str) -> String {
+pub(crate) fn normalized_group(name: &str, delimiters: &str) -> String {
     name.split(|ch| delimiters.contains(ch))
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()

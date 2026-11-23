@@ -4,7 +4,7 @@
 
 mod filetime;
 mod generator;
-mod libmap;
+pub(crate) mod libmap;
 mod mocuic;
 mod rcc;
 
@@ -183,18 +183,20 @@ pub(crate) fn rcc_merge_options(base: &mut Vec<String>, new: &[String], qt5_or_l
 fn rcc_list_parse_content(content: &str, files: &mut Vec<String>) {
     let file_match = crate::cmregex::Regex::new("(<file[^<]+)").unwrap();
     let file_replace = crate::cmregex::Regex::new("(^<file[^>]*>)").unwrap();
-    let bytes = content.as_bytes();
+    // Upstream reads a C string, and advances it by the length of the match
+    // alone, so text before an entry makes that entry match again.
+    let bytes = content.split('\0').next().unwrap_or_default().as_bytes();
     let mut offset = 0;
-    while let Some(m) = file_match.find_bytes(bytes, offset, false) {
-        let entry = m.groups[1].unwrap_or_default();
-        let entry_text = &content[entry.0..entry.1];
+    while let Some(m) = file_match.find_bytes(&bytes[offset..], 0, false) {
+        let (start, end) = m.groups[1].unwrap_or_default();
+        let entry = String::from_utf8_lossy(&bytes[offset + start..offset + end]).into_owned();
         // The entry always starts with the "<file..." tag.
         let tag_len = file_replace
-            .find(entry_text)
+            .find(&entry)
             .and_then(|m| m.groups[1])
             .map_or(0, |(s, e)| e - s);
-        files.push(entry_text[tag_len..].to_owned());
-        offset = entry.1;
+        files.push(entry[tag_len..].to_owned());
+        offset += end - start;
     }
 }
 

@@ -79,6 +79,8 @@ pub struct Target {
     /// `cmTarget::TemplateName`: the imported target this synthetic target
     /// was created from (`GetTemplateName` falls back to `Name`).
     pub template_name: Option<String>,
+    /// `cmTarget::IsGeneratorProvided`.
+    pub generator_provided: bool,
 }
 
 impl Target {
@@ -109,6 +111,7 @@ impl Target {
             find_package_stack: Vec::new(),
             synthetic: false,
             template_name: None,
+            generator_provided: false,
         }
     }
 }
@@ -322,6 +325,9 @@ pub struct Ext {
     pub synthetic_deps: BTreeMap<String, Vec<String>>,
     pub sources: BTreeMap<usize, Vec<SourceFile>>,
     pub generated_sources: BTreeSet<String>,
+    /// Where `target_order` continues with targets the generator created
+    /// after `CreateGenerationObjects`, behind the global targets.
+    pub generated_targets_start: Option<usize>,
     pub source_groups: BTreeMap<usize, BTreeMap<String, SourceGroup>>,
     pub directory_provenance: BTreeMap<usize, BTreeMap<String, Vec<PropertyEntry>>>,
     pub directory_system_includes: BTreeMap<usize, BTreeSet<String>>,

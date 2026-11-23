@@ -324,6 +324,58 @@ pub fn internal_depfile_name(ctx: &GenCtx, full_depfile: &str) -> String {
     format!("{}/CMakeFiles/d/{hash}.d", ctx.interp.home_binary)
 }
 
+/// `cmLocalNinjaGenerator::MakeCustomCommandGenerators`: the output
+/// configuration and evaluated command of the file's configuration, plus the
+/// other cross configurations when every output and byproduct is a generator
+/// expression with values unique to each configuration.
+pub fn make_generators(
+    ctx: &GenCtx,
+    command: &crate::state::CustomCommand,
+    file_config: &str,
+) -> Vec<(String, EvaluatedCommand)> {
+    let spec = spec_from_command(ctx, command);
+    let mut ccgs = vec![(
+        file_config.to_owned(),
+        evaluate_spec_cfg(ctx, &spec, file_config, file_config),
+    )];
+    if !ctx.multi_config
+        || ctx.cross_configs.is_empty()
+        || !command
+            .outputs
+            .iter()
+            .chain(&command.byproducts)
+            .all(|output| output.contains("$<"))
+    {
+        return ccgs;
+    }
+    // GetCrossConfigs(fileConfig): a sorted std::set.
+    for config in &ctx.cross_configs {
+        if config != file_config {
+            ccgs.push((
+                config.clone(),
+                evaluate_spec_cfg(ctx, &spec, config, file_config),
+            ));
+        }
+    }
+    // HasUniqueOutputs.
+    let mut outputs = std::collections::HashSet::new();
+    let mut byproducts = std::collections::HashSet::new();
+    let unique = ccgs.iter().all(|(_, evaluated)| {
+        evaluated
+            .outputs
+            .iter()
+            .all(|output| outputs.insert(output.clone()))
+            && evaluated
+                .byproducts
+                .iter()
+                .all(|byproduct| byproducts.insert(byproduct.clone()))
+    });
+    if !unique {
+        ccgs.truncate(1);
+    }
+    ccgs
+}
+
 /// A configured custom command as the generator's input.
 pub fn spec_from_command(
     _ctx: &GenCtx,

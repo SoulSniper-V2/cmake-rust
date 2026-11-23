@@ -272,6 +272,7 @@ fn check(case: &str, interp: &Interp) -> Result<(), String> {
     let ctx = GenCtx::new(interp);
     let generate = || {
         install::write_install_scripts(&ctx)?;
+        install::write_install_index(&ctx)?;
         test_gen::write_test_files(&ctx)?;
         export::write_build_exports(&ctx)?;
         Ok::<(), std::io::Error>(())

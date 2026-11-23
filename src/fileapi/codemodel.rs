@@ -796,6 +796,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             jstr(relative_if_under(&self.top_build, &m.binary_dir)),
         );
         t.set("paths", paths);
+        if target.generator_provided {
+            t.set("isGeneratorProvided", Json::Bool(true));
+        }
         jbt(&mut graph, &mut t, &target.backtrace);
         if target.have_install_rule {
             t.set("install", self.dump_install(&mut graph, target));

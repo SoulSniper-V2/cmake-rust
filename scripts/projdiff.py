@@ -17,7 +17,8 @@ Generated files compared (when present on either side): every *.ninja file
 build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja),
 CMakeCache.txt (with volatile entries dropped), CTestTestfile.cmake,
 cmake_install.cmake (all directories), CMakeFiles/clean_additional.cmake,
-compile_commands.json, Android.mk-style `*.mk` exports, every file under
+compile_commands.json, AutogenInfo.json, AutoRcc_*_Info.json,
+TargetDirectories.txt, InstallScripts.json, Android.mk-style `*.mk` exports, every file under
 CMakeFiles/Export/ (install-tree export files), and extra generator project
 files (*.cbp, *.workspace, *.project, .project, .cproject, .kateproject*,
 *.sublime-project, .settings/*).
@@ -71,7 +72,9 @@ def gather(build_dir):
         if not path.is_file():
             continue
         if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
-                     "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json")
+                     "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json",
+                     "AutogenInfo.json", "InstallScripts.json", "TargetDirectories.txt")
+                or (name.startswith("AutoRcc_") and name.endswith("_Info.json"))
                 or name.endswith(".mk") or rel.startswith("CMakeFiles/Export/")
                 # Extra generator outputs (CodeBlocks, CodeLite, Eclipse CDT4,
                 # Kate, Sublime Text 2).

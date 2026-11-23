@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use super::ctx::GenCtx;
-use super::custom::{evaluate_spec, spec_from_command};
+use super::custom::make_generators;
 use super::target as gt;
 use crate::interp::Interp;
 use crate::state::{CustomCommand, CustomCommandKind, TargetKind};
@@ -135,22 +135,39 @@ impl<'c, 'a> Tracer<'c, 'a> {
         };
         // Queue all the source files already specified for the target.
         let mut emitted = HashSet::new();
-        for source in gt::sources(ctx, target, &ctx.config).iter() {
+        // cmGeneratorTarget::GetAllConfigSources.
+        let mut sources = Vec::new();
+        if ctx.multi_config {
+            for config in &ctx.configs {
+                sources.extend(
+                    gt::sources(&ctx.for_config(config), target, config)
+                        .iter()
+                        .map(|source| source.path.clone()),
+                );
+            }
+        } else {
+            sources.extend(
+                gt::sources(ctx, target, &ctx.config)
+                    .iter()
+                    .map(|source| source.path.clone()),
+            );
+        }
+        for path in sources {
             // cmTargetTraceDependencies: a file(GENERATE) output whose
             // OUTPUT expression depends on this target's sources must not
             // also be a source of the target.
-            if interp_filename_depends_contains(ctx, &source.path, key) {
+            if interp_filename_depends_contains(ctx, &path, key) {
                 ctx.error(
                     ctx.dir_backtrace(target.makefile),
                     format!(
                         "Evaluation output file\n  \"{}\"\ndepends on the sources of a target it is used in.  This is a dependency loop and is not allowed.",
-                        source.path
+                        path
                     ),
                 );
                 return tracer;
             }
-            if emitted.insert(source.path.clone()) && tracer.queued.insert(source.path.clone()) {
-                tracer.queue.push_back(source.path.clone());
+            if emitted.insert(path.clone()) && tracer.queued.insert(path.clone()) {
+                tracer.queue.push_back(path.clone());
             }
         }
         // Queue pre-build, pre-link, and post-build rule dependencies.
@@ -262,14 +279,18 @@ impl<'c, 'a> Tracer<'c, 'a> {
                     | TargetKind::SharedLibrary
                     | TargetKind::ModuleLibrary
             ) {
-                // GetLocationForBuild.
-                let location = gt::full_path(
-                    self.ctx,
-                    found,
-                    &self.ctx.config,
-                    gt::ArtifactType::Runtime,
-                    false,
-                );
+                // GetLocationForBuild: without a configuration.
+                let location = if found.imported {
+                    gt::imported_full_path(self.ctx, found, "", gt::ArtifactType::Runtime)
+                } else {
+                    gt::full_path(
+                        &self.ctx.for_config(""),
+                        found,
+                        "",
+                        gt::ArtifactType::Runtime,
+                        false,
+                    )
+                };
                 let target_dir = collapse_full_path(&filename_path(&location), "");
                 let dep_dir = collapse_full_path(&filename_path(dep), "");
                 if dep_dir == target_dir {
@@ -286,16 +307,19 @@ impl<'c, 'a> Tracer<'c, 'a> {
 
     /// `cmTargetTraceDependencies::CheckCustomCommand`.
     fn check_custom_command(&mut self, command: &CustomCommand) {
-        let spec = spec_from_command(self.ctx, command);
-        let evaluated = evaluate_spec(self.ctx, &spec);
-        for (name, cross) in &evaluated.utilities {
-            self.add_utility(name.clone(), *cross);
-            if command.codegen {
-                self.traced.codegen.insert(name.clone());
+        // Collect file-level dependencies referenced in DEPENDS (std::set).
+        let mut depends: BTreeSet<String> = BTreeSet::new();
+        for config in &self.ctx.configs.clone() {
+            for (_, evaluated) in make_generators(self.ctx, command, config) {
+                for (name, cross) in &evaluated.utilities {
+                    self.add_utility(name.clone(), *cross);
+                    if command.codegen {
+                        self.traced.codegen.insert(name.clone());
+                    }
+                }
+                depends.extend(evaluated.raw_depends);
             }
         }
-        // Collect file-level dependencies referenced in DEPENDS (std::set).
-        let depends: BTreeSet<String> = evaluated.raw_depends.into_iter().collect();
         for dep in depends {
             if !self.is_utility(&dep) {
                 self.follow_name(&dep);
