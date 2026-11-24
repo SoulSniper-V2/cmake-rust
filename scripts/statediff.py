@@ -15,6 +15,7 @@ import argparse
 import difflib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,8 +56,9 @@ def normalizer(build: Path, cmake: Path):
         # and _CMAKE_INSTALL_DIR (also a CMAKE_SYSTEM_PREFIX_PATH entry) is
         # CMAKE_ROOT's grandparent.
         *[(re.escape(r) + r"(?![\w.-])", "<PREFIX>") for r in (root, f"{VALIDATION}/kitware")],
-        (re.escape(os.path.dirname(os.path.dirname(root))) + r"(?=[;\]])", "<PREFIX>"),
+        (re.escape(os.path.dirname(os.path.dirname(root))) + r"(?=[;\]]|/bin[;\]])", "<PREFIX>"),
         (r"cmTC_[0-9a-f]{5}", "cmTC_<ID>"),
+        (r"TryCompile-[A-Za-z0-9]{6}", "TryCompile-<ID>"),
         (r"::@\(0x[0-9a-f]+\)", "::@(<DIRECTORY-ID>)"),
         (r"/tmp/cc[A-Za-z0-9]{6}\.", "/tmp/cc<TMP>."),
     ]
@@ -70,6 +72,7 @@ def normalizer(build: Path, cmake: Path):
 
 
 def run(cmake: Path, source: Path, build: Path, props: Path, extra: list[str]) -> list[str]:
+    shutil.rmtree(build, ignore_errors=True)  # always a fresh configure
     log = build.with_suffix(".log")
     with open(log, "w") as stream:
         proc = subprocess.run(
