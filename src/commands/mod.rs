@@ -74,7 +74,11 @@ pub fn register_all(interp: &mut Interp) {
     property::register(interp);
     separate_arguments::register(interp);
     sysinfo::register(interp);
-    if interp.mode == crate::interp::Mode::Project {
+    // cmake::RoleProject: project and --find-package modes.
+    if matches!(
+        interp.mode,
+        crate::interp::Mode::Project | crate::interp::Mode::FindPackage
+    ) {
         crate::instrumentation::register(interp);
     }
     try_compile::register(interp);

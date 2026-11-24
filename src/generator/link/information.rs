@@ -211,7 +211,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
         .map(|flag| {
             info.framework_paths
                 .iter()
-                .map(|dir| format!("{flag}{} ", shell(dir)))
+                .map(|dir| format!("{flag}{} ", query.shell(dir)))
                 .collect::<String>()
         })
         .unwrap_or_default();
@@ -237,7 +237,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
                 query.config,
                 link_artifact(query, target),
             );
-            dirs.push_str(&format!(" {flag}{}{terminator} ", shell(&dir)));
+            dirs.push_str(&format!(" {flag}{}{terminator} ", query.shell(&dir)));
         }
         if !dirs.is_empty() {
             link_path.push((dirs, None));
@@ -246,7 +246,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
     let link_dirs = info.linker_search_path.ordered(&reporter).to_vec();
     for dir in &link_dirs {
         link_path.push((
-            format!(" {flag}{}{terminator} ", shell(dir)),
+            format!(" {flag}{}{terminator} ", query.shell(dir)),
             Some(dir.clone()),
         ));
     }
@@ -257,7 +257,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
         )),
         false,
     ) {
-        link_path.push((format!(" {flag}{}{terminator} ", shell(&dir)), None));
+        link_path.push((format!(" {flag}{}{terminator} ", query.shell(&dir)), None));
     }
 
     // cmLinkLineComputer::ComputeLinkLibraries.
@@ -268,7 +268,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
     }
     for item in info.items.iter().filter(|item| !item.unlinked) {
         let text = if item.is_path {
-            item.formatted(&shell(&query.ninja_path(&item.value)))
+            item.formatted(&query.shell(&query.link_reference(&item.value)))
         } else {
             item.value.clone()
         };
@@ -278,7 +278,7 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
     if let Some(order) = &info.dependent_search_path {
         let dirs = order.ordered(&reporter).join(":");
         if !info.rpath_link_flag.is_empty() && !dirs.is_empty() {
-            rest.push_str(&format!("{}{} ", info.rpath_link_flag, shell(&dirs)));
+            rest.push_str(&format!("{}{} ", info.rpath_link_flag, query.shell(&dirs)));
         }
     }
     let standard = var(&format!("CMAKE_{}_STANDARD_LIBRARIES", info.language));
@@ -472,6 +472,7 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
     let query = if query.policy(head, "CMP0099") != PolicyStatus::New {
         compile_query = Query {
             compile_usage: true,
+            base_computer: query.base_computer,
             ..Query::new(query.ctx, query.config, query.language)
         };
         &compile_query
@@ -1655,7 +1656,7 @@ impl LinkInformation {
             return self
                 .rpath(reporter, false)
                 .iter()
-                .map(|dir| format!("{}{} ", self.runtime_flag, shell(dir)))
+                .map(|dir| format!("{}{} ", self.runtime_flag, reporter.query.shell(dir)))
                 .collect();
         }
         // All rpath entries are combined ("-Wl,-rpath,a:b:c").
@@ -1663,7 +1664,7 @@ impl LinkInformation {
         if rpath.is_empty() {
             return String::new();
         }
-        format!("{}{} ", self.runtime_flag, shell(&rpath))
+        format!("{}{} ", self.runtime_flag, reporter.query.shell(&rpath))
     }
 
     /// The rpath in the build tree and its replacement at install time.

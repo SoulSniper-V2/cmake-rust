@@ -27,7 +27,8 @@ pub fn register(interp: &mut Interp) {
         ("link_libraries", link_libraries),
         ("source_group", source_group),
     ];
-    if interp.mode == Mode::Project {
+    // cmake::RoleProject: project and --find-package modes.
+    if matches!(interp.mode, Mode::Project | Mode::FindPackage) {
         for &(name, command) in commands {
             interp.register(name, command);
         }

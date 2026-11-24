@@ -1956,9 +1956,10 @@ impl Interp {
     fn command_failed(&mut self) {
         // cmake::CommandFailureAction::EXIT_CODE applies in NORMAL_MODE
         // (project configure): a command returning false reports an error
-        // but the current list file keeps running. Only SCRIPT_MODE
-        // (-P) and explicit SetFatalErrorOccurred sites stop it.
-        if self.mode == Mode::Script {
+        // but the current list file keeps running. SCRIPT_MODE (-P),
+        // FIND_PACKAGE_MODE and explicit SetFatalErrorOccurred sites stop it.
+        // FATAL_ERROR applies outside NORMAL_MODE: -P and --find-package.
+        if matches!(self.mode, Mode::Script | Mode::FindPackage) {
             self.set_fatal();
         }
     }

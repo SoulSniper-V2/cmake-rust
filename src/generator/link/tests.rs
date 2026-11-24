@@ -368,6 +368,7 @@ fn cmake_4_1_ninja_edges() {
             language: "C",
             generator: &FixtureGenerator,
             compile_usage: false,
+            base_computer: false,
         };
         // The fixtures hold evaluated expressions: record the objects that
         // $<TARGET_OBJECTS> names.

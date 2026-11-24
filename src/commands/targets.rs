@@ -38,7 +38,8 @@ pub fn register(interp: &mut Interp) {
         ("enable_testing", enable_testing),
         ("add_test", add_test),
     ];
-    if interp.mode == Mode::Project {
+    // cmake::RoleProject: project and --find-package modes.
+    if matches!(interp.mode, Mode::Project | Mode::FindPackage) {
         for &(name, command) in commands {
             interp.register(name, command);
         }
@@ -50,7 +51,9 @@ pub fn register(interp: &mut Interp) {
 /// expanded, with "command is not scriptable".  Called after all families
 /// have registered so it overrides them.
 pub fn register_script_mode_unexpected(interp: &mut Interp) {
-    if interp.mode == Mode::Project {
+    // cmake::RoleProject (project and --find-package modes) has the real
+    // project commands.
+    if matches!(interp.mode, Mode::Project | Mode::FindPackage) {
         return;
     }
     for name in [

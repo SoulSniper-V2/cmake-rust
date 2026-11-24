@@ -1169,6 +1169,11 @@ fn normalize_script_args(argv: &mut Vec<String>) {
 }
 
 fn make_script_interp(argv: &[String], cwd: &str) -> Option<Interp> {
+    make_interp(Mode::Script, argv, cwd)
+}
+
+/// The interpreter of `-P` scripts and of `--find-package` mode.
+fn make_interp(mode: Mode, argv: &[String], cwd: &str) -> Option<Interp> {
     let Some(root) = configure::find_cmake_root() else {
         cmcmd::error(format!(
             "Could not find CMAKE_ROOT !!!\nCMake has most likely not been installed correctly.\nModules directory not found in\n{}",
@@ -1176,7 +1181,7 @@ fn make_script_interp(argv: &[String], cwd: &str) -> Option<Interp> {
         ));
         return None;
     };
-    let mut interp = Interp::new(Mode::Script, cwd, cwd, &root);
+    let mut interp = Interp::new(mode, cwd, cwd, &root);
     configure::add_default_definitions(&mut interp);
     configure::add_cmake_paths(&mut interp);
     interp.set_def("CMAKE_ARGC", argv.len().to_string());
@@ -1301,10 +1306,9 @@ fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i
         eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
         return 1;
     };
-    let Some(mut interp) = make_script_interp(argv, cwd) else {
+    let Some(mut interp) = make_interp(Mode::FindPackage, argv, cwd) else {
         return 1;
     };
-    interp.mode = crate::interp::Mode::FindPackage;
     for CacheArg { name, value } in args {
         if *name == "-D" {
             match cache_definition(value) {
@@ -1316,39 +1320,161 @@ fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i
             }
         }
     }
-    let result = read_script(
+    // cmMakefile::ReadListFile: errors are reported, and the result is
+    // still computed from the variables the module set.
+    let _ = read_script(
         &mut interp,
         &format!("{root}/Modules/CMakeFindPackageMode.cmake"),
         cwd,
         false,
     );
-    if result != 0 {
-        return result;
-    }
-    let name = interp
-        .get_def("NAME")
-        .map(str::to_owned)
-        .unwrap_or_default();
-    let mode = interp
-        .get_def("MODE")
-        .map(str::to_owned)
-        .unwrap_or_default();
-    let found = interp.get_def("PACKAGE_FOUND").is_some_and(util::is_on);
-    let quiet = interp.get_def("PACKAGE_QUIET").is_some_and(util::is_on);
+    let var = |name: &str| interp.get_def(name).map(str::to_owned).unwrap_or_default();
+    let language = var("LANGUAGE");
+    let mode = var("MODE");
+    let name = var("NAME");
+    let found = util::is_on(&var("PACKAGE_FOUND"));
+    let quiet = util::is_on(&var("PACKAGE_QUIET"));
     if !found {
         if !quiet {
             println!("{name} not found.");
         }
+        // cmake::SetArgs: the failed --find-package argument.
+        cmcmd::error("Run 'cmake --help' for all supported options.");
         return 1;
     }
-    if mode == "EXIST" {
-        if !quiet {
-            println!("{name} found.");
+    match mode.as_str() {
+        "EXIST" => {
+            if !quiet {
+                println!("{name} found.");
+            }
         }
-        return 0;
+        "COMPILE" => {
+            let includes = util::expand_list(&var("PACKAGE_INCLUDE_DIRS"), false);
+            let include_flags = find_package_include_flags(&interp, &includes, &language);
+            println!("{include_flags} {}", var("PACKAGE_DEFINITIONS"));
+        }
+        "LINK" => {
+            let line = find_package_link_line(&mut interp, &language);
+            println!("{line}");
+        }
+        _ => {}
     }
-    eprintln!("CMake Error: --find-package MODE={mode} is not supported");
-    1
+    // cmake::Run: any reported error fails the run.
+    i32::from(interp.error || interp.fatal)
+}
+
+/// `cmake::FindPackage` MODE=LINK: the link line of a dummy executable
+/// linking `PACKAGE_LIBRARIES`, from the base link line computer.
+fn find_package_link_line(interp: &mut Interp, language: &str) -> String {
+    let libraries = util::expand_list(
+        interp.get_def("PACKAGE_LIBRARIES").unwrap_or_default(),
+        false,
+    );
+    let build_type = interp
+        .get_def("CMAKE_BUILD_TYPE")
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let mut target = crate::state::Target::new("dummy", crate::state::TargetKind::Executable, 0);
+    target.props.set("LINKER_LANGUAGE", language.to_owned());
+    // cmTarget::AddLinkLibrary with GENERAL_LibraryType.
+    for library in &libraries {
+        target.insert_entry("LINK_LIBRARIES", library, &[], false);
+    }
+    let key = crate::commands::target::register_target(interp, target);
+    // The generation objects see the directory's final variables.
+    interp.record_directory_vars();
+    let ctx = crate::generator::ctx::GenCtx::new(interp);
+    let target = &ctx.interp.ext.targets[&key];
+    let line = crate::generator::link::base_link_line(&ctx, target, &build_type, language);
+    // cmLocalGenerator::AppendFlags joins the non-empty fragments with
+    // single spaces, keeping each fragment's own spacing.
+    let append_flags = |fragments: Vec<&str>| {
+        let mut flags = String::new();
+        for fragment in fragments
+            .into_iter()
+            .filter(|fragment| !fragment.is_empty())
+        {
+            if !flags.is_empty() {
+                flags.push(' ');
+            }
+            flags.push_str(fragment);
+        }
+        flags
+    };
+    let link_path = append_flags(
+        line.path_fragments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect(),
+    );
+    let link_libs = append_flags(
+        line.lib_fragments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect(),
+    );
+    format!("{}{link_path}{link_libs}", line.framework_path)
+}
+
+/// `cmLocalGenerator::GetIncludeFlags` without a target, as
+/// `cmake::FindPackage` calls it, with the base generator's shell.
+fn find_package_include_flags(interp: &Interp, includes: &[String], lang: &str) -> String {
+    if lang.is_empty() {
+        return String::new();
+    }
+    let shell = |path: &str| {
+        crate::outconv::escape_for_shell(
+            path,
+            crate::outconv::FLAG_MAKE | crate::outconv::FLAG_IS_UNIX,
+        )
+    };
+    let var = |name: &str| interp.get_def(name).map(str::to_owned);
+    let include_flag = var(&format!("CMAKE_INCLUDE_FLAG_{lang}")).unwrap_or_default();
+    let quote_paths = var("CMAKE_QUOTE_INCLUDE_PATHS").is_some();
+    // A separator means the flag is given once, as in `-classpath a:b:c`.
+    let (sep, repeat_flag) = match var(&format!("CMAKE_INCLUDE_FLAG_SEP_{lang}")) {
+        Some(sep) => (sep, false),
+        None => (" ".to_owned(), true),
+    };
+    let fw_search_flag = var(&format!("CMAKE_{lang}_FRAMEWORK_SEARCH_FLAG"));
+    let apple = interp.get_def("APPLE").is_some_and(util::is_on);
+    let mut flags = String::new();
+    let mut flag_used = false;
+    let mut emitted = std::collections::HashSet::new();
+    for include in includes {
+        if let Some(fw_flag) = fw_search_flag.as_deref().filter(|flag| !flag.is_empty())
+            && apple
+            && crate::apple::is_path_to_framework(include)
+        {
+            let framework_dir = util::filename_path(include);
+            if emitted.insert(framework_dir.clone()) {
+                flags.push_str(fw_flag);
+                flags.push_str(&shell(&framework_dir));
+                flags.push(' ');
+            }
+            continue;
+        }
+        if !flag_used || repeat_flag {
+            flags.push_str(&include_flag);
+            flag_used = true;
+        }
+        let path = shell(include);
+        let quote = quote_paths && !path.is_empty() && !path.starts_with('"');
+        if quote {
+            flags.push('"');
+        }
+        flags.push_str(&path);
+        if quote {
+            flags.push('"');
+        }
+        flags.push_str(&sep);
+    }
+    // Remove trailing separators.
+    if !sep.starts_with(' ') && flags.ends_with(&sep[..1]) {
+        flags.pop();
+        flags.push(' ');
+    }
+    flags.trim().to_owned()
 }
 
 fn run_script_mode(

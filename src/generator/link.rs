@@ -55,6 +55,23 @@ pub struct LinkLine {
     pub path_fragments: Vec<(String, Option<String>)>,
 }
 
+/// The link line of `target` with the base `cmLinkLineComputer`, as
+/// `cmake::FindPackage` computes it for its dummy executable.
+pub(crate) fn base_link_line(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> LinkLine {
+    let query = Query {
+        base_computer: true,
+        ..Query::new(ctx, config, language)
+    };
+    information::compute(&query, target)
+        .map(|info| information::line(&query, target, &info))
+        .unwrap_or_default()
+}
+
 pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> LinkLine {
     let query = Query::new(ctx, config, language);
     link_information(ctx, target, config, language)
@@ -375,6 +392,10 @@ pub(crate) struct Query<'a, 'i> {
     generator: &'a dyn GeneratorQueries,
     /// Evaluate for `UseTo::Compile` (usage requirements only).
     compile_usage: bool,
+    /// The base `cmLinkLineComputer` (of `cmake --find-package`) in place
+    /// of the Ninja one: link references stay full paths and the shell is
+    /// not Ninja's.
+    base_computer: bool,
 }
 
 impl<'a, 'i> Query<'a, 'i> {
@@ -385,7 +406,28 @@ impl<'a, 'i> Query<'a, 'i> {
             language,
             generator: &Generator,
             compile_usage: false,
+            base_computer: false,
         }
+    }
+
+    /// `cmLinkLineComputer::ConvertToLinkReference`.
+    fn link_reference(&self, path: &str) -> String {
+        if self.base_computer {
+            path.to_owned()
+        } else {
+            self.ninja_path(path)
+        }
+    }
+
+    /// `cmLinkLineComputer::ConvertToOutputFormat` (SHELL).
+    fn shell(&self, value: &str) -> String {
+        use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, FLAG_IS_UNIX, FLAG_MAKE, NINJA_UNIX};
+        let flags = if self.base_computer {
+            FLAG_MAKE | FLAG_IS_UNIX
+        } else {
+            NINJA_UNIX
+        };
+        crate::outconv::escape_for_shell(value, flags | FLAG_ALLOW_MAKE_VARIABLES)
     }
 
     fn var(&self, target: &Target, name: &str) -> String {

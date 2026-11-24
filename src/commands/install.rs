@@ -11,7 +11,8 @@ use crate::util::{expand_list, is_full_path};
 
 pub fn register(interp: &mut Interp) {
     interp.register("install", install);
-    if interp.mode == Mode::Project {
+    // cmake::RoleProject: project and --find-package modes.
+    if matches!(interp.mode, Mode::Project | Mode::FindPackage) {
         interp.register("install_files", legacy_files);
         interp.register("install_programs", legacy_programs);
         interp.register("install_targets", legacy_targets);

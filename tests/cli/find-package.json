@@ -1,0 +1,227 @@
+[
+ {
+  "name": "find-package-exist-foo",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Foo",
+   "-DMODE=EXIST"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-exist-broken",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Broken",
+   "-DMODE=EXIST"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-exist-tgt",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Tgt",
+   "-DMODE=EXIST"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-exist-missing",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Missing",
+   "-DMODE=EXIST"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-compile-foo",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Foo",
+   "-DMODE=COMPILE"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-compile-broken",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Broken",
+   "-DMODE=COMPILE"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-compile-tgt",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Tgt",
+   "-DMODE=COMPILE"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-compile-missing",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Missing",
+   "-DMODE=COMPILE"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-link-foo",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Foo",
+   "-DMODE=LINK"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-link-broken",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Broken",
+   "-DMODE=LINK"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-link-tgt",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Tgt",
+   "-DMODE=LINK"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-link-missing",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Missing",
+   "-DMODE=LINK"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-exist-quiet-missing",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=C",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Missing",
+   "-DMODE=EXIST",
+   "-DQUIET=TRUE"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ },
+ {
+  "name": "find-package-link-cxx",
+  "argv": [
+   "--find-package",
+   "-DCOMPILER_ID=GNU",
+   "-DLANGUAGE=CXX",
+   "-DCMAKE_MODULE_PATH={work}/pkg",
+   "-DNAME=Foo",
+   "-DMODE=LINK"
+  ],
+  "files": {
+   "pkg/FindFoo.cmake": "set(Foo_FOUND TRUE)\nset(Foo_INCLUDE_DIRS /opt/foo/include \"/opt/foo bar/inc\" /usr/include)\nset(Foo_LIBRARIES /opt/foo/lib/libfoo.so /opt/foo/lib/libfoo2.a -lm /usr/lib/x86_64-linux-gnu/libz.so)\nset(Foo_DEFINITIONS -DFOO=1)\n",
+   "pkg/FindBroken.cmake": "message(SEND_ERROR \"broken find module\")\nset(Broken_FOUND TRUE)\nset(Broken_INCLUDE_DIRS /opt/b)\n",
+   "pkg/FindTgt.cmake": "add_library(Tgt::Tgt UNKNOWN IMPORTED)\nset_target_properties(Tgt::Tgt PROPERTIES IMPORTED_LOCATION /opt/t/libt.so)\nset(Tgt_FOUND TRUE)\nset(Tgt_LIBRARIES Tgt::Tgt)\n"
+  }
+ }
+]
