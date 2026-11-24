@@ -1,0 +1,8 @@
+-DFIRST=cli
+-DBOTH=before
+-Csrc/init.cmake
+-DKEPT=after
+-DLAST=cli
+-C
+src/second.cmake
+-UDROPPED

@@ -12,7 +12,8 @@ use crate::apple::{
     FrameworkFormat, is_path_to_framework, is_path_to_xcframework, split_framework_path,
 };
 use crate::cmregex::Regex;
-use crate::util::{collapse_full_path, filename_name, filename_path, is_subdirectory};
+use crate::commands::install::unix_slashes;
+use crate::util::{filename_name, filename_path, is_subdirectory};
 
 /// `cmComputeLinkInformation` after `Compute()`.
 pub(in crate::generator) struct LinkInformation {
@@ -277,7 +278,11 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
     if let Some(order) = &info.dependent_search_path {
         let dirs = order.ordered(&reporter).join(":");
         if !info.rpath_link_flag.is_empty() && !dirs.is_empty() {
-            rest.push_str(&format!("{}{} ", info.rpath_link_flag, query.shell(&dirs)));
+            rest.push_str(&format!(
+                "{}{} ",
+                info.rpath_link_flag,
+                query.escape(&dirs, 0)
+            ));
         }
     }
     let standard = var(&format!("CMAKE_{}_STANDARD_LIBRARIES", info.language));
@@ -425,17 +430,14 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
         property: &str,
         items: Vec<Item<'i>>,
         seen: &mut HashSet<usize>,
-        values: &mut Vec<String>,
+        values: &mut Vec<(String, Option<String>)>,
     ) {
         for target in items.into_iter().filter_map(|item| item.target) {
             if !seen.insert(std::ptr::from_ref(target) as usize) {
                 continue;
             }
             for value in entries(query, target, head, property) {
-                if property == "INTERFACE_LINK_DIRECTORIES" && !Path::new(&value).is_absolute() {
-                    query.error(format!("Target \"{}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\"", target.name));
-                }
-                values.push(value);
+                values.push((value, Some(target.name.clone())));
             }
             collect(
                 query,
@@ -447,36 +449,10 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
             );
         }
     }
-    let mut values = entries(query, head, head, property);
-    if property == "LINK_DIRECTORIES" {
-        // `cmGeneratorTarget::EvaluateLinkDirectories`: CMP0081 gates the
-        // relative-path diagnostic; the target's directory backtrace is
-        // attached in all modes.
-        let status = query.policy(head, "CMP0081");
-        if status != PolicyStatus::Old {
-            let backtrace = query.ctx.dir_backtrace(head.makefile);
-            for value in values
-                .iter()
-                .filter(|value| !Path::new(value).is_absolute())
-            {
-                let message = format!(
-                    "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
-                    head.name
-                );
-                match status {
-                    PolicyStatus::New => query.error_at(backtrace.clone(), message),
-                    PolicyStatus::Warn => query.ctx.warning(
-                        backtrace.clone(),
-                        format!(
-                            "{}\n{message}",
-                            crate::commands::target::policy_warning("CMP0081")
-                        ),
-                    ),
-                    PolicyStatus::Old => {}
-                }
-            }
-        }
-    }
+    let mut values: Vec<(String, Option<String>)> = entries(query, head, head, property)
+        .into_iter()
+        .map(|value| (value, None))
+        .collect();
     // CMP0099 OLD: the transitive interface-property traversal uses
     // UseTo::Compile, so $<LINK_ONLY:...> edges (private dependencies of
     // static libraries) are not followed
@@ -501,11 +477,54 @@ fn usage_property(query: &Query<'_, '_>, head: &Target, property: &str) -> Vec<S
         &mut values,
     );
     if property == "LINK_DIRECTORIES" {
-        values
-            .iter_mut()
-            .for_each(|value| *value = normalize_slashes(value));
+        return link_directories(query, head, values);
     }
-    unique(values)
+    unique(values.into_iter().map(|(value, _)| value))
+}
+
+/// `processLinkDirectories`: the first relative directory that is an error
+/// ends the list.
+fn link_directories(
+    query: &Query<'_, '_>,
+    head: &Target,
+    values: Vec<(String, Option<String>)>,
+) -> Vec<String> {
+    let mut directories = Vec::new();
+    for (value, provider) in values {
+        if !crate::util::is_full_path(&value) {
+            // The target's directory backtrace is attached in all modes.
+            let backtrace = query.ctx.dir_backtrace(head.makefile);
+            if let Some(provider) = provider {
+                query.error_at(
+                    backtrace,
+                    format!(
+                        "Target \"{provider}\" contains relative path in its INTERFACE_LINK_DIRECTORIES:\n  \"{value}\""
+                    ),
+                );
+                break;
+            }
+            let message = format!(
+                "Found relative path while evaluating link directories of \"{}\":\n  \"{value}\"\n",
+                head.name
+            );
+            match query.policy(head, "CMP0081") {
+                PolicyStatus::Old => {}
+                PolicyStatus::Warn => query.ctx.warning(
+                    backtrace,
+                    format!(
+                        "{}\n{message}",
+                        crate::commands::target::policy_warning("CMP0081")
+                    ),
+                ),
+                PolicyStatus::New => {
+                    query.error_at(backtrace, message);
+                    break;
+                }
+            }
+        }
+        directories.push(unix_slashes(&value));
+    }
+    unique(directories)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1592,7 +1611,7 @@ impl LinkInformation {
                 .ctx
                 .var(head.makefile, "CMAKE_SYSROOT_LINK")
                 .unwrap_or_else(|| var("CMAKE_SYSROOT"));
-            let root = normalize_slashes(&root);
+            let root = unix_slashes(&root);
             let stage = var("CMAKE_STAGING_PREFIX");
             let prefix = var("CMAKE_INSTALL_PREFIX");
             let source = &query.ctx.interp.makefiles[0].source_dir;
@@ -1606,7 +1625,7 @@ impl LinkInformation {
                 paths.push(if !root.is_empty() && dir.starts_with(&root) {
                     dir[root.len()..].to_owned()
                 } else if !stage.is_empty() && dir.starts_with(&stage) {
-                    normalize_slashes(&format!("{prefix}/{}", &dir[stage.len()..]))
+                    unix_slashes(&format!("{prefix}/{}", &dir[stage.len()..]))
                 } else if use_build && relative && under(dir, binary) {
                     let tail = relative_path(&output, dir);
                     if tail.is_empty() {
@@ -1672,7 +1691,7 @@ impl LinkInformation {
         if rpath.is_empty() {
             return String::new();
         }
-        format!("{}{} ", self.runtime_flag, reporter.query.shell(&rpath))
+        format!("{}{} ", self.runtime_flag, reporter.query.escape(&rpath, 0))
     }
 
     /// The rpath in the build tree and its replacement at install time.
@@ -1949,13 +1968,4 @@ fn relative_path(from: &str, to: &str) -> String {
         .collect::<Vec<_>>()
         .join("/");
     up + &down
-}
-
-fn normalize_slashes(value: &str) -> String {
-    let value = value.replace('\\', "/");
-    if value.starts_with('/') {
-        collapse_full_path(&value, "")
-    } else {
-        value
-    }
 }

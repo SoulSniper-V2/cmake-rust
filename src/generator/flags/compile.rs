@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use super::{
-    Flags, append, append_options, cmake_space, shell, shell_with_make_vars, unix_command_line,
+    Flags, append, append_options, cmake_space, shell, shell_flag, shell_with_make_vars,
+    unix_command_line,
 };
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
@@ -831,7 +832,7 @@ pub(crate) fn flag_fragments(
             }
             for item in inputs.usage_items("COMPILE_OPTIONS") {
                 if regex.find(&item.value).is_some() {
-                    out.push((shell(&item.value), ctx.backtrace(item.backtrace)));
+                    out.push((shell_flag(&item.value), ctx.backtrace(item.backtrace)));
                 }
             }
         }
@@ -840,7 +841,7 @@ pub(crate) fn flag_fragments(
             out.push((raw.to_owned(), Vec::new()));
         }
         for item in inputs.usage_items("COMPILE_OPTIONS") {
-            out.push((shell(&item.value), ctx.backtrace(item.backtrace)));
+            out.push((shell_flag(&item.value), ctx.backtrace(item.backtrace)));
         }
     }
     // cmLocalGenerator::AddCompileOptions honours --compile-no-warning-as-error.

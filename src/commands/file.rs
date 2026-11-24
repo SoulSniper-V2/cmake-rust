@@ -25,7 +25,7 @@ use crate::messages::MessageType;
 use crate::policy::{PolicyStatus, policy_warning};
 use crate::util::is_full_path;
 
-use super::configure_file::{configure_text, newline_style, write_configured};
+use super::configure_file::{configure_text, newline_style};
 use super::legacy_fs::{
     can_write, collapse, collapse_from_cwd, fatal, mkdir, mode, raw_error, real_path, source_path,
     split_search_path, system_error, unix_slashes, write,
@@ -977,7 +977,7 @@ fn configure(interp: &mut Interp, args: &[String]) -> CmdResult {
         at_only,
         escape_quotes,
     );
-    if let Err(error) = write_configured(&output, &data) {
+    if let Err(error) = crate::fsutil::write_if_different(Path::new(&output), &data) {
         raw_error(
             interp,
             &format!("Could not open file for write in copy operation {output}"),

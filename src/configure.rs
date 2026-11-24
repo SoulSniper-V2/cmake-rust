@@ -18,6 +18,19 @@ pub struct CacheDefinition {
     pub kind: Option<CacheType>,
 }
 
+/// One command-line argument `cmake::SetCacheArgs` processes.
+#[derive(Clone, Debug)]
+pub enum CacheArgument {
+    /// `-D`, `--toolchain` or `--install-prefix`.
+    Define(CacheDefinition),
+    /// A `-U` glob pattern.
+    Undefine(String),
+    /// A `-C` value as given, and the script's full path.
+    Preload { value: String, path: String },
+    /// An argument that does not parse.
+    Error(String),
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ConfigureOptions {
     pub source_dir: String,
@@ -36,15 +49,11 @@ pub struct ConfigureOptions {
     pub environment_instance: String,
     pub environment_platform: String,
     pub environment_toolset: String,
-    pub toolchain_file: Option<String>,
-    pub install_prefix: Option<String>,
+    /// Cache entries set ahead of the command line: preset variables
+    /// (`cmake::ProcessPresetVariables`) or a try_compile project's.
     pub definitions: Vec<CacheDefinition>,
-    /// `-U` glob patterns.
-    pub undefine: Vec<String>,
-    /// `-C <initial-cache>` scripts.
-    pub preload_scripts: Vec<String>,
-    /// The `-C` values as given, for "loading initial cache file".
-    pub preload_script_args: Vec<String>,
+    /// The command line's cache arguments, in order (`cmake::SetCacheArgs`).
+    pub cache_args: Vec<CacheArgument>,
     /// `cmake::PrintPresetVariables`/`PrintPresetEnvironment` output,
     /// printed after the cache arguments (with `-C`) are processed.
     pub preset_report: Option<String>,
@@ -201,7 +210,41 @@ pub fn add_default_definitions(interp: &mut Interp) {
     );
 }
 
-/// Applies `-D`/`-U` arguments (`cmake::SetCacheArgs`).
+/// `cmake::ProcessCacheArg`.
+fn process_cache_arg(interp: &mut Interp, name: &str, value: &str, kind: CacheType) {
+    let cached = interp
+        .cache
+        .get(name)
+        .filter(|entry| entry.initialized)
+        .map(|entry| entry.value.clone());
+    interp.cache.add(
+        name,
+        Some(value),
+        Some("No help, variable specified on the command line."),
+        kind,
+    );
+    let mut vars = interp.cli_vars.borrow_mut();
+    vars.remove(name);
+    if interp.warn_unused_cli && cached.as_deref() != interp.cache.value(name) {
+        vars.insert(name.to_owned(), false);
+    }
+}
+
+/// The `-U` argument's effect (`UnSetLambda` in `cmake::SetCacheArgs`).
+pub(crate) fn unset_cache_entries(cache: &mut crate::cache::Cache, pattern: &str) {
+    let regex = glob_to_regex(pattern);
+    let names: Vec<String> = cache
+        .entries
+        .iter()
+        .filter(|(name, entry)| entry.kind != CacheType::Static && regex.find(name).is_some())
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in names {
+        cache.remove(&name);
+    }
+}
+
+/// Applies the cache arguments (`cmake::SetCacheArgs`).
 fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
     if interp.cache.value("CMAKE_POLICY_VERSION_MINIMUM").is_none()
         && let Ok(value) = std::env::var("CMAKE_POLICY_VERSION_MINIMUM")
@@ -218,98 +261,85 @@ fn apply_cache_args(interp: &mut Interp, options: &ConfigureOptions) -> bool {
         }
     }
     for definition in &options.definitions {
-        // cmake::ProcessCacheArg
-        let cached = interp
-            .cache
-            .get(&definition.name)
-            .filter(|entry| entry.initialized)
-            .map(|entry| entry.value.clone());
-        interp.cache.add(
+        process_cache_arg(
+            interp,
             &definition.name,
-            Some(&definition.value),
-            Some("No help, variable specified on the command line."),
+            &definition.value,
             definition.kind.unwrap_or(CacheType::Uninitialized),
         );
-        let mut vars = interp.cli_vars.borrow_mut();
-        vars.remove(&definition.name);
-        if interp.warn_unused_cli && cached.as_deref() != interp.cache.value(&definition.name) {
-            vars.insert(definition.name.clone(), false);
-        }
     }
-    for pattern in &options.undefine {
-        let regex = glob_to_regex(pattern);
-        let names: Vec<String> = interp
-            .cache
-            .entries
-            .iter()
-            .filter(|(name, entry)| {
-                entry.kind != CacheType::Static
-                    && entry.kind != CacheType::Internal
-                    && regex.find(name).is_some()
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-        for name in names {
-            interp.cache.remove(&name);
+    for argument in &options.cache_args {
+        match argument {
+            CacheArgument::Define(definition) => process_cache_arg(
+                interp,
+                &definition.name,
+                &definition.value,
+                definition.kind.unwrap_or(CacheType::Uninitialized),
+            ),
+            CacheArgument::Undefine(pattern) => unset_cache_entries(&mut interp.cache, pattern),
+            CacheArgument::Preload { value, path } => {
+                interp.stdout_line(&format!("loading initial cache file {value}"));
+                interp.cache.touched.clear();
+                read_temporary_list_file(interp, path);
+                let touched = std::mem::take(&mut interp.cache.touched);
+                let mut vars = interp.cli_vars.borrow_mut();
+                vars.retain(|name, _| !touched.contains(name));
+            }
+            CacheArgument::Error(message) => {
+                system_error(Some(interp), message);
+                return false;
+            }
         }
-    }
-    // cmake::ProcessCacheArg's unused-variable watch for a value it set.
-    let watch = |interp: &mut Interp, name: &str, cached: Option<String>| {
-        let mut vars = interp.cli_vars.borrow_mut();
-        vars.remove(name);
-        if interp.warn_unused_cli && cached.as_deref() != interp.cache.value(name) {
-            vars.insert(name.to_owned(), false);
-        }
-    };
-    let cached_value = |interp: &Interp, name: &str| {
-        interp
-            .cache
-            .get(name)
-            .filter(|entry| entry.initialized)
-            .map(|entry| entry.value.clone())
-    };
-    // ToolchainLambda and PrefixLambda: cmake::ProcessCacheArg with the
-    // value as given (the cache converts slashes for path types).
-    if let Some(toolchain) = &options.toolchain_file {
-        let cached = cached_value(interp, "CMAKE_TOOLCHAIN_FILE");
-        interp.cache.add(
-            "CMAKE_TOOLCHAIN_FILE",
-            Some(toolchain),
-            Some("No help, variable specified on the command line."),
-            CacheType::Filepath,
-        );
-        watch(interp, "CMAKE_TOOLCHAIN_FILE", cached);
-    }
-    if let Some(prefix) = &options.install_prefix {
-        let cached = cached_value(interp, "CMAKE_INSTALL_PREFIX");
-        interp.cache.add(
-            "CMAKE_INSTALL_PREFIX",
-            Some(prefix),
-            Some("No help, variable specified on the command line."),
-            CacheType::Path,
-        );
-        watch(interp, "CMAKE_INSTALL_PREFIX", cached);
     }
     // Later cache additions (cmake::AddCacheEntry) stop watching a key.
     interp.cache.touched.clear();
     true
 }
 
-/// `cmake::ReadListFile`: a temporary makefile whose reset state keeps
-/// only CMAKE_SOURCE_DIR and CMAKE_BINARY_DIR; normal variables it sets do
-/// not reach the project.
+/// `cmake::ReadListFile`: a temporary makefile over reset state.  Only the
+/// cache, the commands it defines and the diagnostics reach the project.
 fn read_temporary_list_file(interp: &mut Interp, path: &str) {
-    interp.push_scope();
+    let mut list = Interp::new(
+        Mode::Project,
+        &interp.home_source,
+        &interp.home_binary,
+        &interp.cmake_root,
+    );
+    list.debug = interp.debug.clone();
+    list.warn_uninitialized = interp.warn_uninitialized;
+    list.check_system_vars = interp.check_system_vars;
+    list.warn_unused_cli = interp.warn_unused_cli;
+    list.trace = interp.trace.clone();
+    list.ext.misc = interp.ext.misc.clone();
+    add_default_definitions(&mut list);
     let (source, binary) = (interp.home_source.clone(), interp.home_binary.clone());
-    interp.set_def("CMAKE_SOURCE_DIR", source);
-    interp.set_def("CMAKE_BINARY_DIR", binary);
+    for (name, value) in [
+        ("CMAKE_SOURCE_DIR", &source),
+        ("CMAKE_BINARY_DIR", &binary),
+        ("CMAKE_CURRENT_SOURCE_DIR", &source),
+        ("CMAKE_CURRENT_BINARY_DIR", &binary),
+    ] {
+        list.set_def(name, value.clone());
+    }
+    let swap = |interp: &mut Interp, list: &mut Interp| {
+        std::mem::swap(&mut interp.cache, &mut list.cache);
+        std::mem::swap(&mut interp.cli_vars, &mut list.cli_vars);
+        std::mem::swap(&mut interp.commands, &mut list.commands);
+        std::mem::swap(&mut interp.sarif_log, &mut list.sarif_log);
+        std::mem::swap(&mut interp.debugger, &mut list.debugger);
+        std::mem::swap(&mut interp.stdout_log, &mut list.stdout_log);
+        std::mem::swap(&mut interp.stderr_capture, &mut list.stderr_capture);
+        std::mem::swap(&mut interp.fatal, &mut list.fatal);
+        std::mem::swap(&mut interp.error, &mut list.error);
+    };
+    swap(interp, &mut list);
     if !std::path::Path::new(path).is_file() {
-        system_error(Some(interp), &format!("Not a file: {path}"));
+        system_error(Some(&mut list), &format!("Not a file: {path}"));
     }
-    if !interp.read_list_file(path) {
-        system_error(Some(interp), &format!("Error processing file: {path}"));
+    if !list.read_list_file(path) {
+        system_error(Some(&mut list), &format!("Error processing file: {path}"));
     }
-    interp.pop_scope();
+    swap(interp, &mut list);
 }
 
 /// `cmake::RunCheckForUnusedVariables`.
@@ -342,12 +372,6 @@ pub fn check_for_unused_variables(interp: &mut Interp) {
         }
         interp.issue_at(MessageType::Warning, &message, &[]);
     }
-}
-
-fn util_cwd() -> String {
-    std::env::current_dir()
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// `cmsys::Glob::PatternToRegex` (no recursion, anchored).
@@ -571,37 +595,32 @@ fn handle_delete_cache_variables(interp: &Interp, options: &ConfigureOptions) {
     eprintln!("{warning}");
 }
 
-/// `cmake::Run` for NORMAL_MODE after argument parsing.
-pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
-    let binary = options.binary_dir.clone();
-    if options.fresh {
-        let _ = std::fs::remove_file(format!("{binary}/CMakeCache.txt"));
-        let _ = std::fs::remove_dir_all(format!("{binary}/CMakeFiles"));
+/// `cmake::Run` with `noconfigure` (`-N`): process the cache arguments only.
+pub fn process_cache_only(cache: &mut crate::cache::Cache, options: &ConfigureOptions) -> i32 {
+    let Some(root) = find_cmake_root() else {
+        eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
+        return 1;
+    };
+    let mut interp = new_project_interp(options, &root);
+    interp.cache = std::mem::take(cache);
+    add_cmake_paths(&mut interp);
+    let ready = prepare_run(&mut interp, options);
+    if let Some(path) = &options.sarif_output {
+        interp.sarif_log.write(path, false);
     }
-    let _ = std::fs::create_dir_all(&binary);
-    match interp.cache.load(std::path::Path::new(&binary)) {
-        Ok(_) => {}
-        Err(message) => {
-            system_error(Some(interp), &message);
-        }
-    }
-    for message in std::mem::take(&mut interp.cache.load_errors) {
-        system_error(Some(interp), &message);
-    }
-    add_cmake_paths(interp);
+    *cache = interp.cache;
+    i32::from(!ready)
+}
+
+/// `cmake::Run` between loading the cache and configuring.
+fn prepare_run(interp: &mut Interp, options: &ConfigureOptions) -> bool {
+    let builtins = interp.commands.clone();
     if !apply_cache_args(interp, options) {
         system_error(
             Some(interp),
             "Run 'cmake --help' for all supported options.",
         );
-        return -1;
-    }
-    for (index, script) in options.preload_scripts.iter().enumerate() {
-        if let Some(arg) = options.preload_script_args.get(index) {
-            interp.stdout_line(&format!("loading initial cache file {arg}"));
-        }
-        let path = util::collapse_full_path(script, &util_cwd());
-        read_temporary_list_file(interp, &path);
+        return false;
     }
     if let Some(report) = &options.preset_report {
         use std::io::Write;
@@ -623,6 +642,31 @@ pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         if std::path::Path::new(&pre_load).exists() {
             read_temporary_list_file(interp, &pre_load);
         }
+    }
+    // cmake::Configure -> CleanupCommandsAndMacros
+    interp.commands = builtins;
+    true
+}
+
+/// `cmake::Run` for NORMAL_MODE after argument parsing.
+pub fn run_configure(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
+    let binary = options.binary_dir.clone();
+    if options.fresh {
+        let _ = std::fs::remove_file(format!("{binary}/CMakeCache.txt"));
+        let _ = std::fs::remove_dir_all(format!("{binary}/CMakeFiles"));
+    }
+    match interp.cache.load(std::path::Path::new(&binary)) {
+        Ok(_) => {}
+        Err(message) => {
+            system_error(Some(interp), &message);
+        }
+    }
+    for message in std::mem::take(&mut interp.cache.load_errors) {
+        system_error(Some(interp), &message);
+    }
+    add_cmake_paths(interp);
+    if !prepare_run(interp, options) {
+        return -1;
     }
     // cmake::Run starts the debugger between CheckBuildSystem and Configure.
     if !start_debugger(interp, options) {
@@ -854,6 +898,7 @@ fn actual_configure(
             CacheType::Internal,
         );
     }
+    let _ = std::fs::create_dir_all(&binary);
     let redirects = format!("{binary}/CMakeFiles/pkgRedirects");
     let _ = std::fs::remove_dir_all(&redirects);
     if std::fs::create_dir_all(&redirects).is_err() {
@@ -1266,6 +1311,14 @@ pub fn try_compile_project(
         binary_dir: bindir.to_owned(),
         in_try_compile: true,
         debug_trycompile: outer.debug_trycompile,
+        generator: Some(
+            if outer.ext.multi_config {
+                "Ninja Multi-Config"
+            } else {
+                "Ninja"
+            }
+            .to_owned(),
+        ),
         definitions: cmake_args.map(parse_cache_args).unwrap_or_default(),
         ..ConfigureOptions::default()
     };
@@ -1274,8 +1327,10 @@ pub fn try_compile_project(
     inner.recursion_depth_base = outer.recursion_depth_now();
     let _ = inner.cache.load(std::path::Path::new(bindir));
     add_cmake_paths(&mut inner);
+    // Tell the single-configuration generator which configuration to use.
     if let Some(config) = outer
         .get_def("CMAKE_TRY_COMPILE_CONFIGURATION")
+        .filter(|_| !outer.ext.multi_config)
         .map(str::to_owned)
     {
         inner.cache.add(
@@ -1374,6 +1429,12 @@ pub fn try_compile_project(
     let mut output = format!("Change Dir: '{bindir}'\n");
     let make = inner.get_safe("CMAKE_MAKE_PROGRAM");
     let mut command = vec![make, "-v".to_owned()];
+    // cmGlobalNinjaMultiGenerator::AppendNinjaFileArgument
+    let config = outer.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
+    if outer.ext.multi_config && !config.is_empty() {
+        command.push("-f".to_owned());
+        command.push(format!("build-{config}.ninja"));
+    }
     if !target_name.is_empty() {
         command.push(target_name.to_owned());
     }

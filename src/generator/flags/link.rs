@@ -2,10 +2,11 @@ use std::path::Path;
 
 use super::rule::{RuleStep, expand_rule_for_step};
 use super::{
-    BtFrag, Flags, append, append_options, cmake_space, shell, shell_with_make_vars,
+    BtFrag, Flags, append, append_options, cmake_space, shell, shell_flag, shell_with_make_vars,
     target_options, unix_command_line,
 };
 use crate::generator::ctx::GenCtx;
+use crate::generator::ninja::encode_literal;
 use crate::policy::PolicyStatus;
 use crate::state::{Target, TargetKind};
 use crate::util::{expand_list, is_off_opt, is_on, is_on_opt};
@@ -198,10 +199,6 @@ fn append_link_variable(inputs: &Flags<'_, '_>, flags: &mut String, value: &str)
     } else {
         append(flags, &encode_literal(value));
     }
-}
-
-fn encode_literal(value: &str) -> String {
-    value.replace('$', "$$").replace('\n', "$\n")
 }
 
 pub(super) fn selected_linker(inputs: &Flags<'_, '_>) -> Option<String> {
@@ -523,7 +520,7 @@ pub(crate) fn codemodel_link_flags(
             }
             for item in inputs.usage_items("STATIC_LIBRARY_OPTIONS") {
                 for option in resolve_wrapper(&inputs, vec![item.value.clone()], "ARCHIVER") {
-                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                    out.push((shell_flag(&option), ctx.backtrace(item.backtrace)));
                 }
             }
         }
@@ -554,7 +551,7 @@ pub(crate) fn codemodel_link_flags(
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
                 for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
-                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                    out.push((shell_flag(&option), ctx.backtrace(item.backtrace)));
                 }
             }
         }
@@ -625,7 +622,7 @@ pub(crate) fn codemodel_link_flags(
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
                 for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
-                    out.push((shell(&option), ctx.backtrace(item.backtrace)));
+                    out.push((shell_flag(&option), ctx.backtrace(item.backtrace)));
                 }
             }
         }

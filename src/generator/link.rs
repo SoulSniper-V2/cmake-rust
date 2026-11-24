@@ -428,12 +428,23 @@ impl<'a, 'i> Query<'a, 'i> {
 
     /// `cmLinkLineComputer::ConvertToOutputFormat` (SHELL).
     fn shell(&self, value: &str) -> String {
-        use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, FLAG_IS_UNIX, FLAG_MAKE, NINJA_UNIX};
         let flags = if self.base_computer {
-            FLAG_MAKE | FLAG_IS_UNIX
+            0
         } else {
-            NINJA_UNIX
+            super::flags::unescape_configuration()
         };
+        self.escape(value, flags)
+    }
+
+    /// `cmOutputConverter::EscapeForShell(value, true)`.
+    fn escape(&self, value: &str, flags: u32) -> String {
+        use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, FLAG_IS_UNIX, FLAG_MAKE, NINJA_UNIX};
+        let flags = flags
+            | if self.base_computer {
+                FLAG_MAKE | FLAG_IS_UNIX
+            } else {
+                NINJA_UNIX
+            };
         crate::outconv::escape_for_shell(value, flags | FLAG_ALLOW_MAKE_VARIABLES)
     }
 

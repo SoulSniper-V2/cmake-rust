@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cache::{self, Cache, CacheType};
-use crate::configure::{self, CacheDefinition, ConfigureOptions};
+use crate::configure::{self, CacheArgument, CacheDefinition, ConfigureOptions};
 use crate::interp::{self, Interp, Mode};
 use crate::{cmcmd, util};
 
@@ -1060,10 +1060,7 @@ fn configure_args_with(argv: &[String], cwd: &str, no_progress: bool) -> Result<
             view,
         ));
     }
-    if let Err(error) = process_cache_args(&mut options, &cache_args, cwd) {
-        cmcmd::error(error);
-        return Ok(cli_failure());
-    }
+    process_cache_args(&mut options, &cache_args, cwd);
     if let Some(state) = &preset_state
         && matches!(
             options.log_level.as_deref(),
@@ -1085,22 +1082,7 @@ fn configure_args_with(argv: &[String], cwd: &str, no_progress: bool) -> Result<
         options.preset_report = Some(state.render(&overridden));
     }
     let result = if view_only {
-        let result = apply_cache_view_args(&mut cache, &cache_args, &options, cwd);
-        if let Some(path) = &options.sarif_output {
-            crate::sarif::ResultsLog::default().write(path, false);
-        }
-        if let Some(report) = &options.preset_report {
-            print!("{report}");
-        }
-        result
-    } else if !options.preload_scripts.is_empty()
-        && options
-            .preload_scripts
-            .iter()
-            .all(|path| !Path::new(path).is_file())
-        && !validate_project_source(&options, &cache_args)
-    {
-        1
+        configure::process_cache_only(&mut cache, &options)
     } else {
         let result = configure::configure(&options);
         if view.is_some() {
@@ -1294,91 +1276,48 @@ fn warning_option(options: &mut ConfigureOptions, value: &str) -> Result<(), Str
     Ok(())
 }
 
-fn process_cache_args(
-    options: &mut ConfigureOptions,
-    args: &[CacheArg<'_>],
-    cwd: &str,
-) -> Result<(), String> {
+fn process_cache_args(options: &mut ConfigureOptions, args: &[CacheArg<'_>], cwd: &str) {
+    let define = |name: &str, value: &str, kind| {
+        CacheArgument::Define(CacheDefinition {
+            name: name.to_owned(),
+            value: value.to_owned(),
+            kind: Some(kind),
+        })
+    };
     for CacheArg { name, value } in args {
-        match *name {
-            "-D" => options.definitions.push(cache_definition(value)?),
-            "-C" if value.is_empty() => return Err("No file name specified for -C".to_owned()),
-            "-C" => {
-                options
-                    .preload_scripts
-                    .push(util::collapse_full_path(value, cwd));
-                options.preload_script_args.push(value.clone());
+        let argument = match *name {
+            "-D" => match cache_definition(value) {
+                Ok(definition) => CacheArgument::Define(definition),
+                Err(message) => CacheArgument::Error(message),
+            },
+            "-C" if value.is_empty() => {
+                CacheArgument::Error("No file name specified for -C".to_owned())
             }
-            "-U" => options.undefine.push(value.clone()),
-            "-W" => warning_option(options, value)?,
-            "--toolchain" => options.toolchain_file = Some(value.clone()),
+            "-C" => CacheArgument::Preload {
+                value: value.clone(),
+                path: util::collapse_full_path(value, cwd),
+            },
+            "-U" => CacheArgument::Undefine(value.clone()),
+            "-W" => match warning_option(options, value) {
+                Ok(()) => continue,
+                Err(message) => CacheArgument::Error(message),
+            },
+            "--toolchain" => define("CMAKE_TOOLCHAIN_FILE", value, CacheType::Filepath),
             "--install-prefix" if Path::new(value).is_absolute() => {
-                options.install_prefix = Some(value.clone())
+                define("CMAKE_INSTALL_PREFIX", value, CacheType::Path)
             }
             "--install-prefix" => {
-                return Err("Absolute paths are required for --install-prefix".to_owned());
+                CacheArgument::Error("Absolute paths are required for --install-prefix".to_owned())
             }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn unset_cache_entries(cache: &mut Cache, pattern: &str) {
-    use std::ffi::CString;
-    let Ok(pattern) = CString::new(pattern) else {
-        return;
-    };
-    cache.entries.retain(|key, entry| {
-        if entry.kind == CacheType::Static {
-            return true;
-        }
-        let Ok(key) = CString::new(key.as_str()) else {
-            return true;
+            _ => continue,
         };
-        // KWSys cache globs treat backslashes literally and wildcards do
-        // not cross slash boundaries.
-        unsafe {
-            libc::fnmatch(
-                pattern.as_ptr(),
-                key.as_ptr(),
-                libc::FNM_NOESCAPE | libc::FNM_PATHNAME,
-            ) != 0
+        // Arguments after one that does not parse are not processed.
+        let failed = matches!(argument, CacheArgument::Error(_));
+        options.cache_args.push(argument);
+        if failed {
+            break;
         }
-    });
-}
-
-fn validate_project_source(options: &ConfigureOptions, cache_args: &[CacheArg<'_>]) -> bool {
-    let source = Path::new(&options.source_dir);
-    let problem = if !source.exists() {
-        Some("does not exist")
-    } else if !source.is_dir() {
-        Some("is a file, not a directory")
-    } else if !source.join("CMakeLists.txt").exists() {
-        Some("does not appear to contain CMakeLists.txt")
-    } else {
-        None
-    };
-    if let Some(problem) = problem {
-        // The configure pipeline processes initial caches before its project
-        // validation. Preserve the missing-preload diagnostics on this path.
-        let mut preload_paths = options.preload_scripts.iter();
-        for arg in cache_args.iter().filter(|arg| arg.name == "-C") {
-            if let Some(file) = preload_paths.next() {
-                println!("loading initial cache file {}", arg.value);
-                if !Path::new(file).is_file() {
-                    cmcmd::error(format!("Not a file: {file}"));
-                    cmcmd::error(format!("Error processing file: {file}"));
-                }
-            }
-        }
-        cmcmd::error(format!(
-            "The source directory \"{}\" {problem}.\nSpecify --help for usage, or press the help button on the CMake GUI.",
-            options.source_dir
-        ));
-        return false;
     }
-    true
 }
 
 fn normalize_script_args(argv: &mut Vec<String>) {
@@ -1475,59 +1414,6 @@ fn add_definition(cache: &mut Cache, definition: &CacheDefinition) {
         Some("No help, variable specified on the command line."),
         definition.kind.unwrap_or(CacheType::Uninitialized),
     );
-}
-
-fn apply_cache_view_args(
-    cache: &mut Cache,
-    args: &[CacheArg<'_>],
-    options: &ConfigureOptions,
-    cwd: &str,
-) -> i32 {
-    let mut result = 0;
-    let mut definitions = options.definitions.iter();
-    for CacheArg { name, value } in args {
-        match *name {
-            "-D" => {
-                if let Some(definition) = definitions.next() {
-                    add_definition(cache, definition);
-                }
-            }
-            "-U" => unset_cache_entries(cache, value),
-            "--toolchain" => cache.add(
-                "CMAKE_TOOLCHAIN_FILE",
-                Some(value),
-                Some("No help, variable specified on the command line."),
-                CacheType::Filepath,
-            ),
-            "--install-prefix" => cache.add(
-                "CMAKE_INSTALL_PREFIX",
-                Some(value),
-                Some("No help, variable specified on the command line."),
-                CacheType::Path,
-            ),
-            "-C" => {
-                let file = util::collapse_full_path(value, cwd);
-                println!("loading initial cache file {value}");
-                let Some(root) = configure::find_cmake_root() else {
-                    cmcmd::error("Could not find CMAKE_ROOT !!!");
-                    return 1;
-                };
-                let mut interp = Interp::new(
-                    Mode::Project,
-                    &options.source_dir,
-                    &options.binary_dir,
-                    &root,
-                );
-                interp.cache = std::mem::take(cache);
-                configure::add_default_definitions(&mut interp);
-                configure::add_cmake_paths(&mut interp);
-                result |= i32::from(read_script(&mut interp, &file, cwd, false) != 0);
-                *cache = interp.cache;
-            }
-            _ => {}
-        }
-    }
-    result
 }
 
 /// `cmake::FindPackage`: run CMakeFindPackageMode.cmake in a find-package
@@ -1755,7 +1641,7 @@ fn run_script_mode(
                     break;
                 }
             },
-            "-U" => unset_cache_entries(&mut interp.cache, value),
+            "-U" => configure::unset_cache_entries(&mut interp.cache, value),
             "-C" => {
                 println!("loading initial cache file {value}");
                 result = read_script(

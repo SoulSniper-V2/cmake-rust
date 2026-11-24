@@ -696,9 +696,24 @@ fn shell_with_make_vars(text: &str) -> String {
     escape_for_shell(text, NINJA_UNIX | FLAG_ALLOW_MAKE_VARIABLES)
 }
 
+/// `cmLocalGenerator::AppendFlagEscape`'s escaping.
+fn shell_flag(text: &str) -> String {
+    escape_for_shell(text, NINJA_UNIX | unescape_configuration())
+}
+
+/// `IsNinjaMulti`: a Multi-Config command line may refer to the
+/// configuration through `${CONFIGURATION}`.
+pub(crate) fn unescape_configuration() -> u32 {
+    if super::ninja::MULTI_CONFIG.get() {
+        crate::outconv::FLAG_UNESCAPE_NINJA_CONFIGURATION
+    } else {
+        0
+    }
+}
+
 fn append_options(flags: &mut String, options: impl IntoIterator<Item = String>) {
     for option in options {
-        append(flags, &shell(&option));
+        append(flags, &shell_flag(&option));
     }
 }
 

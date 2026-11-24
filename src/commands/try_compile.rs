@@ -1379,12 +1379,21 @@ fn str_error(code: i32) -> String {
         .into_owned()
 }
 
-/// `cmCoreTryCompile::FindOutputFile` — multi-config always false (Ninja).
-fn find_output_file(tc: &mut TryCompile, target_name: &str) {
+/// `cmCoreTryCompile::FindOutputFile`.
+fn find_output_file(interp: &Interp, tc: &mut TryCompile, target_name: &str) {
     tc.find_error_message.clear();
     tc.output_file.clear();
     let mut tmp_output_file = format!("/{target_name}");
-    // Single-config generator: no per-config suffix.
+    if interp.ext.multi_config {
+        let config = interp.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
+        let config = if config.is_empty() {
+            TRY_COMPILE_DEFAULT_CONFIG.to_owned()
+        } else {
+            upper_case(&config)
+        };
+        tmp_output_file.push('_');
+        tmp_output_file.push_str(&config);
+    }
     tmp_output_file.push_str("_loc");
 
     let command = format!("{}{tmp_output_file}", tc.binary_directory);
@@ -1747,9 +1756,13 @@ fn emit_test_project(
     out.push_str(")\n");
 
     /* Write out the output location of the target we are building */
-    // Ninja is single-config: no per-config generator expression.
+    let per_config = if interp.ext.multi_config {
+        "_$<UPPER_CASE:$<CONFIG>>"
+    } else {
+        ""
+    };
     out.push_str(&format!(
-        "file(GENERATE OUTPUT \"${{CMAKE_BINARY_DIR}}/{target_name}_loc\"\n"
+        "file(GENERATE OUTPUT \"${{CMAKE_BINARY_DIR}}/{target_name}{per_config}_loc\"\n"
     ));
     out.push_str(&format!("     CONTENT $<TARGET_FILE:{target_name}>)\n"));
 
@@ -2385,7 +2398,7 @@ fn try_compile_code(
 
     if tc.src_file_signature {
         let mut copy_file_error_message = String::new();
-        find_output_file(tc, &target_name);
+        find_output_file(interp, tc, &target_name);
 
         if res == 0
             && let Some(copy_file) = &args.copy_file_to

@@ -84,7 +84,18 @@ impl Build {
 
 /// `cmGlobalNinjaGenerator::EncodeLiteral`.
 pub fn encode_literal(text: &str) -> String {
-    text.replace('$', "$$").replace('\n', "$\n")
+    let encoded = text.replace('$', "$$").replace('\n', "$\n");
+    if MULTI_CONFIG.get() {
+        // The CMAKE_CFG_INTDIR reference stays a Ninja variable.
+        encoded.replace("$${CONFIGURATION}", "${CONFIGURATION}")
+    } else {
+        encoded
+    }
+}
+
+thread_local! {
+    /// `cmGlobalNinjaGenerator::IsMultiConfig` of the generator in use.
+    pub static MULTI_CONFIG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// `cmGlobalNinjaGenerator::EncodePath`.
@@ -4849,7 +4860,13 @@ impl<'a> NinjaGenerator<'a> {
             if argv[0].is_empty() {
                 continue;
             }
-            let mut line = format!("{launcher}{}", self.shell(&argv[0]));
+            let program = outconv::escape_for_shell(
+                &argv[0],
+                outconv::NINJA_UNIX
+                    | outconv::FLAG_ALLOW_MAKE_VARIABLES
+                    | flags::unescape_configuration(),
+            );
+            let mut line = format!("{launcher}{program}");
             evaluated.append_arguments(&self.ctx, index, &mut line);
             lines.push(line);
         }

@@ -122,7 +122,7 @@ pub(super) fn bom(data: &[u8]) -> (usize, &'static str) {
     (0, "")
 }
 
-pub(super) fn write_configured(path: &str, data: &[u8]) -> io::Result<()> {
+fn write_configured(path: &str, data: &[u8]) -> io::Result<()> {
     let temp = format!("{path}.tmp");
     if let Some(parent) = Path::new(path).parent() {
         fs::create_dir_all(parent)?;
@@ -316,7 +316,14 @@ pub(super) fn configure_file_core(
     } else {
         configure_text(interp, &data, newline, true, at_only, escape_quotes)
     };
-    if let Err(error) = write_configured(&output, &data) {
+    // Only a configured output goes through `<output>.tmp`; a copy
+    // (`cmSystemTools::CopyFileIfDifferent`) leaves such a file alone.
+    let written = if copy_only {
+        crate::fsutil::write_if_different(Path::new(&output), &data)
+    } else {
+        write_configured(&output, &data)
+    };
+    if let Err(error) = written {
         if copy_only {
             interp.issue(
                 MessageType::FatalError,

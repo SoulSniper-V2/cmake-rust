@@ -206,7 +206,7 @@ fn split_root(path: &str) -> (&str, &str) {
     }
 }
 
-pub(super) fn collapse(path: &str, base: &str) -> String {
+pub fn collapse(path: &str, base: &str) -> String {
     let path = path.replace('\\', "/");
     let base = base.replace('\\', "/");
     let expand_home = |path: String| {
@@ -260,7 +260,7 @@ pub(super) fn split_search_path(path: &str) -> Vec<&str> {
     values
 }
 
-pub(super) fn collapse_from_cwd(path: &str) -> String {
+pub fn collapse_from_cwd(path: &str) -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     collapse(path, &cwd.to_string_lossy())
 }

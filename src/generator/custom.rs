@@ -598,8 +598,8 @@ impl EvaluatedCommand {
             } else {
                 0
             }
-            | if ctx.multi_config {
-                // cmOutputConverter::NINJAMULTI
+            | if self.escape_allow_make_vars && ctx.multi_config {
+                // MakeVars && IsNinjaMulti()
                 crate::outconv::FLAG_UNESCAPE_NINJA_CONFIGURATION
             } else {
                 0
@@ -632,7 +632,10 @@ impl EvaluatedCommand {
         } else {
             &self.working_directory
         };
-        let mut lines = vec![format!("cd {}", escape_for_shell(directory, flags))];
+        let mut lines = vec![format!(
+            "cd {}",
+            escape_for_shell(directory, NINJA_UNIX | FLAG_ALLOW_MAKE_VARIABLES)
+        )];
         for (index, argv) in self.command_lines.iter().enumerate() {
             if argv[0].is_empty() {
                 continue;

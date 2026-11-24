@@ -56,6 +56,7 @@ use crate::interp::Interp;
 /// success.
 pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let multi_config = interp.get_def("CMAKE_GENERATOR") == Some("Ninja Multi-Config");
+    ninja::MULTI_CONFIG.set(multi_config);
     if multi_config {
         // cmGlobalNinjaMultiGenerator::InspectConfigTypeVariables.
         let mut config_list: Vec<String> = interp

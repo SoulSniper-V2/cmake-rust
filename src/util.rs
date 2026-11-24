@@ -294,32 +294,11 @@ pub fn is_full_path(path: &str) -> bool {
 /// `base` and normalizes `.`/`..` components lexically (no symlink
 /// resolution), matching kwsys `CollapseFullPath`.
 pub fn collapse_full_path(path: &str, base: &str) -> String {
-    let joined = if path.starts_with('/') {
-        path.to_owned()
-    } else if let Some(rest) = path.strip_prefix('~') {
-        let home = std::env::var("HOME").unwrap_or_default();
-        format!("{home}{rest}")
-    } else if base.is_empty() {
-        let cwd = std::env::current_dir()
-            .map(|dir| dir.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        format!("{cwd}/{path}")
+    if base.is_empty() {
+        crate::commands::legacy_fs::collapse_from_cwd(path)
     } else {
-        format!("{base}/{path}")
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for part in joined.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            other => parts.push(other),
-        }
+        crate::commands::legacy_fs::collapse(path, base)
     }
-    let mut out = String::from("/");
-    out.push_str(&parts.join("/"));
-    out
 }
 
 /// `cmSystemTools::IsSubDirectory(cSubdir, cDir)`.
