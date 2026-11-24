@@ -1188,5 +1188,27 @@
   "inspect": [
    "b/.cmake/instrumentation-a37d1069-1972-4901-b9c9-f194aaf2b6e0/v1/query/generated/query-0.json"
   ]
+ },
+ {
+  "name": "graphviz-missing-directory",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--graphviz=g/sub/deps.dot"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p C)\nadd_library(a STATIC a.c)\nadd_executable(e a.c)\ntarget_link_libraries(e a)\n",
+   "src/a.c": "int main(void){return 0;}\n"
+  },
+  "inspect": [
+   "g/sub/deps.dot",
+   "g/sub/deps.dot.a",
+   "g/sub/deps.dot.e.dependers",
+   "g/sub"
+  ]
  }
 ]
