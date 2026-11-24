@@ -54,11 +54,13 @@ pub fn test_script(ctx: &GenCtx, index: usize) -> String {
         write_test(ctx, &mut out, index, test);
     }
     for &child in &mf.children {
+        // cmLocalGenerator::MaybeRelativeToCurBinDir: a binary directory
+        // outside this one (add_subdirectory(<src> <bin>)) stays relative
+        // while both are under the top binary directory.
         let child_dir = &ctx.interp.makefiles[child].binary_dir;
-        let relative = child_dir
-            .strip_prefix(&format!("{}/", mf.binary_dir))
-            .unwrap_or(child_dir);
-        writeln!(out, "subdirs({})", escape_for_cmake(relative)).unwrap();
+        let relative =
+            crate::generator::custom::maybe_relative_to(ctx, index, &mf.binary_dir, child_dir);
+        writeln!(out, "subdirs({})", escape_for_cmake(&relative)).unwrap();
     }
     let labels = [
         mf.props.get("LABELS").map(str::to_owned),
