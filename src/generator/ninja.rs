@@ -2596,6 +2596,18 @@ impl<'a> NinjaGenerator<'a> {
         if self.has_rule(&name) {
             return;
         }
+        // These languages need generator paths (ISPC headers and object
+        // variants, Swift module/library builds) that are not ported; say so
+        // instead of writing a rule with unexpanded placeholders.
+        if matches!(language, "ISPC" | "Swift") {
+            self.ctx.error(
+                target.backtrace.clone(),
+                format!(
+                    "The target \"{}\" has {language} sources, but cmake-rust does not implement {language} compilation in the Ninja generators.",
+                    target.name
+                ),
+            );
+        }
         let makefile = target.makefile;
         let mut rule = Rule {
             name,
