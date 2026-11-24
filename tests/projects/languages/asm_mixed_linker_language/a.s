@@ -1,0 +1,3 @@
+.globl fa
+fa:
+ ret

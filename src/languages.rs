@@ -50,6 +50,26 @@ fn set_language_enabled_flag(interp: &mut Interp, lang: &str) {
     {
         interp.langs.enabled.insert(position, lang.to_owned());
     }
+    // Filled now for try_compile's source signature, and again by
+    // set_language_enabled_maps for compiler- or platform-specific entries.
+    fill_extension_to_language_map(interp, lang);
+}
+
+/// `cmGlobalGenerator::FillExtensionToLanguageMap`: the language enabled
+/// last claims an extension listed by several (`.s` is ASM-ATT once both ASM
+/// and ASM-ATT are enabled, in that order).
+fn fill_extension_to_language_map(interp: &mut Interp, lang: &str) {
+    if let Some(extensions) = interp
+        .get_def(&format!("CMAKE_{lang}_SOURCE_FILE_EXTENSIONS"))
+        .map(str::to_owned)
+    {
+        for extension in util::expand_list(&extensions, false) {
+            interp
+                .langs
+                .extension_to_language
+                .insert(extension, lang.to_owned());
+        }
+    }
 }
 
 /// `cmGlobalGenerator::SetLanguageEnabledMaps`.
@@ -80,18 +100,7 @@ fn set_language_enabled_maps(interp: &mut Interp, lang: &str) {
                 .insert(format!("{lang}:nodot"), stripped.to_owned());
         }
     }
-    if let Some(extensions) = interp
-        .get_def(&format!("CMAKE_{lang}_SOURCE_FILE_EXTENSIONS"))
-        .map(str::to_owned)
-    {
-        for extension in util::expand_list(&extensions, false) {
-            interp
-                .langs
-                .extension_to_language
-                .entry(extension)
-                .or_insert_with(|| lang.to_owned());
-        }
-    }
+    fill_extension_to_language_map(interp, lang);
     if let Some(ignores) = interp
         .get_def(&format!("CMAKE_{lang}_IGNORE_EXTENSIONS"))
         .map(str::to_owned)

@@ -1,0 +1,3 @@
+.globl fc
+fc:
+ ret

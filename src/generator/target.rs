@@ -2669,7 +2669,7 @@ fn select_linker_language(
     }
     if preferred.len() > 1 {
         let list: Vec<_> = preferred.iter().map(String::as_str).collect();
-        ctx.error(Vec::new(), format!(
+        ctx.error(target.backtrace.clone(), format!(
             "Target {} contains multiple languages with the highest linker preference ({best}):\n  {}\nSet the LINKER_LANGUAGE property for this target.",
             target.name, list.join("\n  ")
         ));
