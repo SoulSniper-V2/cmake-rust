@@ -420,12 +420,15 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         if !generates_for_config(&opts.configurations, &self.config) {
             return;
         }
+        use crate::install_model::Namelink;
         let mut installer = jobj();
         let dest = || genex_at(self.ctx, mf, &opts.destination);
         match &rule.action {
             InstallAction::Target {
                 name,
                 namelink,
+                importlink,
+                implib,
                 imported,
             } => {
                 installer.set("destination", jstr(dest()));
@@ -463,60 +466,37 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     }
                 } else {
                     let names = gt::names(self.ctx, target, &self.config);
-                    let dir =
-                        gt::directory(self.ctx, target, &self.config, gt::ArtifactType::Runtime);
-                    let mut files: Vec<&str> = Vec::new();
-                    if target.kind == TargetKind::Executable {
-                        if names.real != names.output {
-                            files.push(&names.real);
-                        }
-                        files.push(&names.output);
-                    } else {
-                        // `computeFilesToInstall` over (output, sharedObject, real).
-                        let output = &names.output;
-                        let library = &names.shared_object;
-                        let real = &names.real;
-                        let has_soname = !library.is_empty() && library != output;
-                        let has_real = real != output && real != library;
-                        let have_namelink = has_soname || has_real;
-                        use crate::install_model::Namelink;
-                        if have_namelink {
-                            match namelink {
-                                Namelink::Only => {
-                                    installer.set("targetInstallNamelink", jstr("only"));
-                                    files.push(output);
-                                }
-                                mode => {
-                                    if *mode == Namelink::Skip {
-                                        installer.set("targetInstallNamelink", jstr("skip"));
-                                    }
-                                    if has_real {
-                                        files.push(real);
-                                    }
-                                    if has_soname {
-                                        files.push(library);
-                                    }
-                                    if *mode != Namelink::Skip {
-                                        files.push(output);
-                                    }
-                                }
-                            }
-                        } else if *namelink != Namelink::Only {
-                            files.push(output);
-                        }
-                    }
-                    if files.is_empty() {
+                    let (_, _, mode, pairs) = crate::generator::install::target_files(
+                        self.ctx,
+                        target,
+                        &names,
+                        *namelink,
+                        *importlink,
+                        *implib,
+                        &rule.backtrace,
+                    );
+                    if pairs.is_empty() {
                         // `DumpInstaller`: no files means no installer.
                         return;
                     }
-                    for file in files {
-                        let from = relative_if_under(&self.top_build, &format!("{dir}/{file}"));
-                        paths.push(installer_path(&from, file));
+                    for (from, to) in &pairs {
+                        paths.push(installer_path(
+                            &relative_if_under(&self.top_build, from),
+                            to,
+                        ));
+                    }
+                    match mode {
+                        Namelink::None => {}
+                        Namelink::Only => installer.set("targetInstallNamelink", jstr("only")),
+                        Namelink::Skip => installer.set("targetInstallNamelink", jstr("skip")),
                     }
                 }
                 installer.set("paths", paths);
                 if opts.optional {
                     installer.set("isOptional", Json::Bool(true));
+                }
+                if *implib {
+                    installer.set("targetIsImportLibrary", Json::Bool(true));
                 }
             }
             InstallAction::Copy { kind, paths, .. } => {
@@ -659,42 +639,26 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                     installer.set("isOptional", Json::Bool(true));
                 }
             }
-            InstallAction::RuntimeDependencies { set, framework, .. } => {
-                // The library destination generator.
+            InstallAction::RuntimeDependencies { .. } => {
+                // `cmInstallGetRuntimeDependenciesGenerator` is an
+                // implementation detail and is not reported.
+                return;
+            }
+            InstallAction::RuntimeDepSet { kind, set, .. } => {
                 installer.set("type", jstr("runtimeDependencySet"));
                 installer.set("destination", jstr(dest()));
                 let name = set_name(set);
                 if !name.is_empty() {
                     installer.set("runtimeDependencySetName", jstr(name));
                 }
-                installer.set("runtimeDependencySetType", jstr("library"));
-                installer.set("component", jstr(&opts.component));
-                if opts.exclude {
-                    installer.set("isExcludeFromAll", Json::Bool(true));
-                }
-                jbt(graph, &mut installer, &rule.backtrace);
-                installers.push(installer);
-                // The framework destination generator (Apple only).
-                let apple = self
-                    .ctx
-                    .var(mf, "CMAKE_HOST_SYSTEM_NAME")
-                    .is_some_and(|v| v == "Darwin");
-                if let Some(fw) = framework.as_deref().filter(|_| apple) {
-                    let mut fw_installer = jobj();
-                    fw_installer.set("type", jstr("runtimeDependencySet"));
-                    fw_installer.set("destination", jstr(genex_at(self.ctx, mf, &fw.destination)));
-                    if !name.is_empty() {
-                        fw_installer.set("runtimeDependencySetName", jstr(name));
-                    }
-                    fw_installer.set("runtimeDependencySetType", jstr("framework"));
-                    fw_installer.set("component", jstr(&fw.component));
-                    if fw.exclude {
-                        fw_installer.set("isExcludeFromAll", Json::Bool(true));
-                    }
-                    jbt(graph, &mut fw_installer, &rule.backtrace);
-                    installers.push(fw_installer);
-                }
-                return;
+                installer.set(
+                    "runtimeDependencySetType",
+                    jstr(if *kind == crate::install_model::DepSetKind::Framework {
+                        "framework"
+                    } else {
+                        "library"
+                    }),
+                );
             }
             InstallAction::LegacyFiles { args, programs } => {
                 installer.set("type", jstr("file"));

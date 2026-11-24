@@ -686,7 +686,7 @@ pub(super) fn write_install(
         .iter()
         .filter_map(|item| {
             let tgt = ex.find(index, &item.name)?;
-            let kind = if tgt.kind == TargetKind::ObjectLibrary && item.artifact.is_none() {
+            let kind = if tgt.kind == TargetKind::ObjectLibrary && item.objects.is_none() {
                 TargetKind::InterfaceLibrary
             } else {
                 tgt.kind
@@ -696,6 +696,7 @@ pub(super) fn write_install(
                 installed: Some(item),
                 kind,
                 name: format!("{}{}", package.namespace(), export_name(tgt)),
+                xcframework: None,
             })
         })
         .collect();

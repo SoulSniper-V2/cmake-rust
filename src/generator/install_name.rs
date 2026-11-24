@@ -1,7 +1,10 @@
-//! The install name queries of `cmGeneratorTarget` on Apple platforms.
+//! The install name queries of `cmGeneratorTarget` on Apple platforms:
+//! the `INSTALL_NAME_DIR` and rpath-derived install_name directories,
+//! the CMP0068 warn-target bookkeeping of `cmGlobalGenerator`, and the
+//! GNU-to-Microsoft import library name conversion.
 
 use super::ctx::GenCtx;
-use super::target::{ArtifactType, directory, import_info, target_policy};
+use super::target::{ArtifactType, directory, has_import_library, import_info, target_policy};
 use crate::policy::{PolicyStatus, index_of};
 use crate::state::{Target, TargetKind};
 use crate::util::{is_on, is_on_opt};
@@ -11,21 +14,6 @@ fn is_set(ctx: &GenCtx, target: &Target, name: &str) -> bool {
     ctx.var(target.makefile, name).is_some_and(|value| {
         !value.is_empty() && value != "NOTFOUND" && !value.ends_with("-NOTFOUND")
     })
-}
-
-/// `cmGeneratorTarget::MacOSXUseInstallNameDir`.
-pub(super) fn use_install_name_dir(ctx: &GenCtx, target: &Target) -> bool {
-    if let Some(value) = target.props.get("BUILD_WITH_INSTALL_NAME_DIR") {
-        return is_on(value);
-    }
-    let policy = target_policy(ctx, target, index_of("CMP0068").unwrap());
-    if policy == PolicyStatus::New {
-        return false;
-    }
-    target
-        .props
-        .get("BUILD_WITH_INSTALL_RPATH")
-        .is_some_and(is_on)
 }
 
 /// `cmGeneratorTarget::MacOSXRpathInstallNameDirDefault`.
@@ -54,8 +42,11 @@ fn determine_rpath_install_name_dir(ctx: &GenCtx, target: &Target, config: &str)
         if target.kind != TargetKind::SharedLibrary {
             return false;
         }
+        // `MacOSXUseInstallNameDir` runs (and may warn) even without
+        // INSTALL_NAME_DIR.
+        let use_install_name = use_install_name_dir_warn(ctx, target);
         if let Some(name) = target.props.get("INSTALL_NAME_DIR")
-            && use_install_name_dir(ctx, target)
+            && use_install_name
         {
             if name != "@rpath" {
                 return false;
@@ -65,9 +56,16 @@ fn determine_rpath_install_name_dir(ctx: &GenCtx, target: &Target, config: &str)
             macosx_rpath = rpath_install_name_dir_default(ctx, target);
         }
     } else if let Some(info) = import_info(target, config) {
-        // Reading the install name of a library without a known soname needs
-        // a Mach-O parser, which CMake has only on macOS hosts.
-        install_name_is_rpath = !info.no_soname && info.soname.starts_with("@rpath/");
+        // Lookup the imported soname.
+        if !info.no_soname && !info.soname.is_empty() {
+            if info.soname.starts_with("@rpath/") {
+                install_name_is_rpath = true;
+            }
+        } else if guess_install_name(info.location)
+            .is_some_and(|install_name| install_name.contains("@rpath"))
+        {
+            install_name_is_rpath = true;
+        }
     }
     if !install_name_is_rpath && !macosx_rpath {
         return false;
@@ -97,7 +95,7 @@ fn warn_cmp0068(ctx: &GenCtx, target: &Target) {
 }
 
 /// `cmGeneratorTarget::MacOSXUseInstallNameDir`, with the CMP0068 warning.
-fn use_install_name_dir_warn(ctx: &GenCtx, target: &Target) -> bool {
+pub(super) fn use_install_name_dir_warn(ctx: &GenCtx, target: &Target) -> bool {
     if let Some(value) = target.props.get("BUILD_WITH_INSTALL_NAME_DIR") {
         return is_on(value);
     }
@@ -113,7 +111,11 @@ fn use_install_name_dir_warn(ctx: &GenCtx, target: &Target) -> bool {
 }
 
 /// `cmGeneratorTarget::CanGenerateInstallNameDir`.
-fn can_generate_install_name_dir(ctx: &GenCtx, target: &Target, for_install: bool) -> bool {
+pub(super) fn can_generate_install_name_dir(
+    ctx: &GenCtx,
+    target: &Target,
+    for_install: bool,
+) -> bool {
     let policy = target_policy(ctx, target, index_of("CMP0068").unwrap());
     if policy == PolicyStatus::New {
         return true;
@@ -139,7 +141,7 @@ pub(super) fn install_name_dir_for_build_tree(
     target: &Target,
     config: &str,
 ) -> String {
-    if !is_set(ctx, target, "CMAKE_PLATFORM_HAS_INSTALLNAME") {
+    if !is_on(&ctx.var_safe(target.makefile, "CMAKE_PLATFORM_HAS_INSTALLNAME")) {
         return String::new();
     }
     // If building directly for installation then the build tree
@@ -168,7 +170,7 @@ pub(super) fn install_name_dir_for_install_tree(
     config: &str,
     install_prefix: &str,
 ) -> String {
-    if !is_set(ctx, target, "CMAKE_PLATFORM_HAS_INSTALLNAME") {
+    if !is_on(&ctx.var_safe(target.makefile, "CMAKE_PLATFORM_HAS_INSTALLNAME")) {
         return String::new();
     }
     let mut dir = String::new();
@@ -176,9 +178,8 @@ pub(super) fn install_name_dir_for_install_tree(
     if can_generate_install_name_dir(ctx, target, true)
         && let Some(value) = install_name_dir.filter(|value| !value.is_empty())
     {
-        // cmGeneratorExpression::ReplaceInstallPrefix.
-        let value = value.replace("$<INSTALL_PREFIX>", install_prefix);
-        let value = ctx.genex(&value, None, Some(config));
+        let value = crate::genex::replace_install_prefix(value, install_prefix);
+        let value = ctx.for_config(config).genex(&value, Some(target), None);
         if !value.is_empty() {
             dir = format!("{value}/");
         }
@@ -187,4 +188,96 @@ pub(super) fn install_name_dir_for_install_tree(
         dir = "@rpath/".to_owned();
     }
     dir
+}
+
+/// `cmGeneratorTarget::HasImplibGNUtoMS`.
+pub fn has_implib_gnu_to_ms(ctx: &GenCtx, target: &Target, config: &str) -> bool {
+    has_import_library(ctx, target, config) && is_on_opt(target.props.get("GNUtoMS"))
+}
+
+/// `cmGeneratorTarget::GetImplibGNUtoMS`: the Microsoft-style import
+/// library name for a GNU import library name, when the target's
+/// `GNUtoMS` conversion applies.
+pub fn implib_gnu_to_ms(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    gnu_name: &str,
+    new_ext: Option<&str>,
+) -> Option<String> {
+    if has_implib_gnu_to_ms(ctx, target, config)
+        && gnu_name.len() > ".dll.a".len()
+        && let Some(base) = gnu_name.strip_suffix(".dll.a")
+    {
+        return Some(format!("{base}{}", new_ext.unwrap_or(".lib")));
+    }
+    None
+}
+
+/// `cmSystemTools::GuessLibraryInstallName`: the install_name recorded
+/// by a Mach-O binary's `LC_ID_DYLIB` load command.
+fn guess_install_name(path: &str) -> Option<String> {
+    use std::io::Read as _;
+    let mut data = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(1 << 20)
+        .read_to_end(&mut data)
+        .ok()?;
+    mach_o_install_name(&data, 0)
+}
+
+/// The `LC_ID_DYLIB` name of the Mach-O binary at `offset` in `data`.
+fn mach_o_install_name(data: &[u8], offset: usize) -> Option<String> {
+    let data = data.get(offset..)?;
+    let magic = u32::from_be_bytes(data.get(..4)?.try_into().ok()?);
+    let (little, is64) = match magic {
+        0xFEEDFACE | 0xCEFAEDFE => (magic == 0xCEFAEDFE, false),
+        0xFEEDFACF | 0xCFFAEDFE => (magic == 0xCFFAEDFE, true),
+        // A fat binary: inspect its first architecture.
+        0xCAFEBABE | 0xCAFEBABF => {
+            let u32be = |at: usize| -> Option<u32> {
+                Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))
+            };
+            if u32be(4)? == 0 {
+                return None;
+            }
+            let offset = if magic == 0xCAFEBABE {
+                u32be(16)? as usize
+            } else {
+                let high = u32be(16)? as usize;
+                (high << 32) | u32be(20)? as usize
+            };
+            return mach_o_install_name(data, offset);
+        }
+        _ => return None,
+    };
+    let u32x = |at: usize| -> Option<u32> {
+        let bytes: [u8; 4] = data.get(at..at + 4)?.try_into().ok()?;
+        Some(if little {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        })
+    };
+    let ncmds = u32x(16)? as usize;
+    let mut at = if is64 { 32 } else { 28 };
+    const LC_ID_DYLIB: u32 = 0x0D;
+    for _ in 0..ncmds {
+        let cmd = u32x(at)?;
+        let cmdsize = u32x(at + 4)? as usize;
+        if cmdsize < 8 {
+            return None;
+        }
+        if cmd == LC_ID_DYLIB {
+            // struct dylib_command: lc_str name at cmd+8; the install
+            // name is the NUL-terminated string at cmd + name.offset.
+            let name_offset = u32x(at + 8)? as usize;
+            let name_at = at.checked_add(name_offset)?;
+            let end = data.get(name_at..)?.iter().position(|b| *b == 0)? + name_at;
+            return String::from_utf8(data.get(name_at..end)?.to_vec()).ok();
+        }
+        at = at.checked_add(cmdsize)?;
+    }
+    None
 }

@@ -214,6 +214,8 @@ fn model(fixture: &Fixture) -> Interp {
                         action: InstallAction::Target {
                             name: name.clone(),
                             namelink: Namelink::None,
+                            importlink: Namelink::None,
+                            implib: false,
                             imported: false,
                         },
                         preceding_children: 0,

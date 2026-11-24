@@ -9,12 +9,12 @@ use std::path::Path;
 
 use md5::{Digest, Md5};
 
-use super::{ctx::GenCtx, genex_host::CtxHost, install::*, target};
+use super::{ctx::GenCtx, genex_host::CtxHost, install::*, install_name, target};
 use crate::fsutil::write_if_different;
 use crate::genex;
 use crate::install_model::{
     BuildExport, CopyKind, ExportOptions, ExportSet, ExportTarget, InstallAction, InstallExport,
-    InstallRule,
+    InstallOptions, InstallRule,
 };
 use crate::messages::Frame;
 use crate::state::{FileSet, Target, TargetKind};
@@ -193,6 +193,8 @@ pub(super) struct Record<'a> {
     pub kind: TargetKind,
     /// Namespace + export name.
     pub name: String,
+    /// `cmTargetExport::XcFrameworkLocation` (`export(SETUP)`).
+    pub xcframework: Option<&'a str>,
 }
 
 pub(super) struct ExportInfo {
@@ -1270,9 +1272,11 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 failed = true;
                 return;
             }
+            // `GetExportTargetType`: an OBJECT library installed with no
+            // OBJECTS DESTINATION is transformed to an INTERFACE library.
             let kind = if self.installed
                 && tgt.kind == TargetKind::ObjectLibrary
-                && item.is_some_and(|item| item.artifact.is_none())
+                && item.is_some_and(|item| item.objects.is_none())
             {
                 TargetKind::InterfaceLibrary
             } else {
@@ -1286,6 +1290,9 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 installed: item,
                 kind,
                 name: format!("{}{}", self.namespace, export_name(tgt)),
+                xcframework: item
+                    .and_then(|item| set.and_then(|set| set.xcframework_locations.get(&item.name)))
+                    .map(String::as_str),
             });
         };
         if let Some(set) = set {
@@ -1322,6 +1329,8 @@ impl<'a, 'b> Exporter<'a, 'b> {
             else {
                 continue;
             };
+            // `GetImportXcFrameworkLocation`.
+            let xcframework = self.xcframework_location(record, config);
             // `SetImportLinkInterface` (old-style).
             self.link_interface(config, &suffix, tgt, &mut properties);
             // `GenerateImportPropertyCode`.
@@ -1330,11 +1339,51 @@ impl<'a, 'b> Exporter<'a, 'b> {
                 "# Import target \"{name}\" for configuration \"{config}\"\nset_property(TARGET {name} APPEND PROPERTY IMPORTED_CONFIGURATIONS {upper})\nset_target_properties({name} PROPERTIES"
             )
             .unwrap();
-            write_properties(out, &properties);
-            out.push_str("  )\n\n");
+            // An XCFramework location replaces the ordinary
+            // IMPORTED_LOCATION with a conditional pick below.
+            let location_prop = format!("IMPORTED_LOCATION{suffix}");
+            for (key, value) in &properties {
+                if !xcframework.is_empty() && *key == location_prop {
+                    continue;
+                }
+                writeln!(out, "  {key} {}", export_escape(value)).unwrap();
+            }
+            out.push_str("  )\n");
+            if !xcframework.is_empty()
+                && let Some(original) = properties.get(&location_prop)
+            {
+                writeln!(
+                    out,
+                    "if(NOT CMAKE_VERSION VERSION_LESS \"3.28\" AND IS_DIRECTORY {})",
+                    export_escape(&xcframework)
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "  set_property(TARGET {name} PROPERTY {location_prop} {})",
+                    export_escape(&xcframework)
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "else()\n  set_property(TARGET {name} PROPERTY {location_prop} {})",
+                    export_escape(original)
+                )
+                .unwrap();
+                out.push_str("endif()\n");
+            }
+            out.push('\n');
             // `GenerateImportedFileChecksCode`.
-            if self.installed && !locations.is_empty() {
+            if self.installed {
                 writeln!(out, "list(APPEND _cmake_import_check_targets {name} )").unwrap();
+                if !xcframework.is_empty() {
+                    writeln!(
+                        out,
+                        "set(_cmake_import_check_xcframework_for_{name} {})",
+                        export_escape(&xcframework)
+                    )
+                    .unwrap();
+                }
                 write!(out, "list(APPEND _cmake_import_check_files_for_{name} ").unwrap();
                 for prop in &locations {
                     if let Some(value) = properties.get(prop) {
@@ -1358,58 +1407,87 @@ impl<'a, 'b> Exporter<'a, 'b> {
         let tgt = record.target;
         let mut properties = BTreeMap::new();
         let mut locations = BTreeSet::new();
-        let artifact = record.installed.and_then(|item| {
-            if item.namelink_only {
-                item.namelink.as_ref()
-            } else {
-                item.artifact.as_ref()
+        if self.installed {
+            // `cmExportInstallFileGenerator::PopulateImportProperties`: one
+            // `SetImportLocationProperty` call per install generator.
+            if let Some(item) = record.installed {
+                // `IsImportLibrary`: the ARCHIVE generator installs the
+                // import library of shared libraries and of executables
+                // with exports; only static libraries install the real
+                // artifact through it.
+                let implib = matches!(tgt.kind, TargetKind::SharedLibrary | TargetKind::Executable);
+                for (itgen, implib) in [
+                    (item.archive.as_ref(), implib),
+                    (item.library.as_ref(), false),
+                    (item.runtime.as_ref(), false),
+                    (item.objects.as_ref(), false),
+                    (item.framework.as_ref(), false),
+                    (item.bundle.as_ref(), false),
+                ] {
+                    self.set_import_location_property(
+                        tgt,
+                        itgen,
+                        implib,
+                        config,
+                        suffix,
+                        &mut properties,
+                        &mut locations,
+                    );
+                }
             }
-        });
-        if self.installed
-            && artifact.is_none_or(|arg| {
-                !arg.configurations.is_empty()
-                    && !arg
-                        .configurations
-                        .iter()
-                        .any(|c| c.eq_ignore_ascii_case(config))
-            })
-        {
-            return None;
-        }
-        // `SetImportLocationProperty`.
-        if tgt.kind == TargetKind::ObjectLibrary {
-            let base = if let Some(arg) = artifact.filter(|_| self.installed) {
-                let dest = self.eval(&arg.destination, tgt, config).0;
-                let mut value = String::new();
-                if !is_full_path(&dest) {
-                    value.push_str(self.import_prefix_slash());
-                }
-                format!("{value}{dest}/{}/", object_subdir(tgt, config))
-            } else {
-                target::object_directory(self.ctx, tgt, config)
-            };
-            let files: Vec<String> = object_names(self.ctx, tgt)
-                .iter()
-                .map(|name| format!("{base}{name}"))
-                .collect();
-            let prop = format!("IMPORTED_OBJECTS{suffix}");
-            properties.insert(prop.clone(), files.join(";"));
-            locations.insert(prop);
         } else {
-            let names = target::names(self.ctx, tgt, config);
-            let location = if let Some(arg) = artifact.filter(|_| self.installed) {
-                let dest = self.eval(&arg.destination, tgt, config).0;
-                let mut value = String::new();
-                if !is_full_path(&dest) {
-                    value.push_str(self.import_prefix_slash());
-                }
-                format!("{value}{dest}/{}", names.real)
+            // `cmExportBuildFileGenerator::SetImportLocationProperty`.
+            if tgt.kind == TargetKind::ObjectLibrary {
+                let prop = format!("IMPORTED_OBJECTS{suffix}");
+                let base = target::object_directory(self.ctx, tgt, config);
+                let files: Vec<String> = object_names(self.ctx, tgt)
+                    .iter()
+                    .map(|name| format!("{base}{name}"))
+                    .collect();
+                properties.insert(prop.clone(), files.join(";"));
+                locations.insert(prop);
             } else {
-                target::full_path(self.ctx, tgt, config, target::ArtifactType::Runtime, true)
-            };
-            let prop = format!("IMPORTED_LOCATION{suffix}");
-            properties.insert(prop.clone(), location);
-            locations.insert(prop);
+                // The main target file; application bundles take the
+                // non-real path because the bundle directory is part of it.
+                let prop = format!("IMPORTED_LOCATION{suffix}");
+                let location = target::full_path(
+                    self.ctx,
+                    tgt,
+                    config,
+                    target::ArtifactType::Runtime,
+                    !tgt.is_app_bundle_on_apple(),
+                );
+                properties.insert(prop.clone(), location);
+                locations.insert(prop);
+                // Add the import library for windows DLLs.
+                if target::has_import_library(self.ctx, tgt, config) {
+                    let prop = format!("IMPORTED_IMPLIB{suffix}");
+                    let mut value = target::full_path(
+                        self.ctx,
+                        tgt,
+                        config,
+                        target::ArtifactType::Import,
+                        true,
+                    );
+                    // `cmGeneratorTarget::GetImplibGNUtoMS`.
+                    if self
+                        .ctx
+                        .var(tgt.makefile, "CMAKE_IMPORT_LIBRARY_SUFFIX")
+                        .is_some()
+                        && let Some(converted) = install_name::implib_gnu_to_ms(
+                            self.ctx,
+                            tgt,
+                            config,
+                            &value,
+                            Some("${CMAKE_IMPORT_LIBRARY_SUFFIX}"),
+                        )
+                    {
+                        value = converted;
+                    }
+                    properties.insert(prop.clone(), value);
+                    locations.insert(prop);
+                }
+            }
         }
         if properties.is_empty() {
             return None;
@@ -1417,6 +1495,133 @@ impl<'a, 'b> Exporter<'a, 'b> {
         // `SetImportDetailProperties`.
         self.detail_properties(record, config, suffix, &mut properties);
         Some((properties, locations))
+    }
+
+    /// `cmExportInstallFileGenerator::SetImportLocationProperty`: the
+    /// location properties one install generator (`itgen`) contributes.
+    #[allow(clippy::too_many_arguments)]
+    fn set_import_location_property(
+        &self,
+        tgt: &Target,
+        itgen: Option<&InstallOptions>,
+        implib: bool,
+        config: &str,
+        suffix: &str,
+        properties: &mut BTreeMap<String, String>,
+        locations: &mut BTreeSet<String>,
+    ) {
+        // Skip rules that do not match this configuration.
+        let Some(itgen) = itgen.filter(|itgen| generates_for_config(&itgen.configurations, config))
+        else {
+            return;
+        };
+        // Construct the installed location of the target.
+        let dest = self.eval(&itgen.destination, tgt, config).0;
+        let mut value = String::new();
+        if !is_full_path(&dest) {
+            value.push_str(self.import_prefix_slash());
+        }
+        value.push_str(&dest);
+        value.push('/');
+        if implib {
+            let prop = format!("IMPORTED_IMPLIB{suffix}");
+            value.push_str(&install_filename(
+                self.ctx,
+                tgt,
+                config,
+                InstallFilename::ImplibReal,
+            ));
+            properties.insert(prop.clone(), value);
+            locations.insert(prop);
+        } else if tgt.kind == TargetKind::ObjectLibrary {
+            let prop = format!("IMPORTED_OBJECTS{suffix}");
+            // `GetInstallObjectNames`: each object below the per-config
+            // `computeInstallObjectDir` subdirectory.
+            let files: Vec<String> = object_names(self.ctx, tgt)
+                .iter()
+                .map(|name| format!("{value}{}/{name}", object_subdir(tgt, config)))
+                .collect();
+            properties.insert(prop.clone(), files.join(";"));
+            locations.insert(prop);
+        } else {
+            if tgt.is_framework_on_apple() && target::has_import_library(self.ctx, tgt, config) {
+                // Store as well the implib that lives inside the framework.
+                let prop = format!("IMPORTED_IMPLIB{suffix}");
+                properties.insert(
+                    prop.clone(),
+                    format!(
+                        "{value}{}",
+                        install_filename(self.ctx, tgt, config, InstallFilename::ImplibReal)
+                    ),
+                );
+                locations.insert(prop);
+            }
+            let prop = format!("IMPORTED_LOCATION{suffix}");
+            if tgt.is_app_bundle_on_apple() {
+                value.push_str(&install_filename(
+                    self.ctx,
+                    tgt,
+                    config,
+                    InstallFilename::Normal,
+                ));
+                value.push_str(".app/");
+                if !target::apple_embedded(self.ctx, tgt) {
+                    value.push_str("Contents/MacOS/");
+                }
+                value.push_str(&install_filename(
+                    self.ctx,
+                    tgt,
+                    config,
+                    InstallFilename::Normal,
+                ));
+            } else {
+                value.push_str(&install_filename(
+                    self.ctx,
+                    tgt,
+                    config,
+                    InstallFilename::Real,
+                ));
+            }
+            properties.insert(prop.clone(), value);
+            locations.insert(prop);
+        }
+    }
+
+    /// `cmExportInstallFileGenerator::GetImportXcFrameworkLocation` and the
+    /// build-tree equivalent in `cmExportBuildCMakeConfigGenerator`'s
+    /// `GenerateImportTargetsConfig`.
+    fn xcframework_location(&self, record: &Record<'_>, config: &str) -> String {
+        let Some(mut location) = record.xcframework.map(str::to_owned) else {
+            return String::new();
+        };
+        if location.is_empty() {
+            return location;
+        }
+        if self.installed {
+            location = genex::preprocess(
+                &location,
+                genex::PreprocessContext::InstallInterface,
+                self.import_prefix_slash(),
+            );
+            location = self.eval(&location, record.target, config).0;
+            if !location.is_empty()
+                && !is_full_path(&location)
+                && !location.starts_with(self.import_prefix_slash())
+            {
+                return format!("{}{location}", self.import_prefix_slash());
+            }
+        } else {
+            location = genex::preprocess(&location, genex::PreprocessContext::BuildInterface, "");
+            location = self.eval(&location, record.target, config).0;
+            if !location.is_empty() && !is_full_path(&location) {
+                // `LG->GetCurrentBinaryDirectory()`.
+                location = format!(
+                    "{}/{location}",
+                    self.ctx.interp.makefiles[self.error_dir].binary_dir
+                );
+            }
+        }
+        location
     }
 
     /// `SetImportDetailProperties`.
@@ -1428,13 +1633,35 @@ impl<'a, 'b> Exporter<'a, 'b> {
         props: &mut BTreeMap<String, String>,
     ) {
         let tgt = record.target;
+        // Add the soname for unix shared libraries.
         if matches!(
             tgt.kind,
             TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-        ) {
+        ) && !tgt.platform.dll
+        {
             let names = target::names(self.ctx, tgt, config);
             if target::has_soname(self.ctx, tgt, config) {
-                props.insert(format!("IMPORTED_SONAME{suffix}"), names.shared_object);
+                let mut value = String::new();
+                if is_on(
+                    &self
+                        .ctx
+                        .var_safe(tgt.makefile, "CMAKE_PLATFORM_HAS_INSTALLNAME"),
+                ) {
+                    // `cmExportInstallFileGenerator::InstallNameDir` /
+                    // `cmExportBuildFileGenerator::InstallNameDir`.
+                    value = if self.installed {
+                        install_name::install_name_dir_for_install_tree(
+                            self.ctx,
+                            tgt,
+                            config,
+                            self.import_prefix(),
+                        )
+                    } else {
+                        install_name::install_name_dir_for_build_tree(self.ctx, tgt, config)
+                    };
+                }
+                value.push_str(&names.shared_object);
+                props.insert(format!("IMPORTED_SONAME{suffix}"), value);
             } else {
                 props.insert(format!("IMPORTED_NO_SONAME{suffix}"), "TRUE".into());
             }
@@ -1630,6 +1857,40 @@ impl<'a, 'b> Exporter<'a, 'b> {
 fn write_properties(out: &mut String, properties: &BTreeMap<String, String>) {
     for (key, value) in properties {
         writeln!(out, "  {key} {}", export_escape(value)).unwrap();
+    }
+}
+
+/// `cmInstallTargetGenerator::NameType` values the export writers use.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InstallFilename {
+    Normal,
+    Real,
+    Implib,
+    ImplibReal,
+}
+
+/// `cmInstallTargetGenerator::GetInstallFilename`, including the
+/// `GNUtoMS` import-library name conversion.
+fn install_filename(ctx: &GenCtx, tgt: &Target, config: &str, kind: InstallFilename) -> String {
+    let names = target::names(ctx, tgt, config);
+    match kind {
+        InstallFilename::Normal => names.output,
+        InstallFilename::Real => names.real,
+        InstallFilename::Implib | InstallFilename::ImplibReal => {
+            let name = if kind == InstallFilename::Implib {
+                names.import_library
+            } else {
+                names.import_real
+            };
+            install_name::implib_gnu_to_ms(
+                ctx,
+                tgt,
+                config,
+                &name,
+                Some("${CMAKE_IMPORT_LIBRARY_SUFFIX}"),
+            )
+            .unwrap_or(name)
+        }
     }
 }
 
@@ -1873,7 +2134,7 @@ fn write_target_file_sets(ex: &Exporter<'_, '_>, out: &mut String, record: &Reco
 }
 
 /// `GenerateImportTargetCode`.
-fn import_target_code(out: &mut String, record: &Record<'_>) {
+fn import_target_code(ctx: &GenCtx, out: &mut String, record: &Record<'_>) {
     let tgt = record.target;
     let name = &record.name;
     writeln!(out, "# Create imported target {name}").unwrap();
@@ -1892,8 +2153,30 @@ fn import_target_code(out: &mut String, record: &Record<'_>) {
             writeln!(out, "add_library({name} {k} IMPORTED)").unwrap();
         }
     }
-    if exe_with_exports(tgt) {
+    // Mark the imported executable if it has exports.
+    if exe_with_exports(tgt)
+        || (tgt.is_shared_library_with_exports() && target::has_import_library(ctx, tgt, ""))
+    {
         writeln!(out, "set_property(TARGET {name} PROPERTY ENABLE_EXPORTS 1)").unwrap();
+    }
+    // Mark the imported library if it is a framework.
+    if tgt.is_framework_on_apple() {
+        writeln!(out, "set_property(TARGET {name} PROPERTY FRAMEWORK 1)").unwrap();
+    }
+    // Mark the imported executable if it is an application bundle.
+    if tgt.is_app_bundle_on_apple() {
+        writeln!(out, "set_property(TARGET {name} PROPERTY MACOSX_BUNDLE 1)").unwrap();
+    }
+    if tgt.is_cf_bundle_on_apple() {
+        writeln!(out, "set_property(TARGET {name} PROPERTY BUNDLE 1)").unwrap();
+    }
+    // Mark the imported library if it is an AIX shared library archive.
+    if tgt.is_archived_aix_shared_library() {
+        writeln!(
+            out,
+            "set_property(TARGET {name} PROPERTY AIX_SHARED_LIBRARY_ARCHIVE 1)"
+        )
+        .unwrap();
     }
     if let Some(value) = tgt.props.get("DEPRECATION").filter(|v| !v.is_empty()) {
         writeln!(
@@ -1919,7 +2202,7 @@ fn import_target_code(out: &mut String, record: &Record<'_>) {
 /// `PopulateInterfaceProperties` + `GenerateInterfaceProperties` +
 /// `GenerateTargetFileSets` for one record.
 fn write_target(ex: &mut Exporter<'_, '_>, out: &mut String, record: &Record<'_>) {
-    import_target_code(out, record);
+    import_target_code(ex.ctx, out, record);
     let props = ex.populate_interface_props(record);
     if !props.is_empty() {
         writeln!(out, "set_target_properties({} PROPERTIES", record.name).unwrap();
@@ -2391,12 +2674,14 @@ fn write_install_android_mk<'a>(
         "/..".repeat(depth)
     );
     for record in &records {
-        // The `__dest` property: the archive destination, else the library one.
+        // The `__dest` property (`GenerateImportHeaderCode`): the library
+        // destination overridden by the archive one when both exist.
         let artifact_dest = record
             .installed
-            .and_then(|item| item.artifact.as_ref())
-            .map(|artifact| artifact.destination.as_str())
-            .unwrap_or_default();
+            .and_then(|item| item.archive.as_ref().or(item.library.as_ref()))
+            .map_or_else(String::new, |opts| {
+                ex.eval(&opts.destination, record.target, "").0
+            });
         let name = super::target::full_name(
             ctx,
             record.target,
@@ -2550,7 +2835,7 @@ pub(super) fn write_install_export(
             .iter()
             .filter_map(|item| {
                 let tgt = ex.find(index, &item.name)?;
-                let kind = if tgt.kind == TargetKind::ObjectLibrary && item.artifact.is_none() {
+                let kind = if tgt.kind == TargetKind::ObjectLibrary && item.objects.is_none() {
                     TargetKind::InterfaceLibrary
                 } else {
                     tgt.kind
@@ -2560,6 +2845,10 @@ pub(super) fn write_install_export(
                     installed: Some(item),
                     kind,
                     name: format!("{}{}", export.options.namespace, export_name(tgt)),
+                    xcframework: set
+                        .xcframework_locations
+                        .get(&item.name)
+                        .map(String::as_str),
                 })
             })
             .collect();
