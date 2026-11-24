@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::commands::string::json::{Json, write_json_stream};
+use crate::commands::string::json::{Json, write_json_ostream};
 use crate::interp::Interp;
 use crate::presets::json as jsoncpp;
 
@@ -388,7 +388,7 @@ impl FileApi {
     /// `ComputeSuffixHash`.
     fn write_json_file(&mut self, value: &Json, prefix: &str, time_suffix: bool) -> String {
         let tmp_file = format!("{}/tmp.json", self.api_v1);
-        let mut text = write_json_stream(value);
+        let mut text = write_json_ostream(value);
         text.push('\n');
         if std::fs::write(&tmp_file, &text).is_err() {
             let _ = std::fs::remove_file(&tmp_file);

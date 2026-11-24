@@ -922,7 +922,10 @@ impl<'a> NinjaGenerator<'a> {
                 .iter()
                 .filter(|global| global.makefile == index)
             {
-                summary.push_str(&format!("{binary}/CMakeFiles/{}.dir\n", global.name));
+                let directory = format!("{binary}/CMakeFiles/{}.dir", global.name);
+                self.write_labels_files(&global.name, None, index, Vec::new(), &directory)?;
+                summary.push_str(&directory);
+                summary.push('\n');
             }
             summarize(after, &mut summary)?;
         }
@@ -4535,13 +4538,52 @@ impl<'a> NinjaGenerator<'a> {
     /// `cmGlobalGenerator::WriteSummary(target)`: Labels.txt/Labels.json in
     /// the target's support directory when any labels apply.
     fn write_labels(&self, target: &Target, directory: &str) -> std::io::Result<()> {
-        use crate::commands::string::json::{Json, write_json_stream};
+        let interp = self.ctx.interp;
+        let mut seen = HashSet::new();
+        let sources = gt::sources(&self.ctx, target, &self.config)
+            .iter()
+            .filter(|source| seen.insert(source.path.clone()))
+            .map(|source| {
+                let labels = crate::commands::target::find_known_source(
+                    interp,
+                    target.makefile,
+                    &source.path,
+                )
+                .and_then(|index| {
+                    interp.ext.sources[&target.makefile][index]
+                        .props
+                        .get("LABELS")
+                        .map(str::to_owned)
+                });
+                (source.path.clone(), labels)
+            })
+            .collect();
+        self.write_labels_files(
+            &target.name,
+            target.props.get("LABELS"),
+            target.makefile,
+            sources,
+            directory,
+        )
+    }
+
+    /// The shared body of `WriteSummary(target)`.  A default global target
+    /// (`edit_cache`, `install`, ...) has no LABELS property and no sources,
+    /// but still gets the files when its directory has labels.
+    fn write_labels_files(
+        &self,
+        name: &str,
+        target_labels: Option<&str>,
+        makefile: usize,
+        sources: Vec<(String, Option<String>)>,
+        directory: &str,
+    ) -> std::io::Result<()> {
+        use crate::commands::string::json::{Json, write_json_ostream};
         let interp = self.ctx.interp;
         let file = format!("{directory}/Labels.txt");
         let json_file = format!("{directory}/Labels.json");
-        let target_labels = target.props.get("LABELS");
-        let directory_labels = interp.makefiles[target.makefile].props.get("LABELS");
-        let cmake_directory_labels = self.ctx.var(target.makefile, "CMAKE_DIRECTORY_LABELS");
+        let directory_labels = interp.makefiles[makefile].props.get("LABELS");
+        let cmake_directory_labels = self.ctx.var(makefile, "CMAKE_DIRECTORY_LABELS");
         if target_labels.is_none() && directory_labels.is_none() && cmake_directory_labels.is_none()
         {
             let _ = std::fs::remove_file(&file);
@@ -4570,24 +4612,12 @@ impl<'a> NinjaGenerator<'a> {
             all_labels.push(text(label));
         }
         out.push_str("# Source files and their labels\n");
-        let mut sources = Vec::new();
-        let mut seen = HashSet::new();
-        for source in gt::sources(&self.ctx, target, &self.config).iter() {
-            if !seen.insert(source.path.clone()) {
-                continue;
-            }
-            out.push_str(&source.path);
+        let mut source_json = Vec::new();
+        for (path, labels) in sources {
+            out.push_str(&path);
             out.push('\n');
             let mut entry = std::collections::BTreeMap::new();
-            entry.insert(b"file".to_vec(), text(&source.path));
-            let labels =
-                crate::commands::target::find_known_source(interp, target.makefile, &source.path)
-                    .and_then(|index| {
-                        interp.ext.sources[&target.makefile][index]
-                            .props
-                            .get("LABELS")
-                            .map(str::to_owned)
-                    });
+            entry.insert(b"file".to_vec(), text(&path));
             if let Some(labels) = labels {
                 let mut list = Vec::new();
                 for label in util::expand_list(&labels, false) {
@@ -4596,20 +4626,20 @@ impl<'a> NinjaGenerator<'a> {
                 }
                 entry.insert(b"labels".to_vec(), Json::Array(list));
             }
-            sources.push(Json::Object(entry));
+            source_json.push(Json::Object(entry));
         }
         let mut target_json = std::collections::BTreeMap::new();
         target_json.insert(b"labels".to_vec(), Json::Array(all_labels));
-        target_json.insert(b"name".to_vec(), text(&target.name));
+        target_json.insert(b"name".to_vec(), text(name));
         let mut root = std::collections::BTreeMap::new();
-        root.insert(b"sources".to_vec(), Json::Array(sources));
+        root.insert(b"sources".to_vec(), Json::Array(source_json));
         root.insert(b"target".to_vec(), Json::Object(target_json));
         let _ = std::fs::create_dir_all(directory);
         // cmGlobalGenerator::WriteSummary: plain cmGeneratedFileStreams.
         crate::fsutil::write_generated(std::path::Path::new(&file), out.as_bytes())?;
         crate::fsutil::write_generated(
             std::path::Path::new(&json_file),
-            write_json_stream(&Json::Object(root)).as_bytes(),
+            write_json_ostream(&Json::Object(root)).as_bytes(),
         )
     }
 

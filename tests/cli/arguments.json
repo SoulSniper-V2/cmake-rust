@@ -1134,5 +1134,23 @@
   "files": {
    "check.cmake": "file(STRINGS r.txt lines REGEX \"^(CMAKE_GENERATOR|CMAKE_MAKE_PROGRAM|RESULT_FILE|PROJECT_NAME) \")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\nfile(STRINGS r.txt avoid REGEX \"Avoid ctest\")\nlist(LENGTH avoid n)\nmessage(\"ctest lines: ${n}\")\nif(EXISTS __cmake_systeminformation)\n  message(\"scratch dir kept\")\nendif()\n"
   }
+ },
+ {
+  "name": "mark-as-advanced-helpstring",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmark_as_advanced(FOO)\nget_property(h CACHE FOO PROPERTY HELPSTRING)\nget_property(t CACHE FOO PROPERTY TYPE)\nmessage(\"h=[${h}] t=[${t}]\")\nset(BAR 1)\nmark_as_advanced(BAR)\nget_property(h CACHE BAR PROPERTY HELPSTRING)\nmessage(\"bar h=[${h}]\")\n"
+  }
  }
 ]

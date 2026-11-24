@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
-use crate::commands::string::json::{Json, write_json_stream};
+use crate::commands::string::json::{Json, write_json_ostream};
 
 struct Profiler {
     out: BufWriter<File>,
@@ -114,7 +114,7 @@ pub fn start_entry(category: &str, name: &str, args: impl FnOnce() -> Option<Jso
         if let Some(args) = args() {
             object.insert(b"args".to_vec(), args);
         }
-        let text = write_json_stream(&Json::Object(object));
+        let text = write_json_ostream(&Json::Object(object));
         profiler.write(text.as_bytes());
     });
 }
@@ -133,7 +133,7 @@ pub fn stop_entry() {
         let mut object = BTreeMap::new();
         object.insert(b"ph".to_vec(), Json::Str(b"E".to_vec()));
         common(&mut object);
-        let text = write_json_stream(&Json::Object(object));
+        let text = write_json_ostream(&Json::Object(object));
         profiler.write(text.as_bytes());
     });
 }

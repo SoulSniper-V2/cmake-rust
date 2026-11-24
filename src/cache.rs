@@ -172,11 +172,12 @@ impl Cache {
             entry.value = value.to_owned();
             entry.initialized = true;
         }
-        entry.properties.insert(
-            "HELPSTRING".into(),
-            help.unwrap_or("(This variable does not exist and should not be used)")
-                .to_owned(),
-        );
+        // cmState::AddCacheEntry takes the help as `std::string const&`, so
+        // a null cmValue arrives as "" and cmCacheManager's "(This variable
+        // does not exist and should not be used)" fallback is never reached.
+        entry
+            .properties
+            .insert("HELPSTRING".into(), help.unwrap_or("").to_owned());
         // Normalize paths for PATH/FILEPATH entries (`cmSystemTools::ConvertToUnixSlashes`
         // of each list element).
         if matches!(kind, CacheType::Path | CacheType::Filepath) {

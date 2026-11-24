@@ -18,7 +18,7 @@ build-<Config>.ninja, CMakeFiles/impl-<Config>.ninja and common.ninja),
 CMakeCache.txt (with volatile entries dropped), CTestTestfile.cmake,
 cmake_install.cmake (all directories), CMakeFiles/clean_additional.cmake,
 compile_commands.json, AutogenInfo.json, AutoRcc_*_Info.json, *DependInfo.json, *.cps,
-TargetDirectories.txt, InstallScripts.json, Android.mk-style `*.mk` exports, every file under
+TargetDirectories.txt, Labels.json/Labels.txt, InstallScripts.json, Android.mk-style `*.mk` exports, every file under
 CMakeFiles/Export/ (install-tree export files), and extra generator project
 files (*.cbp, *.workspace, *.project, .project, .cproject, .kateproject*,
 *.sublime-project, .settings/*).
@@ -80,7 +80,8 @@ def gather(build_dir):
             continue
         if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json", "CXXDependInfo.json",
-                     "AutogenInfo.json", "InstallScripts.json", "TargetDirectories.txt")
+                     "AutogenInfo.json", "InstallScripts.json", "TargetDirectories.txt",
+                     "Labels.json", "Labels.txt")
                 or (name.startswith("AutoRcc_") and name.endswith("_Info.json"))
                 or name.endswith((".mk", ".cps", "_build_database.json.in"))
                 or rel.startswith("CMakeFiles/Export/")
@@ -139,8 +140,10 @@ def run_side(binary, case, work):
             if path.name.startswith("index-"):
                 continue
             key = re.sub(r"-[0-9a-f]{20}\.json$", "", path.name)
-            text = json.dumps(json.loads(path.read_text()), indent=1, sort_keys=True)
-            result[f"fileapi:{key}"] = re.sub(r'"jsonFile": "[^"]*"', '"jsonFile": "<HASH>"', text)
+            # Byte-compare the text (jsoncpp's layout included); only the
+            # hashed references between reply objects are hidden.
+            text = path.read_text()
+            result[f"fileapi:{key}"] = re.sub(r'"jsonFile" ?: "[^"]*"', '"jsonFile" : "<HASH>"', text)
     if (case / "build.txt").exists() and proc.returncode == 0:
         b = subprocess.run(["ninja", "-C", str(build)], cwd=work, env=env, capture_output=True, timeout=1800)
         result["build.exit"] = str(b.returncode)

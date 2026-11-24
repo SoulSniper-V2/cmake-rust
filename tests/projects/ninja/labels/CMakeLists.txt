@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(p C)
+set_directory_properties(PROPERTIES LABELS "top;dir label")
+add_library(l STATIC a.c b.c)
+set_property(TARGET l PROPERTY LABELS "lib;core")
+set_property(SOURCE b.c PROPERTY LABELS "src1;src2")
+add_subdirectory(sub)

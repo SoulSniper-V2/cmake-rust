@@ -1103,10 +1103,10 @@ fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
     }
 }
 
-/// `operator<<(std::ostream&, Json::Value const&)`: the default
-/// StreamWriterBuilder (tab indentation).
-pub fn write_json_stream(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write_indented(value, b"\t", false)).into_owned()
+/// `operator<<(std::ostream&, Json::Value const&)` with the builder's default
+/// `commentStyle = "All"`: every nonempty array goes on multiple lines.
+pub fn write_json_ostream(value: &Json) -> String {
+    String::from_utf8_lossy(&Writer::write_indented(value, b"\t", true)).into_owned()
 }
 
 /// Serialize generator metadata with the same writer as jsoncpp's operator<<.
