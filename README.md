@@ -53,7 +53,7 @@ Harnesses:
 - `scripts/difftest.py`: script mode, 1,253 cases.
 - `scripts/clitest.py`: command line, 446 cases.
 - `scripts/projdiff.py`: project mode, generated files byte-compared (including install-tree export files and file API replies), 135 projects.
-- `scripts/statediff.py`: end-of-configure interpreter state (every variable, cache entry and set directory/target/global property), injected through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES` without modifying the project. At `01c6813` there are no differing lines for LLVM (94,998), Kitware CMake (7,217) or zlib (3,078) after tool-path normalization, nor for any of the 128 `tests/projects` cases whose configure completes.
+- `scripts/statediff.py`: end-of-configure interpreter state (every variable, cache entry and set directory/target/global property), injected through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES` without modifying the project. At `01c6813` there are no differing lines for LLVM (94,998), Kitware CMake (7,217) or zlib (3,078) after tool-path normalization, nor for any of the 128 `tests/projects` cases whose configure completes. `--reconfigure` compares a second configure over the existing tree; LLVM (94,087) and Kitware CMake (6,378) match there too.
 - `scripts/dapdiff.py` (debugger protocol) and `scripts/autogendiff.py` (Qt AUTOGEN).
 - `scripts/ninjadiff.py`: structural `build.ninja` comparison.
 - `scripts/llvm-configure.sh` and `scripts/kitware-configure.sh`: oracle/candidate configure runners.

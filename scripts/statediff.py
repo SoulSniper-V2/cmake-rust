@@ -9,7 +9,7 @@ build directories, try_compile scratch names, compiler temp files and the
 pointer-valued directory ids of `::@(0x...)` link markers are normalized; any
 other difference is reported.
 
-Usage: statediff.py --candidate <staged bin/cmake> SOURCE [cmake args...]
+Usage: statediff.py --candidate <staged bin/cmake> [--reconfigure] SOURCE [cmake args...]
 """
 import argparse
 import difflib
@@ -71,18 +71,22 @@ def normalizer(build: Path, cmake: Path):
     return apply
 
 
-def run(cmake: Path, source: Path, build: Path, props: Path, extra: list[str]) -> list[str]:
+def run(cmake: Path, source: Path, build: Path, props: Path, extra: list[str],
+        reconfigure: bool) -> list[str]:
     shutil.rmtree(build, ignore_errors=True)  # always a fresh configure
     log = build.with_suffix(".log")
-    with open(log, "w") as stream:
-        proc = subprocess.run(
-            [str(cmake), "-S", str(source), "-B", str(build), "-G", "Ninja",
-             f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={DUMP}",
-             f"-DCMAKE_RUST_STATEDIFF_PROPS={props}", *extra],
-            stdout=stream, stderr=subprocess.STDOUT,
-            env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "CMAKE_RUST_DATA_ROOT")},
-        )
     dump = build / "statediff-dump.txt"
+    with open(log, "w") as stream:
+        for _ in range(2 if reconfigure else 1):
+            dump.unlink(missing_ok=True)
+            proc = subprocess.run(
+                [str(cmake), "-S", str(source), "-B", str(build), "-G", "Ninja",
+                 f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={DUMP}",
+                 f"-DCMAKE_RUST_STATEDIFF_PROPS={props}", *extra],
+                stdout=stream, stderr=subprocess.STDOUT,
+                env={k: v for k, v in os.environ.items()
+                     if k not in ("MAKEFLAGS", "CMAKE_RUST_DATA_ROOT")},
+            )
     if not dump.is_file():
         sys.exit(f"{cmake}: no dump written (exit {proc.returncode}); see {log}")
     norm = normalizer(build, cmake)
@@ -96,6 +100,8 @@ def main() -> int:
     parser.add_argument("--oracle", type=Path, default=ORACLE)
     parser.add_argument("--work", type=Path, help="keep build trees here")
     parser.add_argument("--show", type=int, default=40)
+    parser.add_argument("--reconfigure", action="store_true",
+                        help="configure twice and compare the state of the second run")
     parser.add_argument("source", type=Path)
     parser.add_argument("cmake_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -103,8 +109,10 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     props = work / "props.cmake"
     property_list(args.oracle, props)
-    oracle = run(args.oracle, args.source.resolve(), work / "oracle", props, args.cmake_args)
-    candidate = run(args.candidate, args.source.resolve(), work / "candidate", props, args.cmake_args)
+    oracle = run(args.oracle, args.source.resolve(), work / "oracle", props, args.cmake_args,
+                 args.reconfigure)
+    candidate = run(args.candidate, args.source.resolve(), work / "candidate", props,
+                    args.cmake_args, args.reconfigure)
     diff = [line for line in difflib.unified_diff(oracle, candidate, "oracle", "candidate",
                                                   n=0, lineterm="")
             if not line.startswith(("---", "+++", "@@"))]
