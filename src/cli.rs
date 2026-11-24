@@ -35,6 +35,7 @@ pub fn main() -> i32 {
         Some("--build") => build(&argv, &cwd),
         Some("--install") => install(&argv, &cwd),
         Some("--workflow") => crate::presets::cli::workflow(&args[1..], &cwd),
+        Some("--open") => open_project(&args[1..], &cwd),
         Some("--print-config-dir") => {
             if let Ok(dir) = std::env::var("CMAKE_CONFIG_DIR") {
                 println!("{dir}");
@@ -486,6 +487,76 @@ const VALUE_OPTIONS: &[(&str, &str, bool)] = &[
 struct CacheArg<'a> {
     name: &'a str,
     value: String,
+}
+
+/// cmakemain's `do_open` and `cmake::Open`.  Only an extra generator can
+/// open a project (cmExtraSublimeTextGenerator::Open runs
+/// `CMAKE_SUBLIMETEXT_EXECUTABLE --project <bindir>/<name>.sublime-project`);
+/// every other generator reports failure without a message.
+fn open_project(args: &[String], cwd: &str) -> i32 {
+    let mut dir = String::new();
+    for (index, arg) in args.iter().enumerate() {
+        if index == 0 {
+            dir = normalized_path(arg, cwd);
+        } else {
+            eprintln!("Unknown argument {arg}");
+            dir.clear();
+        }
+    }
+    if dir.is_empty() {
+        eprintln!("Usage: cmake --open <dir>");
+        return 1;
+    }
+    let path = Path::new(&dir);
+    if !path.is_dir() {
+        eprintln!("Error: {dir} is not a directory");
+        return 1;
+    }
+    // cmake::FindCacheFile.
+    let cache_dir = if !path.join("CMakeCache.txt").exists() && path.join("CMakeFiles").exists() {
+        path.ancestors()
+            .find(|candidate| candidate.join("CMakeCache.txt").exists())
+            .unwrap_or(path)
+    } else {
+        path
+    };
+    let mut cache = Cache::default();
+    if !matches!(cache.load(cache_dir), Ok(true)) {
+        eprintln!("Error: not a CMake build directory (missing CMakeCache.txt)");
+        return 1;
+    }
+    let Some(generator) = cache.value("CMAKE_GENERATOR") else {
+        eprintln!("Error: could not find CMAKE_GENERATOR in Cache");
+        return 1;
+    };
+    let extra = cache.value("CMAKE_EXTRA_GENERATOR").unwrap_or("");
+    let full_name = crate::generator::extra::create_full_generator_name(generator, extra);
+    if !known_generator(&full_name) {
+        eprintln!("Error: could not create CMAKE_GENERATOR \"{full_name}\"");
+        return 1;
+    }
+    let Some(project) = cache.value("CMAKE_PROJECT_NAME") else {
+        eprintln!("Error: could not find CMAKE_PROJECT_NAME in Cache");
+        return 1;
+    };
+    if extra != "Sublime Text 2" {
+        return 1;
+    }
+    let Some(sublime) = cache
+        .value("CMAKE_SUBLIMETEXT_EXECUTABLE")
+        .filter(|value| !crate::util::is_notfound(value))
+    else {
+        return 1;
+    };
+    let file = format!("{dir}/{project}.sublime-project");
+    // cmSystemTools::RunSingleCommand (output passed through).
+    match std::process::Command::new(sublime)
+        .args(["--project", &file])
+        .status()
+    {
+        Ok(status) if status.success() => 0,
+        _ => 1,
+    }
 }
 
 /// cmakemain's argument loop when `--system-information` is present: the

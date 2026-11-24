@@ -1210,5 +1210,103 @@
    "g/sub/deps.dot.e.dependers",
    "g/sub"
   ]
+ },
+ {
+  "name": "open-usage",
+  "steps": [
+   {
+    "argv": [
+     "--open"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "a",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "missing"
+    ]
+   }
+  ],
+  "dirs": [
+   "a"
+  ]
+ },
+ {
+  "name": "open-not-build-dir",
+  "argv": [
+   "--open",
+   "plain"
+  ],
+  "dirs": [
+   "plain"
+  ]
+ },
+ {
+  "name": "open-ninja-tree",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "b/CMakeFiles"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(op NONE)\n"
+  }
+ },
+ {
+  "name": "open-sublime-tree",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Sublime Text 2 - Ninja",
+     "-DCMAKE_SUBLIMETEXT_EXECUTABLE={work}/subl.sh"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "b"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(op NONE)\n",
+   "subl.sh": {
+    "text": "#!/bin/sh\necho \"subl $@\" > \"$(dirname \"$0\")/subl.log\"\n",
+    "mode": "755"
+   }
+  },
+  "inspect": [
+   "subl.log"
+  ]
  }
 ]
