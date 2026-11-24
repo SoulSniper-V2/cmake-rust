@@ -12,7 +12,6 @@ use crate::apple::{
     FrameworkFormat, is_path_to_framework, is_path_to_xcframework, split_framework_path,
 };
 use crate::cmregex::Regex;
-use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};
 use crate::util::{collapse_full_path, filename_name, filename_path, is_subdirectory};
 
 /// `cmComputeLinkInformation` after `Compute()`.
@@ -1927,10 +1926,6 @@ fn compiled(pattern: &str) -> Option<Regex> {
             .or_insert_with(|| Regex::new(pattern).ok())
             .clone()
     })
-}
-
-fn shell(value: &str) -> String {
-    escape_for_shell(value, NINJA_UNIX | FLAG_ALLOW_MAKE_VARIABLES)
 }
 
 fn under(path: &str, top: &str) -> bool {

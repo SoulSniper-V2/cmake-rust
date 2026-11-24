@@ -1343,11 +1343,7 @@ fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i
         return 1;
     }
     match mode.as_str() {
-        "EXIST" => {
-            if !quiet {
-                println!("{name} found.");
-            }
-        }
+        "EXIST" if !quiet => println!("{name} found."),
         "COMPILE" => {
             let includes = util::expand_list(&var("PACKAGE_INCLUDE_DIRS"), false);
             let include_flags = find_package_include_flags(&interp, &includes, &language);
