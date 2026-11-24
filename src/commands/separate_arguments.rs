@@ -9,65 +9,23 @@ pub fn register(interp: &mut Interp) {
     interp.register("separate_arguments", separate_arguments_command);
 }
 
+pub(crate) use crate::util::parse_unix_command_line;
+
+/// `cmIsSpace`: C-locale `isspace` on ASCII bytes (includes `\v`).
 fn is_space(c: u8) -> bool {
-    c.is_ascii_whitespace()
+    c.is_ascii_whitespace() || c == 0x0b
 }
 
-/// `kwsysSystem__ParseUnixCommand`.
-pub(crate) fn parse_unix_command_line(command: &str) -> Vec<String> {
-    let bytes = command.as_bytes();
-    let mut args = Vec::new();
-    let mut arg = String::new();
-    let mut in_argument = false;
-    let mut in_escape = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    for &c in bytes {
-        if in_escape {
-            in_argument = true;
-            arg.push(c as char);
-            in_escape = false;
-        } else if c == b'\\' {
-            in_escape = true;
-        } else if c == b'\'' && !in_double {
-            if in_single {
-                in_single = false;
-            } else {
-                in_single = true;
-                in_argument = true;
-            }
-        } else if c == b'"' && !in_single {
-            if in_double {
-                in_double = false;
-            } else {
-                in_double = true;
-                in_argument = true;
-            }
-        } else if is_space(c) {
-            if in_argument {
-                if in_single || in_double {
-                    arg.push(c as char);
-                } else {
-                    args.push(std::mem::take(&mut arg));
-                    in_argument = false;
-                }
-            }
-        } else {
-            in_argument = true;
-            arg.push(c as char);
-        }
-    }
-    if in_argument {
-        args.push(arg);
-    }
-    args
+fn utf8(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
 /// `cmSystemTools::ParseWindowsCommandLine`.
 fn parse_windows_command_line(command: &str) -> Vec<String> {
     let bytes = command.as_bytes();
     let mut args = Vec::new();
-    let mut arg = String::new();
+    let mut arg = Vec::new();
     let mut in_argument = false;
     let mut in_quotes = false;
     let mut backslashes = 0usize;
@@ -78,33 +36,33 @@ fn parse_windows_command_line(command: &str) -> Vec<String> {
         } else if c == b'"' {
             let backslash_pairs = backslashes >> 1;
             let backslash_escaped = backslashes & 1;
-            arg.extend(std::iter::repeat_n('\\', backslash_pairs));
+            arg.extend(std::iter::repeat_n(b'\\', backslash_pairs));
             backslashes = 0;
             if backslash_escaped != 0 {
-                arg.push('"');
+                arg.push(b'"');
             } else {
                 in_quotes = !in_quotes;
             }
             in_argument = true;
         } else {
-            arg.extend(std::iter::repeat_n('\\', backslashes));
+            arg.extend(std::iter::repeat_n(b'\\', backslashes));
             backslashes = 0;
             if is_space(c) {
                 if in_quotes {
-                    arg.push(c as char);
+                    arg.push(c);
                 } else if in_argument {
-                    args.push(std::mem::take(&mut arg));
+                    args.push(utf8(std::mem::take(&mut arg)));
                     in_argument = false;
                 }
             } else {
                 in_argument = true;
-                arg.push(c as char);
+                arg.push(c);
             }
         }
     }
-    arg.extend(std::iter::repeat_n('\\', backslashes));
+    arg.extend(std::iter::repeat_n(b'\\', backslashes));
     if in_argument {
-        args.push(arg);
+        args.push(utf8(arg));
     }
     args
 }
@@ -116,7 +74,7 @@ fn split_program_from_args(command: &str) -> (String, String, bool) {
     while c < bytes.len() && is_space(bytes[c]) {
         c += 1;
     }
-    let mut program = String::new();
+    let mut program = Vec::new();
     let mut in_escape = false;
     let mut in_double = false;
     let mut in_single = false;
@@ -126,18 +84,18 @@ fn split_program_from_args(command: &str) -> (String, String, bool) {
             if ch == b'\'' {
                 in_single = false;
             } else {
-                program.push(ch as char);
+                program.push(ch);
             }
         } else if in_escape {
             in_escape = false;
-            program.push(ch as char);
+            program.push(ch);
         } else if ch == b'\\' {
             in_escape = true;
         } else if in_double {
             if ch == b'"' {
                 in_double = false;
             } else {
-                program.push(ch as char);
+                program.push(ch);
             }
         } else if ch == b'"' {
             in_double = true;
@@ -146,13 +104,13 @@ fn split_program_from_args(command: &str) -> (String, String, bool) {
         } else if is_space(ch) {
             break;
         } else {
-            program.push(ch as char);
+            program.push(ch);
         }
         c += 1;
     }
     let args = command[c..].to_owned();
     let ok = !in_single && !in_escape && !in_double;
-    (program, args, ok)
+    (utf8(program), args, ok)
 }
 
 /// `SystemTools::FileIsExecutable` (POSIX).

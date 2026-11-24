@@ -74,7 +74,12 @@ def run(binary, case, *, oracle):
             except subprocess.TimeoutExpired:
                 result[f"step {index}"] = "timeout"
                 continue
-            stdout = normalize(proc.stdout)
+            # Configure/generate wall time is the one nondeterministic field
+            # of a project run; RunCMake's expectations accept any value too.
+            stdout = re.sub(
+                rb"(?m)^-- (Configuring|Generating) done \([0-9]+\.[0-9]s\)$",
+                rb"-- \1 done (<SECONDS>)", normalize(proc.stdout),
+            )
             if step.get("elapsed"):
                 stdout = re.sub(
                     rb"(?m)^Elapsed time \(seconds\): [0-9.eE+-]+$",

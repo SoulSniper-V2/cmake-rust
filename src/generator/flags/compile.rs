@@ -382,19 +382,7 @@ fn target_define_names(inputs: &Flags<'_, '_>) -> Vec<String> {
             .prop("DEFINE_SYMBOL")
             .map(str::to_owned)
             .unwrap_or_else(|| {
-                let name = format!("{}_EXPORTS", inputs.target.name);
-                let mut symbol = String::new();
-                if name.starts_with(|c: char| c.is_ascii_digit()) {
-                    symbol.push('_');
-                }
-                symbol.extend(name.bytes().map(|c| {
-                    if c.is_ascii_alphanumeric() {
-                        char::from(c)
-                    } else {
-                        '_'
-                    }
-                }));
-                symbol
+                crate::util::make_c_identifier(&format!("{}_EXPORTS", inputs.target.name))
             });
         direct.extend(expand_list(&symbol, false));
     }
@@ -943,19 +931,7 @@ pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &s
             .prop("DEFINE_SYMBOL")
             .map(str::to_owned)
             .unwrap_or_else(|| {
-                let name = format!("{}_EXPORTS", inputs.target.name);
-                let mut symbol = String::new();
-                if name.starts_with(|c: char| c.is_ascii_digit()) {
-                    symbol.push('_');
-                }
-                symbol.extend(name.bytes().map(|c| {
-                    if c.is_ascii_alphanumeric() {
-                        char::from(c)
-                    } else {
-                        '_'
-                    }
-                }));
-                symbol
+                crate::util::make_c_identifier(&format!("{}_EXPORTS", inputs.target.name))
             });
         for define in expand_list(&symbol, false) {
             items.push((define, Vec::new()));

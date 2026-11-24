@@ -1343,46 +1343,4 @@ fn wrap_options(
     result
 }
 
-/// cmSystemTools::ParseUnixCommandLine (kwsysSystem__ParseUnixCommand).
-pub(super) fn parse_unix_command_line(command: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut arg = Vec::new();
-    let mut in_argument = false;
-    let mut in_escape = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    let push = |arg: &mut Vec<u8>, args: &mut Vec<String>| {
-        args.push(String::from_utf8_lossy(&std::mem::take(arg)).into_owned());
-    };
-    for &c in command.as_bytes() {
-        if in_escape {
-            in_argument = true;
-            arg.push(c);
-            in_escape = false;
-        } else if c == b'\\' {
-            in_escape = true;
-        } else if c == b'\'' && !in_double {
-            in_single = !in_single;
-            in_argument = true;
-        } else if c == b'"' && !in_single {
-            in_double = !in_double;
-            in_argument = true;
-        } else if c.is_ascii_whitespace() || c == 0x0b {
-            if in_argument {
-                if in_single || in_double {
-                    arg.push(c);
-                } else {
-                    push(&mut arg, &mut args);
-                    in_argument = false;
-                }
-            }
-        } else {
-            in_argument = true;
-            arg.push(c);
-        }
-    }
-    if in_argument {
-        push(&mut arg, &mut args);
-    }
-    args
-}
+pub(super) use crate::util::parse_unix_command_line;

@@ -119,7 +119,7 @@ fn create_timestamp(time: i64, micros: u32, format: &str, utc: bool) -> String {
         return String::new();
     };
     let bytes = format.as_bytes();
-    let mut result = String::new();
+    let mut result = Vec::<u8>::new();
     let mut i = 0usize;
     while i < bytes.len() {
         let c1 = bytes[i];
@@ -130,27 +130,27 @@ fn create_timestamp(time: i64, micros: u32, format: &str, utc: bool) -> String {
             match c2 {
                 b'a' | b'A' | b'b' | b'B' | b'd' | b'H' | b'I' | b'j' | b'm' | b'M' | b'S'
                 | b'U' | b'V' | b'w' | b'y' | b'Y' | b'%' | b'Z' | b'z' => {
-                    result.push_str(&strftime_component(&tm, c2));
+                    result.extend_from_slice(strftime_component(&tm, c2).as_bytes());
                 }
                 b's' => {
                     // Seconds since the UNIX epoch; timegm(1970-01-01) == 0.
-                    result.push_str(&time.to_string());
+                    result.extend_from_slice(time.to_string().as_bytes());
                 }
                 b'f' => {
-                    result.push_str(&format!("{:06}", micros % 1_000_000));
+                    result.extend_from_slice(format!("{:06}", micros % 1_000_000).as_bytes());
                 }
                 _ => {
-                    result.push('%');
-                    result.push(c2 as char);
+                    result.push(b'%');
+                    result.push(c2);
                 }
             }
             i += 1;
         } else {
-            result.push(c1 as char);
+            result.push(c1);
         }
         i += 1;
     }
-    result
+    String::from_utf8_lossy(&result).into_owned()
 }
 
 pub fn handle_timestamp(interp: &mut Interp, args: &[String]) -> CmdResult {

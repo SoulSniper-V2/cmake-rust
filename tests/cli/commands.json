@@ -57,7 +57,7 @@
    "one two",
    "",
    "--",
-   "\u96ea"
+   "雪"
   ]
  },
  {
@@ -2005,6 +2005,175 @@
    "cmake_depends",
    "Ninja",
    "{work}"
+  ]
+ },
+ {
+  "name": "link-script-verbose-order",
+  "argv": [
+   "-E",
+   "cmake_link_script",
+   "ls.txt",
+   "--verbose=1"
+  ],
+  "files": {
+   "ls.txt": "echo one \"two  three\"\n  \t\n\r\n/nonexistent/tool a\necho never\n"
+  }
+ },
+ {
+  "name": "link-script-quiet-exit-code",
+  "argv": [
+   "-E",
+   "cmake_link_script",
+   "ls.txt",
+   "--verbose=OFF"
+  ],
+  "files": {
+   "ls.txt": "echo a\r\nsh -c \"exit 7\"\necho never\n"
+  }
+ },
+ {
+  "name": "link-script-signal",
+  "argv": [
+   "-E",
+   "cmake_link_script",
+   "ls.txt",
+   "--verbose=yes"
+  ],
+  "files": {
+   "ls.txt": "sh -c \"kill -SEGV \\$\\$\"\necho never\n"
+  }
+ },
+ {
+  "name": "link-script-no-trailing-newline",
+  "argv": [
+   "-E",
+   "cmake_link_script",
+   "ls.txt"
+  ],
+  "files": {
+   "ls.txt": "echo 'single quoted  arg' \\\"x\\\" last"
+  }
+ },
+ {
+  "name": "link-script-missing",
+  "steps": [
+   {
+    "argv": [
+     "-E",
+     "cmake_link_script",
+     "nofile"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_link_script"
+    ]
+   }
+  ]
+ },
+ {
+  "name": "progress-start",
+  "steps": [
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "d",
+     "cnt-hex"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "e",
+     "cnt-oct"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "f",
+     "-12abc"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "g",
+     "0"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "h",
+     "cnt-bad"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_start",
+     "i"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_report",
+     "x"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_progress_report"
+    ]
+   }
+  ],
+  "files": {
+   "cnt-hex": " 0x1f\n",
+   "cnt-oct": "017",
+   "cnt-bad": "zz\n",
+   "g/Progress/count.txt": "9\n"
+  },
+  "inspect": [
+   "d/Progress/count.txt",
+   "e/Progress/count.txt",
+   "f/Progress/count.txt",
+   "g/Progress",
+   "h/Progress"
+  ]
+ },
+ {
+  "name": "unimplemented-variable",
+  "steps": [
+   {
+    "argv": [
+     "-E",
+     "cmake_unimplemented_variable",
+     "FOO"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_unimplemented_variable"
+    ]
+   },
+   {
+    "argv": [
+     "-E",
+     "cmake_unimplemented_variable",
+     "a",
+     "b"
+    ]
+   }
   ]
  }
 ]

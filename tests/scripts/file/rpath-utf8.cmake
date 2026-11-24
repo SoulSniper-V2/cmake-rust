@@ -1,0 +1,11 @@
+# Non-ASCII RUNPATH bytes are read and rewritten unchanged.
+file(COPY_FILE data/lib.so lib.so)
+file(READ_ELF lib.so RUNPATH before)
+message("before=[${before}]")
+file(RPATH_CHANGE FILE lib.so OLD_RPATH "/opt/é/lib" NEW_RPATH "/ñ")
+file(READ_ELF lib.so RUNPATH after)
+message("after=[${after}]")
+file(RPATH_CHECK FILE lib.so RPATH "/ñ:/usr/ü")
+if(EXISTS lib.so)
+  message("check kept the file")
+endif()

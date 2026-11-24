@@ -14,8 +14,9 @@ const LATEST_LOG_VERSION: u64 = 1;
 
 #[derive(Debug)]
 enum Sink {
-    /// Real log file, opened lazily by `ensure_init`.
-    File(std::fs::File),
+    /// Real log file, opened lazily by `ensure_init`.  Buffered like the
+    /// upstream `ofstream`; `end_line` flushes as `std::endl` does.
+    File(std::io::BufWriter<std::fs::File>),
     /// In-memory sink used by tests and in-process reuse.
     #[allow(dead_code)]
     Buffer(Vec<u8>),
@@ -123,7 +124,7 @@ impl ConfigureLog {
                 .create(true)
                 .open(&name)
             {
-                Ok(file) => self.sink = Some(Sink::File(file)),
+                Ok(file) => self.sink = Some(Sink::File(std::io::BufWriter::new(file))),
                 Err(_) => return,
             }
         }
@@ -140,6 +141,9 @@ impl ConfigureLog {
 
     fn end_line(&mut self) {
         self.out("\n");
+        if let Some(Sink::File(file)) = self.sink.as_mut() {
+            let _ = file.flush();
+        }
     }
 
     /// `cmConfigureLog::BeginObject`.
@@ -194,6 +198,11 @@ impl ConfigureLog {
     pub fn end_event(&mut self) {
         assert!(self.indent > 0);
         self.indent -= 1;
+        // Every event ends with a line; flush anything a writer left behind
+        // so an exit without unwinding loses nothing.
+        if let Some(Sink::File(file)) = self.sink.as_mut() {
+            let _ = file.flush();
+        }
     }
 
     /// `cmConfigureLog::WriteBacktrace`.

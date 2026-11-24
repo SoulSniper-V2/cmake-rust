@@ -179,6 +179,19 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
             args.get(2).map_or("", String::as_str),
         )),
         "tar" if args.len() >= 2 => archive::tar(args),
+        "cmake_progress_start" if args.len() == 2 => progress_start(&args[0], &args[1]),
+        // Superseded by `cmake_echo_color --progress-*`; kept so stale
+        // makefiles keep working.
+        "cmake_progress_report" if !args.is_empty() => 0,
+        "cmake_link_script" if !args.is_empty() => link_script(args),
+        "cmake_unimplemented_variable" => {
+            let mut message = "Feature not implemented for this platform.".to_owned();
+            if let [variable] = args {
+                message.push_str(&format!("  Variable {variable} is not set."));
+            }
+            eprintln!("{message}");
+            1
+        }
         // copy_if_newer is absent from the pinned 4.1.0 cmcmd dispatcher.
         _ => {
             usage(program);
@@ -804,4 +817,167 @@ fn symlink_internal(command: &str, source: &str, dest: &str) -> i32 {
         return 1;
     }
     0
+}
+
+/// C `atoi`: optional leading whitespace and sign, then decimal digits.
+fn c_atoi(text: &str) -> i32 {
+    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '\x0b');
+    let (negative, digits) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let value = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i64, |value, digit| {
+            (value * 10 + i64::from(digit - b'0')).min(i64::from(u32::MAX) + 1)
+        });
+    (if negative { -value } else { value }) as i32
+}
+
+/// `fscanf(file, "%i", &count)`: an integer with C base prefixes (`0x`
+/// hexadecimal, `0` octal), or `None` when no integer can be read.
+fn scan_c_integer(text: &str) -> Option<i32> {
+    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '\x0b');
+    let (negative, rest) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let (radix, digits) = if let Some(hex) = rest
+        .strip_prefix("0x")
+        .or_else(|| rest.strip_prefix("0X"))
+        .filter(|hex| hex.starts_with(|c: char| c.is_ascii_hexdigit()))
+    {
+        (16, hex)
+    } else if rest.starts_with('0') {
+        (8, rest)
+    } else {
+        (10, rest)
+    };
+    let digits: String = digits.chars().take_while(|c| c.is_digit(radix)).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let value = u64::from_str_radix(&digits, radix).unwrap_or(u64::MAX) as i64;
+    Some(
+        (if negative {
+            value.wrapping_neg()
+        } else {
+            value
+        }) as i32,
+    )
+}
+
+/// `cmake_progress_start <dir> <count-or-file>` (cmcmd.cxx).
+fn progress_start(directory: &str, count: &str) -> i32 {
+    let progress = format!("{directory}/Progress");
+    let _ = std::fs::remove_dir_all(&progress);
+    let count = match std::fs::read(count) {
+        Ok(bytes) => scan_c_integer(&String::from_utf8_lossy(&bytes)).unwrap_or_else(|| {
+            eprintln!("Could not read from count file.");
+            // Upstream leaves `count` uninitialized here; treat it as zero.
+            0
+        }),
+        Err(_) => c_atoi(count),
+    };
+    if count != 0 {
+        let _ = std::fs::create_dir_all(&progress);
+        let _ = std::fs::write(format!("{progress}/count.txt"), format!("{count}\n"));
+    }
+    0
+}
+
+/// `cmcmd::ExecuteLinkScript`: run each non-blank line of the script as a
+/// command sharing this process's stdout and stderr, stopping at the first
+/// failure.
+fn link_script(args: &[String]) -> i32 {
+    let verbose = args
+        .get(1)
+        .and_then(|arg| arg.strip_prefix("--verbose="))
+        .is_some_and(|value| !crate::util::is_off(value));
+    let Ok(script) = std::fs::read(&args[0]) else {
+        eprintln!("Error opening link script \"{}\"", args[0]);
+        return 1;
+    };
+    // `std::cout` echoes through C stdio, so the echo is buffered exactly
+    // as glibc buffers stdout (fully when piped) relative to the children.
+    let echo = Stdout::open();
+    let script = String::from_utf8_lossy(&script);
+    let mut lines: Vec<&str> = script.split('\n').collect();
+    if script.ends_with('\n') {
+        lines.pop();
+    }
+    let mut result = 0;
+    for line in lines {
+        let command = line.strip_suffix('\r').unwrap_or(line);
+        if command.trim_matches([' ', '\t']).is_empty() {
+            continue;
+        }
+        let argv = crate::util::parse_unix_command_line(command);
+        if verbose {
+            echo.write(&format!("{command}\n"));
+        }
+        let Some((program, rest)) = argv.split_first() else {
+            continue;
+        };
+        match Command::new(program).args(rest).status() {
+            Ok(status) => {
+                if let Some(text) = crate::commands::process::exception_text(status) {
+                    echo.flush();
+                    eprint!("Error running link command: {text}");
+                    result = 1;
+                } else if status.code() != Some(0) {
+                    result = status.code().unwrap_or(1);
+                }
+            }
+            Err(error) => {
+                echo.flush();
+                eprint!(
+                    "Error running link command: {}",
+                    crate::commands::process::spawn_error_text(&error)
+                );
+                result = 2;
+            }
+        }
+        if result != 0 {
+            break;
+        }
+    }
+    result
+}
+
+/// A C stdio stream on file descriptor 1, which glibc buffers like
+/// `stdout` (line buffered on a terminal, fully buffered otherwise).
+struct Stdout(*mut libc::FILE);
+
+impl Stdout {
+    fn open() -> Self {
+        // SAFETY: fdopen on the always-open descriptor 1 with a valid mode.
+        Self(unsafe { libc::fdopen(1, c"w".as_ptr()) })
+    }
+
+    fn write(&self, text: &str) {
+        if self.0.is_null() {
+            print!("{text}");
+            return;
+        }
+        // SAFETY: the stream is open and the buffer is valid for its length.
+        unsafe { libc::fwrite(text.as_ptr().cast(), 1, text.len(), self.0) };
+    }
+
+    /// `std::cerr` is tied to `std::cout`: writing an error flushes it.
+    fn flush(&self) {
+        if !self.0.is_null() {
+            // SAFETY: flush the stream without closing descriptor 1.
+            unsafe { libc::fflush(self.0) };
+        }
+    }
+}
+
+impl Drop for Stdout {
+    fn drop(&mut self) {
+        self.flush();
+    }
 }

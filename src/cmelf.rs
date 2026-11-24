@@ -362,6 +362,7 @@ impl Internal {
             // strtab.sh_offset + last. A failed get() leaves it failed.
             let mut terminated = false;
             let mut failed = false;
+            let mut value = Vec::new();
             while last != end {
                 let Some(&c) = self.data.get((strtab.sh_offset + last) as usize) else {
                     failed = true;
@@ -372,7 +373,7 @@ impl Internal {
                 }
                 last += 1;
                 if c != 0 {
-                    se.value.push(c as char);
+                    value.push(c);
                 } else {
                     terminated = true;
                 }
@@ -393,6 +394,8 @@ impl Internal {
                 self.dynamic_section_strings.insert(tag, se);
                 return None;
             }
+            // The bytes are kept as-is (non-ASCII paths are UTF-8 on disk).
+            se.value = String::from_utf8_lossy(&value).into_owned();
             se.position = strtab.sh_offset + first;
             se.size = last - first;
             se.index_in_section = index as i64;
