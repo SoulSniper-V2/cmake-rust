@@ -298,10 +298,11 @@ impl Instrumentation {
 
     fn write(&self, subdir: &str, filename: &str, data: &Value) {
         let directory = self.directory.join(subdir);
-        if std::fs::create_dir_all(&directory).is_ok()
-            && let Ok(mut contents) = serde_json::to_vec_pretty(data)
-        {
-            contents.push(b'\n');
+        // cmInstrumentation::WriteInstrumentationJson: a StreamWriterBuilder
+        // with tab indentation, then "\n".
+        if std::fs::create_dir_all(&directory).is_ok() {
+            let mut contents = crate::commands::string::json::stream_value(data);
+            contents.push('\n');
             let _ = std::fs::write(directory.join(filename), contents);
         }
     }

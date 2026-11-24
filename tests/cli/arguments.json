@@ -1152,5 +1152,41 @@
   "files": {
    "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmark_as_advanced(FOO)\nget_property(h CACHE FOO PROPERTY HELPSTRING)\nget_property(t CACHE FOO PROPERTY TYPE)\nmessage(\"h=[${h}] t=[${t}]\")\nset(BAR 1)\nmark_as_advanced(BAR)\nget_property(h CACHE BAR PROPERTY HELPSTRING)\nmessage(\"bar h=[${h}]\")\n"
   }
+ },
+ {
+  "name": "sarif-output-layout",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "--sarif-output=s.json"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmessage(WARNING \"w1\")\nmessage(AUTHOR_WARNING \"a1\")\nmessage(DEPRECATION \"d1\")\n"
+  },
+  "inspect": [
+   "s.json"
+  ]
+ },
+ {
+  "name": "instrumentation-query-layout",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Ninja",
+   "-DCMAKE_EXPERIMENTAL_INSTRUMENTATION=a37d1069-1972-4901-b9c9-f194aaf2b6e0"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\ncmake_instrumentation(API_VERSION 1 DATA_VERSION 1 QUERIES staticSystemInformation dynamicSystemInformation HOOKS postGenerate preBuild CALLBACK ${CMAKE_COMMAND} -E true)\n"
+  },
+  "inspect": [
+   "b/.cmake/instrumentation-a37d1069-1972-4901-b9c9-f194aaf2b6e0/v1/query/generated/query-0.json"
+  ]
  }
 ]

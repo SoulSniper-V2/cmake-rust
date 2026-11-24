@@ -84,7 +84,9 @@ impl ResultsLog {
                     "results": self.results
                 }]
             });
-            serde_json::to_writer_pretty(std::fs::File::create(path)?, &document)?;
+            // StreamWriterBuilder defaults (tab indentation, sorted keys,
+            // multi-line arrays) and no trailing newline.
+            std::fs::write(path, crate::commands::string::json::stream_value(&document))?;
             Ok(())
         };
         if write().is_err() {
