@@ -261,13 +261,16 @@ fn enable_language_common(interp: &mut Interp, languages: &[String], optional: b
         read(interp, &path);
     }
     if read_system {
-        let system = interp.get_safe("CMAKE_SYSTEM_NAME");
-        let _ = system;
+        let generator = if interp.ext.multi_config {
+            "Ninja Multi-Config"
+        } else {
+            "Ninja"
+        };
         // cmGlobalGenerator::SetGeneratorInstance.
         let instance = interp.get_safe("CMAKE_GENERATOR_INSTANCE");
         if !instance.is_empty() {
             let text = format!(
-                "Generator\n  Ninja\ndoes not support instance specification, but instance\n  {instance}\nwas specified."
+                "Generator\n  {generator}\ndoes not support instance specification, but instance\n  {instance}\nwas specified."
             );
             interp.issue(MessageType::FatalError, &text);
             interp.set_fatal();
@@ -276,7 +279,7 @@ fn enable_language_common(interp: &mut Interp, languages: &[String], optional: b
         let platform = interp.get_safe("CMAKE_GENERATOR_PLATFORM");
         if !platform.is_empty() {
             let text = format!(
-                "Generator\n  Ninja\ndoes not support platform specification, but platform\n  {platform}\nwas specified."
+                "Generator\n  {generator}\ndoes not support platform specification, but platform\n  {platform}\nwas specified."
             );
             interp.issue(MessageType::FatalError, &text);
             interp.set_fatal();
@@ -285,7 +288,7 @@ fn enable_language_common(interp: &mut Interp, languages: &[String], optional: b
         let toolset = interp.get_safe("CMAKE_GENERATOR_TOOLSET");
         if !toolset.is_empty() {
             let text = format!(
-                "Generator\n  Ninja\ndoes not support toolset specification, but toolset\n  {toolset}\nwas specified."
+                "Generator\n  {generator}\ndoes not support toolset specification, but toolset\n  {toolset}\nwas specified."
             );
             interp.issue(MessageType::FatalError, &text);
             interp.set_fatal();

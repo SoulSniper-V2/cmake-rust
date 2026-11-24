@@ -144,20 +144,34 @@ fn generator_documentation(text: &str) -> String {
     text.to_owned()
 }
 
-fn warn_orphan_generator_settings() {
-    if std::env::var_os("CMAKE_GENERATOR").is_none() {
-        for variable in [
+/// cmake::LoadEnvironmentPresets: `CMAKE_GENERATOR` names the default
+/// generator, and only then do `CMAKE_GENERATOR_{INSTANCE,PLATFORM,TOOLSET}`
+/// seed the generator settings.
+fn load_environment_presets(options: &mut ConfigureOptions) {
+    let generator = std::env::var("CMAKE_GENERATOR").ok();
+    for (variable, slot) in [
+        (
             "CMAKE_GENERATOR_INSTANCE",
+            &mut options.environment_instance,
+        ),
+        (
             "CMAKE_GENERATOR_PLATFORM",
-            "CMAKE_GENERATOR_TOOLSET",
-        ] {
-            if std::env::var_os(variable).is_some() {
-                eprintln!(
-                    "Warning: Environment variable {variable} will be ignored, because CMAKE_GENERATOR is not set."
-                );
-            }
+            &mut options.environment_platform,
+        ),
+        ("CMAKE_GENERATOR_TOOLSET", &mut options.environment_toolset),
+    ] {
+        let Ok(value) = std::env::var(variable) else {
+            continue;
+        };
+        if generator.is_some() {
+            *slot = value;
+        } else {
+            eprintln!(
+                "Warning: Environment variable {variable} will be ignored, because CMAKE_GENERATOR is not set."
+            );
         }
     }
+    options.environment_generator = generator;
 }
 
 pub(crate) fn known_generator(name: &str) -> bool {
@@ -494,13 +508,13 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         .iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg.starts_with("-P"));
-    if !script_mode {
-        warn_orphan_generator_settings();
-    }
     let mut options = ConfigureOptions {
         command_args: argv.to_vec(),
         ..ConfigureOptions::default()
     };
+    if !script_mode {
+        load_environment_presets(&mut options);
+    }
     let mut view = None::<CacheView>;
     let mut view_only = false;
     let mut regenerate = false;
@@ -724,6 +738,12 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     }
     if find_package_mode {
         return Ok(run_find_package_mode(args, &cache_args, cwd));
+    }
+    // Empty instance, platform and toolset if only a generator is specified.
+    if options.generator.is_some() {
+        options.environment_instance.clear();
+        options.environment_platform.clear();
+        options.environment_toolset.clear();
     }
 
     // The end of cmake::SetArgs.
@@ -1298,9 +1318,8 @@ fn apply_cache_view_args(
     result
 }
 
-/// `cmake::FindPackage`: run CMakeFindPackageMode.cmake in a script-mode
-/// interpreter and report the result for MODE=EXIST (COMPILE/LINK flag
-/// computation is not implemented).
+/// `cmake::FindPackage`: run CMakeFindPackageMode.cmake in a find-package
+/// mode interpreter and report the result for MODE=EXIST, COMPILE or LINK.
 fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i32 {
     let Some(root) = configure::find_cmake_root() else {
         eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");

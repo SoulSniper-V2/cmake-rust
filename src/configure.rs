@@ -26,6 +26,14 @@ pub struct ConfigureOptions {
     pub generator: Option<String>,
     pub toolset: Option<String>,
     pub platform: Option<String>,
+    /// The `CMAKE_GENERATOR` environment variable (cmake::EnvironmentGenerator).
+    pub environment_generator: Option<String>,
+    /// `CMAKE_GENERATOR_INSTANCE`, `_PLATFORM` and `_TOOLSET` from the
+    /// environment, honored only when `CMAKE_GENERATOR` is set there.  They
+    /// seed the cache but, unlike `-A`/`-T`, never count as "set".
+    pub environment_instance: String,
+    pub environment_platform: String,
+    pub environment_toolset: String,
     pub toolchain_file: Option<String>,
     pub install_prefix: Option<String>,
     pub definitions: Vec<CacheDefinition>,
@@ -871,13 +879,27 @@ fn actual_configure(
         .map(str::to_owned);
     // `cmExternalMakefileProjectGeneratorFactory` names resolve to a
     // (extra, global) pair; anything else is a plain global generator name.
-    let resolved = requested.clone().or_else(|| {
+    let mut resolved = requested.clone().or_else(|| {
         cached.clone().map(|global| {
             cached_extra.clone().map_or(global.clone(), |extra| {
                 crate::generator::extra::create_full_generator_name(&global, &extra)
             })
         })
     });
+    // cmake::EvaluateDefaultGlobalGenerator.  The default proper is Ninja:
+    // cmake-rust does not implement Kitware's Linux default (Unix Makefiles).
+    if resolved.is_none()
+        && let Some(environment) = options.environment_generator.as_deref()
+    {
+        if crate::cli::known_generator(environment) {
+            resolved = Some(environment.to_owned());
+        } else {
+            system_error(
+                Some(interp),
+                "CMAKE_GENERATOR was set but the specified generator doesn't exist. Using CMake default.",
+            );
+        }
+    }
     let (generator, extra) = resolved
         .as_deref()
         .and_then(crate::generator::extra::split_generator_name)
@@ -887,7 +909,14 @@ fn actual_configure(
         );
     if generator != "Ninja" && generator != "Ninja Multi-Config" {
         let name = resolved.as_deref().unwrap_or(&generator);
-        let message = format!("Could not create named generator {name}");
+        let mut message = format!("Could not create named generator {name}");
+        if crate::cli::known_generator(name) {
+            // The name is a Kitware CMake 4.1.0 generator, but cmake-rust
+            // ports only the Ninja global generators.
+            message.push_str(&format!(
+                "\nThe \"{generator}\" generator is not implemented by cmake-rust; use \"Ninja\" or \"Ninja Multi-Config\"."
+            ));
+        }
         system_error(Some(interp), &message);
         return -1;
     }
@@ -937,27 +966,47 @@ fn actual_configure(
             );
         }
     }
-    for (name, value, help) in [
+    // cmake::ActualConfigure: an explicitly set instance, platform or toolset
+    // must match the cached one; otherwise the cache keeps its value.
+    let settings = [
         (
             "CMAKE_GENERATOR_INSTANCE",
-            String::new(),
+            "instance",
+            None,
+            &options.environment_instance,
             "Generator instance identifier.",
         ),
         (
             "CMAKE_GENERATOR_PLATFORM",
-            options.platform.clone().unwrap_or_default(),
+            "platform",
+            options.platform.as_ref(),
+            &options.environment_platform,
             "Name of generator platform.",
         ),
         (
             "CMAKE_GENERATOR_TOOLSET",
-            options.toolset.clone().unwrap_or_default(),
+            "toolset",
+            options.toolset.as_ref(),
+            &options.environment_toolset,
             "Name of generator toolset.",
         ),
-    ] {
-        if interp.cache.value(name).is_none() {
+    ];
+    for (name, what, set, environment, help) in settings {
+        if let Some(previous) = interp.cache.value(name).map(str::to_owned) {
+            if let Some(value) = set
+                && *value != previous
+            {
+                let message = format!(
+                    "Error: generator {what}: {value}\nDoes not match the {what} used previously: {previous}\nEither remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory."
+                );
+                system_error(Some(interp), &message);
+                return -2;
+            }
+        } else {
+            let value = set.unwrap_or(environment);
             interp
                 .cache
-                .add(name, Some(&value), Some(help), CacheType::Internal);
+                .add(name, Some(value), Some(help), CacheType::Internal);
         }
     }
     if interp.cache.value("CMAKE_TEST_LAUNCHER").is_none()

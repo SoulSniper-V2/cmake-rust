@@ -830,5 +830,256 @@
    "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmark_as_advanced(FOO)\nmark_as_advanced(CLEAR BAR)\nmark_as_advanced(NEW1 BAZ)\ncmake_policy(SET CMP0102 NEW)\nmark_as_advanced(NEW2)\n",
    "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^(FOO|BAR|BAZ|NEW1|NEW2)\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
   }
+ },
+ {
+  "name": "env-generator-multi-config",
+  "env": {
+   "CMAKE_GENERATOR": "Ninja Multi-Config"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  },
+  "inspect": [
+   "b/build.ninja"
+  ]
+ },
+ {
+  "name": "env-generator-extra",
+  "env": {
+   "CMAKE_GENERATOR": "CodeBlocks - Ninja"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
+ },
+ {
+  "name": "env-generator-platform",
+  "env": {
+   "CMAKE_GENERATOR": "Ninja Multi-Config",
+   "CMAKE_GENERATOR_PLATFORM": "x64"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
+ },
+ {
+  "name": "env-generator-instance",
+  "env": {
+   "CMAKE_GENERATOR": "Ninja",
+   "CMAKE_GENERATOR_INSTANCE": "inst"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
+ },
+ {
+  "name": "env-generator-settings-cleared-by-G",
+  "env": {
+   "CMAKE_GENERATOR": "Ninja",
+   "CMAKE_GENERATOR_TOOLSET": "t1",
+   "CMAKE_GENERATOR_INSTANCE": "inst"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
+ },
+ {
+  "name": "env-generator-toolset-reconfigure",
+  "env": {
+   "CMAKE_GENERATOR": "Ninja",
+   "CMAKE_GENERATOR_TOOLSET": "t1"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b"
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-T",
+     "t2"
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-T",
+     "t1"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
+ },
+ {
+  "name": "generator-platform-toolset-mismatch",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja"
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-A",
+     "x64"
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-T",
+     "v1"
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-A",
+     ""
+    ]
+   },
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja Multi-Config"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
+   "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  }
  }
 ]
