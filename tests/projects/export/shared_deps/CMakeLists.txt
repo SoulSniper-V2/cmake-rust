@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 4.1)
+project(shared_deps C)
+add_library(one SHARED f.c)
+add_library(two SHARED f.c)
+add_library(three SHARED f.c)
+add_library(arc STATIC f.c)
+add_library(ns::one ALIAS one)
+# Implementation dependencies name each shared library once, whatever name
+# it was linked by, and leave out what is already in the link interface.
+add_library(top SHARED f.c)
+target_link_libraries(top PRIVATE one two one ns::one arc two PUBLIC three)
+target_link_libraries(top PRIVATE three -lm m -lm)
+export(TARGETS top one two three arc FILE exp.cmake NAMESPACE exp::)
+install(TARGETS top one two three arc EXPORT e)
+install(EXPORT e DESTINATION lib/cmake/e NAMESPACE inst::)

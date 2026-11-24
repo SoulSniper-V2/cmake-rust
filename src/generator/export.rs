@@ -1688,27 +1688,22 @@ impl<'a, 'b> Exporter<'a, 'b> {
             TargetKind::SharedLibrary | TargetKind::StaticLibrary | TargetKind::InterfaceLibrary
         ) && tgt.kind != TargetKind::InterfaceLibrary
         {
-            let emitted: HashSet<(usize, String)> =
+            // Targets are identified by themselves, other items by their text.
+            let identity = |dep: Option<&Target>, name: &str| match dep {
+                Some(dep) => (std::ptr::from_ref(dep) as usize, String::new()),
+                None => (0, name.to_string()),
+            };
+            let mut emitted: HashSet<(usize, String)> =
                 target::evaluated_links(self.ctx, tgt, tgt, "INTERFACE_LINK_LIBRARIES")
                     .iter()
-                    .map(|name| {
-                        (
-                            self.resolve(tgt.makefile, name)
-                                .map_or(0, |t| std::ptr::from_ref(t) as usize),
-                            name.clone(),
-                        )
-                    })
+                    .map(|name| identity(self.resolve(tgt.makefile, name), name))
                     .collect();
             let old_missing = self.missing.len();
             let old_external = self.external.len();
             let mut shared_deps = Vec::new();
             for name in target::evaluated_links(self.ctx, tgt, tgt, "LINK_LIBRARIES") {
                 let dep = self.resolve(tgt.makefile, &name);
-                let key = (
-                    dep.map_or(0, |t| std::ptr::from_ref(t) as usize),
-                    name.clone(),
-                );
-                if !emitted.contains(&key)
+                if emitted.insert(identity(dep, &name))
                     && dep.is_some_and(|d| d.kind == TargetKind::SharedLibrary)
                 {
                     let mut item = name.clone();
