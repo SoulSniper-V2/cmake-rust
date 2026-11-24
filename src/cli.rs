@@ -488,11 +488,154 @@ struct CacheArg<'a> {
     value: String,
 }
 
+/// cmakemain's argument loop when `--system-information` is present: the
+/// arguments left after the cmakemain-level options are consumed
+/// (`parsedArgs`), or `None` without the flag.
+fn system_information_args(argv: &[String]) -> Option<Vec<String>> {
+    let mut parsed = Vec::new();
+    let mut sysinfo = false;
+    let mut script = false;
+    let mut index = 0;
+    while let Some(arg) = argv.get(index) {
+        if arg == "--" && script {
+            parsed = argv.to_vec();
+            break;
+        }
+        match arg.as_str() {
+            "--system-information" => sysinfo = true,
+            "-N" | "-LAH" | "-LA" | "-LH" | "-L" => {}
+            "-LRAH" | "-LRA" | "-LRH" | "-LR" => index += 1,
+            "--find-package" => parsed.push(arg.clone()),
+            _ if arg.starts_with("-P") => {
+                script = true;
+                parsed.push("-P".to_owned());
+                if arg.len() > 2 {
+                    parsed.push(arg[2..].to_owned());
+                } else if let Some(value) = argv.get(index + 1) {
+                    parsed.push(value.clone());
+                    index += 1;
+                }
+            }
+            _ if arg.starts_with("--list-presets") => {
+                parsed.push("--list-presets".to_owned());
+                parsed.push(arg.strip_prefix("--list-presets=").unwrap_or("").to_owned());
+            }
+            _ => parsed.push(arg.clone()),
+        }
+        index += 1;
+    }
+    sysinfo.then_some(parsed)
+}
+
+/// `cmake::GetSystemInformation`: configure `Modules/SystemInformation.cmake`
+/// in `<cwd>/__cmake_systeminformation` and print or keep its result file.
+fn system_information(args: &[String], cwd: &str) -> i32 {
+    let dest = format!("{cwd}/__cmake_systeminformation");
+    let _ = std::fs::remove_dir_all(&dest);
+    if std::fs::create_dir_all(&dest).is_err() {
+        eprintln!("Error: --system-information must be run from a writable directory!");
+        return 1;
+    }
+    let mut result_file = String::new();
+    let mut write_to_stdout = true;
+    let mut generator = None;
+    // cmSystemTools::Error sets the error flag, and the internal cmake::Run
+    // then stops right after its argument processing.
+    let mut error_occurred = false;
+    let mut index = 1;
+    while let Some(arg) = args.get(index) {
+        if let Some(value) = arg.strip_prefix("-G") {
+            let value = if value.is_empty() {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    cmcmd::error("No generator specified for -G");
+                    print_generators();
+                    return -1;
+                };
+                value.as_str()
+            } else {
+                value
+            };
+            if known_generator(value) {
+                generator = Some(value.to_owned());
+            } else {
+                cmcmd::error(format!("Could not create named generator {value}"));
+                print_generators();
+                error_occurred = true;
+            }
+        } else {
+            if !Path::new(arg).is_absolute() {
+                result_file = format!("{cwd}/");
+            }
+            result_file.push_str(arg);
+            write_to_stdout = false;
+        }
+        index += 1;
+    }
+    let Some(root) = configure::find_cmake_root() else {
+        eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
+        return 1;
+    };
+    let in_file = format!("{root}/Modules/SystemInformation.cmake");
+    let out_file = format!("{dest}/CMakeLists.txt");
+    if std::fs::copy(&in_file, &out_file).is_err() {
+        eprintln!("Error copying file \"{in_file}\" to \"{out_file}\".");
+        return 1;
+    }
+    if result_file.is_empty() {
+        result_file = format!("{cwd}/__cmake_systeminformation/results.txt");
+    }
+    // cmWorkingDirectory: the internal configure runs inside `dest`.
+    let previous = std::env::current_dir().ok();
+    if let Err(error) = std::env::set_current_dir(&dest) {
+        eprintln!(
+            "Failed to change working directory to {dest} : {}",
+            cmcmd::os_error(&error)
+        );
+        return 1;
+    }
+    let mut internal = vec![
+        args[0].clone(),
+        dest.clone(),
+        format!("-DRESULT_FILE={result_file}"),
+    ];
+    if let Some(generator) = generator {
+        // The generator chosen here is the one the internal run uses.
+        internal.extend(["-G".to_owned(), generator]);
+    }
+    let result = if error_occurred {
+        -1
+    } else {
+        configure_args_with(&internal, &dest, true).unwrap_or(1)
+    };
+    if let Some(previous) = previous {
+        let _ = std::env::set_current_dir(previous);
+    }
+    if result != 0 {
+        eprintln!("Error: --system-information failed on internal CMake!");
+        return result;
+    }
+    if write_to_stdout && let Ok(contents) = std::fs::read(&result_file) {
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(&contents);
+        let _ = stdout.flush();
+    }
+    let _ = std::fs::remove_dir_all(&dest);
+    0
+}
+
 fn project_or_script(argv: &[String], cwd: &str) -> i32 {
     configure_args(argv, cwd).unwrap_or(1)
 }
 
 fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
+    configure_args_with(argv, cwd, false)
+}
+
+/// `cmake::Run` on a `cmake` instance; `no_progress` when it has no progress
+/// callback (cmake::GetSystemInformation's internal run).
+fn configure_args_with(argv: &[String], cwd: &str, no_progress: bool) -> Result<i32, ()> {
     let args = &argv[1..];
     if args
         .iter()
@@ -504,12 +647,16 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
         );
         return Ok(1);
     }
+    if let Some(parsed) = system_information_args(argv) {
+        return Ok(system_information(&parsed, cwd));
+    }
     let script_mode = args
         .iter()
         .take_while(|arg| arg.as_str() != "--")
         .any(|arg| arg.starts_with("-P"));
     let mut options = ConfigureOptions {
         command_args: argv.to_vec(),
+        no_progress,
         ..ConfigureOptions::default()
     };
     if !script_mode {
@@ -521,7 +668,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     let mut cache_args = Vec::new();
     let mut unknown = None;
     let mut extra = None;
-    let mut unsupported = None;
     let mut find_package_mode = false;
     let mut bad_generator = false;
     let mut trace_file_failed = false;
@@ -698,7 +844,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
                     options.ignore_link_warning_as_error = true;
                 }
                 "-O" | "--warn-unused-vars" => {}
-                "--system-information" => unsupported = Some(arg),
                 "--debugger" => {
                     println!("Running with debugger on.");
                     options.debugger_on = true;
@@ -731,10 +876,6 @@ fn configure_args(argv: &[String], cwd: &str) -> Result<i32, ()> {
     if let Some(arg) = unknown.filter(|_| !script_mode) {
         cmcmd::error(format!("Unknown argument {arg}"));
         return Ok(cli_failure());
-    }
-    if let Some(flag) = unsupported {
-        cmcmd::error(format!("{flag} is not supported"));
-        return Ok(1);
     }
     if find_package_mode {
         return Ok(run_find_package_mode(args, &cache_args, cwd));

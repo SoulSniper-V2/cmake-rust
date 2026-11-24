@@ -396,9 +396,13 @@ fn include_guard(interp: &mut Interp, args: &[String]) -> CmdResult {
     let file = interp.get_safe("CMAKE_CURRENT_LIST_FILE");
     let marker = format!("__INCGUARD_{}__", md5_hex(&file));
     let guarded = match scope {
+        // An existing guard returns before anything is (re)set.
         "VARIABLE" => {
             let guarded = interp.is_def_set(&marker);
-            interp.set_def(marker, "TRUE");
+            if !guarded {
+                // cmMakefile::AddDefinitionBool(var, true).
+                interp.set_def(marker, "ON");
+            }
             guarded
         }
         "DIRECTORY" => {
@@ -411,12 +415,16 @@ fn include_guard(interp: &mut Interp, args: &[String]) -> CmdResult {
                 }
                 directory = interp.makefiles[index].parent;
             }
-            interp.mf_mut().props.set(&marker, "TRUE".into());
+            if !found {
+                interp.mf_mut().props.set(&marker, "TRUE".into());
+            }
             found
         }
         "GLOBAL" => {
             let found = interp.global_props.get(&marker).is_some();
-            interp.global_props.set(&marker, "TRUE".into());
+            if !found {
+                interp.global_props.set(&marker, "TRUE".into());
+            }
             found
         }
         other => {

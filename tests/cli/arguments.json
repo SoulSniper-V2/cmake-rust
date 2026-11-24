@@ -1081,5 +1081,58 @@
    "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\n",
    "dump.cmake": "file(STRINGS b/CMakeCache.txt lines REGEX \"^CMAKE_(EXTRA_)?GENERATOR\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
   }
+ },
+ {
+  "name": "system-information-missing-generator",
+  "argv": [
+   "--system-information",
+   "-G"
+  ]
+ },
+ {
+  "name": "system-information-bad-generator",
+  "steps": [
+   {
+    "argv": [
+     "--system-information",
+     "-G",
+     "Bogus",
+     "-GNinja",
+     "-N",
+     "r.txt"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "check.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "check.cmake": "file(STRINGS r.txt lines REGEX \"^(CMAKE_GENERATOR|CMAKE_MAKE_PROGRAM|RESULT_FILE|PROJECT_NAME) \")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\nfile(STRINGS r.txt avoid REGEX \"Avoid ctest\")\nlist(LENGTH avoid n)\nmessage(\"ctest lines: ${n}\")\nif(EXISTS __cmake_systeminformation)\n  message(\"scratch dir kept\")\nendif()\n"
+  }
+ },
+ {
+  "name": "system-information-result-file",
+  "steps": [
+   {
+    "argv": [
+     "--system-information",
+     "-GNinja",
+     "-N",
+     "r.txt"
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "check.cmake"
+    ]
+   }
+  ],
+  "files": {
+   "check.cmake": "file(STRINGS r.txt lines REGEX \"^(CMAKE_GENERATOR|CMAKE_MAKE_PROGRAM|RESULT_FILE|PROJECT_NAME) \")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\nfile(STRINGS r.txt avoid REGEX \"Avoid ctest\")\nlist(LENGTH avoid n)\nmessage(\"ctest lines: ${n}\")\nif(EXISTS __cmake_systeminformation)\n  message(\"scratch dir kept\")\nendif()\n"
+  }
  }
 ]

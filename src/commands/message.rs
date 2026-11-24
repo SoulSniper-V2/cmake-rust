@@ -227,7 +227,9 @@ pub fn status_line(interp: &mut Interp, text: &str) {
         line.push_str(&interp.mf().source_dir);
     }
     line.push_str(&interp.debug_stack());
-    interp.stdout_line(&line);
+    if !interp.ext.no_progress {
+        interp.stdout_line(&line);
+    }
     // `cmMakefile::DisplayStatus` -> `OnMessageOutput(MESSAGE, message)`.
     interp.debug_message(crate::messages::MessageType::Message, text);
 }

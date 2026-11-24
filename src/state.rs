@@ -507,6 +507,9 @@ pub struct Ext {
     /// (`CMAKE_DEFAULT_BUILD_TYPE` or the first config), the
     /// `CMAKE_CROSS_CONFIGS` and `CMAKE_DEFAULT_CONFIGS` sets.
     pub multi_config: bool,
+    /// No progress callback is installed (`cmake --system-information`):
+    /// status lines are not printed.
+    pub no_progress: bool,
     pub gen_configs: Vec<String>,
     pub gen_default_file_config: String,
     pub gen_cross_configs: BTreeSet<String>,

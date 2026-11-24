@@ -26,6 +26,8 @@ pub struct ConfigureOptions {
     pub generator: Option<String>,
     pub toolset: Option<String>,
     pub platform: Option<String>,
+    /// Configure without cmakemain's progress callback (`--system-information`).
+    pub no_progress: bool,
     /// The `CMAKE_GENERATOR` environment variable (cmake::EnvironmentGenerator).
     pub environment_generator: Option<String>,
     /// `CMAKE_GENERATOR_INSTANCE`, `_PLATFORM` and `_TOOLSET` from the
@@ -921,6 +923,7 @@ fn actual_configure(
         return -1;
     }
     interp.ext.multi_config = generator == "Ninja Multi-Config";
+    interp.ext.no_progress = options.no_progress;
     // cmake::ActualConfigure compares the generator's full name with the
     // cached CMAKE_GENERATOR/CMAKE_EXTRA_GENERATOR pair.
     let full_name = crate::generator::extra::create_full_generator_name(
