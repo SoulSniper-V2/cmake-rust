@@ -403,7 +403,7 @@ fn interface_config_props(suffix: &str, props: &BTreeMap<String, String>) -> Obj
                 let languages: Vec<String> = expand_list(value, false)
                     .iter()
                     .map(|lang| {
-                        let ll = lang.to_lowercase();
+                        let ll = lang.to_ascii_lowercase();
                         if ll == "cxx" { "cpp".to_owned() } else { ll }
                     })
                     .collect();
@@ -422,7 +422,7 @@ fn property_config_suffix(config: &str) -> String {
     if config.is_empty() {
         "_NOCONFIG".to_owned()
     } else {
-        format!("_{}", config.to_uppercase())
+        format!("_{}", config.to_ascii_uppercase())
     }
 }
 

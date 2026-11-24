@@ -214,7 +214,7 @@ impl<'a> GenCtx<'a> {
         if self.multi_config && !config.is_empty() {
             format!(
                 "cmake_object_order_depends_target_{name}_{}",
-                config.to_uppercase()
+                config.to_ascii_uppercase()
             )
         } else {
             format!("cmake_object_order_depends_target_{name}")

@@ -665,7 +665,7 @@ pub fn store_matches(interp: &mut Interp, text: &str, found: &crate::cmregex::Ma
     let mut highest: Option<usize> = None;
     for index in 0..10 {
         let value = found.groups[index]
-            .map(|(start, end)| text.get(start..end).unwrap_or("").to_owned())
+            .map(|(start, end)| String::from_utf8_lossy(&text.as_bytes()[start..end]).into_owned())
             .unwrap_or_default();
         if !value.is_empty() {
             interp.set_def(format!("CMAKE_MATCH_{index}"), value);

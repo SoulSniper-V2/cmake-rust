@@ -94,9 +94,7 @@ fn framework_parent(path: &str) -> Option<String> {
         return None;
     }
     let found = SPLIT.with(|regex| regex.find(path))?;
-    let group = |index: usize| {
-        found.groups[index].map_or(String::new(), |(start, end)| path[start..end].to_owned())
-    };
+    let group = |index: usize| found.text(path, index).unwrap_or_default().into_owned();
     group(3).contains(&group(2)).then(|| group(1))
 }
 
@@ -165,11 +163,9 @@ impl Constraint {
                 else {
                     return false;
                 };
-                let group = |index: usize| {
-                    found.groups[index].map_or("", |(start, end)| &self.name[start..end])
-                };
+                let group = |index: usize| found.text(&self.name, index).unwrap_or_default();
                 order.link_extensions.iter().any(|extension| {
-                    extension != group(2)
+                    *extension != group(2)
                         && self.file_conflicts(
                             directory,
                             &format!("{}{extension}", group(1)),

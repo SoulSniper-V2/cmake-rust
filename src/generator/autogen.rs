@@ -1231,7 +1231,7 @@ impl Initializer {
         };
         let (mut headers, mut sources) = (Vec::new(), Vec::new());
         for (path, generated, configs) in &all {
-            let ext = extension(path).to_lowercase();
+            let ext = extension(path).to_ascii_lowercase();
             if self.moc_or_uic() {
                 let file = || self.make_mu_file(ctx, path, *generated, configs, true);
                 if is_header(&ext) {
@@ -1324,7 +1324,7 @@ impl Initializer {
                 if path.is_empty() {
                     continue;
                 }
-                let ext = extension(&path).to_lowercase();
+                let ext = extension(&path).to_ascii_lowercase();
                 let generated = source_generated(interp, dir, index, &path);
                 if is_header(&ext) {
                     if !known_headers.contains(&path) {

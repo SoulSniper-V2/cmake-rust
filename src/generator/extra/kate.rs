@@ -52,7 +52,9 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
 
 /// `cmExtraKateGenerator::GenerateFilesString`.
 fn generate_files_string(s: &Shared, dir: usize) -> String {
-    let mode = s.var_safe(dir, "CMAKE_KATE_FILES_MODE").to_uppercase();
+    let mode = s
+        .var_safe(dir, "CMAKE_KATE_FILES_MODE")
+        .to_ascii_uppercase();
     const GIT: &str = "\"git\": 1 ";
     const SVN: &str = "\"svn\": 1 ";
     const HG: &str = "\"hg\": 1 ";

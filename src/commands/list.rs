@@ -390,7 +390,7 @@ impl CmList {
                     result = util::filename_name(&result);
                 }
                 if config.case == CaseSensitivity::Insensitive {
-                    result = result.to_lowercase();
+                    result = result.to_ascii_lowercase();
                 }
                 result
             };
@@ -606,7 +606,8 @@ impl ReplaceHelper {
     }
 
     fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
-        output.clear();
+        // Byte ranges may split multi-byte characters; assemble bytes.
+        let mut bytes = Vec::<u8>::new();
         let bol_at_offset = interp.policy_status("CMP0186") != PolicyStatus::New;
 
         let mut base = 0usize;
@@ -617,12 +618,12 @@ impl ReplaceHelper {
             crate::state::store_matches(interp, input, &found);
 
             // Concatenate the part of the input that was not matched.
-            output.push_str(&input[base..start]);
+            bytes.extend_from_slice(&input.as_bytes()[base..start]);
 
             // Concatenate the replacement for the match.
             for replacement in &self.replacements {
                 match replacement {
-                    Replacement::Text(text) => output.push_str(text),
+                    Replacement::Text(text) => bytes.extend_from_slice(text.as_bytes()),
                     Replacement::Group(n) => {
                         if *n > self.num_groups {
                             return Err(OutOfRange(format!(
@@ -631,7 +632,7 @@ impl ReplaceHelper {
                             )));
                         }
                         if let Some((s, e)) = found.groups[*n] {
-                            output.push_str(&input[s..e]);
+                            bytes.extend_from_slice(&input.as_bytes()[s..e]);
                         }
                     }
                 }
@@ -644,7 +645,8 @@ impl ReplaceHelper {
             }
             nonempty = start == end;
         }
-        output.push_str(&input[base..]);
+        bytes.extend_from_slice(&input.as_bytes()[base..]);
+        *output = String::from_utf8_lossy(&bytes).into_owned();
         Ok(())
     }
 }
@@ -1268,8 +1270,8 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
         Ok(match action {
             TransformAction::Append => format!("{}{}", s, action_args[0]),
             TransformAction::Prepend => format!("{}{}", action_args[0], s),
-            TransformAction::ToUpper => s.to_uppercase(),
-            TransformAction::ToLower => s.to_lowercase(),
+            TransformAction::ToUpper => s.to_ascii_uppercase(),
+            TransformAction::ToLower => s.to_ascii_lowercase(),
             TransformAction::Strip => s.trim_matches(|c: char| c.is_whitespace()).to_owned(),
             TransformAction::GenexStrip => strip_all_generator_expressions(s),
             TransformAction::Replace => {

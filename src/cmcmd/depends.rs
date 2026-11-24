@@ -613,15 +613,15 @@ impl<'a> DependsC<'a> {
         let Some(m) = regex.find(line) else {
             return line.to_owned();
         };
-        let group = |n: usize| m.groups[n].map(|(s, e)| &line[s..e]).unwrap_or("");
-        let Some(value) = self.transform_rules.get(group(3)) else {
+        let group = |n: usize| m.text(line, n).unwrap_or_default().into_owned();
+        let Some(value) = self.transform_rules.get(&group(3)) else {
             return line.to_owned();
         };
         let mut newline = group(1).to_owned();
         let arg = group(4);
         for c in value.chars() {
             if c == '%' {
-                newline.push_str(arg);
+                newline.push_str(&arg);
             } else {
                 newline.push(c);
             }
@@ -734,7 +734,7 @@ impl<'a> DependsC<'a> {
                 line
             };
             if let Some(m) = self.include_regex_line.find(&line) {
-                let group = |n: usize| m.groups[n].map(|(s, e)| line[s..e].to_owned());
+                let group = |n: usize| m.text(&line, n).map(std::borrow::Cow::into_owned);
                 let mut entry = UnscannedEntry {
                     file_name: crate::cache::convert_to_unix_slashes(&group(2).unwrap_or_default()),
                     ..UnscannedEntry::default()

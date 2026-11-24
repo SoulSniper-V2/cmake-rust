@@ -835,7 +835,7 @@ fn write_dyndep_metadata(
     mod_files: &BTreeMap<String, (String, bool)>,
 ) -> Result<(), String> {
     let mut errors = String::new();
-    let config_upper = export.config.to_uppercase();
+    let config_upper = export.config.to_ascii_uppercase();
 
     let mut exports: Vec<(String, &CxxExport)> = vec![];
     for e in &export.exports {

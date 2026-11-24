@@ -223,7 +223,7 @@ impl PackageInfoArguments {
     /// `cmPackageInfoArguments::GetPackageDirName`.
     pub fn package_dir_name(&self) -> String {
         if self.lower_case {
-            self.package_name.to_lowercase()
+            self.package_name.to_ascii_lowercase()
         } else {
             self.package_name.clone()
         }

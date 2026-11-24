@@ -121,6 +121,15 @@ pub struct Match {
     pub groups: [Option<(usize, usize)>; MAX_GROUPS],
 }
 
+impl Match {
+    /// The text of group `n` in `text`.  Groups are byte ranges and may split
+    /// a multi-byte character; such bytes are kept lossily instead of
+    /// panicking on a char boundary.
+    pub fn text<'a>(&self, text: &'a str, n: usize) -> Option<std::borrow::Cow<'a, str>> {
+        self.groups[n].map(|(start, end)| String::from_utf8_lossy(&text.as_bytes()[start..end]))
+    }
+}
+
 /// A compiled regular expression (kwsys `program` plus its precomputed
 /// match hints).
 #[derive(Clone)]

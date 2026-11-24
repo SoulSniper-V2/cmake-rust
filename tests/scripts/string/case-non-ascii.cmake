@@ -1,0 +1,11 @@
+# Case mapping is C-locale tolower/toupper: only ASCII letters change.
+string(TOUPPER "aéßı" a)
+string(TOLOWER "AÉİ" b)
+set(L "aé;ßı;Ö")
+list(TRANSFORM L TOUPPER OUTPUT_VARIABLE U)
+list(TRANSFORM L TOLOWER OUTPUT_VARIABLE W)
+set(S "é;a;€;Z;É;b")
+list(SORT S CASE INSENSITIVE)
+set(S2 "é;a;€;Z;É;b")
+list(SORT S2 CASE INSENSITIVE ORDER DESCENDING)
+message("${a}|${b}|${U}|${W}|${S}|${S2}")

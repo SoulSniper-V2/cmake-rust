@@ -354,7 +354,7 @@ fn regex_match(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(found) = re.find_at(&input, 0, false) {
         store_matches(interp, &input, &found);
         if let Some((start, end)) = found.groups[0] {
-            output = input.get(start..end).unwrap_or("").to_owned();
+            output = String::from_utf8_lossy(&input.as_bytes()[start..end]).into_owned();
         }
     }
     interp.set_def(outvar.clone(), output);
@@ -379,17 +379,19 @@ fn regex_match_all(interp: &mut Interp, args: &[String]) -> CmdResult {
 
     let old_policy = old_bol(interp);
 
-    let mut output = String::new();
+    // Matches are byte ranges; a range may split a multi-byte character, so
+    // the list is assembled as bytes.
+    let mut output = Vec::<u8>::new();
     let mut base = 0usize;
     let mut nonempty_at_offset = false;
     while let Some(found) = regex_find_next(&re, &input, base, nonempty_at_offset, old_policy) {
         clear_matches(interp);
         store_matches(interp, &input, &found);
         if !output.is_empty() || nonempty_at_offset {
-            output.push(';');
+            output.push(b';');
         }
         let (start, end) = found.groups[0].unwrap_or((base, base));
-        output.push_str(input.get(start..end).unwrap_or(""));
+        output.extend_from_slice(&input.as_bytes()[start..end]);
         base = end;
         if start == input.len() {
             break;
@@ -397,7 +399,10 @@ fn regex_match_all(interp: &mut Interp, args: &[String]) -> CmdResult {
         nonempty_at_offset = start == end;
     }
 
-    interp.set_def(outvar.clone(), output);
+    interp.set_def(
+        outvar.clone(),
+        String::from_utf8_lossy(&output).into_owned(),
+    );
     Ok(())
 }
 
