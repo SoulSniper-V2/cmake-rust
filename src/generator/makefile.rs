@@ -146,6 +146,7 @@ struct TargetProgress {
     var_by_file: HashMap<String, usize>,
     all: Vec<usize>,
     rules: Vec<usize>,
+    marks: Vec<usize>,
 }
 
 pub struct MakefileGenerator<'a> {
@@ -1048,7 +1049,7 @@ impl<'a> MakefileGenerator<'a> {
             ),
             ("ARCH_FLAGS", link_vars.arch_flags.clone()),
             ("LINK_FLAGS", link_flags),
-            ("LINK_LIBRARIES", makefile_link_libraries(&line.libraries)),
+            ("LINK_LIBRARIES", makefile_link_libraries(&line)),
             ("LINK_PATH", line.framework_path + &line.link_path),
             ("CONFIG", config.clone()),
             ("TARGET_PDB", String::new()),
@@ -1057,15 +1058,25 @@ impl<'a> MakefileGenerator<'a> {
             ("MANIFESTS", String::new()),
         ];
         if target.kind == TargetKind::SharedLibrary || target.kind == TargetKind::ModuleLibrary {
+            let has_soname = gt::has_soname(self.ctx, target, &config);
             vars.push((
                 "SONAME_FLAG",
-                self.ctx.var_safe(
-                    target.makefile,
-                    &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG"),
-                ),
+                if has_soname {
+                    self.ctx.var_safe(
+                        target.makefile,
+                        &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG"),
+                    )
+                } else {
+                    String::new()
+                },
             ));
-            vars.push(("TARGET_SONAME", shell_path(self.ctx, &names.shared_object)));
-            vars.push(("SONAME", shell_path(self.ctx, &names.shared_object)));
+            let soname = if has_soname {
+                shell_path(self.ctx, &names.shared_object)
+            } else {
+                String::new()
+            };
+            vars.push(("TARGET_SONAME", soname.clone()));
+            vars.push(("SONAME", soname));
         }
         let mut text = String::new();
         for part in template.split(';').filter(|s| !s.is_empty()) {
@@ -1445,7 +1456,7 @@ impl<'a> MakefileGenerator<'a> {
             crate::fsutil::write_if_different(Path::new(&format!("{support}/build.make")), &build);
     }
 
-    fn write_progress_marks(&self) {
+    fn write_progress_marks(&mut self) {
         let total: usize = self.progress.iter().map(|(_, p)| p.total).sum();
         let _ = crate::fsutil::write_if_different(
             Path::new(&format!(
@@ -1478,18 +1489,53 @@ impl<'a> MakefileGenerator<'a> {
             ));
             let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{count}\n"));
         }
+        let mut ordered: Vec<(String, String, usize)> = self
+            .progress
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (name, _))| {
+                self.ctx.target(name).map(|target| {
+                    (
+                        name.clone(),
+                        self.ctx.interp.makefiles[target.makefile]
+                            .binary_dir
+                            .clone(),
+                        index,
+                    )
+                })
+            })
+            .collect();
+        ordered.sort();
         let mut current = 0usize;
-        for (name, progress) in self.progress.iter().rev() {
+        let total_actions = total;
+        for (_, _, index) in ordered {
+            let total_actions_for_target = self.progress[index].1.total;
+            let Some((name, _)) = self.progress.get(index) else {
+                continue;
+            };
             let Some(target) = self.ctx.target(name) else {
                 continue;
             };
             let support = gt::support_directory(self.ctx, target);
             let mut text = String::new();
-            for index in 1..=progress.total {
-                current += 1;
-                let _ = writeln!(text, "CMAKE_PROGRESS_{index} = {current}");
+            let mut marks = Vec::new();
+            for action in 1..=total_actions_for_target {
+                let before = ((action - 1 + current) * 100) / total_actions.max(1);
+                let absolute = action + current;
+                let after = (absolute * 100) / total_actions.max(1);
+                text.push_str(&format!("CMAKE_PROGRESS_{action} = "));
+                if total_actions <= 100 {
+                    text.push_str(&absolute.to_string());
+                    marks.push(absolute);
+                } else if after > before {
+                    text.push_str(&after.to_string());
+                    marks.push(after);
+                }
+                text.push('\n');
             }
             text.push('\n');
+            current += total_actions_for_target;
+            self.progress[index].1.marks = marks;
             let _ = crate::fsutil::write_if_different(
                 Path::new(&format!("{support}/progress.make")),
                 &text,
@@ -1498,26 +1544,39 @@ impl<'a> MakefileGenerator<'a> {
     }
 
     fn progress_numbers(&self, name: &str) -> Vec<usize> {
-        let mut current = 0usize;
-        for (n, p) in self.progress.iter().rev() {
-            let start = current + 1;
-            current += p.total;
-            if n == name {
-                return (start..=current).collect();
-            }
-        }
-        Vec::new()
+        self.progress
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p.marks.clone())
+            .unwrap_or_default()
     }
 
-    fn progress_end_in_creation_order(&self, name: &str) -> usize {
-        let mut end = 0;
-        for (n, p) in &self.progress {
-            end += p.total;
-            if n == name {
-                return end;
+    fn count_progress_marks_in_target(
+        &self,
+        target: &Target,
+        emitted: &mut std::collections::HashSet<String>,
+    ) -> usize {
+        if !emitted.insert(target.name.clone()) {
+            return 0;
+        }
+        let mut count = self
+            .progress
+            .iter()
+            .find(|(n, _)| n == &target.name)
+            .map(|(_, p)| p.marks.len())
+            .unwrap_or(0);
+        for depend in super::link::target_depends(self.ctx, target).iter() {
+            if let Some(dep) = self.ctx.interp.ext.targets.get(&depend.key)
+                && is_in_build_system(dep)
+            {
+                count += self.count_progress_marks_in_target(dep, emitted);
             }
         }
-        end
+        count
+    }
+
+    fn progress_count_in_target(&self, target: &Target) -> usize {
+        self.count_progress_marks_in_target(target, &mut std::collections::HashSet::new())
     }
 
     fn write_target_directories(&self) {
@@ -1677,7 +1736,12 @@ impl<'a> MakefileGenerator<'a> {
                 maybe_relative_cur(self.ctx, t.makefile, &gt::support_directory(self.ctx, t))
             )
         };
-        for dir in 0..self.ctx.interp.makefiles.len() {
+        let mut dirs: Vec<usize> = (0..self.ctx.interp.makefiles.len()).collect();
+        dirs.sort_by_key(|dir| {
+            let rel = home_relative_output_path(self.ctx, *dir);
+            (rel.starts_with('/'), rel)
+        });
+        for dir in dirs {
             if dir == 0 {
                 out.push_str("#=============================================================================\n# Directory level rules for the build root directory\n\n");
             } else {
@@ -1775,7 +1839,7 @@ impl<'a> MakefileGenerator<'a> {
                 &[
                     format!(
                         "$(CMAKE_COMMAND) -E cmake_progress_start {progress_dir} {}",
-                        self.progress_end_in_creation_order(&t.name)
+                        self.progress_count_in_target(t)
                     ),
                     format!("$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 {r}/all"),
                     format!("$(CMAKE_COMMAND) -E cmake_progress_start {progress_dir} 0"),
@@ -1901,14 +1965,27 @@ impl<'a> MakefileGenerator<'a> {
                 .var(0, "CMAKE_SKIP_INSTALL_RULES")
                 .is_some_and(|v| crate::util::is_on(&v));
         if install_enabled {
+            let mut components = vec!["Unspecified".to_string()];
+            if let Some(extra) = self.ctx.interp.ext.misc.get("install-components") {
+                components.extend(
+                    crate::util::expand_list(extra, false)
+                        .into_iter()
+                        .filter(|component| component != "Unspecified"),
+                );
+            }
+            let quoted = components
+                .iter()
+                .map(|component| format!("\\\"{component}\\\""))
+                .collect::<Vec<_>>()
+                .join(" ");
             write_make_rule(
                 &mut out,
                 Some("Special rule for the target list_install_components"),
                 "list_install_components",
                 &[],
-                &[
-                    "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --cyan \"Available install components are: \\\"Unspecified\\\"\"".to_string(),
-                ],
+                &[format!(
+                    "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --cyan \"Available install components are: {quoted}\""
+                )],
                 true,
             );
             write_make_rule(
@@ -2188,10 +2265,22 @@ impl<'a> MakefileGenerator<'a> {
                 }
             }
         }
-        objects.sort();
-        objects.dedup();
-        let mut help_objects = Vec::new();
+        // cmLocalUnixMakefileGenerator3::WriteConvenienceRules groups all
+        // object builds for the same source-file stem in one make rule; the
+        // recipe then invokes every target build that can produce it.
+        let mut grouped: Vec<(String, Vec<(String, String)>)> = Vec::new();
         for (base, stem, r) in objects {
+            if let Some((_, commands)) = grouped.iter_mut().find(|(b, _)| *b == base) {
+                if !commands.iter().any(|x| x == &(stem.clone(), r.clone())) {
+                    commands.push((stem, r));
+                }
+            } else {
+                grouped.push((base, vec![(stem, r)]));
+            }
+        }
+        grouped.sort();
+        let mut help_objects = Vec::new();
+        for (base, target_calls) in grouped {
             let aliasbase = base
                 .rsplit_once('.')
                 .map_or(base.as_str(), |(stem, _)| stem)
@@ -2210,14 +2299,18 @@ impl<'a> MakefileGenerator<'a> {
                     "i" => "target to preprocess a source file",
                     _ => "target to generate assembly for a file",
                 };
+                let commands: Vec<String> = target_calls
+                    .iter()
+                    .map(|(stem, r)| {
+                        format!("{cdroot}$(MAKE) $(MAKESILENT) -f {r}/build.make {stem}.{suffix}")
+                    })
+                    .collect();
                 write_make_rule(
                     &mut out,
                     Some(comment),
                     &format!("{base}.{suffix}"),
                     &[],
-                    &[format!(
-                        "{cdroot}$(MAKE) $(MAKESILENT) -f {r}/build.make {stem}.{suffix}"
-                    )],
+                    &commands,
                     true,
                 );
                 help_objects.push(format!("{aliasbase}.{suffix}"));
@@ -2265,11 +2358,21 @@ impl<'a> MakefileGenerator<'a> {
     }
 }
 
-fn makefile_link_libraries(libraries: &str) -> String {
-    if libraries.is_empty() {
-        return String::new();
+fn makefile_link_libraries(line: &super::link::LinkLine) -> String {
+    fn append_values(values: &[(String, impl Clone)]) -> String {
+        let mut result = String::new();
+        for (value, _) in values {
+            if result.is_empty() {
+                result.push(' ');
+            }
+            result.push_str(value);
+        }
+        result
     }
-    format!(" {}", libraries.replace(":  ", ": ").trim_end())
+    let mut result = line.framework_path.clone();
+    result.push_str(&append_values(&line.path_fragments));
+    result.push_str(&append_values(&line.lib_fragments));
+    result.trim_end().to_owned()
 }
 
 fn compiler_tag(ctx: &GenCtx<'_>, target: &Target, lang: &str) -> String {
