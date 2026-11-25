@@ -81,6 +81,119 @@ fn strip_last_extension(path: &str) -> &str {
     path.rfind('.').map_or(path, |pos| &path[..pos])
 }
 
+fn makefile_target_version(target: &Target) -> (String, String) {
+    let version = target.props.get("VERSION").unwrap_or("");
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|part| part.parse::<i64>().ok())
+        .unwrap_or(0);
+    let minor = parts
+        .next()
+        .and_then(|part| part.parse::<i64>().ok())
+        .unwrap_or(0);
+    (major.to_string(), minor.to_string())
+}
+
+fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> String {
+    ctx.var(
+        target.makefile,
+        &format!("CMAKE_{language}_RESPONSE_FILE_LINK_FLAG"),
+    )
+    .filter(|flag| !flag.is_empty())
+    .unwrap_or_else(|| "@".to_owned())
+}
+
+fn makefile_object_entries(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    objects: &[String],
+    externals: &[String],
+) -> Vec<String> {
+    let pch_extension = ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
+    let dir = target.makefile;
+    objects
+        .iter()
+        .filter(|object| {
+            pch_extension
+                .as_ref()
+                .is_none_or(|extension| !object.ends_with(extension.as_str()))
+        })
+        .map(|object| shell_path(ctx, object))
+        .chain(
+            externals
+                .iter()
+                .map(|object| shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+        )
+        .collect()
+}
+
+fn makefile_object_strings(entries: &[String], limit: usize) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut current = String::new();
+    for entry in entries {
+        if limit != usize::MAX && current.len() + 1 + entry.len() > limit {
+            strings.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(entry);
+    }
+    strings.push(current);
+    strings
+}
+
+fn makefile_use_response_objects(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    language: &str,
+    entries: &[String],
+) -> bool {
+    let name = format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_OBJECTS");
+    if let Some(value) = ctx.var(target.makefile, &name)
+        && !value.is_empty()
+    {
+        return is_on(&value);
+    }
+    let length: usize = entries.iter().map(|entry| entry.len() + 3).sum();
+    length as i64 > super::ninja::command_line_length_limit() / 2
+}
+
+fn makefile_use_archive_rules(ctx: &GenCtx<'_>, target: &Target, language: &str) -> bool {
+    if target.kind != TargetKind::StaticLibrary {
+        return false;
+    }
+    let create_var = format!("CMAKE_{language}_CREATE_STATIC_LIBRARY");
+    let have_static_rule = ctx
+        .var(target.makefile, &create_var)
+        .is_some_and(|value| !value.is_empty());
+    !have_static_rule
+        && !ctx
+            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"))
+            .is_empty()
+        && !ctx
+            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_APPEND"))
+            .is_empty()
+}
+
+fn makefile_response_plan(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    objects: &[String],
+    externals: &[String],
+    language: &str,
+) -> (bool, Vec<String>) {
+    let entries = makefile_object_entries(ctx, target, objects, externals);
+    let use_response = makefile_use_response_objects(ctx, target, language, &entries);
+    let strings = if use_response {
+        makefile_object_strings(&entries, 131000)
+    } else {
+        vec![entries.join(" ")]
+    };
+    (use_response, strings)
+}
+
 fn write_make_rule(
     out: &mut String,
     comment: Option<&str>,
@@ -1077,7 +1190,7 @@ impl<'a> MakefileGenerator<'a> {
         externals: &[String],
         support_rel_cur: &str,
         support_rel_top: &str,
-        compiler_depends: bool,
+        _compiler_depends: bool,
         out: &mut String,
     ) {
         let varname = target
@@ -1139,11 +1252,38 @@ impl<'a> MakefileGenerator<'a> {
         } else {
             super::link::base_link_line(self.ctx, target, &config, &language)
         };
+        let use_archive_rules = makefile_use_archive_rules(self.ctx, target, &language);
+        let (mut use_response_objects, object_strings) =
+            makefile_response_plan(self.ctx, target, objects, externals, &language);
+        if use_archive_rules {
+            use_response_objects = false;
+        }
         if target.kind != TargetKind::StaticLibrary {
-            if compiler_depends {
+            if flags::link_dependency_file(self.ctx, target, &language).is_some() {
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
             depends.extend(line.depends.iter().map(|p| maybe_relative_top(self.ctx, p)));
+        }
+        if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
+            depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
+        }
+        let libraries_text = makefile_link_libraries(&line);
+        let use_response_libraries = target.kind != TargetKind::StaticLibrary
+            && self
+                .ctx
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_LIBRARIES"),
+                )
+                .is_some_and(|value| !value.is_empty() && is_on(&value))
+            && libraries_text.trim_start().is_empty() == false;
+        if use_response_libraries {
+            depends.push(format!("{support_rel_top}/linkLibs.rsp"));
+        }
+        if use_response_objects {
+            for index in 1..=object_strings.len() {
+                depends.push(format!("{support_rel_top}/objects{index}.rsp"));
+            }
         }
         let link_script = format!("{support_rel_cur}/link.txt");
         depends.push(format!("{support_rel_top}/link.txt"));
@@ -1277,26 +1417,49 @@ impl<'a> MakefileGenerator<'a> {
         let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
         let target_full = format!("{directory}/{}", names.real);
         let target_shell = shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_full));
-        let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
-        let object_list = objects
-            .iter()
-            .filter(|object| {
-                pch_extension
-                    .as_ref()
-                    .is_none_or(|extension| !object.ends_with(extension.as_str()))
-            })
-            .map(|o| shell_path(self.ctx, o))
-            .chain(
-                externals
-                    .iter()
-                    .map(|o| shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, o))),
-            )
-            .collect::<Vec<_>>()
-            .join(" ");
+        let entries = makefile_object_entries(self.ctx, target, objects, externals);
+        let (mut use_response_objects, object_strings) =
+            makefile_response_plan(self.ctx, target, objects, externals, language);
+        if makefile_use_archive_rules(self.ctx, target, language) {
+            use_response_objects = false;
+        }
+        let response_flag = makefile_response_flag(self.ctx, target, language);
+        let support = gt::support_directory(self.ctx, target);
+        let object_list = if use_response_objects {
+            let mut references = Vec::new();
+            for (index, contents) in object_strings.iter().enumerate() {
+                let name = format!("objects{}.rsp", index + 1);
+                let path = format!("{support}/{name}");
+                let _ =
+                    crate::fsutil::write_if_different(Path::new(&path), &format!("{contents}\n"));
+                references.push(format!(
+                    "{response_flag}{}",
+                    shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+                ));
+            }
+            references.join(" ")
+        } else {
+            entries.join(" ")
+        };
         let create_var = match target.kind {
-            TargetKind::Executable => format!("CMAKE_{language}_LINK_EXECUTABLE"),
+            TargetKind::Executable => {
+                let with_exports = format!("CMAKE_{language}_LINK_EXECUTABLE_WITH_EXPORTS");
+                if target.is_executable_with_exports()
+                    && self.ctx.var(target.makefile, &with_exports).is_some()
+                {
+                    with_exports
+                } else {
+                    format!("CMAKE_{language}_LINK_EXECUTABLE")
+                }
+            }
             TargetKind::StaticLibrary => format!("CMAKE_{language}_CREATE_STATIC_LIBRARY"),
-            TargetKind::SharedLibrary => format!("CMAKE_{language}_CREATE_SHARED_LIBRARY"),
+            TargetKind::SharedLibrary => {
+                if target.is_archived_aix_shared_library() {
+                    format!("CMAKE_{language}_CREATE_SHARED_LIBRARY_ARCHIVE")
+                } else {
+                    format!("CMAKE_{language}_CREATE_SHARED_LIBRARY")
+                }
+            }
             TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
             _ => String::new(),
         };
@@ -1337,9 +1500,40 @@ impl<'a> MakefileGenerator<'a> {
             self.ctx,
             &maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target)),
         );
+        let mut libraries = makefile_link_libraries(line);
+        let use_response_libraries = target.kind != TargetKind::StaticLibrary
+            && self
+                .ctx
+                .var(
+                    target.makefile,
+                    &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_LIBRARIES"),
+                )
+                .is_some_and(|value| !value.is_empty() && is_on(&value))
+            && !libraries.trim_start().is_empty();
+        if use_response_libraries {
+            let path = format!("{support}/linkLibs.rsp");
+            let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{libraries}\n"));
+            libraries = format!(
+                "{response_flag}{}",
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+            );
+        }
+        let target_implib = if names.import_library.is_empty() {
+            String::new()
+        } else {
+            shell_path(
+                self.ctx,
+                &maybe_relative_cur(
+                    self.ctx,
+                    dir,
+                    &gt::full_path(self.ctx, target, &config, ArtifactType::Import, false),
+                ),
+            )
+        };
+        let (version_major, version_minor) = makefile_target_version(target);
         let mut vars = vec![
             ("LANGUAGE", language.to_owned()),
-            ("OBJECTS", object_list),
+            ("OBJECTS", object_list.clone()),
             ("TARGET", target_shell.clone()),
             ("TARGET_FILE", target_shell),
             ("OBJECT_DIR", object_dir),
@@ -1350,12 +1544,26 @@ impl<'a> MakefileGenerator<'a> {
             ),
             ("ARCH_FLAGS", link_vars.arch_flags.clone()),
             ("LINK_FLAGS", link_flags),
-            ("LINK_LIBRARIES", makefile_link_libraries(line)),
+            ("LINK_LIBRARIES", libraries),
             ("LINK_PATH", line.framework_path.clone() + &line.link_path),
             ("CONFIG", config.clone()),
             ("TARGET_PDB", String::new()),
-            ("TARGET_IMPLIB", String::new()),
-            ("AIX_EXPORTS", String::new()),
+            ("TARGET_IMPLIB", target_implib),
+            ("TARGET_VERSION_MAJOR", version_major),
+            ("TARGET_VERSION_MINOR", version_minor),
+            (
+                "AIX_EXPORTS",
+                if target.platform.aix
+                    && target
+                        .props
+                        .get("AIX_EXPORT_ALL_SYMBOLS")
+                        .is_some_and(|value| !is_on(value))
+                {
+                    "-n".to_owned()
+                } else {
+                    String::new()
+                },
+            ),
             ("MANIFESTS", String::new()),
         ];
         if target.kind == TargetKind::SharedLibrary || target.kind == TargetKind::ModuleLibrary {
@@ -1380,18 +1588,73 @@ impl<'a> MakefileGenerator<'a> {
             vars.push(("SONAME", soname));
         }
         let mut text = String::new();
-        for part in template.split(';').filter(|s| !s.is_empty()) {
-            let expanded = flags::expand_rule_for_step(
-                self.ctx,
-                target,
-                language,
-                flags::RuleStep::Link,
-                part,
-                &vars,
-            );
-            if !expanded.is_empty() && !expanded.starts_with(':') {
-                text.push_str(&expanded);
-                text.push('\n');
+        let archive_create = self
+            .ctx
+            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"));
+        let archive_append = self
+            .ctx
+            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_APPEND"));
+        let archive_finish = self
+            .ctx
+            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
+        let use_archive_rules = target.kind == TargetKind::StaticLibrary
+            && self
+                .ctx
+                .var(target.makefile, &create_var)
+                .is_none_or(|value| value.is_empty())
+            && !archive_create.is_empty()
+            && !archive_append.is_empty();
+        if use_archive_rules {
+            let limit = (super::ninja::command_line_length_limit() / 2).max(1) as usize;
+            let chunks = makefile_object_strings(&entries, limit);
+            let expand_part = |part: &str, objects_value: String, text: &mut String| {
+                let mut part_vars = vars.clone();
+                for (name, value) in part_vars.iter_mut() {
+                    if *name == "OBJECTS" {
+                        *value = objects_value.clone();
+                    }
+                }
+                let expanded = flags::expand_rule_for_step(
+                    self.ctx,
+                    target,
+                    language,
+                    flags::RuleStep::Link,
+                    part,
+                    &part_vars,
+                );
+                if !expanded.is_empty() && !expanded.starts_with(':') {
+                    text.push_str(&expanded);
+                    text.push('\n');
+                }
+            };
+            let mut chunks_iter = chunks.into_iter();
+            if let Some(first) = chunks_iter.next() {
+                for part in archive_create.split(';').filter(|part| !part.is_empty()) {
+                    expand_part(part, first.clone(), &mut text);
+                }
+                for chunk in chunks_iter {
+                    for part in archive_append.split(';').filter(|part| !part.is_empty()) {
+                        expand_part(part, chunk.clone(), &mut text);
+                    }
+                }
+            }
+            for part in archive_finish.split(';').filter(|part| !part.is_empty()) {
+                expand_part(part, String::new(), &mut text);
+            }
+        } else {
+            for part in template.split(';').filter(|s| !s.is_empty()) {
+                let expanded = flags::expand_rule_for_step(
+                    self.ctx,
+                    target,
+                    language,
+                    flags::RuleStep::Link,
+                    part,
+                    &vars,
+                );
+                if !expanded.is_empty() && !expanded.starts_with(':') {
+                    text.push_str(&expanded);
+                    text.push('\n');
+                }
             }
         }
         let path = format!("{}/link.txt", gt::support_directory(self.ctx, target));

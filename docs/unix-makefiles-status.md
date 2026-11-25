@@ -32,6 +32,17 @@ Started from the fresh post-merge full lane: **108/161**
 - Generation-time output files (`file(GENERATE)`, Apple bundle/plist outputs)
   are recorded with their owning directory and appear in
   `CMAKE_MAKEFILE_PRODUCTS` in `Makefile.cmake`.
+- Unix Makefiles link generation now supports object/library response files
+  (`objectsN.rsp`, `linkLibs.rsp`), split archive create/append command lists,
+  correct response-file dependency ordering, module-definition source
+  dependencies, `TARGET_IMPLIB` and target version placeholders, executable
+  exports link rule selection, and AIX archived shared-library/export-list
+  templates.  Focused results: install/dll, platform/windows_dll,
+  platform/cygwin_dll, platform/msys_dll, platform/windows_exe_exports,
+  platform/windows_export_all, ninja/response_file_limit, install/aix, and
+  platform/aix_shared all PASS (`/tmp/pd-rsp-platform-focus2.log`,
+  `/tmp/pd-aix-focus.log`).  ninja/response_file still differs only in the
+  upstream pointer-ordered Makefile2 dependency sequence.
 
 ## Batch 6 (custom source properties and Fortran object modules)
 
