@@ -35,11 +35,13 @@ def run(binary, case, *, oracle):
             return value.replace("{work}", str(work)).replace("{cmake}", str(binary))
 
         def normalize(data):
-            return (data.replace(os.fsencode(binary), b"<CMAKE>")
+            data = (data.replace(os.fsencode(binary), b"<CMAKE>")
                         .replace(os.fsencode(binary.parent.parent), b"<PREFIX>")
                         .replace(os.fsencode(work), b"<WORK>")
                         .replace(os.fsencode(work).replace(b"/", b"\\"), b"<WORK>")
                         .replace(os.fsencode(DATA_ROOT), b"<ROOT>"))
+            # cmGeneratedFileStream temporaries end in a random hex suffix.
+            return re.sub(rb"\.tmp[0-9a-f]{5}\b", b".tmp<R>", data)
 
         for name in case.get("dirs", []):
             (work / name).mkdir(parents=True, exist_ok=True)

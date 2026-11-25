@@ -126,5 +126,42 @@
       "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\ninclude(inc.cmake)\nmessage(STATUS done)\n",
       "src/inc.cmake": "cmake_policy(POP)\n"
     }
+  },
+  {
+    "name": "cycle-error-stops-generate",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x C)\nfile(WRITE ${CMAKE_BINARY_DIR}/a.c \"int a(void){return 0;}\")\nadd_library(s STATIC ${CMAKE_BINARY_DIR}/a.c)\nadd_library(d SHARED ${CMAKE_BINARY_DIR}/a.c)\ntarget_link_libraries(s PUBLIC d)\ntarget_link_libraries(d PUBLIC s)\nenable_testing()\nadd_test(NAME t COMMAND s)\n"
+    },
+    "inspect": [
+      "b/build.ninja",
+      "b/CTestTestfile.cmake",
+      "b/cmake_install.cmake",
+      "b/CMakeFiles/TargetDirectories.txt"
+    ]
+  },
+  {
+    "name": "build-export-missing-target-namespace",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\nadd_library(dep INTERFACE)\nadd_library(lib INTERFACE)\ntarget_link_libraries(lib INTERFACE dep $<LINK_ONLY:dep>)\ninstall(TARGETS lib EXPORT ex)\nexport(EXPORT ex NAMESPACE ns:: FILE exTargets.cmake)\n"
+    },
+    "inspect": [
+      "b/exTargets.cmake"
+    ]
   }
 ]

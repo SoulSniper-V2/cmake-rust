@@ -15,6 +15,7 @@ import argparse
 import concurrent.futures
 import difflib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,9 +55,11 @@ def run(binary, script, args, env_extra):
         except subprocess.TimeoutExpired:
             code, out, err = "timeout", b"", b""
         def norm(data):
-            return (data.replace(os.fsencode(work), b"<WORK>")
+            data = (data.replace(os.fsencode(work), b"<WORK>")
                         .replace(os.fsencode(binary.parent.parent), b"<PREFIX>")
                         .replace(os.fsencode(DATA_ROOT), b"<ROOT>"))
+            # cmGeneratedFileStream temporaries end in a random hex suffix.
+            return re.sub(rb"\.tmp[0-9a-f]{5}\b", b".tmp<R>", data)
         return code, norm(out), norm(err)
 
 

@@ -45,6 +45,22 @@ pub struct TargetDepend {
 pub(crate) struct DepGraph<'i> {
     pub targets: Vec<&'i Target>,
     pub edges: Vec<Vec<DepEdge>>,
+    /// `cmComputeTargetDepends::Compute` returned false (a cycle that
+    /// cannot be broken).
+    pub failed: bool,
+}
+
+/// `cmGlobalGenerator::ComputeTargetDepends`: compute (and cache) the
+/// whole inter-target graph now; false when a cycle could not be broken,
+/// which stops generation before any file is written. (Link-item
+/// diagnostics issued while computing it do not fail it.)
+pub(crate) fn compute_target_depends(ctx: &GenCtx) -> bool {
+    if ctx.dep_graph.borrow().is_some() {
+        return true;
+    }
+    let (graph, failed) = compute_all(ctx);
+    *ctx.dep_graph.borrow_mut() = Some(Rc::new(graph));
+    !failed
 }
 
 /// `cmGlobalGenerator::GetTargetDirectDepends`: `head`'s dependees in the
@@ -52,7 +68,7 @@ pub(crate) struct DepGraph<'i> {
 pub(crate) fn direct_depends(ctx: &GenCtx, head: &Target) -> Rc<Vec<TargetDepend>> {
     let cached = ctx.dep_graph.borrow().clone();
     let graph = cached.unwrap_or_else(|| {
-        let graph = Rc::new(compute_all(ctx));
+        let graph = Rc::new(compute_all(ctx).0);
         *ctx.dep_graph.borrow_mut() = Some(graph.clone());
         graph
     });
@@ -62,7 +78,7 @@ pub(crate) fn direct_depends(ctx: &GenCtx, head: &Target) -> Rc<Vec<TargetDepend
         .unwrap_or_default()
 }
 
-fn compute_all(ctx: &GenCtx) -> HashMap<usize, Rc<Vec<TargetDepend>>> {
+fn compute_all(ctx: &GenCtx) -> (HashMap<usize, Rc<Vec<TargetDepend>>>, bool) {
     let contexts: Vec<GenCtx> = if ctx.multi_config {
         ctx.configs
             .iter()
@@ -108,7 +124,7 @@ fn compute_all(ctx: &GenCtx) -> HashMap<usize, Rc<Vec<TargetDepend>>> {
             Rc::new(depends.into_values().collect()),
         );
     }
-    result
+    (result, graph.failed)
 }
 
 /// `cmComputeTargetDepends::Compute`, with one query per configuration.
@@ -202,6 +218,7 @@ pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
         return DepGraph {
             targets,
             edges: Vec::new(),
+            failed: true,
         };
     }
 
@@ -300,6 +317,7 @@ pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
                 return DepGraph {
                     targets,
                     edges: Vec::new(),
+                    failed: true,
                 };
             }
         }
@@ -337,6 +355,7 @@ pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
     DepGraph {
         targets,
         edges: result,
+        failed: false,
     }
 }
 

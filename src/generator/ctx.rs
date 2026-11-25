@@ -833,6 +833,11 @@ impl<'a> GenCtx<'a> {
         if super::target::check_targets_for_missing_sources(self) {
             return (false, self.errors.take());
         }
+        // cmGlobalGenerator::Compute: a failed ComputeTargetDepends (a
+        // forbidden dependency cycle) also ends it before Generate.
+        if !super::link::compute_target_depends(self) {
+            return (false, self.errors.take());
+        }
         (true, self.generate(autogen))
     }
 
