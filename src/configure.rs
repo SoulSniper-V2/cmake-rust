@@ -124,7 +124,7 @@ pub(crate) fn project_list_file(dir: &str, name: &str) -> String {
 
 /// `cmSystemTools::Error`.
 pub fn system_error(interp: Option<&mut Interp>, message: &str) {
-    eprintln!("CMake Error: {message}");
+    crate::cmcmd::error(message);
     if let Some(interp) = interp {
         interp.error = true;
     }
@@ -494,7 +494,7 @@ pub const RESTART_CONFIGURE: i32 = -7;
 
 pub fn configure(options: &ConfigureOptions) -> i32 {
     let Some(root) = find_cmake_root() else {
-        eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
+        crate::cmcmd::error("Could not find CMAKE_ROOT !!!");
         return 1;
     };
     // cmake::Run keeps one SARIF results log (written when Run returns)

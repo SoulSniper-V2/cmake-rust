@@ -100,9 +100,9 @@ pub fn notify_variable(interp: &mut Interp, variable: &str, access: &str, value:
                 interp.execute(&parsed, &command, None)
             };
             if !ok {
-                eprintln!(
+                interp.system_message(&format!(
                     "CMake Error: Error in cmake code at\nUnknown:0:\nA command failed during the invocation of callback \"{callback}\"."
-                );
+                ));
             }
         }
         interp.ext.active_variable_watches.remove(&key);

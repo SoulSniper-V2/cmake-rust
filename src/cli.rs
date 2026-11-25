@@ -281,10 +281,9 @@ impl CacheView {
 }
 
 fn warning(message: &str) {
-    eprintln!(
-        "{}",
-        crate::messages::render(crate::messages::MessageType::Warning, message, &[], None)
-    );
+    let rendered =
+        crate::messages::render(crate::messages::MessageType::Warning, message, &[], None);
+    crate::messages::print_diagnostic(crate::messages::MessageType::Warning, &rendered);
 }
 
 fn set_source(options: &mut ConfigureOptions, source: String, script_mode: bool) {
@@ -697,6 +696,7 @@ fn system_information(args: &[String], cwd: &str) -> i32 {
 }
 
 fn project_or_script(argv: &[String], cwd: &str) -> i32 {
+    cmcmd::enable_message_callback();
     configure_args(argv, cwd).unwrap_or(1)
 }
 
@@ -1420,7 +1420,7 @@ fn add_definition(cache: &mut Cache, definition: &CacheDefinition) {
 /// mode interpreter and report the result for MODE=EXIST, COMPILE or LINK.
 fn run_find_package_mode(argv: &[String], args: &[CacheArg<'_>], cwd: &str) -> i32 {
     let Some(root) = configure::find_cmake_root() else {
-        eprintln!("CMake Error: Could not find CMAKE_ROOT !!!");
+        cmcmd::error("Could not find CMAKE_ROOT !!!");
         return 1;
     };
     let Some(mut interp) = make_interp(Mode::FindPackage, argv, cwd) else {
@@ -1813,6 +1813,7 @@ fn build(argv: &[String], cwd: &str) -> i32 {
         eprint!("{}", include_str!("cmcmd/build-usage.txt"));
         return 1;
     };
+    cmcmd::enable_message_callback();
     if options.preset {
         let settings = crate::presets::cli::BuildSettings {
             dir: &mut options.dir,
@@ -1877,15 +1878,13 @@ fn build(argv: &[String], cwd: &str) -> i32 {
             let message = format!(
                 "Generator\n  {generator}\ndoes not support {setting} specification, but {setting}\n  {value}\nwas specified."
             );
-            eprintln!(
-                "{}",
-                crate::messages::render(
-                    crate::messages::MessageType::FatalError,
-                    &message,
-                    &[],
-                    None
-                )
+            let rendered = crate::messages::render(
+                crate::messages::MessageType::FatalError,
+                &message,
+                &[],
+                None,
             );
+            crate::messages::print_diagnostic(crate::messages::MessageType::FatalError, &rendered);
             return 1;
         }
     }
@@ -2096,6 +2095,7 @@ fn install(invocation: &[String], cwd: &str) -> i32 {
             }
         }
     }
+    cmcmd::enable_message_callback();
     // cmInstrumentation::InstrumentCommand("cmakeInstall", ...) around
     // the install, then the postInstall hook.
     let clock = instrumentation.timer();

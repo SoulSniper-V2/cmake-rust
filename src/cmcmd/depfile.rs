@@ -48,15 +48,13 @@ pub(super) fn transform(args: &[String]) -> i32 {
             rules
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "{}",
-                messages::render(
-                    messages::MessageType::Warning,
-                    &format!("Expected depfile does not exist.\n  {input}"),
-                    &[],
-                    None,
-                )
+            let rendered = messages::render(
+                messages::MessageType::Warning,
+                &format!("Expected depfile does not exist.\n  {input}"),
+                &[],
+                None,
             );
+            messages::print_diagnostic(messages::MessageType::Warning, &rendered);
             Vec::new()
         }
         Err(_) => return 2,

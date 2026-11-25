@@ -194,10 +194,7 @@ pub fn handle_timestamp(interp: &mut Interp, args: &[String]) -> CmdResult {
                 micros = 0;
             }
             None => {
-                let _ = writeln!(
-                    std::io::stderr(),
-                    "CMake Error: Cannot parse SOURCE_DATE_EPOCH as integer"
-                );
+                crate::cmcmd::error("Cannot parse SOURCE_DATE_EPOCH as integer");
                 std::process::exit(27);
             }
         }

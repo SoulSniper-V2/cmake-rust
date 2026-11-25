@@ -149,6 +149,24 @@ pub fn is_error(kind: MessageType) -> bool {
     )
 }
 
+/// `getMessageColor` in cmMessenger.cxx.
+pub fn term_attr(kind: MessageType) -> crate::stdio::TermAttrSet {
+    use crate::stdio::TermAttr;
+    match kind {
+        MessageType::InternalError | MessageType::FatalError | MessageType::AuthorError => {
+            TermAttr::ForegroundRed.bit()
+        }
+        MessageType::AuthorWarning | MessageType::Warning => TermAttr::ForegroundYellow.bit(),
+        _ => TermAttr::Normal.bit(),
+    }
+}
+
+/// Print a rendered messenger diagnostic through cmakemainMessageCallback's
+/// attributed stderr write and its trailing uncolored newline.
+pub fn print_diagnostic(kind: MessageType, rendered: &str) {
+    crate::stdio::print_err_then_plain(term_attr(kind), rendered, "\n");
+}
+
 /// Renders a full diagnostic like `cmMessenger::DisplayMessage`.
 pub fn render(kind: MessageType, text: &str, backtrace: &[Frame], top: Option<&str>) -> String {
     let mut msg = format!("CMake {}", type_str(kind));

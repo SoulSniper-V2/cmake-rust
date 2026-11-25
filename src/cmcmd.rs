@@ -16,6 +16,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use md5::Md5;
@@ -25,8 +26,21 @@ use sha2::{Sha224, Sha256, Sha384, Sha512};
 use crate::cli::{Values, matches_value, read_value};
 use crate::{interp, util};
 
+static MESSAGE_CALLBACK_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Mark that cmakemain has installed its cmSystemTools message callback for
+/// this command's cmake instance. `-E` never does so and keeps raw stderr.
+pub(crate) fn enable_message_callback() {
+    MESSAGE_CALLBACK_ACTIVE.store(true, Ordering::Relaxed);
+}
+
 pub(crate) fn error(message: impl std::fmt::Display) {
-    eprintln!("CMake Error: {message}");
+    let text = format!("CMake Error: {message}");
+    if MESSAGE_CALLBACK_ACTIVE.load(Ordering::Relaxed) {
+        crate::stdio::print_err_then_plain(crate::stdio::TermAttr::Normal.bit(), &text, "\n");
+    } else {
+        eprintln!("{text}");
+    }
 }
 
 pub(crate) fn process_error(err: &io::Error) -> String {
@@ -61,6 +75,7 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
             print!("{}", args.join(" "));
             0
         }
+        "cmake_echo_color" => echo_color(args),
         "true" => 0,
         "false" => 1,
         "server" => {
@@ -252,6 +267,158 @@ fn run_command(command: &mut Command, on_spawn_error: i32) -> i32 {
             on_spawn_error
         }
     }
+}
+
+/// Scan the first `%i` conversion in a progress count file. `%i` accepts an
+/// optional sign, decimal input, octal input with a leading zero, and
+/// hexadecimal input with a leading `0x`.
+fn scan_percent_i(input: &[u8]) -> Option<i32> {
+    let mut index = 0;
+    while input
+        .get(index)
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c))
+    {
+        index += 1;
+    }
+    let mut negative = false;
+    match input.get(index) {
+        Some(b'-') => {
+            negative = true;
+            index += 1;
+        }
+        Some(b'+') => index += 1,
+        _ => {}
+    }
+    let rest = &input[index..];
+    if rest.first().is_none_or(|byte| !byte.is_ascii_digit()) {
+        return None;
+    }
+
+    let (base, digits) = if rest.len() >= 3
+        && rest[0] == b'0'
+        && matches!(rest[1], b'x' | b'X')
+        && rest[2].is_ascii_hexdigit()
+    {
+        let end = rest[2..]
+            .iter()
+            .position(|byte| !byte.is_ascii_hexdigit())
+            .map_or(rest.len(), |pos| pos + 2);
+        (16, &rest[2..end])
+    } else if rest[0] == b'0' {
+        let end = rest
+            .iter()
+            .position(|byte| !matches!(byte, b'0'..=b'7'))
+            .unwrap_or(rest.len());
+        (8, &rest[..end])
+    } else {
+        let end = rest
+            .iter()
+            .position(|byte| !byte.is_ascii_digit())
+            .unwrap_or(rest.len());
+        (10, &rest[..end])
+    };
+    let mut value = 0i64;
+    for &byte in digits {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => continue,
+        };
+        value = value.saturating_mul(base).saturating_add(i64::from(digit));
+    }
+    if negative {
+        value = -value;
+    }
+    Some(value as i32)
+}
+
+/// `cmcmdProgressReport`: touch the numbered progress marker files and
+/// print the percentage represented by the directory entry count.
+fn progress_report(dir: &str, num: &str) {
+    let dir_name = format!("{dir}/Progress");
+    let count_name = format!("{dir_name}/count.txt");
+    let Ok(contents) = fs::read(&count_name) else {
+        return;
+    };
+    let count = match scan_percent_i(&contents) {
+        Some(count) => count,
+        None => {
+            eprintln!("Could not read from progress file.");
+            0
+        }
+    };
+
+    for marker in num.split(',').filter(|marker| !marker.is_empty()) {
+        let _ = fs::write(format!("{dir_name}/{marker}"), "empty");
+    }
+    let file_num = fs::read_dir(&dir_name).map_or(0, |entries| {
+        entries.filter_map(Result::ok).count() as i32 + 2
+    });
+    if count > 0 {
+        let percent = ((file_num - 3) * 100) / count;
+        print!("[{percent:3}%] ");
+    }
+}
+
+/// `cmcmd::ExecuteEchoColor`.
+fn echo_color(args: &[String]) -> i32 {
+    use crate::stdio::TermAttr;
+
+    let mut enabled = true;
+    let mut attrs = TermAttr::Normal.bit();
+    let mut newline = true;
+    let mut progress_dir = String::new();
+    for arg in args {
+        if let Some(value) = arg.strip_prefix("--switch=") {
+            if !value.is_empty() {
+                enabled = util::is_on(value);
+            }
+        } else if let Some(value) = arg.strip_prefix("--progress-dir=") {
+            progress_dir = value.to_owned();
+        } else if let Some(value) = arg.strip_prefix("--progress-num=") {
+            if !progress_dir.is_empty() {
+                progress_report(&progress_dir, value);
+            }
+        } else if arg == "--normal" {
+            attrs = TermAttr::Normal.bit();
+        } else if arg == "--black" {
+            attrs = TermAttr::ForegroundBlack.bit();
+        } else if arg == "--red" {
+            attrs = TermAttr::ForegroundRed.bit();
+        } else if arg == "--green" {
+            attrs = TermAttr::ForegroundGreen.bit();
+        } else if arg == "--yellow" {
+            attrs = TermAttr::ForegroundYellow.bit();
+        } else if arg == "--blue" {
+            attrs = TermAttr::ForegroundBlue.bit();
+        } else if arg == "--magenta" {
+            attrs = TermAttr::ForegroundMagenta.bit();
+        } else if arg == "--cyan" {
+            attrs = TermAttr::ForegroundCyan.bit();
+        } else if arg == "--white" {
+            attrs = TermAttr::ForegroundWhite.bit();
+        } else if arg == "--bold" {
+            attrs |= TermAttr::ForegroundBold.bit();
+        } else if arg == "--no-newline" {
+            newline = false;
+        } else if arg == "--newline" {
+            newline = true;
+        } else {
+            crate::stdio::print_out(
+                if enabled {
+                    attrs
+                } else {
+                    crate::stdio::NO_ATTRS
+                },
+                arg,
+            );
+            if newline {
+                println!();
+            }
+        }
+    }
+    0
 }
 
 fn run_env(args: &[String]) -> i32 {

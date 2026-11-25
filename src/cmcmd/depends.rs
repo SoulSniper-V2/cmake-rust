@@ -1246,7 +1246,7 @@ fn update_dependencies(
     interp: &mut Interp,
     tgt_info: &str,
     verbose: bool,
-    _color: bool,
+    color: bool,
 ) -> bool {
     if !interp.read_list_file(tgt_info) || interp.error {
         super::error("Target DependInfo.cmake file not found");
@@ -1256,9 +1256,14 @@ fn update_dependencies(
     check_multiple_outputs(interp, verbose);
 
     let echo = |message: &str| {
-        // Color output is only emitted when --color is passed; the
-        // plain-text form is used otherwise.
-        println!("{message}");
+        let attrs = if color {
+            crate::stdio::TermAttr::ForegroundMagenta.bit()
+                | crate::stdio::TermAttr::ForegroundBold.bit()
+        } else {
+            crate::stdio::NO_ATTRS
+        };
+        crate::stdio::print_out(attrs, message);
+        println!();
     };
 
     let target_dir = filename_path(tgt_info).to_owned();

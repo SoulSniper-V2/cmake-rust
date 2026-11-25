@@ -1,0 +1,464 @@
+[
+  {
+    "name": "messages-default",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(SEND_ERROR \"e\")\nmessage(STATUS \"s\")\nmessage(AUTHOR_WARNING \"aw\")\nmessage(DEPRECATION \"d\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-force",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(SEND_ERROR \"e\")\nmessage(STATUS \"s\")\nmessage(AUTHOR_WARNING \"aw\")\nmessage(DEPRECATION \"d\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-no-color-overrides-force",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "NO_COLOR": "1"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(SEND_ERROR \"e\")\nmessage(STATUS \"s\")\nmessage(AUTHOR_WARNING \"aw\")\nmessage(DEPRECATION \"d\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-no-color-zero-allows-force",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "NO_COLOR": "0"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(SEND_ERROR \"e\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-clicolor-zero-suppresses-make-termout",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR": "0",
+      "MAKE_TERMOUT": "1"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-force-overrides-clicolor-zero",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR": "0",
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-make-termout",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "MAKE_TERMOUT": "1"
+    },
+    "files": {
+      "t.cmake": "message(WARNING \"w\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "messages-trace-force",
+    "argv": [
+      "--trace",
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "t.cmake": "message(STATUS \"s\")\nmessage(NOTICE \"n\")\n"
+    }
+  },
+  {
+    "name": "script-missing-force",
+    "argv": [
+      "-P",
+      "missing.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "project-configure-force",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(colorproj NONE)\nmessage(WARNING \"project warning\")\nmessage(NOTICE \"project notice\")\n"
+    }
+  },
+  {
+    "name": "message-fatal-error-force",
+    "argv": [
+      "-P",
+      "t.cmake"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "t.cmake": "message(FATAL_ERROR \"fatal\")\n"
+    }
+  },
+  {
+    "name": "echo-color-no-color-overrides-force",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--red",
+      "hello"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "NO_COLOR": "1"
+    }
+  },
+  {
+    "name": "echo-color-plain",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "hello"
+    ]
+  },
+  {
+    "name": "echo-color-normal-force",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "hello"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-all-colors",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--black",
+      "black",
+      "--red",
+      "red",
+      "--green",
+      "green",
+      "--yellow",
+      "yellow",
+      "--blue",
+      "blue",
+      "--magenta",
+      "magenta",
+      "--cyan",
+      "cyan",
+      "--white",
+      "white"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-bold-order",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--red",
+      "--bold",
+      "both",
+      "--bold",
+      "--green",
+      "assigned",
+      "--cyan",
+      "--bold",
+      "last"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-normal-newline",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--cyan",
+      "--bold",
+      "x",
+      "--normal",
+      "y",
+      "--no-newline",
+      "z"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-newline-toggle",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--no-newline",
+      "a",
+      "--newline",
+      "b",
+      "c"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-switch-values",
+    "steps": [
+      {
+        "argv": [
+          "-E",
+          "cmake_echo_color",
+          "--switch=1",
+          "on"
+        ]
+      },
+      {
+        "argv": [
+          "-E",
+          "cmake_echo_color",
+          "--switch=yes",
+          "--red",
+          "yes"
+        ]
+      },
+      {
+        "argv": [
+          "-E",
+          "cmake_echo_color",
+          "--switch=0",
+          "off"
+        ]
+      },
+      {
+        "argv": [
+          "-E",
+          "cmake_echo_color",
+          "--switch=",
+          "empty"
+        ]
+      }
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-switch-literal-not-environment",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--switch=SWITCH",
+      "text"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "SWITCH": "1"
+    }
+  },
+  {
+    "name": "echo-color-unknown-switch-is-text",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--not-a-switch",
+      "tail"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    }
+  },
+  {
+    "name": "echo-color-progress",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--progress-dir={work}/p",
+      "--progress-num=3",
+      "hello"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1"
+    },
+    "files": {
+      "p/Progress/count.txt": "10",
+      "p/Progress/a": "",
+      "p/Progress/b": ""
+    },
+    "inspect": [
+      "p/Progress"
+    ]
+  },
+  {
+    "name": "echo-color-progress-multiple",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--progress-dir={work}/p",
+      "--progress-num=3,4",
+      "hello"
+    ],
+    "files": {
+      "p/Progress/count.txt": "10",
+      "p/Progress/a": "",
+      "p/Progress/b": ""
+    },
+    "inspect": [
+      "p/Progress"
+    ]
+  },
+  {
+    "name": "echo-color-progress-before-dir",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--progress-num=3",
+      "--progress-dir={work}/p",
+      "hello"
+    ],
+    "files": {
+      "p/Progress/count.txt": "10"
+    },
+    "inspect": [
+      "p/Progress"
+    ]
+  },
+  {
+    "name": "echo-color-progress-bad-count",
+    "argv": [
+      "-E",
+      "cmake_echo_color",
+      "--progress-dir={work}/p",
+      "--progress-num=3",
+      "hello"
+    ],
+    "files": {
+      "p/Progress/count.txt": "bad"
+    },
+    "inspect": [
+      "p/Progress"
+    ]
+  },
+  {
+    "name": "depends-color-scan",
+    "argv": [
+      "-E",
+      "cmake_depends",
+      "Unix Makefiles",
+      "{work}/src",
+      "{work}/src",
+      "{work}/b",
+      "{work}/b",
+      "{work}/b/CMakeFiles/x.dir/DependInfo.cmake",
+      "--color=1"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "src/main.c": "#include \"h.h\"\nint main(void) { return H; }\n",
+      "src/h.h": "#define H 0\n",
+      "b/CMakeFiles/x.dir/DependInfo.cmake": "set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)\nset(CMAKE_DEPENDS_LANGUAGES\n  \"C\"\n  )\nset(CMAKE_DEPENDS_CHECK_C\n  \"{work}/src/main.c\" \"CMakeFiles/x.dir/main.c.o\"\n  )\nset(CMAKE_C_TARGET_INCLUDE_PATH\n  )\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n  )\n",
+      "b/CMakeFiles/CMakeDirectoryInformation.cmake": "# CMAKE generated file: DO NOT EDIT!\nset(CMAKE_RELATIVE_PATH_TOP_SOURCE \"{work}/src\")\nset(CMAKE_RELATIVE_PATH_TOP_BINARY \"{work}/b\")\nset(CMAKE_FORCE_UNIX_PATHS 1)\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"^.*$\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"^$\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n"
+    }
+  },
+  {
+    "name": "depends-color-off",
+    "argv": [
+      "-E",
+      "cmake_depends",
+      "Unix Makefiles",
+      "{work}/src",
+      "{work}/src",
+      "{work}/b",
+      "{work}/b",
+      "{work}/b/CMakeFiles/x.dir/DependInfo.cmake",
+      "--color=0"
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "src/main.c": "#include \"h.h\"\nint main(void) { return H; }\n",
+      "src/h.h": "#define H 0\n",
+      "b/CMakeFiles/x.dir/DependInfo.cmake": "set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)\nset(CMAKE_DEPENDS_LANGUAGES\n  \"C\"\n  )\nset(CMAKE_DEPENDS_CHECK_C\n  \"{work}/src/main.c\" \"CMakeFiles/x.dir/main.c.o\"\n  )\nset(CMAKE_C_TARGET_INCLUDE_PATH\n  )\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n  )\n",
+      "b/CMakeFiles/CMakeDirectoryInformation.cmake": "# CMAKE generated file: DO NOT EDIT!\nset(CMAKE_RELATIVE_PATH_TOP_SOURCE \"{work}/src\")\nset(CMAKE_RELATIVE_PATH_TOP_BINARY \"{work}/b\")\nset(CMAKE_FORCE_UNIX_PATHS 1)\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"^.*$\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"^$\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n"
+    }
+  },
+  {
+    "name": "depends-color-empty-enables",
+    "argv": [
+      "-E",
+      "cmake_depends",
+      "Unix Makefiles",
+      "{work}/src",
+      "{work}/src",
+      "{work}/b",
+      "{work}/b",
+      "{work}/b/CMakeFiles/x.dir/DependInfo.cmake",
+      "--color="
+    ],
+    "env": {
+      "CLICOLOR_FORCE": "1",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "src/main.c": "#include \"h.h\"\nint main(void) { return H; }\n",
+      "src/h.h": "#define H 0\n",
+      "b/CMakeFiles/x.dir/DependInfo.cmake": "set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)\nset(CMAKE_DEPENDS_LANGUAGES\n  \"C\"\n  )\nset(CMAKE_DEPENDS_CHECK_C\n  \"{work}/src/main.c\" \"CMakeFiles/x.dir/main.c.o\"\n  )\nset(CMAKE_C_TARGET_INCLUDE_PATH\n  )\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n  )\n",
+      "b/CMakeFiles/CMakeDirectoryInformation.cmake": "# CMAKE generated file: DO NOT EDIT!\nset(CMAKE_RELATIVE_PATH_TOP_SOURCE \"{work}/src\")\nset(CMAKE_RELATIVE_PATH_TOP_BINARY \"{work}/b\")\nset(CMAKE_FORCE_UNIX_PATHS 1)\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"^.*$\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"^$\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n"
+    }
+  }
+]

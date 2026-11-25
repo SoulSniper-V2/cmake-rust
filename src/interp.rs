@@ -518,7 +518,7 @@ impl Interp {
     /// and the --debug-output call stack on stderr.
     pub fn system_message(&mut self, text: &str) {
         let stack = self.debug_stack();
-        self.stderr_line(&format!("{text}{stack}"));
+        self.stderr_attributed(crate::stdio::TermAttr::Normal.bit(), text, &stack);
     }
 
     /// The variable watch `cmWarnUnusedCliWarning` (`cmake::MarkCliAsUsed`).
@@ -1085,32 +1085,46 @@ impl Interp {
         if messages::is_error(kind) {
             self.error = true;
         }
-        rendered.push_str(&self.debug_stack());
-        self.stderr_line(&rendered);
+        let stack = self.debug_stack();
+        self.stderr_attributed(messages::term_attr(kind), &rendered, &stack);
         self.debug_message(kind, &dbg_text);
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
         self.sarif_log.message(kind, text, &self.backtrace);
-        let mut rendered = messages::render(kind, text, &self.backtrace, self.top_source());
+        let rendered = messages::render(kind, text, &self.backtrace, self.top_source());
         let dbg_text = rendered.clone();
         if messages::is_error(kind) {
             self.error = true;
         }
-        rendered.push_str(&self.debug_stack());
-        self.stderr_line(&rendered);
+        let stack = self.debug_stack();
+        self.stderr_attributed(messages::term_attr(kind), &rendered, &stack);
         self.debug_message(kind, &dbg_text);
     }
 
-    /// Writes one line to stderr (or to `stderr_capture`).
+    /// Writes one `cmSystemTools::Message` line to stderr (or to
+    /// `stderr_capture`). The default message metadata carries the Normal
+    /// attribute even though it produces no escape on a non-terminal.
     pub fn stderr_line(&mut self, text: &str) {
+        self.stderr_attributed(crate::stdio::TermAttr::Normal.bit(), text, "");
+    }
+
+    fn stderr_attributed(&mut self, attrs: crate::stdio::TermAttrSet, text: &str, suffix: &str) {
         match &mut self.stderr_capture {
             Some(capture) => {
                 capture.push_str(text);
+                capture.push_str(suffix);
                 capture.push('\n');
             }
-            None => eprintln!("{text}"),
+            None => {
+                let plain = if suffix.is_empty() {
+                    "\n".to_owned()
+                } else {
+                    format!("{suffix}\n")
+                };
+                crate::stdio::print_err_then_plain(attrs, text, &plain);
+            }
         }
     }
 

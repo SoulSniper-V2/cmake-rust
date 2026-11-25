@@ -239,15 +239,13 @@ impl<'a> GenCtx<'a> {
         if self.interp.suppress_dev_warnings {
             return;
         }
-        eprintln!(
-            "{}",
-            crate::messages::render(
-                crate::messages::MessageType::AuthorWarning,
-                &message,
-                &backtrace,
-                Some(&self.interp.home_source),
-            )
+        let rendered = crate::messages::render(
+            crate::messages::MessageType::AuthorWarning,
+            &message,
+            &backtrace,
+            Some(&self.interp.home_source),
         );
+        crate::messages::print_diagnostic(crate::messages::MessageType::AuthorWarning, &rendered);
     }
 
     /// Reports a generator-expression error at `backtrace`, followed by

@@ -39,9 +39,11 @@ pub mod properties;
 mod props;
 mod sarif;
 mod state;
+mod stdio;
 mod util;
 
 fn main() {
+    stdio::init();
     let code = cli::main();
     // The cmake instance's destructor closes the profiling output.
     profiling::finish();

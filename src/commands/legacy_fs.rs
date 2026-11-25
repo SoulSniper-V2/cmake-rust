@@ -26,7 +26,7 @@ pub(super) fn fatal(interp: &mut Interp, message: &str) -> CmdErr {
 }
 
 pub(super) fn raw_error(interp: &mut Interp, message: &str) {
-    eprintln!("CMake Error: {message}");
+    interp.system_message(&format!("CMake Error: {message}"));
     interp.error = true;
 }
 

@@ -1225,10 +1225,8 @@ fn warning(ctx: &GenCtx, kind: MessageType, text: &str, backtrace: &[Frame]) {
             return;
         }
     }
-    eprintln!(
-        "{}",
-        messages::render(kind, text, backtrace, Some(&ctx.interp.home_source))
-    );
+    let rendered = messages::render(kind, text, backtrace, Some(&ctx.interp.home_source));
+    messages::print_diagnostic(kind, &rendered);
 }
 
 /// The non-diagnosing part of `cmTarget::ImportedGetFullPath` (shared by
