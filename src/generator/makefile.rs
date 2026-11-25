@@ -575,8 +575,8 @@ impl<'a> MakefileGenerator<'a> {
             .unwrap_or_default();
         let source_shell = shell_path(self.ctx, &source.path);
         let object_shell = shell_path(self.ctx, obj_rel_cur);
-        let defines_var = format!("$({lang}_DEFINES)");
-        let includes_var = format!("$({lang}_INCLUDES)");
+        let defines_var = self.object_defines_var(target, source, &properties);
+        let includes_var = self.object_includes_var(target, source, &properties);
         let flags_var = self.object_flags_var(target, source, &properties);
         let vars = vec![
             ("DEFINES", defines_var),
@@ -698,8 +698,22 @@ impl<'a> MakefileGenerator<'a> {
                 echo_output
             );
             let vars = vec![
-                ("DEFINES", format!("$({lang}_DEFINES)")),
-                ("INCLUDES", format!("$({lang}_INCLUDES)")),
+                (
+                    "DEFINES",
+                    self.object_defines_var(
+                        target,
+                        source,
+                        &self.source_props(target, &source.path),
+                    ),
+                ),
+                (
+                    "INCLUDES",
+                    self.object_includes_var(
+                        target,
+                        source,
+                        &self.source_props(target, &source.path),
+                    ),
+                ),
                 (
                     "FLAGS",
                     self.object_flags_var(target, source, &self.source_props(target, &source.path)),
@@ -767,6 +781,38 @@ impl<'a> MakefileGenerator<'a> {
                     .clone()
             })
             .unwrap_or_default()
+    }
+
+    fn object_defines_var(
+        &self,
+        target: &Target,
+        source: &gt::SourceInfo,
+        properties: &crate::props::Props,
+    ) -> String {
+        let extra =
+            flags::source_define_flags(self.ctx, target, &self.ctx.config, source, properties);
+        let base = format!("$({}_DEFINES)", source.language);
+        if extra.is_empty() {
+            base
+        } else {
+            format!("{base} {extra}")
+        }
+    }
+
+    fn object_includes_var(
+        &self,
+        target: &Target,
+        source: &gt::SourceInfo,
+        properties: &crate::props::Props,
+    ) -> String {
+        let extra =
+            flags::source_include_flags(self.ctx, target, &self.ctx.config, source, properties);
+        let base = format!("$({}_INCLUDES)", source.language);
+        if extra.is_empty() {
+            base
+        } else {
+            format!("{extra} {base}")
+        }
     }
 
     fn object_flags_var(
@@ -859,16 +905,15 @@ impl<'a> MakefileGenerator<'a> {
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
             let mut commands = Vec::new();
-            if let Some(comment) = &evaluated.comment
-                && !comment.is_empty()
-            {
+            let comment = evaluated.description(self.ctx, target.makefile, "");
+            if !comment.is_empty() {
                 let progress = self.add_progress_file(
                     target,
                     self.top_rule_path(evaluated.outputs.first().map(String::as_str).unwrap_or("")),
                 );
                 commands.push(format!(
                     "@{}",
-                    self.echo(comment, "--blue --bold", Some(progress), target)
+                    self.echo(&comment, "--blue --bold", Some(progress), target)
                 ));
             }
             commands.extend(self.custom_command_lines(
@@ -1449,9 +1494,47 @@ impl<'a> MakefileGenerator<'a> {
             if let Some(value) = rule_flags.pch_options {
                 let _ = writeln!(out, "# PCH options: {obj_rel_top}_OPTIONS = {value}\n");
             }
+            if let Some(value) = rule_flags.custom_includes {
+                let _ = writeln!(
+                    out,
+                    "# Custom include directories: {obj_rel_top}_INCLUDE_DIRECTORIES = {value}\n"
+                );
+            }
+            if let Some(value) = rule_flags.custom_defines {
+                let _ = writeln!(out, "# Custom defines: {obj_rel_top}_DEFINES = {value}\n");
+            }
+            if let Some(value) = rule_flags.custom_config_defines {
+                let upper = self.ctx.config.to_ascii_uppercase();
+                let _ = writeln!(
+                    out,
+                    "# Custom defines: {obj_rel_top}_DEFINES_{upper} = {value}\n"
+                );
+            }
         }
         let path = format!("{}/flags.make", gt::support_directory(self.ctx, target));
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
+    }
+
+    fn have_fortran_sources(&self, target: &Target) -> bool {
+        fn visit(ctx: &GenCtx<'_>, target: &Target, config: &str, depth: usize) -> bool {
+            if depth > 32 {
+                return false;
+            }
+            let sources = gt::sources(ctx, target, config);
+            for source in sources.iter() {
+                if source.language == "Fortran" {
+                    return true;
+                }
+                if let Some(library) = &source.object_library
+                    && let Some(library) = gt::target_in_directory(ctx, target.makefile, library)
+                    && visit(ctx, library, config, depth + 1)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        visit(self.ctx, target, &self.ctx.config, 0)
     }
 
     fn write_depend_info(&self, target: &Target, implicit: &ImplicitDepends) {
@@ -1465,9 +1548,7 @@ impl<'a> MakefileGenerator<'a> {
             "\n# Consider dependencies only in project.\nset(CMAKE_DEPENDS_IN_PROJECT_ONLY {})\n\n# The set of languages for which implicit dependencies are needed:\nset(CMAKE_DEPENDS_LANGUAGES\n",
             if project_only { "ON" } else { "OFF" }
         );
-        let has_fortran = gt::sources(self.ctx, target, &config)
-            .iter()
-            .any(|source| source.language == "Fortran");
+        let has_fortran = self.have_fortran_sources(target);
         let mut fortran_listed = false;
         for lang in implicit.cmake.keys() {
             let _ = writeln!(out, "  \"{lang}\"");
@@ -1706,6 +1787,11 @@ impl<'a> MakefileGenerator<'a> {
         }
         let mut result: Vec<(String, bool)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let source_object_libraries: std::collections::HashSet<String> =
+            gt::sources(self.ctx, target, &self.ctx.config)
+                .iter()
+                .filter_map(|source| source.object_library.clone())
+                .collect();
         for depend in super::link::target_depends(self.ctx, target).iter() {
             if !depend.link {
                 continue;
@@ -1716,11 +1802,19 @@ impl<'a> MakefileGenerator<'a> {
             if dep.imported || dep.kind == TargetKind::InterfaceLibrary {
                 continue;
             }
-            let has_fortran = gt::sources(self.ctx, dep, &self.ctx.config)
-                .iter()
-                .any(|source| source.language == "Fortran");
-            if has_fortran && seen.insert(dep.name.clone()) {
-                result.push((gt::support_directory(self.ctx, dep), false));
+            let forward = source_object_libraries.contains(&dep.name);
+            if self.have_fortran_sources(dep) && seen.insert(dep.name.clone()) {
+                result.push((gt::support_directory(self.ctx, dep), forward));
+            }
+        }
+        for library in source_object_libraries {
+            if let Some(dep) = gt::target_in_directory(self.ctx, target.makefile, &library)
+                && !dep.imported
+                && dep.kind != TargetKind::InterfaceLibrary
+                && self.have_fortran_sources(dep)
+                && seen.insert(dep.name.clone())
+            {
+                result.push((gt::support_directory(self.ctx, dep), true));
             }
         }
         result

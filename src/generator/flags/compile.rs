@@ -66,6 +66,9 @@ pub struct SourceRuleFlags {
     pub custom_flags: Option<String>,
     pub custom_options: Option<String>,
     pub pch_options: Option<String>,
+    pub custom_includes: Option<String>,
+    pub custom_defines: Option<String>,
+    pub custom_config_defines: Option<String>,
 }
 
 pub fn source_rule_flags(
@@ -136,6 +139,16 @@ pub fn source_rule_flags(
         if !pch_source.is_empty() {
             pch_sources.insert(pch_source, arch);
         }
+    }
+    if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
+        result.custom_includes = Some(inputs.eval(value));
+    }
+    if let Some(value) = properties.get("COMPILE_DEFINITIONS") {
+        result.custom_defines = Some(inputs.eval(value));
+    }
+    let config_define = format!("COMPILE_DEFINITIONS_{}", config.to_ascii_uppercase());
+    if let Some(value) = properties.get(&config_define) {
+        result.custom_config_defines = Some(inputs.eval(value));
     }
     if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
         let options = match pch_sources.get(&source.path) {
@@ -257,6 +270,72 @@ pub fn compile_vars_with_source_props(
     }
 }
 
+pub fn source_include_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let system = system_include_dirs(&inputs);
+    let mut source_dirs = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
+        for dir in expand_list(&inputs.eval(value), false) {
+            if !Path::new(&dir).is_absolute() {
+                let name = Path::new(&source.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&source.path);
+                inputs.local_error(format!(
+                    "Found relative path while evaluating include directories of \"{name}\":\n  \"{dir}\"\n"
+                ));
+                break;
+            }
+            let dir = unix_slashes(&dir);
+            if seen.insert(dir.clone()) {
+                source_dirs.push(dir);
+            }
+        }
+    }
+    include_flags(&inputs, &source_dirs, &system)
+}
+
+pub fn source_define_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let mut names: Vec<String> = Vec::new();
+    if inputs.ctx.multi_config {
+        names.push(format!("CMAKE_INTDIR=\"{}\"", inputs.config));
+    }
+    names.extend(
+        [
+            "COMPILE_DEFINITIONS".to_owned(),
+            format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
+        ]
+        .iter()
+        .filter_map(|name| properties.get(name))
+        .flat_map(|value| expand_list(&inputs.eval(value), false)),
+    );
+    render_defines(&inputs, &[names])
+}
+
 pub(crate) fn fortran_preprocess(target: &Target, source: &Props) -> Option<bool> {
     source
         .get("Fortran_PREPROCESS")
@@ -285,10 +364,10 @@ pub(crate) fn fortran_source_include(ctx: &GenCtx, target: &Target, directory: S
 
 pub(crate) fn fortran_module_dir(ctx: &GenCtx, target: &Target) -> Option<String> {
     let current = &ctx.interp.makefiles[target.makefile].binary_dir;
-    let dir = target
-        .props
-        .get("Fortran_MODULE_DIRECTORY")
-        .or_else(|| (current != &ctx.interp.home_binary).then_some(current.as_str()))?;
+    let ninja_generator = ctx.interp.get_def("CMAKE_GENERATOR") != Some("Unix Makefiles");
+    let dir = target.props.get("Fortran_MODULE_DIRECTORY").or_else(|| {
+        (ninja_generator && current != &ctx.interp.home_binary).then_some(current.as_str())
+    })?;
     if dir.is_empty()
         || ctx
             .var(target.makefile, "CMAKE_Fortran_MODDIR_FLAG")

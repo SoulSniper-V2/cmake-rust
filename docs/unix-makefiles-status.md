@@ -15,6 +15,23 @@ Evidence still pending: fresh full Unix Makefiles lane after this batch, zlib
 byte parity/build, Kitware CMake self-configure/build, RunCMake lane, and CLI
 regression additions.
 
+## Batch 6 (custom source properties and Fortran object modules)
+
+Uncommitted/follow-up state at first: focused results are `pch_unity/options` PASS,
+`targets/fortran_objects` PASS, and `targets/custom_relative_generated_dep` down
+to `CMakeFiles/progress.marks` (`/tmp/pd-finalfocus.log`).
+
+- Output-generating custom commands now use `ConstructComment`'s default
+  `Generating ...` message and allocate progress actions when COMMENT is absent.
+- Source-specific INCLUDE_DIRECTORIES and COMPILE_DEFINITIONS are prepended or
+  appended in compile/preprocess/assembly commands and documented with the
+  oracle's `# Custom include directories` / `# Custom defines` blocks.
+- Unix Makefiles Fortran compilation no longer emits `-J` merely because the
+  target lives in a subdirectory; compilation executes in that directory, unlike
+  Ninja.  `$<TARGET_OBJECTS>` object-library Fortran modules recursively make
+  consuming targets Fortran-dependent, and source object libraries appear in
+  both direct and forward linked DependInfo entries.
+
 ## Batch 5 (PCH, source flags, Fortran module fixes)
 
 Started from the 103/161 post-merge baseline (`/tmp/pd-umf-baseline.log`).
