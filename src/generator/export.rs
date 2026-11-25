@@ -369,6 +369,12 @@ impl<'a, 'b> Exporter<'a, 'b> {
             self.missing.push(missing);
         } else {
             self.complain_missing(depender, dependee, &info);
+            if !self.installed {
+                // cmExportBuildFileGenerator::HandleMissingTarget: after the
+                // complaint, assume another command exports it and append it
+                // with this export's namespace.
+                out.push_str(&format!("{}{}", self.namespace, export_name(dependee)));
+            }
         }
     }
 

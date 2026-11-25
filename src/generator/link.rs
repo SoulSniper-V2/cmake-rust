@@ -9,7 +9,7 @@ pub(super) use directories::DirectoryContents;
 pub(super) use information::{LinkInformation, link_information};
 
 pub use target_graph::TargetDepend;
-pub(crate) use target_graph::in_build_system;
+pub(crate) use target_graph::{compute_target_depends, in_build_system};
 
 #[cfg(test)]
 mod tests;
