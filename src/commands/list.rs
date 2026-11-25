@@ -499,18 +499,30 @@ struct ReplaceHelper {
 }
 
 /// Count capture groups in the kwsys regex dialect: every unescaped `(`
-/// outside a `[...]` class.
+/// outside a bracket expression. Bracket expressions do not treat `\` as
+/// an escape; an immediate `]` or `-` is literal, matching kwsys `regnpar`.
 fn count_groups(pattern: &str) -> usize {
     let bytes = pattern.as_bytes();
     let mut count = 0;
     let mut i = 0;
-    let mut in_class = false;
     while i < bytes.len() {
         match bytes[i] {
-            b'\\' => i += 1,
-            b'[' if !in_class => in_class = true,
-            b']' if in_class => in_class = false,
-            b'(' if !in_class => count += 1,
+            b'\\' => {
+                i += 1;
+            }
+            b'[' => {
+                i += 1;
+                if i < bytes.len() && bytes[i] == b'^' {
+                    i += 1;
+                }
+                if i < bytes.len() && matches!(bytes[i], b']' | b'-') {
+                    i += 1;
+                }
+                while i < bytes.len() && bytes[i] != b']' {
+                    i += 1;
+                }
+            }
+            b'(' => count += 1,
             _ => {}
         }
         i += 1;

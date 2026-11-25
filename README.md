@@ -1,5 +1,7 @@
 # cmake-rust
 
+[![CI](https://github.com/SoulSniper-V2/cmake-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/SoulSniper-V2/cmake-rust/actions/workflows/ci.yml)
+
 **A reimplementation of CMake in Rust.** It reads ordinary `CMakeLists.txt` files, runs the real compiler checks, and writes Ninja build files that are byte-for-byte identical to the ones Kitware CMake 4.1.0 writes for the same project.
 
 It is good enough to configure and build **LLVM + Clang 20**. Clang's own test suite then reports exactly the same counts as on a build configured by real CMake.

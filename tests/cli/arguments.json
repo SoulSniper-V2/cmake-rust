@@ -832,6 +832,24 @@
   }
  },
  {
+  "name": "mark-as-advanced-then-set-cache",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Ninja"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nmark_as_advanced(FOO)\nset(FOO TRUE CACHE BOOL \"help\")\nget_property(v CACHE FOO PROPERTY VALUE)\nget_property(t CACHE FOO PROPERTY TYPE)\nmessage(\"v=[${v}] t=[${t}]\")\n"
+  }
+ },
+ {
   "name": "env-generator-multi-config",
   "env": {
    "CMAKE_GENERATOR": "Ninja Multi-Config"
