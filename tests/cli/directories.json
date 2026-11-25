@@ -28,5 +28,26 @@
       "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.25)\nproject(p NONE)\nset(A dir)\nset(B dir)\nset(C dir)\nfunction(outer)\n  set(A outer)\n  inner()\n  set(A outer-after-inner)\n  set(D outer-late)\nendfunction()\nfunction(inner)\n  set(B inner)\n  unset(C)\n  block()\n    set(E block)\n    subdirs(sub)\n    set(E block-after)\n  endblock()\n  set(B inner-after)\nendfunction()\nouter()\nset(A dir-late)\nset(F dir-late)\n",
       "src/sub/CMakeLists.txt": "foreach(v A B C D E F)\n  if(DEFINED ${v})\n    message(\"${v}=[${${v}}]\")\n  else()\n    message(\"${v} undefined\")\n  endif()\nendforeach()\n"
     }
+  },
+  {
+    "name": "script-include-policy-push-without-pop-stops",
+    "argv": [
+      "-P",
+      "a.cmake"
+    ],
+    "files": {
+      "inc.cmake": "cmake_policy(PUSH)\nmessage(\"in inc\")\n",
+      "a.cmake": "include(${CMAKE_CURRENT_LIST_DIR}/inc.cmake)\nmessage(\"not reached\")\ncmake_policy(PUSH)\n"
+    }
+  },
+  {
+    "name": "script-send-error-in-function-continues",
+    "argv": [
+      "-P",
+      "a.cmake"
+    ],
+    "files": {
+      "a.cmake": "function(f)\n  message(SEND_ERROR \"e\")\nendfunction()\nf()\nmessage(\"reached\")\n"
+    }
   }
 ]

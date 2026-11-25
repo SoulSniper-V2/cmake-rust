@@ -270,6 +270,11 @@ pub struct Interp {
     pub commands: HashMap<String, CommandDef>,
     pub global_props: Props,
     pub fatal: bool,
+    /// `cmExecutionStatus::SetNestedError` for the innermost command being
+    /// executed: a FATAL_ERROR or INTERNAL_ERROR diagnostic was issued while
+    /// it ran, so cmMakefile::ExecuteCommand treats it as failed and does not
+    /// add the command's own status error.
+    nested_error: bool,
     pub error: bool,
     pub exit_code: Option<i32>,
     pub cmake_root: String,
@@ -362,6 +367,7 @@ impl Interp {
             commands: HashMap::new(),
             global_props: Props::default(),
             fatal: false,
+            nested_error: false,
             error: false,
             exit_code: None,
             cmake_root: cmake_root.to_owned(),
@@ -1139,6 +1145,9 @@ impl Interp {
     }
 
     pub fn issue_at(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
+        if matches!(kind, MessageType::FatalError | MessageType::InternalError) {
+            self.nested_error = true;
+        }
         // `cmake::SetCacheArgs` syncs these messenger flags on every cache
         // write, so read the cache entries live here.
         let suppress_dev = self
@@ -1193,6 +1202,28 @@ impl Interp {
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
+    /// Run `f` under its own `cmExecutionStatus` pushed by
+    /// `cmMakefile::CallRAII`: nested errors it raises stay out of the
+    /// current command's status.
+    pub fn with_fresh_status<R>(&mut self, f: impl FnOnce(&mut Interp) -> R) -> R {
+        let saved = std::mem::replace(&mut self.nested_error, false);
+        let result = f(self);
+        self.nested_error = saved;
+        result
+    }
+
+    /// `cmMessenger::IssueMessage` (or `cmake::IssueMessage`) with an
+    /// explicit backtrace: like [`Self::issue_at`] but without marking the
+    /// current command's status with a nested error.
+    pub fn issue_at_messenger(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
+        let saved = self.nested_error;
+        self.issue_at(kind, text, backtrace);
+        self.nested_error = saved;
+    }
+
+    /// `cmMessenger::DisplayMessage` as message() uses it: it bypasses
+    /// cmMakefile::IssueMessage, so it never marks the command's status
+    /// with a nested error (SEND_ERROR keeps a -P script running).
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
         self.sarif_log.message(kind, text, &self.backtrace);
         let rendered = messages::render(kind, text, &self.backtrace, self.top_source());
@@ -1409,7 +1440,10 @@ impl Interp {
             } else {
                 MessageType::FatalError
             };
-            self.issue_at(kind, &diag.message, &backtrace);
+            // cmListFileParser::IssueError goes through cmMessenger, not
+            // cmMakefile::IssueMessage: no nested error for the command
+            // that read the file (include() still adds its own error).
+            self.issue_at_messenger(kind, &diag.message, &backtrace);
             if diag.fatal {
                 self.set_fatal();
             }
@@ -2038,10 +2072,15 @@ impl Interp {
         let limit = self.recursion_depth_limit();
         if depth > limit {
             self.recursion_depth -= 1;
+            // Issued inside the failing command's own CallScope, so the
+            // nested error belongs to that (discarded) status, not to the
+            // enclosing command.
+            let saved = self.nested_error;
             self.issue(
                 MessageType::FatalError,
                 &format!("Maximum recursion depth of {limit} exceeded"),
             );
+            self.nested_error = saved;
             self.set_fatal();
             return (false, Ctl::Normal);
         }
@@ -2073,7 +2112,11 @@ impl Interp {
         }
         match def {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
-            CommandDef::Raw(function) => function(self, file, command, subst),
+            CommandDef::Raw(function) => {
+                let saved = std::mem::replace(&mut self.nested_error, false);
+                let (ok, ctl) = function(self, file, command, subst);
+                self.finish_command(saved, ok, ctl)
+            }
             CommandDef::Unexpected(message) => {
                 self.issue(
                     MessageType::FatalError,
@@ -2087,19 +2130,26 @@ impl Interp {
                     return (true, Ctl::Normal);
                 };
                 let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
+                let saved = std::mem::replace(&mut self.nested_error, false);
                 match function(self, &values) {
                     Ok(()) => {
-                        if std::mem::take(&mut self.request_return) {
-                            (true, Ctl::Return(None))
+                        let ctl = if std::mem::take(&mut self.request_return) {
+                            Ctl::Return(None)
                         } else {
-                            (true, Ctl::Normal)
-                        }
+                            Ctl::Normal
+                        };
+                        self.finish_command(saved, true, ctl)
                     }
                     Err(error) => {
-                        if let CmdErr::Error(message) = error {
+                        // The status error is reported only when the
+                        // command did not already issue a fatal error.
+                        if let CmdErr::Error(message) = error
+                            && !self.nested_error
+                        {
                             let text = format!("{} {}", command.name, message);
                             self.issue(MessageType::FatalError, &text);
                         }
+                        self.nested_error = saved;
                         self.command_failed();
                         (false, Ctl::Normal)
                     }
@@ -2110,9 +2160,24 @@ impl Interp {
                     return (true, Ctl::Normal);
                 };
                 let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
-                self.invoke_callable(&callable, &values, &command.name)
+                let saved = std::mem::replace(&mut self.nested_error, false);
+                let (ok, ctl) = self.invoke_callable(&callable, &values, &command.name);
+                self.finish_command(saved, ok, ctl)
             }
         }
+    }
+
+    /// The end of cmMakefile::ExecuteCommand for a command that returned
+    /// `ok`: a nested fatal error marks it failed (and, outside project
+    /// mode, stops processing per cmake::CommandFailureAction). Restores
+    /// the enclosing command's nested-error state.
+    fn finish_command(&mut self, saved: bool, ok: bool, ctl: Ctl) -> (bool, Ctl) {
+        let nested = std::mem::replace(&mut self.nested_error, saved);
+        if ok && nested {
+            self.command_failed();
+            return (false, ctl);
+        }
+        (ok, ctl)
     }
 
     pub fn set_fatal_if_script(&mut self) {
