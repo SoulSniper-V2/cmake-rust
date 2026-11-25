@@ -154,11 +154,18 @@ fn read(interp: &mut Interp, args: &[String]) -> CmdResult {
             } else {
                 let mut reader = BufReader::new(file);
                 let mut line = Vec::new();
-                while limit > 0
-                    && reader
-                        .read_until(b'\n', &mut line)
-                        .is_ok_and(|size| size > 0)
-                {
+                while limit > 0 {
+                    match reader.read_until(b'\n', &mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(_) => {
+                            // A read error (a directory: EISDIR) fails
+                            // std::getline without EOF, so GetLineFromStream
+                            // reports one empty line that "had a newline".
+                            data.push(b'\n');
+                            break;
+                        }
+                    }
                     let newline = line.last() == Some(&b'\n');
                     if newline {
                         line.pop();
@@ -978,12 +985,14 @@ fn configure(interp: &mut Interp, args: &[String]) -> CmdResult {
         escape_quotes,
     );
     if let Err(error) = crate::fsutil::write_if_different_bytes(Path::new(&output), &data) {
+        // !fout: Error() and ReportLastSystemError(""), then a failure with
+        // no status error ("unknown error.").
         raw_error(
             interp,
             &format!("Could not open file for write in copy operation {output}"),
         );
-        eprintln!("System Error: {}", system_error(&error));
-        return Err(CmdErr::Reported);
+        raw_error(interp, &format!(": System Error: {}", system_error(&error)));
+        return err("unknown error.");
     }
     Ok(())
 }
@@ -1040,24 +1049,55 @@ fn copy_times(source: &str, dest: &str) -> io::Result<()> {
     }
 }
 
+/// `kwsys::SystemTools::CopyFileAlways`, step for step: the source's
+/// permissions are read first; the destination directory is created before
+/// the source is opened (so creating it can make the source appear), and a
+/// read error ends the block-wise copy without failing it.
 fn copy_file_always(source: &str, dest: &str) -> io::Result<()> {
-    let metadata = fs::metadata(source)?;
-    if metadata.is_dir() {
+    let permissions = fs::metadata(source).ok().map(|meta| meta.permissions());
+    let real_dest = if Path::new(source).is_dir() {
         mkdir(&unix_slashes(dest))?;
-        fs::set_permissions(dest, metadata.permissions())
+        dest.to_owned()
     } else {
-        let dest = if Path::new(dest).is_dir() {
-            format!(
-                "{}/{}",
-                unix_slashes(dest),
-                crate::util::filename_name(source)
+        let (dest_dir, real_dest) = if Path::new(dest).is_dir() {
+            (
+                dest.to_owned(),
+                format!(
+                    "{}/{}",
+                    unix_slashes(dest),
+                    crate::util::filename_name(source)
+                ),
             )
         } else {
-            dest.to_owned()
+            (crate::util::filename_path(dest), dest.to_owned())
         };
-        mkdir(&crate::util::filename_path(&unix_slashes(&dest)))?;
-        copy_file(source, &dest).map_err(|(error, _)| error)
+        if same_file(source, &real_dest) {
+            return Ok(());
+        }
+        if !dest_dir.is_empty() {
+            mkdir(&dest_dir)?;
+        }
+        // CloneFileContent, then CopyFileContentBlockwise.
+        let mut input = File::open(source)?;
+        let _ = fs::remove_file(&real_dest);
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&real_dest)?;
+        let mut buffer = [0u8; 4096];
+        loop {
+            match input.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => io::Write::write_all(&mut output, &buffer[..n])?,
+            }
+        }
+        real_dest
+    };
+    if let Some(permissions) = permissions {
+        fs::set_permissions(&real_dest, permissions)?;
     }
+    Ok(())
 }
 
 /// `HandleReadMachoCommand` as built off Apple (no CMake_USE_MACH_PARSER):

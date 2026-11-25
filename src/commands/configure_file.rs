@@ -319,7 +319,7 @@ pub(super) fn configure_file_core(
     // Only a configured output goes through `<output>.tmp`; a copy
     // (`cmSystemTools::CopyFileIfDifferent`) leaves such a file alone.
     let written = if copy_only {
-        crate::fsutil::write_if_different_bytes(Path::new(&output), &data)
+        crate::fsutil::copy_if_different_bytes(Path::new(&output), &data)
     } else {
         write_configured(&output, &data)
     };
