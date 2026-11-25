@@ -1,0 +1,30 @@
+cmake-rust
+Copyright (c) 2026, Arush Wadhawan. Licensed under BSD-3-Clause (see LICENSE).
+
+This project reimplements the behaviour of CMake 4.1.0, and parts of it are
+derived from CMake:
+
+- Files under tests/ whose names start with "upstream_", and any file whose
+  header says "Verbatim from Kitware CMake", are copied from the CMake 4.1.0
+  test suite.
+- Source comments that say "Port of <cmSomething>" mark code whose logic was
+  translated from the named CMake source file.
+- Some help text, diagnostics and data tables reproduce CMake's own text so
+  that the output matches byte for byte.
+
+That material remains under CMake's license:
+
+  CMake - Cross Platform Makefile Generator
+  Copyright 2000-2025 Kitware, Inc. and Contributors
+  All rights reserved.
+
+  Distributed under the OSI-approved BSD 3-Clause License.
+  See https://cmake.org/licensing for details.
+
+The full text of the BSD 3-Clause License appears in LICENSE. The names of
+Kitware, Inc., the Insight Software Consortium, and their contributors may not
+be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+"CMake" is a trademark of Kitware, Inc. This project is not affiliated with or
+endorsed by Kitware.

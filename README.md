@@ -1,60 +1,113 @@
-# CMake in Rust
+# cmake-rust
 
-An independent implementation of the CMake interpreter and Ninja generator. It evaluates existing `CMakeLists.txt` files, performs native compiler checks, and writes Ninja rules, CTest definitions, and an install manifest. It uses the host toolchain to compile and link the resulting projects.
+**A reimplementation of CMake in Rust.** It reads ordinary `CMakeLists.txt` files, runs the real compiler checks, and writes Ninja build files that are byte-for-byte identical to the ones Kitware CMake 4.1.0 writes for the same project.
 
-## Build
+It is good enough to configure and build **LLVM + Clang 20**. Clang's own test suite then reports exactly the same counts as on a build configured by real CMake.
+
+| Project | What was compared | Result |
+|---|---|---|
+| **LLVM + Clang 20.1.8** | every configured and generated file | **614 / 614 identical** (after tool-path normalization) |
+| | `ninja check-clang` on the candidate's build | 3,808 / 3,808 steps; test counts identical to the Kitware-configured build |
+| **Kitware CMake 4.1.0** (CMake building itself) | configured tree, then the upstream CTest suite | **312 / 312** files identical; **683 / 683** tests pass |
+| **zlib 1.3.1** | configure, generate, build, install, tests | all match |
+| **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
+
+LLVM, CMake and RunCMake were measured at commit `67963ae`, against Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
+
+About 134,000 lines of Rust. The only dependencies are small crates for hashing, compression, tar, regex and JSON; the CMake language, generator expressions, policies, the target model, link computation and the Ninja generator are all implemented here.
+
+---
+
+## Quick start
 
 ```sh
 cargo build --locked --release
-target/release/cmake -S /path/to/source -B /path/to/build -G Ninja
-target/release/cmake --build /path/to/build
-ctest --test-dir /path/to/build --output-on-failure
+target/release/cmake -S path/to/source -B path/to/build -G Ninja
+target/release/cmake --build path/to/build
+ctest --test-dir path/to/build --output-on-failure
 ```
 
-Ninja and Ninja Multi-Config (with the CodeBlocks, CodeLite, Eclipse CDT4, Kate and Sublime Text 2 extra generators) are the implemented generators. Without `-G` or `CMAKE_GENERATOR`, the default is Ninja; Kitware's Linux default, Unix Makefiles, is not implemented. `cmake --help` still lists every Kitware 4.1.0 generator, and choosing an unimplemented one fails with an explicit message. Cross-compiling configurations (Darwin, MSVC/clang-cl, Android, AIX, Cygwin/MSYS and others) are generated to match the reference; the build itself runs on the host toolchain. Unsupported features report their CMake source file and line.
+You need Rust 1.87+ (edition 2024), Ninja, and a host C/C++ toolchain.
 
-During configuration, `--explain <target> <flag>` prints the target dependency path and source line for compile definitions, include directories, and target compile options. The integration tests check that an explained definition reaches the real compiler.
+## How it is verified
 
-## Differential verification
+The project has one rule: **real CMake is the oracle.** Kitware CMake 4.1.0 is treated as the specification, and every change is tested by running both tools on the same input and diffing what comes out. A feature counts as done when the outputs match exactly, not when its code compiles.
+
+```
+            CMakeLists.txt
+           /              \
+  Kitware CMake 4.1.0   cmake-rust
+           \              /
+       build.ninja, CTest files, install manifests,
+       file-API replies, exported targets, interpreter state
+                    |
+              byte-for-byte diff
+```
+
+The harnesses in `scripts/`:
+
+| Harness | Compares | Size |
+|---|---|---|
+| `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,253 cases |
+| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 446 cases |
+| `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 135 projects |
+| `statediff.py` | end-of-configure interpreter state: every variable, cache entry and property | LLVM: 94,998 lines, 0 differences |
+| `conformance/` | Kitware's own RunCMake test suite | see [`docs/conformance.md`](docs/conformance.md) |
+| `ninjadiff.py`, `dapdiff.py`, `autogendiff.py` | `build.ninja` structure, the debugger protocol, Qt AUTOGEN | |
+
+`statediff.py` injects itself through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`, so it compares the full interpreter state without modifying the project under test. At `01c6813` it shows no differing lines for LLVM, Kitware CMake, zlib, or any of the 128 `tests/projects` cases whose configure completes, including on a second `--reconfigure` pass.
+
+To reproduce the zlib check:
 
 ```sh
 cargo test --locked
-cargo clippy --locked --all-targets --all-features -- -D warnings
-scripts/stage-prefix.sh   # <root>/rust-prefix/bin/cmake + share/cmake-4.1
+scripts/stage-prefix.sh                     # <root>/rust-prefix/bin/cmake + share/cmake-4.1
 RUST_CMAKE=<root>/rust-prefix/bin/cmake scripts/verify-zlib.sh
 ```
 
-The script requires Git, Python 3, Ninja, a native C toolchain, and a reference installation of Kitware CMake with CTest. It uses two clean copies of zlib v1.3.1 at commit `51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf`, and isolates the Rust side's executable search path. The reference is invoked separately. Set `ZLIB_PIN_DIR` to use an existing clean checkout of that commit. Set `RUST_CMAKE`, `UPSTREAM_CMAKE`, `CTEST`, or `NINJA` to override tool paths.
+`verify-zlib.sh` needs Git, Python 3, Ninja, a C toolchain and a reference Kitware CMake with CTest. It uses two clean copies of zlib v1.3.1 (`51b7f2ab`) and isolates the Rust side's executable search path. It checks the generated header, the normalized per-target compiler arguments, the upstream tests, the installed paths and exported symbols, four gzip encode/decode pairings, and that a second `ninja` run is a no-op. Override tool paths with `RUST_CMAKE`, `UPSTREAM_CMAKE`, `CTEST` or `NINJA`, and set `ZLIB_PIN_DIR` to reuse a checkout.
 
-The harness checks the generated header, normalized per-target compiler arguments, upstream test results, installed paths and exported symbols, four gzip encode/decode pairings, and no-op Ninja rebuilds. Both tools run the stock zlib script that renames `zconf.h` inside each disposable source copy.
+The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.1` holding the pinned 4.1.0 distribution modules, which are read as data. The Kitware `cmake` binary is never called by the candidate. The pinned Kitware `ctest` is used only as an independent test runner.
 
-## Compatibility milestones
+## What's implemented
 
-Differential results are measured against Kitware CMake 4.1.0 (commit
-`2a2c2e0b`) built from source, with the same flags and Ninja. The candidate is
-staged as an installed CMake (`scripts/stage-prefix.sh`: `bin/cmake` plus
-`share/cmake-4.1` holding the pinned 4.1.0 distribution modules, which are
-read as data). The Kitware `cmake` executable is never invoked by the
-candidate. The pinned Kitware `ctest` is the independent test runner.
+- **The CMake language:** lexer, interpreter, scoping, `if()` conditions, lists, strings, math, regex (a port of CMake's own regex engine), `file()`, and the policy table up to 4.1.
+- **Generator expressions:** the full evaluator, including context checks and diagnostics.
+- **The target model:** usage requirements, link features and strategies, link-line and runtime-path computation, imported targets, `install()` and `export()`, CPS and pkg-config package info.
+- **Generators:** Ninja and Ninja Multi-Config, with the CodeBlocks, CodeLite, Eclipse CDT4, Kate and Sublime Text 2 extra generators. Also C++20 module scanning, precompiled headers and unity builds, and the Fortran pipeline.
+- **Around the generator:** `try_compile` / `try_run`, CMake presets, the file API, the DAP debugger, Qt AUTOGEN, instrumentation, SARIF output, and `cmake -E`.
+- **Cross-compiling configurations** (Darwin, MSVC/clang-cl, Android, AIX, Cygwin/MSYS and others) are generated to match the reference. The build itself runs on the host toolchain.
+- **`--explain <target> <flag>`** prints the dependency path and the source line that put a compile definition, include directory or option on a target. The integration tests check that an explained definition really reaches the compiler.
 
-- **LLVM + Clang 20.1.8** (`87f0227c`, Release, `LLVM_ENABLE_PROJECTS=clang`,
-  `LLVM_TARGETS_TO_BUILD=X86`, `LLVM_INCLUDE_BENCHMARKS=OFF`), measured at `67963ae`:
-  - The configured and generated tree is byte-identical to the oracle's (614 of 614 files after tool-path normalization).
-  - `ninja check-clang` on the candidate's build (3808/3808 steps): 21,156 tests run, 42,430 passed, 0 failed, 3,846 unsupported, 29 expectedly failed, 10 skipped. The separately labeled reference build configured by Kitware CMake reports the identical counts.
-- **Kitware CMake 4.1.0**, measured at `67963ae`: the configured tree is identical to the oracle's (312 of 312 files). The candidate-configured build completes, and the upstream CTest suite run by the built `ctest` reports 683/683 passed.
-- **zlib 1.3.1**: configure, generate, build and install match the oracle, and the upstream tests pass.
-- **Upstream RunCMake** (`scripts/conformance/run.py`, unfiltered inventory; Ninja, Ninja Multi-Config and extra-generator cases scored): 5,866 of 5,866 eligible cases pass at `67963ae`.
+## Known gaps
 
-Known gaps, each failing with an explicit error rather than silently: the Unix Makefiles, Watcom WMake and Green Hills MULTI generators; Makefile-only dependency scanning for Fortran and Java in `cmake -E cmake_depends`; and XCFramework linking, which needs macOS `plutil`. Two upstream outputs are ordered by pointer or hash value and cannot be reproduced exactly: the file API `dependencies` order and the order of several reserved-name build-database errors.
+Each of these fails with an explicit error, never silently:
 
-`file(DOWNLOAD)` and `file(UPLOAD)` run on the host's `libcurl.so.4`, which is loaded at the first transfer. Status and error text come from the `curl_easy_strerror` table of the curl 8.14.1 that CMake vendors, generated from the pinned sources. `LOG` output comes from the host libcurl, so its wording can differ.
+- The Unix Makefiles, Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
+- Makefile-only dependency scanning for Fortran and Java in `cmake -E cmake_depends`.
+- XCFramework linking, which needs macOS `plutil`.
 
-Harnesses:
-- `scripts/difftest.py`: script mode, 1,253 cases.
-- `scripts/clitest.py`: command line, 446 cases.
-- `scripts/projdiff.py`: project mode, generated files byte-compared (including install-tree export files and file API replies), 135 projects.
-- `scripts/statediff.py`: end-of-configure interpreter state (every variable, cache entry and set directory/target/global property), injected through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES` without modifying the project. At `01c6813` there are no differing lines for LLVM (94,998), Kitware CMake (7,217) or zlib (3,078) after tool-path normalization, nor for any of the 128 `tests/projects` cases whose configure completes. `--reconfigure` compares a second configure over the existing tree; LLVM (94,087) and Kitware CMake (6,378) match there too.
-- `scripts/dapdiff.py` (debugger protocol) and `scripts/autogendiff.py` (Qt AUTOGEN).
-- `scripts/ninjadiff.py`: structural `build.ninja` comparison.
-- `scripts/llvm-configure.sh` and `scripts/kitware-configure.sh`: oracle/candidate configure runners.
-- `scripts/conformance/`: upstream RunCMake (see `docs/conformance.md`).
+Two upstream outputs are ordered by pointer or hash value and can't be reproduced exactly: the file-API `dependencies` order, and the order of some reserved-name build-database errors.
+
+`file(DOWNLOAD)` and `file(UPLOAD)` load the host's `libcurl.so.4` at the first transfer. Status and error strings come from the `curl_easy_strerror` table of the curl 8.14.1 that CMake vendors. `LOG` output comes from the host libcurl, so its wording can differ.
+
+## Repository layout
+
+```
+src/            the implementation (interpreter, commands/, genex/, generator/, presets/, fileapi/, debugger/ ...)
+tests/          integration tests: cli/ JSON cases, projects/ end-to-end projects, scripts/ cmake -P cases
+scripts/        differential harnesses and oracle runners
+compatibility/  the RunCMake conformance baseline
+docs/           architecture, target model, conformance notes
+legacy/         the first interpreter, kept for reference
+```
+
+Start with [`docs/architecture.md`](docs/architecture.md).
+
+## How this was built
+
+I wrote this with AI coding agents. I designed the harness and the rule that real CMake is the oracle. I split the work into scoped tasks (one CMake subsystem, or one RunCMake suite, per task). The agents ran in parallel worktrees, and a change landed only when the diffs against Kitware came back clean. The commit history shows that loop, one subsystem at a time.
+
+## License and attribution
+
+BSD-3-Clause; see [LICENSE](LICENSE). This is not Kitware's CMake and is not affiliated with or endorsed by Kitware. "CMake" is a trademark of Kitware, Inc. Behaviour is ported from CMake 4.1.0, and some test inputs are copied verbatim from its test suite with their origin noted in each file. See [NOTICE](NOTICE).

@@ -3,6 +3,9 @@ name = "cmake-rust"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
+license = "BSD-3-Clause"
+description = "A reimplementation of CMake in Rust, verified byte-for-byte against Kitware CMake 4.1"
+repository = "https://github.com/SoulSniper-V2/cmake-rust"
 publish = false
 
 [[bin]]
