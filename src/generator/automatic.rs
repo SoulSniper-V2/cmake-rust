@@ -122,6 +122,12 @@ fn apply(interp: &mut Interp, key: &str, changes: Changes) {
             source.props.set(&name, value);
         }
     }
+    // Every source added here (PCH sources and headers, unity sources, PCH
+    // PDB copy rules) was first made a cmSourceFile of the directory by
+    // cmMakefile::GetOrCreateSource.
+    for (path, _) in &changes.add_sources {
+        crate::commands::target::get_or_create_source(interp, dir, path);
+    }
     let target = interp.ext.targets.get_mut(key).expect("target");
     for (name, value, as_string) in changes.target_appends {
         target.props.append(&name, &value, as_string);

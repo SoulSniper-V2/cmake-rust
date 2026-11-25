@@ -2215,6 +2215,18 @@ fn collect_sources(
                         .map(|source| format!("{object_dir}/{}", source.object_name))
                         .collect()
                 };
+                // AddObjectEntries evaluates $<TARGET_OBJECTS:lib> in the
+                // consumer's directory: cmMakefile::AddTargetObject files
+                // each object there.
+                {
+                    let mut registry = ctx.target_objects.borrow_mut();
+                    for object in &objects {
+                        registry.insert(
+                            (target.makefile, collapse_full_path(object, "")),
+                            library.name.clone(),
+                        );
+                    }
+                }
                 entries.push(
                     objects
                         .into_iter()

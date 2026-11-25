@@ -210,8 +210,14 @@ def check(args, index):
             path = src / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        oracle = run_side(args.oracle, src, root / "oracle", args.build, args.generator)
-        candidate = run_side(args.candidate, src, root / "candidate", args.build, args.generator)
+        # Both sides use the same build directory path (one after the
+        # other): extra generators name projects after its basename.
+        results = []
+        for cmake, side in ((args.oracle, "oracle"), (args.candidate, "candidate")):
+            results.append(run_side(cmake, src, root / "b", args.build, args.generator))
+            (root / "b").rename(root / side)
+            (root / "b.log").rename(root / f"{side}.log")
+        oracle, candidate = results
         if oracle == candidate:
             return None
         diffs = []

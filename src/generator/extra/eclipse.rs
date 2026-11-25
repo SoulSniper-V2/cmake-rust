@@ -1037,7 +1037,22 @@ impl<'a, 'b> Eclipse<'a, 'b> {
         let mut dir_groups: Vec<Option<Vec<GroupNode>>> =
             (0..s.makefile_count()).map(|_| None).collect();
 
+        // By the time the extra generator runs, the main generator has
+        // already computed every target's sources, so every
+        // cmMakefile::AddTargetObject claim is in place before any target's
+        // group copy is taken.
+        for dir in 0..dir_groups.len() {
+            let build_type = s.build_type(dir);
+            for target in s.targets(dir) {
+                let _ = s.target_sources(target, &build_type);
+            }
+        }
         for (dir, groups_opt) in dir_groups.iter_mut().enumerate() {
+            if groups_opt.is_none() {
+                let mut groups = self.build_source_groups(dir);
+                self.seed_object_libraries(dir, &mut groups);
+                *groups_opt = Some(groups);
+            }
             for target in s.targets(dir) {
                 let prefix = match target.kind {
                     TargetKind::Executable => "[exe] ",
@@ -1061,11 +1076,10 @@ impl<'a, 'b> Eclipse<'a, 'b> {
                 let groups_template =
                     groups_opt.get_or_insert_with(|| self.build_source_groups(dir));
                 // Upstream copies `makefile->GetSourceGroups()` *before*
-                // `GetSourceFiles` seeds this target's file-set headers and
-                // `$<TARGET_OBJECTS>` files into the makefile's real groups:
-                // the seeding only affects *later* targets' copies.
+                // `GetSourceFiles` seeds this target's file-set headers into
+                // the makefile's real groups: that seeding only affects
+                // *later* targets' copies.
                 let mut groups = groups_template.clone();
-                self.seed_object_libraries(dir, groups_template);
                 self.seed_header_file_sets(target, groups_template);
 
                 // get the files from the source lists then add them to the groups
@@ -1334,10 +1348,11 @@ impl<'a, 'b> Eclipse<'a, 'b> {
                 // `cmLocalGenerator::GetIncludeDirectories(target, "C", config)`
                 // with `mf` == the top-level makefile's config.
                 let config = s.build_type(0);
-                let include_dirs: Vec<String> = flags::include_items(s.ctx, target, &config, "C")
-                    .into_iter()
-                    .map(|(path, _, _)| path)
-                    .collect();
+                let include_dirs: Vec<String> =
+                    flags::include_items_stripped(s.ctx, target, &config, "C")
+                        .into_iter()
+                        .map(|(path, _, _)| path)
+                        .collect();
                 append_include_directories(&mut xml, &include_dirs, &mut emitted);
             }
         }
