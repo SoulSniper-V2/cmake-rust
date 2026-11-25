@@ -315,7 +315,18 @@ impl<'a> MakefileGenerator<'a> {
                 &shell_path(self.ctx, &self.ctx.interp.home_binary),
             );
         // Dependency includes.
-        let mut compiler_depends = self.compiler_depends_enabled(target);
+        // `cmMakefileTargetGenerator::WriteTargetBuildRules`: the
+        // compiler_depend.make include and placeholder files depend on the
+        // project-wide toggle, not on any target language.
+        let depend_toggle = self
+            .ctx
+            .var(target.makefile, "CMAKE_DEPENDS_USE_COMPILER")
+            .is_none_or(|v| is_on(&v));
+        let language = gt::linker_language(self.ctx, target, &self.ctx.config);
+        let mut compiler_depends =
+            depend_toggle || flags::link_dependency_file(self.ctx, target, &language).is_some();
+        let _ = &mut compiler_depends;
+        compiler_depends |= self.compiler_depends_enabled(target);
         for source in sources.iter() {
             if source.kind != SourceKind::ObjectSource {
                 continue;
@@ -433,20 +444,15 @@ impl<'a> MakefileGenerator<'a> {
     }
 
     fn use_compiler_depends(&self, target: &Target, lang: &str) -> bool {
-        let makefile = target.makefile;
-        if self
-            .ctx
-            .var(makefile, "CMAKE_DEPENDS_IN_PROJECT_ONLY")
-            .is_some_and(|v| is_on(&v))
-        {
-            return false;
-        }
-        if let Some(value) = self.ctx.var(makefile, &format!("CMAKE_DEPENDS_USE_{lang}")) {
-            return is_on(&value);
-        }
+        // `cmMakefileTargetGenerator::WriteObjectRuleFiles`: compiler
+        // dependency generation is controlled by the per-language support
+        // variable the compiler modules set.
         self.ctx
-            .var(makefile, "CMAKE_DEPENDS_USE_COMPILER")
-            .is_none_or(|v| is_on(&v))
+            .var(
+                target.makefile,
+                &format!("CMAKE_{lang}_DEPENDS_USE_COMPILER"),
+            )
+            .is_some_and(|v| is_on(&v))
     }
 
     fn depfile_for_source(
@@ -504,8 +510,14 @@ impl<'a> MakefileGenerator<'a> {
         if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
             depends.extend(util::expand_list(&object_deps, false));
         }
-        let depinfo = self.depfile_for_source(target, source, obj_rel_cur);
-        if compiler_depends && depinfo.is_some() {
+        let source_compiler_depends = self.use_compiler_depends(target, &source.language);
+        let depinfo = if source_compiler_depends {
+            self.depfile_for_source(target, source, obj_rel_cur)
+        } else {
+            None
+        };
+        let _ = compiler_depends;
+        if depinfo.is_some() {
             depends.push(format!(
                 "{}/compiler_depend.ts",
                 self.support_rel(target, dir)
@@ -1393,84 +1405,195 @@ impl<'a> MakefileGenerator<'a> {
 
     fn write_depend_info(&self, target: &Target, implicit: &ImplicitDepends) {
         let dir = target.makefile;
-        let mut out = String::from(
-            "\n# Consider dependencies only in project.\nset(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)\n\n# The set of languages for which implicit dependencies are needed:\nset(CMAKE_DEPENDS_LANGUAGES\n",
+        let config = self.ctx.config.clone();
+        let project_only = self
+            .ctx
+            .var(dir, "CMAKE_DEPENDS_IN_PROJECT_ONLY")
+            .is_some_and(|v| is_on(&v));
+        let mut out = format!(
+            "\n# Consider dependencies only in project.\nset(CMAKE_DEPENDS_IN_PROJECT_ONLY {})\n\n# The set of languages for which implicit dependencies are needed:\nset(CMAKE_DEPENDS_LANGUAGES\n",
+            if project_only { "ON" } else { "OFF" }
         );
+        let has_fortran = gt::sources(self.ctx, target, &config)
+            .iter()
+            .any(|source| source.language == "Fortran");
+        let mut fortran_listed = false;
         for lang in implicit.cmake.keys() {
-            let _ = writeln!(out, "  \"{lang}\" \"\"");
+            let _ = writeln!(out, "  \"{lang}\"");
+            if lang == "Fortran" {
+                fortran_listed = true;
+            }
+        }
+        if has_fortran && !fortran_listed {
+            let _ = writeln!(out, "  \"Fortran\"");
         }
         out.push_str("  )\n");
-        {
-            out.push_str("\n# The set of dependency files which are needed:\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n");
-            for (lang, objects) in implicit.compiler.iter().chain(implicit.cmake.iter()) {
+
+        if !implicit.cmake.is_empty() {
+            out.push_str("# The set of files for implicit dependencies of each language:\n");
+            for (lang, objects) in &implicit.cmake {
+                let _ = writeln!(out, "set(CMAKE_DEPENDS_CHECK_{lang}");
                 for (obj, srcs) in objects {
-                    let obj_rel = if util::is_full_path(obj) {
-                        self.top_rule_path(obj)
-                    } else {
-                        format!(
-                            "{}{}",
-                            home_relative_output_path(self.ctx, dir),
-                            maybe_relative_cur(self.ctx, dir, obj)
-                        )
-                    };
                     for src in srcs {
-                        if lang == "CUSTOM" {
-                            let dep = self.top_rule_path(src);
-                            let _ = writeln!(
-                                out,
-                                "  \"\" \"{obj_rel}\" \"custom\" \"{}\"",
-                                escape_cmake(&dep)
-                            );
-                            continue;
-                        }
-                        let dep = if implicit
-                            .compiler
-                            .get(lang)
-                            .and_then(|m| m.get(obj))
-                            .is_some()
-                        {
-                            format!("{obj_rel}.d")
-                        } else {
-                            String::new()
-                        };
-                        let _ = writeln!(
-                            out,
-                            "  \"{}\" \"{obj_rel}\" \"{}\" \"{dep}\"",
-                            escape_cmake(src),
-                            escape_cmake(&compiler_tag(self.ctx, target, lang))
-                        );
+                        let _ =
+                            writeln!(out, "  \"{}\" \"{}\"", escape_cmake(src), escape_cmake(obj));
                     }
                 }
-            }
-            let language = gt::linker_language(self.ctx, target, &self.ctx.config);
-            if let Some(depfile) = flags::link_dependency_file(self.ctx, target, &language) {
-                let dep_rel = format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, &depfile)
+                out.push_str("  )\n");
+                let cid = self
+                    .ctx
+                    .var_safe(target.makefile, &format!("CMAKE_{lang}_COMPILER_ID"));
+                if !cid.is_empty() {
+                    let _ = writeln!(out, "set(CMAKE_{lang}_COMPILER_ID \"{cid}\")");
+                }
+                if lang == "Fortran" {
+                    let sep = self
+                        .ctx
+                        .var_safe(target.makefile, "CMAKE_Fortran_SUBMODULE_SEP");
+                    let ext = self
+                        .ctx
+                        .var_safe(target.makefile, "CMAKE_Fortran_SUBMODULE_EXT");
+                    let _ = writeln!(
+                        out,
+                        "set(CMAKE_Fortran_SUBMODULE_SEP \"{sep}\")\nset(CMAKE_Fortran_SUBMODULE_EXT \"{ext}\")"
+                    );
+                }
+                let defines = flags::compile_define_items(self.ctx, target, &config, lang);
+                if !defines.is_empty() {
+                    let _ = writeln!(
+                        out,
+                        "\n# Preprocessor definitions for this target.\nset(CMAKE_TARGET_DEFINITIONS_{lang}"
+                    );
+                    for (define, _) in &defines {
+                        let _ = writeln!(out, "  {}", escape_cmake(define));
+                    }
+                    out.push_str("  )\n");
+                }
+                let _ = writeln!(
+                    out,
+                    "\n# The include file search paths:\nset(CMAKE_{lang}_TARGET_INCLUDE_PATH"
                 );
-                let names = gt::names(self.ctx, target, &self.ctx.config);
-                let directory =
-                    gt::directory(self.ctx, target, &self.ctx.config, ArtifactType::Runtime);
-                let output = format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, &format!("{directory}/{}", names.output))
-                );
-                let tag = compiler_tag(self.ctx, target, &language);
-                let _ = writeln!(out, "  \"\" \"{output}\" \"{tag}\" \"{dep_rel}\"");
+                let mut includes: Vec<String> =
+                    flags::compile_include_items(self.ctx, target, &config, lang)
+                        .into_iter()
+                        .map(|(path, _, _)| path)
+                        .collect();
+                if project_only {
+                    let home_source = self.ctx.interp.home_source.clone();
+                    let home_binary = self.ctx.interp.home_binary.clone();
+                    includes.retain(|path| {
+                        crate::util::is_subdirectory(path, &home_source)
+                            || crate::util::is_subdirectory(path, &home_binary)
+                    });
+                }
+                for include in includes {
+                    let _ = writeln!(
+                        out,
+                        "  \"{}\"",
+                        escape_cmake(&maybe_relative_top(self.ctx, &include))
+                    );
+                }
+                out.push_str("  )\n");
             }
-            out.push_str("  )\n");
+            // `IMPLICIT_DEPENDS_INCLUDE_TRANSFORM` rules, directory first.
+            let mut transforms: Vec<String> = Vec::new();
+            if let Some(value) = self
+                .ctx
+                .interp
+                .makefiles
+                .get(dir)
+                .and_then(|mf| mf.props.get("IMPLICIT_DEPENDS_INCLUDE_TRANSFORM"))
+            {
+                transforms.extend(crate::util::expand_list(value, false));
+            }
+            if let Some(value) = target.props.get("IMPLICIT_DEPENDS_INCLUDE_TRANSFORM") {
+                transforms.extend(crate::util::expand_list(value, false));
+            }
+            if !transforms.is_empty() {
+                out.push_str("\nset(CMAKE_INCLUDE_TRANSFORMS\n");
+                for rule in &transforms {
+                    let _ = writeln!(out, "  {}", escape_cmake(rule));
+                }
+                out.push_str("  )\n");
+            }
         }
-        let names = gt::names(self.ctx, target, &self.ctx.config);
+
+        // The dependency files managed by the compiler, in std::map language
+        // order with CUSTOM and LINK as pseudo-languages.
+        out.push_str("\n# The set of dependency files which are needed:\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n");
+        let mut rows: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (lang, objects) in &implicit.compiler {
+            if lang == "CUSTOM" {
+                continue;
+            }
+            let format = self
+                .ctx
+                .var_safe(target.makefile, &format!("CMAKE_{lang}_DEPFILE_FORMAT"));
+            let mut lang_rows = Vec::new();
+            for (obj, srcs) in objects {
+                let obj_rel = maybe_relative_top(self.ctx, obj);
+                for src in srcs {
+                    lang_rows.push(format!(
+                        "  \"{}\" \"{obj_rel}\" \"{}\" \"{obj_rel}.d\"",
+                        escape_cmake(src),
+                        escape_cmake(&format),
+                    ));
+                }
+            }
+            rows.insert(lang.clone(), lang_rows);
+        }
+        if let Some(objects) = implicit.compiler.get("CUSTOM") {
+            let mut custom_rows = Vec::new();
+            for (obj, srcs) in objects {
+                let obj_rel = maybe_relative_top(self.ctx, obj);
+                for src in srcs {
+                    custom_rows.push(format!(
+                        "  \"\" \"{obj_rel}\" \"custom\" \"{}\"",
+                        escape_cmake(&maybe_relative_top(self.ctx, src))
+                    ));
+                }
+            }
+            rows.insert("CUSTOM".into(), custom_rows);
+        }
+        let language = gt::linker_language(self.ctx, target, &config);
+        if let Some(depfile) = flags::link_dependency_file(self.ctx, target, &language) {
+            let dep_full = if util::is_full_path(&depfile) {
+                depfile.clone()
+            } else {
+                format!("{}/{depfile}", self.ctx.interp.makefiles[dir].binary_dir)
+            };
+            let dep_rel = maybe_relative_top(self.ctx, &dep_full);
+            let names = gt::names(self.ctx, target, &config);
+            let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
+            let output = maybe_relative_top(self.ctx, &format!("{directory}/{}", names.output));
+            let format = self.ctx.var_safe(
+                target.makefile,
+                &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"),
+            );
+            rows.insert(
+                "LINK".into(),
+                vec![format!("  \"\" \"{output}\" \"{format}\" \"{dep_rel}\"")],
+            );
+        }
+        // CUSTOM is stored inside the compiler map; rows are already ordered
+        // by language key through the BTreeMap.
+        for lang_rows in rows.values() {
+            for row in lang_rows {
+                out.push_str(row);
+                out.push('\n');
+            }
+        }
+        out.push_str("  )\n");
+
+        let names = gt::names(self.ctx, target, &config);
         let mut output_pairs: std::collections::BTreeSet<(String, String)> =
             implicit.output_pairs.iter().cloned().collect();
         if names.output != names.real
             && (target.kind == TargetKind::SharedLibrary
                 || target.kind == TargetKind::ModuleLibrary)
         {
-            let directory =
-                gt::directory(self.ctx, target, &self.ctx.config, ArtifactType::Runtime);
+            let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
             let real = format!("{directory}/{}", names.real);
             for name in [&names.output, &names.shared_object] {
                 if !name.is_empty() && *name != names.real {
@@ -1490,7 +1613,20 @@ impl<'a> MakefileGenerator<'a> {
             }
             out.push_str("  )\n\n");
         }
-        out.push_str("\n# Targets to which this target links which contain Fortran sources.\nset(CMAKE_Fortran_TARGET_LINKED_INFO_FILES\n  )\n\n# Targets to which this target links which contain Fortran sources.\nset(CMAKE_Fortran_TARGET_FORWARD_LINKED_INFO_FILES\n  )\n");
+        let mut linked = String::new();
+        let mut forward_linked = String::new();
+        for (dep, forward) in self.fortran_linked_target_dirs(target) {
+            let entry = format!("  \"{dep}/DependInfo.cmake\"\n");
+            if forward {
+                forward_linked.push_str(&entry);
+            }
+            linked.push_str(&entry);
+        }
+        out.push_str("\n# Targets to which this target links which contain Fortran sources.\nset(CMAKE_Fortran_TARGET_LINKED_INFO_FILES\n");
+        out.push_str(&linked);
+        out.push_str("  )\n\n# Targets to which this target links which contain Fortran sources.\nset(CMAKE_Fortran_TARGET_FORWARD_LINKED_INFO_FILES\n");
+        out.push_str(&forward_linked);
+        out.push_str("  )\n");
         let module_dir = flags::fortran_module_dir(self.ctx, target).unwrap_or_default();
         let _ = writeln!(
             out,
@@ -1501,6 +1637,42 @@ impl<'a> MakefileGenerator<'a> {
             gt::support_directory(self.ctx, target)
         );
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
+    }
+
+    /// `cmCommonTargetGenerator::GetLinkedTargetDirectories` for Fortran:
+    /// non-imported linked targets with Fortran sources that build before
+    /// this target, as (support-directory, forward) entries in link order.
+    fn fortran_linked_target_dirs(&self, target: &Target) -> Vec<(String, bool)> {
+        if !self
+            .ctx
+            .interp
+            .langs
+            .enabled
+            .iter()
+            .any(|lang| lang == "Fortran")
+        {
+            return Vec::new();
+        }
+        let mut result: Vec<(String, bool)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for depend in super::link::target_depends(self.ctx, target).iter() {
+            if !depend.link {
+                continue;
+            }
+            let Some(dep) = self.ctx.interp.ext.targets.get(&depend.key) else {
+                continue;
+            };
+            if dep.imported || dep.kind == TargetKind::InterfaceLibrary {
+                continue;
+            }
+            let has_fortran = gt::sources(self.ctx, dep, &self.ctx.config)
+                .iter()
+                .any(|source| source.language == "Fortran");
+            if has_fortran && seen.insert(dep.name.clone()) {
+                result.push((gt::support_directory(self.ctx, dep), false));
+            }
+        }
+        result
     }
 
     fn write_dependency_placeholders(&self, support: &str, compiler: bool, target_name: &str) {
@@ -1575,6 +1747,7 @@ impl<'a> MakefileGenerator<'a> {
         for (index, object) in objects.iter().enumerate() {
             clean_set.insert(object.clone());
             if let Some(source) = object_sources.get(index)
+                && self.use_compiler_depends(target, &source.language)
                 && let Some((depfile, _)) = self.depfile_for_source(target, source, object)
             {
                 clean_set.insert(depfile);
@@ -2837,19 +3010,6 @@ fn makefile_link_libraries(line: &super::link::LinkLine) -> String {
     result.push_str(&append_values(&line.path_fragments));
     result.push_str(&append_values(&line.lib_fragments));
     result.trim_end().to_owned()
-}
-
-fn compiler_tag(ctx: &GenCtx<'_>, target: &Target, lang: &str) -> String {
-    let id = ctx.var_safe(target.makefile, &format!("CMAKE_{lang}_COMPILER_ID"));
-    if id == "GNU" {
-        match lang {
-            "C" => "gcc".into(),
-            "CXX" => "g++".into(),
-            _ => id.to_lowercase(),
-        }
-    } else {
-        id.to_lowercase()
-    }
 }
 
 fn escape_cmake(text: &str) -> String {

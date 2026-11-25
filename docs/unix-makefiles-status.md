@@ -45,3 +45,27 @@ regression additions.
 - Remaining known: Fortran/ASM scanner-kind DependInfo layout (CMAKE_DEPENDS_CHECK_*
   blocks, depfile-format tags), per-source custom flag comments, AUTOGEN, CUDA,
   PCH/unity, install/target_objects file(GENERATE) deps.
+
+## Batch 3 (DependInfo overhaul)
+
+Rewrote `DependInfo.cmake` generation to follow
+`cmLocalUnixMakefileGenerator3::WriteDependLanguageInfo`:
+
+- Split implicit-dependency scanning into CMake-scanned vs compiler-scanned
+  object sets; `CMAKE_DEPENDS_DEPENDENCY_FILES` rows now carry the depfile
+  format (`gcc`) rather than the compiler executable, and linker depfile rows
+  use top-relative paths including the subdirectory prefix.
+- `CMAKE_DEPENDS_CHECK_<LANG>` source/object pairs, target compile
+  definitions, and per-language include paths written for CMake-scanned
+  languages.
+- Per-source depfile emission now follows `CMAKE_<LANG>_DEPENDS_USE_COMPILER`
+  (`cmMakefileTargetGenerator::WriteObjectRuleFiles`): ASM and Fortran no
+  longer get spurious `-MD`/`-MF` compile flags, `compiler_depend.ts`
+  dependencies, or `.d` entries in clean scripts.  The
+  `compiler_depend.make` include and placeholder files follow the
+  project-wide `CMAKE_DEPENDS_USE_COMPILER` toggle instead.
+
+Focused results: `targets/object_files` bad 0, `asm_extension_precedence`
+6->2 (remaining: flags.make language ordering, Makefile), `asm_mixed_linker`
+10->3, `link/items` 9->3.  Validation before commit: fmt/clippy clean, 939/939
+tests, Ninja projdiff 160/160, difftest 1263/1263, clitest 515/515.
