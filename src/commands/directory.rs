@@ -130,7 +130,7 @@ fn configure_subdirectory(
     // configure_subdirectory_dirscope additionally gives the child's
     // CMakeLists.txt the CMAKE_PARENT_LIST_FILE=self state of
     // cmMakefile::Configure.
-    interp.configure_subdirectory_dirscope(index, system);
+    interp.configure_subdirectory_dirscope(index, system, &[]);
     Ok(())
 }
 
@@ -205,6 +205,7 @@ fn subdirs(interp: &mut Interp, args: &[String]) -> CmdResult {
                     collapse_full_path(&format!("{}/{suffix}", interp.current_binary_dir()), "");
                 if can_add_subdirectory(interp, &source, &binary).is_ok() {
                     let index = interp.create_subdirectory(&source, &binary, exclude);
+                    let inner_scopes = interp.capture_inner_scopes();
                     interp
                         .ext
                         .pending_subdirs
@@ -216,6 +217,7 @@ fn subdirs(interp: &mut Interp, args: &[String]) -> CmdResult {
                             binary,
                             exclude_from_all: exclude,
                             backtrace: interp.backtrace.clone(),
+                            inner_scopes,
                         });
                 }
             }
@@ -246,7 +248,7 @@ pub fn finish_directory(interp: &mut Interp) {
         // parent's list file; diagnostics use the parent's file-scope
         // backtrace, which is the interpreter's current backtrace here.
         if Path::new(&interp.project_list_file(&dir.source)).is_file() {
-            interp.configure_subdirectory_dirscope(dir.index, false);
+            interp.configure_subdirectory_dirscope(dir.index, false, &dir.inner_scopes);
         } else {
             let _: CmdResult = report(
                 interp,

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "subdirs-snapshot-before-configure",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(p NONE)\nset(V1 early)\ninclude_regular_expression(\"^foo\")\nadd_definitions(-DEARLY)\nadd_compile_options(-Wearly)\ninclude_directories(/early)\nlink_directories(/early-lib)\nset_property(DIRECTORY APPEND PROPERTY LINK_OPTIONS -learly)\nset_property(DIRECTORY PROPERTY COMPILE_DEFINITIONS_DEBUG D1)\nfunction(add_in_function)\n  set(V2 function-scope)\n  subdirs(sub)\nendfunction()\nadd_in_function()\nset(V1 late)\nadd_definitions(-DLATE)\nadd_compile_options(-Wlate)\nforeach(p COMPILE_DEFINITIONS COMPILE_OPTIONS INCLUDE_DIRECTORIES LINK_OPTIONS LINK_DIRECTORIES COMPILE_DEFINITIONS_DEBUG INCLUDE_REGULAR_EXPRESSION)\n  get_directory_property(d DIRECTORY sub ${p})\n  message(\"${p} before=[${d}]\")\nendforeach()\nforeach(v V1 V2 CMAKE_CURRENT_SOURCE_DIR CMAKE_CURRENT_BINARY_DIR CMAKE_SOURCE_DIR CMAKE_BINARY_DIR PROJECT_NAME)\n  get_directory_property(d DIRECTORY sub DEFINITION ${v})\n  message(\"${v} before=[${d}]\")\nendforeach()\nget_directory_property(own VARIABLES)\nget_directory_property(sub DIRECTORY sub VARIABLES)\nlist(REMOVE_ITEM own own sub d p v)\nlist(REMOVE_ITEM sub own sub d p v)\nif(own STREQUAL sub)\n  message(\"variables before: same as parent\")\nelse()\n  message(\"variables before: [${sub}] vs [${own}]\")\nendif()\n",
+      "src/sub/CMakeLists.txt": "foreach(p COMPILE_DEFINITIONS COMPILE_OPTIONS INCLUDE_DIRECTORIES V1 V2)\n  get_directory_property(d ${p})\n  message(\"${p} configured=[${d}] var=[${${p}}]\")\nendforeach()\n"
+    }
+  },
+  {
+    "name": "subdirs-closure-over-ended-scopes",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.25)\nproject(p NONE)\nset(A dir)\nset(B dir)\nset(C dir)\nfunction(outer)\n  set(A outer)\n  inner()\n  set(A outer-after-inner)\n  set(D outer-late)\nendfunction()\nfunction(inner)\n  set(B inner)\n  unset(C)\n  block()\n    set(E block)\n    subdirs(sub)\n    set(E block-after)\n  endblock()\n  set(B inner-after)\nendfunction()\nouter()\nset(A dir-late)\nset(F dir-late)\n",
+      "src/sub/CMakeLists.txt": "foreach(v A B C D E F)\n  if(DEFINED ${v})\n    message(\"${v}=[${${v}}]\")\n  else()\n    message(\"${v} undefined\")\n  endif()\nendforeach()\n"
+    }
+  }
+]

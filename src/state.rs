@@ -558,6 +558,8 @@ pub struct PendingSubdirectory {
     pub binary: String,
     pub exclude_from_all: bool,
     pub backtrace: Vec<Frame>,
+    /// Function/block scopes active at the `subdirs()` call (outermost first).
+    pub inner_scopes: Vec<u64>,
 }
 
 /// Look up a visible alias and return its target key and global visibility.

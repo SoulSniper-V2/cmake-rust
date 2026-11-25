@@ -158,6 +158,20 @@ impl MacroSubst {
 #[derive(Debug, Default)]
 struct Scope {
     vars: HashMap<String, Option<String>>,
+    /// Identity of the scope's cmDefinitions node, so a deferred `subdirs()`
+    /// directory can see the node's final contents after it is popped.
+    id: u64,
+}
+
+/// Function and block scopes that were active when deferred `subdirs()`
+/// directories were added. Their cmDefinitions nodes stay alive in Kitware's
+/// linked tree after the scope ends, and
+/// cmStateSnapshot::InitializeFromParent_ForSubdirsCommand closes over them.
+#[derive(Debug, Default)]
+struct CapturedScopes {
+    wanted: std::collections::HashSet<u64>,
+    popped: HashMap<u64, HashMap<String, Option<String>>>,
+    next_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +259,10 @@ pub struct Interp {
     pub mode: Mode,
     pub cache: Cache,
     scopes: Vec<Scope>,
+    captured_scopes: CapturedScopes,
+    /// Scope-stack depth of each directory being configured (its own scope
+    /// is the top one at that depth).
+    directory_scope_depths: Vec<usize>,
     pub backtrace: Vec<Frame>,
     policy_barriers: Vec<(usize, usize)>,
     pub makefiles: Vec<Makefile>,
@@ -332,6 +350,11 @@ impl Interp {
             mode,
             cache: Cache::default(),
             scopes: vec![Scope::default()],
+            captured_scopes: CapturedScopes {
+                next_id: 1,
+                ..CapturedScopes::default()
+            },
+            directory_scope_depths: Vec::new(),
             backtrace: Vec::new(),
             policy_barriers: Vec::new(),
             makefiles: Vec::new(),
@@ -637,11 +660,51 @@ impl Interp {
     }
 
     pub fn push_scope(&mut self) {
-        self.scopes.push(Scope::default());
+        let id = self.captured_scopes.next_id;
+        self.captured_scopes.next_id += 1;
+        self.scopes.push(Scope {
+            vars: HashMap::new(),
+            id,
+        });
     }
 
     pub fn pop_scope(&mut self) {
-        self.scopes.pop();
+        if let Some(scope) = self.scopes.pop()
+            && self.captured_scopes.wanted.remove(&scope.id)
+        {
+            self.captured_scopes.popped.insert(scope.id, scope.vars);
+        }
+    }
+
+    /// The function/block scopes above the current directory's own scope,
+    /// outermost first; they stay visible to a deferred `subdirs()`
+    /// directory added now.
+    pub fn capture_inner_scopes(&mut self) -> Vec<u64> {
+        let base = self.directory_scope_depths.last().copied().unwrap_or(1);
+        let ids: Vec<u64> = self.scopes[base.min(self.scopes.len())..]
+            .iter()
+            .map(|scope| scope.id)
+            .collect();
+        self.captured_scopes.wanted.extend(ids.iter().copied());
+        ids
+    }
+
+    /// Overlay the final contents of captured scopes (outermost first) onto
+    /// the current scope, as the closure in
+    /// cmStateSnapshot::InitializeFromParent_ForSubdirsCommand sees them.
+    fn apply_captured_scopes(&mut self, ids: &[u64]) {
+        for id in ids {
+            let vars = match self.captured_scopes.popped.get(id) {
+                Some(vars) => vars.clone(),
+                None => match self.scopes.iter().find(|scope| scope.id == *id) {
+                    Some(scope) => scope.vars.clone(),
+                    None => continue,
+                },
+            };
+            if let Some(top) = self.scopes.last_mut() {
+                top.vars.extend(vars);
+            }
+        }
     }
 
     pub fn scope_depth(&self) -> usize {
@@ -828,6 +891,42 @@ impl Interp {
             }],
         });
         self.makefiles[parent].children.push(index);
+        // cmState::CreateBuildsystemDirectorySnapshot runs
+        // cmStateSnapshot::InitializeFromParent when the directory is
+        // added: the child starts with the closure of the parent's
+        // variables and its usage-requirement content (visible through
+        // get_directory_property before a deferred `subdirs()` directory
+        // configures). cmMakefile::AddSubDirectory then sets the current
+        // source and binary directories.
+        for key in [
+            "INCLUDE_DIRECTORIES",
+            "COMPILE_DEFINITIONS",
+            "COMPILE_OPTIONS",
+            "LINK_OPTIONS",
+            "LINK_DIRECTORIES",
+            "INCLUDE_REGULAR_EXPRESSION",
+        ] {
+            if let Some(value) = self.makefiles[parent].props.get(key).map(str::to_owned) {
+                self.makefiles[index].props.set(key, value);
+            }
+        }
+        let mut definitions: BTreeMap<String, String> = self
+            .normal_definition_names()
+            .into_iter()
+            .filter_map(|name| {
+                self.get_normal_def(&name)
+                    .map(|value| (name, value.to_owned()))
+            })
+            .collect();
+        for (name, value) in [
+            ("CMAKE_SOURCE_DIR", self.makefiles[0].source_dir.clone()),
+            ("CMAKE_BINARY_DIR", self.makefiles[0].binary_dir.clone()),
+            ("CMAKE_CURRENT_SOURCE_DIR", source.to_owned()),
+            ("CMAKE_CURRENT_BINARY_DIR", binary.to_owned()),
+        ] {
+            definitions.insert(name.to_owned(), value);
+        }
+        self.ext.directory_definitions.insert(index, definitions);
         let _ = std::fs::create_dir_all(binary);
         index
     }
@@ -876,6 +975,7 @@ impl Interp {
         // makefile's ExecutionStatusStack starts empty.
         self.trace_frame_base.push(self.recursion_depth);
         self.push_scope();
+        self.directory_scope_depths.push(self.scopes.len());
         self.set_def("CMAKE_CURRENT_SOURCE_DIR", &source);
         self.set_def("CMAKE_CURRENT_BINARY_DIR", &binary);
         // The child's backtrace starts at its own list file, independent of
@@ -886,6 +986,7 @@ impl Interp {
         self.backtrace = saved_backtrace;
         self.save_directory_definitions(index);
         self.record_directory_vars();
+        self.directory_scope_depths.pop();
         self.pop_scope();
         self.trace_frame_base.pop();
         self.mf_stack.pop();
@@ -3256,7 +3357,12 @@ impl Interp {
     /// `AddDefinition(kCMAKE_PARENT_LIST_FILE, ...)` in `cmMakefile::Configure`:
     /// both name the child's own list file while it executes, and the
     /// inherited values are restored once it finishes.
-    pub fn configure_subdirectory_dirscope(&mut self, index: usize, system: bool) -> bool {
+    pub fn configure_subdirectory_dirscope(
+        &mut self,
+        index: usize,
+        system: bool,
+        inner_scopes: &[u64],
+    ) -> bool {
         let parent = self.mf_index();
         self.save_directory_definitions(parent);
         let flattened = self.effective_policies();
@@ -3298,6 +3404,8 @@ impl Interp {
         // makefile's ExecutionStatusStack starts empty.
         self.trace_frame_base.push(self.recursion_depth);
         self.push_scope();
+        self.directory_scope_depths.push(self.scopes.len());
+        self.apply_captured_scopes(inner_scopes);
         self.set_def("CMAKE_CURRENT_SOURCE_DIR", &source);
         self.set_def("CMAKE_CURRENT_BINARY_DIR", &binary);
         // The child's backtrace starts at its own list file, independent of
@@ -3308,6 +3416,7 @@ impl Interp {
         self.backtrace = saved_backtrace;
         self.save_directory_definitions(index);
         self.record_directory_vars();
+        self.directory_scope_depths.pop();
         self.pop_scope();
         self.trace_frame_base.pop();
         self.mf_stack.pop();
