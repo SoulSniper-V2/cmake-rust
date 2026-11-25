@@ -1,0 +1,6 @@
+set(v2 üñïçødé [[ON]])
+list(SORT v2 COMPARE NATURAL CASE SENSITIVE ORDER ASCENDING)
+message(STATUS "F:v2=[${v2}]")
+set(v3 z9 z10 z09 z9x 007 7)
+list(SORT v3 COMPARE NATURAL)
+message(STATUS "F:v3=[${v3}]")
