@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 4.1)
+project(custom_relative_generated_dep NONE)
+file(GLOB DATA_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/data/*")
+foreach(DATA_FILE IN LISTS DATA_FILES)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILE}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_SOURCE_DIR}/${DATA_FILE}" "${CMAKE_CURRENT_BINARY_DIR}/${DATA_FILE}"
+    MAIN_DEPENDENCY "${CMAKE_CURRENT_SOURCE_DIR}/${DATA_FILE}"
+    VERBATIM)
+endforeach()
+add_custom_target(copydata DEPENDS ${DATA_FILES})
