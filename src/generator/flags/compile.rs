@@ -32,6 +32,131 @@ pub fn compile_vars(
     compile_vars_with_source_props(ctx, target, config, source, &Props::default())
 }
 
+pub fn compile_target_vars(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> CompileVars {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    let dummy = SourceInfo {
+        path: String::new(),
+        language: lang.to_owned(),
+        kind: crate::generator::target::SourceKind::ObjectSource,
+        object_name: String::new(),
+        generated: false,
+        object_library: None,
+        backtrace: Vec::new(),
+    };
+    let flags = target_flags(&inputs, "");
+    CompileVars {
+        flags_untrimmed: flags.clone(),
+        flags: flags.trim_matches(cmake_space).to_owned(),
+        defines: defines(&inputs, &Props::default())
+            .trim_matches(cmake_space)
+            .to_owned(),
+        includes: includes(&inputs, &dummy, &Props::default()),
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SourceRuleFlags {
+    pub before_language: String,
+    pub after_language: String,
+    pub custom_flags: Option<String>,
+    pub custom_options: Option<String>,
+    pub pch_options: Option<String>,
+}
+
+pub fn source_rule_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> SourceRuleFlags {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let mut result = SourceRuleFlags::default();
+    if let Some(language) = properties.get("LANGUAGE")
+        && inputs.policy(119) == PolicyStatus::New
+    {
+        Flags {
+            lang: language,
+            ..inputs
+        }
+        .append_feature(&mut result.before_language, "EXPLICIT_LANGUAGE");
+    }
+    if inputs.lang == "Fortran" {
+        let format = |value: &str| {
+            value.split(';').rev().find_map(|f| match f {
+                "FIXED" => Some("FORMAT_FIXED_FLAG"),
+                "FREE" => Some("FORMAT_FREE_FLAG"),
+                _ => None,
+            })
+        };
+        if let Some(flag) = properties
+            .get("Fortran_FORMAT")
+            .and_then(format)
+            .or_else(|| target.props.get("Fortran_FORMAT").and_then(format))
+            .and_then(|key| inputs.lang_var(key))
+        {
+            append(&mut result.after_language, &flag);
+        }
+        if fortran_preprocess(target, properties) == Some(false) {
+            append_options(
+                &mut result.after_language,
+                expand_list(
+                    &inputs
+                        .lang_var("COMPILE_OPTIONS_PREPROCESS_OFF")
+                        .unwrap_or_default(),
+                    false,
+                ),
+            );
+        }
+    }
+    if let Some(raw) = properties.get("COMPILE_FLAGS") {
+        let evaluated = inputs.eval(raw);
+        append(&mut result.after_language, &evaluated);
+        result.custom_flags = Some(evaluated);
+    }
+    if let Some(options) = properties.get("COMPILE_OPTIONS") {
+        let evaluated = inputs.eval(options);
+        append_options(&mut result.after_language, expand_list(&evaluated, false));
+        result.custom_options = Some(evaluated);
+    }
+    let mut pch_sources = std::collections::HashMap::new();
+    for arch in crate::generator::pch::pch_archs(ctx, target, config, &source.language) {
+        let pch_source =
+            crate::generator::pch::pch_source(ctx, target, config, &source.language, &arch);
+        if !pch_source.is_empty() {
+            pch_sources.insert(pch_source, arch);
+        }
+    }
+    if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+        let options = match pch_sources.get(&source.path) {
+            Some(arch) => crate::generator::pch::pch_create_options(
+                ctx,
+                target,
+                config,
+                &source.language,
+                arch,
+            ),
+            None => {
+                crate::generator::pch::pch_use_options(ctx, target, config, &source.language, "")
+            }
+        };
+        let evaluated = inputs.eval(&options);
+        append_options(&mut result.after_language, expand_list(&evaluated, false));
+        result.pch_options = Some(evaluated);
+    }
+    result
+}
+
 pub fn compile_vars_with_source_props(
     ctx: &GenCtx,
     target: &Target,

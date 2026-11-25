@@ -1,25 +1,8 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-2`
+Branch: `t3/unix-makefiles-3`
 
-Current projdiff Unix Makefiles lane: **102/161** after the DependInfo overhaul batch and merge of main (ba16ad0).  Ninja lane: 161/161.
-(`/tmp/projdiff-umf-current.log`).  The working tree additionally fixes
-`basic/c_libs`, `export/build_export`, `export/compatible_transitive`,
-`targets/custom`, and one local-Makefile header regression; a fresh full lane
-has not yet been run after those fixes.
-
-Implemented/fixed in the current uncommitted batch:
-
-- Target and directory `ADDITIONAL_CLEAN_FILES`, custom outputs/byproducts in
-  target clean scripts, directory clean scripts, utility-target cleaning, and
-  object-library artifact exclusions.
-- Custom command rules discovered from generated sources: dependencies,
-  multi-output touch rules, depfile timestamp dependencies, `CODEGEN` driver
-  dependencies, utility target dependencies/commands, jobserver `+` prefixes,
-  working-directory `cd` prefixes, and custom DependInfo entries.
-- Unix Makefiles linker depfile placement and shared-library/executable link
-  flag ordering.
-- Versioned import-library names in clean files.
+Most recent completed full Unix Makefiles lane before Batch 5: **103/161** (`/tmp/pd-umf-baseline.log`).  Ninja lane: 161/161.  Batch 5 focused fixes are documented below; a fresh full lane has not yet been run after them.
 
 Known remaining projdiff failure groups: autogen, CUDA, C++ modules,
 install/platform variants, ASM dependency scanning, object-library corners,
@@ -31,6 +14,33 @@ normalization in `sub/cmake_install.cmake`.
 Evidence still pending: fresh full Unix Makefiles lane after this batch, zlib
 byte parity/build, Kitware CMake self-configure/build, RunCMake lane, and CLI
 regression additions.
+
+## Batch 5 (PCH, source flags, Fortran module fixes)
+
+Started from the 103/161 post-merge baseline (`/tmp/pd-umf-baseline.log`).
+Focused lane is now `pch_unity/basic` PASS, `asm_extension_precedence` PASS,
+`targets/fortran_modules` PASS, and `link/items` down to Makefile2 dependency
+ordering (`/tmp/pd-focus3.log`).
+
+- `flags.make` now writes all compiler comments before the sorted language
+  blocks and uses target-level compile variables rather than leaking per-object
+  PCH options into every compilation.
+- Object compile, preprocess, and assembly rules carry source-specific
+  COMPILE_FLAGS/COMPILE_OPTIONS, Fortran format/preprocess flags, and PCH
+  create/use options; PCH headers/files are object dependencies and dependency
+  rows.  Preprocess/assembly object basenames strip the final object extension
+  (`.gch` included), and generated build-tree source dependencies are
+  top-relative.
+- Local Makefile object convenience rules now follow
+  `GetObjectFileNameWithoutTarget`/`WriteObjectConvenienceRule`: source-
+  extension aliases, language-sensitive `.i`/`.s` rules, and no phantom `.o`
+  suffix for PCH objects.
+- PCH `REUSE_FROM` target-level dependencies are no longer misclassified as
+  codegen dependencies.  Dependency-scan target definitions are quoted like
+  `EscapeForCMake`.  Spurious per-target `CMAKE_Fortran_MODULE_DIRECTORY`
+  entries were removed from `CMakeDirectoryInformation.cmake`.
+- Validation for this batch: fmt/clippy clean, 939/939 tests, Ninja projdiff
+  161/161, difftest 1279/1279, clitest 524/524 (`/tmp/validate-precommit.log`).
 
 ## Batch 2 (progress + external objects)
 

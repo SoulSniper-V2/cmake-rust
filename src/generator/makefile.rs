@@ -77,6 +77,10 @@ fn quote_output_path(path: &str) -> String {
     }
 }
 
+fn strip_last_extension(path: &str) -> &str {
+    path.rfind('.').map_or(path, |pos| &path[..pos])
+}
+
 fn write_make_rule(
     out: &mut String,
     comment: Option<&str>,
@@ -206,7 +210,6 @@ impl<'a> MakefileGenerator<'a> {
     }
 
     fn write_directory_information(&self, dir: usize) {
-        let mf = &self.ctx.interp.makefiles[dir];
         let _rel = if dir == 0 {
             String::new()
         } else {
@@ -223,26 +226,6 @@ impl<'a> MakefileGenerator<'a> {
             self.ctx.interp.home_source, self.ctx.interp.home_binary
         );
         out.push_str("\n# Force unix paths in dependencies.\nset(CMAKE_FORCE_UNIX_PATHS 1)\n\n");
-        let mut fortran = Vec::new();
-        for key in &mf.targets {
-            if let Some(target) = self.ctx.interp.ext.targets.get(key)
-                && target.makefile == dir
-                && is_in_build_system(target)
-            {
-                let found = gt::sources(self.ctx, target, &self.ctx.config);
-                let mut langs = std::collections::BTreeSet::new();
-                gt::target_languages(self.ctx, target, &self.ctx.config, &found, &mut langs);
-                if langs.iter().any(|l| l == "Fortran") {
-                    fortran.push(quote_output_path(&gt::support_directory(self.ctx, target)));
-                }
-            }
-        }
-        for f in fortran {
-            let _ = writeln!(
-                out,
-                "\n# Fortran module directories.\nset(CMAKE_Fortran_MODULE_DIRECTORY \"{f}\")"
-            );
-        }
         out.push_str("\n# The C and CXX include file regular expressions for this directory.\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"^.*$\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"^$\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n");
         let path = dir_support(self.ctx, dir);
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
@@ -511,15 +494,62 @@ impl<'a> MakefileGenerator<'a> {
         obj_rel_top: &str,
         progress: usize,
         compiler_depends: bool,
-        _impl_depends: &mut ImplicitDepends,
+        impl_depends: &mut ImplicitDepends,
         out: &mut String,
     ) {
         let mut depends = vec![format!("{}/flags.make", self.support_rel(target, dir))];
-        depends.push(source.path.clone());
+        depends.push(self.top_rule_path(&source.path));
         if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
             depends.extend(util::expand_list(&object_deps, false));
         }
         let source_compiler_depends = self.use_compiler_depends(target, &source.language);
+        let properties = self.source_props(target, &source.path);
+        let pch_archs = super::pch::pch_archs(self.ctx, target, &self.ctx.config, &source.language);
+        let mut pch_sources = std::collections::HashMap::new();
+        for arch in &pch_archs {
+            let pch_source =
+                super::pch::pch_source(self.ctx, target, &self.ctx.config, &source.language, arch);
+            if !pch_source.is_empty() {
+                pch_sources.insert(pch_source, arch.clone());
+            }
+        }
+        if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+            let object_full = format!(
+                "{}/{}",
+                gt::support_directory(self.ctx, target),
+                source.object_name
+            );
+            for arch in &pch_archs {
+                let header = super::pch::pch_header(
+                    self.ctx,
+                    target,
+                    &self.ctx.config,
+                    &source.language,
+                    arch,
+                );
+                if !header.is_empty() {
+                    depends.push(self.top_rule_path(&header));
+                    impl_depends.add(
+                        &source.language,
+                        &object_full,
+                        &header,
+                        source_compiler_depends,
+                    );
+                }
+                if !pch_sources.contains_key(&source.path) {
+                    let file = super::pch::pch_file(
+                        self.ctx,
+                        target,
+                        &self.ctx.config,
+                        &source.language,
+                        arch,
+                    );
+                    if !file.is_empty() {
+                        depends.push(self.top_rule_path(&file));
+                    }
+                }
+            }
+        }
         let depinfo = if source_compiler_depends {
             self.depfile_for_source(target, source, obj_rel_cur)
         } else {
@@ -547,7 +577,7 @@ impl<'a> MakefileGenerator<'a> {
         let object_shell = shell_path(self.ctx, obj_rel_cur);
         let defines_var = format!("$({lang}_DEFINES)");
         let includes_var = format!("$({lang}_INCLUDES)");
-        let flags_var = format!("$({lang}_FLAGS)");
+        let flags_var = self.object_flags_var(target, source, &properties);
         let vars = vec![
             ("DEFINES", defines_var),
             ("INCLUDES", includes_var),
@@ -610,16 +640,8 @@ impl<'a> MakefileGenerator<'a> {
         out: &mut String,
     ) {
         let lang = &source.language;
-        let preprocess_target = obj_rel_top
-            .strip_suffix(".o")
-            .unwrap_or(obj_rel_top)
-            .to_owned()
-            + ".i";
-        let asm_target = obj_rel_top
-            .strip_suffix(".o")
-            .unwrap_or(obj_rel_top)
-            .to_owned()
-            + ".s";
+        let preprocess_target = strip_last_extension(obj_rel_top).to_owned() + ".i";
+        let asm_target = strip_last_extension(obj_rel_top).to_owned() + ".s";
         let source_shell = shell_path(self.ctx, &source.path);
         for (target_name, verb, action, _extra) in [
             (
@@ -630,10 +652,7 @@ impl<'a> MakefileGenerator<'a> {
                     "> {}",
                     shell_path(
                         self.ctx,
-                        &format!(
-                            "{}.i",
-                            obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur)
-                        )
+                        &format!("{}.i", strip_last_extension(obj_rel_cur))
                     )
                 ),
             ),
@@ -645,10 +664,7 @@ impl<'a> MakefileGenerator<'a> {
                     "-o {}",
                     shell_path(
                         self.ctx,
-                        &format!(
-                            "{}.s",
-                            obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur)
-                        )
+                        &format!("{}.s", strip_last_extension(obj_rel_cur))
                     )
                 ),
             ),
@@ -669,7 +685,7 @@ impl<'a> MakefileGenerator<'a> {
             }
             let echo_output = format!(
                 "{}.{}",
-                obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur),
+                strip_last_extension(obj_rel_cur),
                 if action == "PREPROCESS" { "i" } else { "s" }
             );
             let echo_text = format!(
@@ -684,7 +700,10 @@ impl<'a> MakefileGenerator<'a> {
             let vars = vec![
                 ("DEFINES", format!("$({lang}_DEFINES)")),
                 ("INCLUDES", format!("$({lang}_INCLUDES)")),
-                ("FLAGS", format!("$({lang}_FLAGS)")),
+                (
+                    "FLAGS",
+                    self.object_flags_var(target, source, &self.source_props(target, &source.path)),
+                ),
                 ("SOURCE", source_shell.clone()),
                 (
                     "OBJECT",
@@ -692,7 +711,7 @@ impl<'a> MakefileGenerator<'a> {
                         self.ctx,
                         &format!(
                             "{}.{}",
-                            obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur),
+                            strip_last_extension(obj_rel_cur),
                             if action == "PREPROCESS" { "i" } else { "s" }
                         ),
                     ),
@@ -701,20 +720,14 @@ impl<'a> MakefileGenerator<'a> {
                     "PREPROCESSED_SOURCE",
                     shell_path(
                         self.ctx,
-                        &format!(
-                            "{}.i",
-                            obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur)
-                        ),
+                        &format!("{}.i", strip_last_extension(obj_rel_cur)),
                     ),
                 ),
                 (
                     "ASSEMBLY_SOURCE",
                     shell_path(
                         self.ctx,
-                        &format!(
-                            "{}.s",
-                            obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur)
-                        ),
+                        &format!("{}.s", strip_last_extension(obj_rel_cur)),
                     ),
                 ),
             ];
@@ -746,15 +759,37 @@ impl<'a> MakefileGenerator<'a> {
         }
     }
 
-    fn source_prop(&self, target: &Target, path: &str, prop: &str) -> Option<String> {
-        crate::commands::target::find_known_source(self.ctx.interp, target.makefile, path).and_then(
-            |index| {
+    fn source_props(&self, target: &Target, path: &str) -> crate::props::Props {
+        crate::commands::target::find_known_source(self.ctx.interp, target.makefile, path)
+            .map(|index| {
                 self.ctx.interp.ext.sources[&target.makefile][index]
                     .props
-                    .get(prop)
-                    .map(str::to_owned)
-            },
-        )
+                    .clone()
+            })
+            .unwrap_or_default()
+    }
+
+    fn object_flags_var(
+        &self,
+        target: &Target,
+        source: &gt::SourceInfo,
+        properties: &crate::props::Props,
+    ) -> String {
+        let rule_flags =
+            flags::source_rule_flags(self.ctx, target, &self.ctx.config, source, properties);
+        let mut parts = Vec::new();
+        if !rule_flags.before_language.is_empty() {
+            parts.push(rule_flags.before_language);
+        }
+        parts.push(format!("$({}_FLAGS)", source.language));
+        if !rule_flags.after_language.is_empty() {
+            parts.push(rule_flags.after_language);
+        }
+        parts.join(" ")
+    }
+
+    fn source_prop(&self, target: &Target, path: &str, prop: &str) -> Option<String> {
+        self.source_props(target, path).get(prop).map(str::to_owned)
     }
 
     fn attached_command(&self, dir: usize, path: &str) -> Option<(usize, usize)> {
@@ -1366,20 +1401,14 @@ impl<'a> MakefileGenerator<'a> {
         let mut out = String::from(
             "# CMAKE generated file: DO NOT EDIT!\n# Generated by \"Unix Makefiles\" Generator, CMake Version 4.1\n\n",
         );
-        let mut first = true;
-        for source in gt::sources(self.ctx, target, &config).iter() {
-            if source.kind != SourceKind::ObjectSource || !first {
-                continue;
-            }
-            first = false;
-        }
         let source_list = gt::sources(self.ctx, target, &config);
         let mut languages_set = std::collections::BTreeSet::new();
         gt::target_languages(self.ctx, target, &config, &source_list, &mut languages_set);
-        for lang in languages_set {
-            if lang == "None" {
-                continue;
-            }
+        let languages: Vec<String> = languages_set
+            .into_iter()
+            .filter(|lang| lang != "None")
+            .collect();
+        for lang in &languages {
             let compiler = self
                 .ctx
                 .var_safe(target.makefile, &format!("CMAKE_{lang}_COMPILER"));
@@ -1388,25 +1417,38 @@ impl<'a> MakefileGenerator<'a> {
                 "# compile {lang} with {}",
                 shell_path(self.ctx, &compiler)
             );
-            let dummy = gt::SourceInfo {
-                path: String::new(),
-                language: lang.clone(),
-                kind: SourceKind::ObjectSource,
-                object_name: String::new(),
-                generated: false,
-                object_library: None,
-                backtrace: Vec::new(),
-            };
-            let vars = flags::compile_vars_with_source_props(
-                self.ctx,
-                target,
-                &config,
-                &dummy,
-                &crate::props::Props::default(),
-            );
+        }
+        for lang in &languages {
+            let vars = flags::compile_target_vars(self.ctx, target, &config, lang);
             let _ = writeln!(out, "{lang}_DEFINES = {}\n", vars.defines);
             let _ = writeln!(out, "{lang}_INCLUDES = {}\n", vars.includes);
             let _ = writeln!(out, "{lang}_FLAGS = {}\n", vars.flags_untrimmed);
+        }
+        let dir = target.makefile;
+        let rel_home = home_relative_output_path(self.ctx, dir);
+        let support = gt::support_directory(self.ctx, target);
+        for source in source_list
+            .iter()
+            .filter(|source| source.kind == SourceKind::ObjectSource)
+        {
+            let properties = self.source_props(target, &source.path);
+            let rule_flags =
+                flags::source_rule_flags(self.ctx, target, &config, source, &properties);
+            let obj_rel_cur = format!(
+                "{}/{}",
+                maybe_relative_cur(self.ctx, dir, &support),
+                source.object_name
+            );
+            let obj_rel_top = format!("{rel_home}{obj_rel_cur}");
+            if let Some(value) = rule_flags.custom_flags {
+                let _ = writeln!(out, "# Custom flags: {obj_rel_top}_FLAGS = {value}\n");
+            }
+            if let Some(value) = rule_flags.custom_options {
+                let _ = writeln!(out, "# Custom options: {obj_rel_top}_OPTIONS = {value}\n");
+            }
+            if let Some(value) = rule_flags.pch_options {
+                let _ = writeln!(out, "# PCH options: {obj_rel_top}_OPTIONS = {value}\n");
+            }
         }
         let path = format!("{}/flags.make", gt::support_directory(self.ctx, target));
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
@@ -1474,7 +1516,7 @@ impl<'a> MakefileGenerator<'a> {
                         "\n# Preprocessor definitions for this target.\nset(CMAKE_TARGET_DEFINITIONS_{lang}"
                     );
                     for (define, _) in &defines {
-                        let _ = writeln!(out, "  {}", escape_cmake(define));
+                        let _ = writeln!(out, "  \"{}\"", escape_cmake(define));
                     }
                     out.push_str("  )\n");
                 }
@@ -2499,6 +2541,42 @@ impl<'a> MakefileGenerator<'a> {
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
     }
 
+    fn object_keeps_source_extension(&self, target: &Target, source: &gt::SourceInfo) -> bool {
+        let properties = self.source_props(target, &source.path);
+        if properties
+            .get("KEEP_EXTENSION")
+            .is_some_and(|value| is_on(value))
+        {
+            return true;
+        }
+        let cuda_custom = [
+            "CUDA_PTX_COMPILATION",
+            "CUDA_CUBIN_COMPILATION",
+            "CUDA_FATBIN_COMPILATION",
+            "CUDA_OPTIX_COMPILATION",
+        ]
+        .iter()
+        .any(|property| {
+            target
+                .props
+                .get(*property)
+                .is_some_and(|value| is_on(value))
+        });
+        if properties.get("PCH_EXTENSION").is_some()
+            || source.object_name.contains("cmake_pch")
+            || cuda_custom
+        {
+            return false;
+        }
+        !self
+            .ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_{}_OUTPUT_EXTENSION_REPLACE", source.language),
+            )
+            .is_some_and(|value| is_on(&value))
+    }
+
     fn write_local_makefile(&self, dir: usize) {
         let mut out = build_file_header("");
         out = out
@@ -2777,7 +2855,7 @@ impl<'a> MakefileGenerator<'a> {
             )],
             true,
         );
-        let mut objects = Vec::new();
+        let mut objects: BTreeMap<String, (bool, Vec<(String, String)>)> = BTreeMap::new();
         for mf in self.ctx.interp.makefiles.iter() {
             for key in &mf.targets {
                 if let Some(t) = self.ctx.interp.ext.targets.get(key) {
@@ -2860,79 +2938,102 @@ impl<'a> MakefileGenerator<'a> {
                         .iter()
                         .filter(|s| s.kind == SourceKind::ObjectSource)
                     {
-                        let obj = format!(
-                            "{}{}",
-                            home_relative_output_path(self.ctx, t.makefile),
-                            maybe_relative_cur(
-                                self.ctx,
-                                t.makefile,
-                                &format!(
-                                    "{}/{}",
-                                    gt::support_directory(self.ctx, t),
-                                    src.object_name
-                                )
-                            )
-                        );
-                        let fullstem = obj.strip_suffix(".o").unwrap_or(&obj).to_string();
-                        let shortstem = src
-                            .object_name
-                            .strip_suffix(".o")
-                            .unwrap_or(&src.object_name)
-                            .to_string();
-                        objects.push((shortstem.clone(), fullstem.clone(), r.clone()));
+                        let object_name = if util::is_full_path(&src.object_name) {
+                            Path::new(&src.object_name)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or(&src.object_name)
+                                .to_owned()
+                        } else {
+                            src.object_name.clone()
+                        };
+                        let has_source_extension = self.object_keeps_source_extension(t, src);
+                        let entry = objects
+                            .entry(object_name)
+                            .or_insert_with(|| (has_source_extension, Vec::new()));
+                        entry.0 = has_source_extension;
+                        entry.1.push((r.clone(), src.language.clone()));
                     }
                 }
             }
         }
-        // cmLocalUnixMakefileGenerator3::WriteConvenienceRules groups all
-        // object builds for the same source-file stem in one make rule; the
-        // recipe then invokes every target build that can produce it.
-        let mut grouped: Vec<(String, Vec<(String, String)>)> = Vec::new();
-        for (base, stem, r) in objects {
-            if let Some((_, commands)) = grouped.iter_mut().find(|(b, _)| *b == base) {
-                if !commands.iter().any(|x| x == &(stem.clone(), r.clone())) {
-                    commands.push((stem, r));
+        let do_preprocess_rules = !self
+            .ctx
+            .var(dir, "CMAKE_SKIP_PREPROCESSED_SOURCE_RULES")
+            .is_some_and(|value| is_on(&value));
+        let do_assembly_rules = !self
+            .ctx
+            .var(dir, "CMAKE_SKIP_ASSEMBLY_SOURCE_RULES")
+            .is_some_and(|value| is_on(&value));
+        fn split_extension(path: &str) -> Option<(&str, &str)> {
+            let dot = path.rfind('.')?;
+            Some((&path[..dot], &path[dot..]))
+        }
+        fn object_alias(output: &str) -> Option<String> {
+            let (base, object_extension) = split_extension(output)?;
+            let (without_source, _) = split_extension(base)?;
+            Some(format!("{without_source}{object_extension}"))
+        }
+        let write_object_convenience = |out: &mut String,
+                                        comment: &str,
+                                        output: &str,
+                                        entries: &[(String, String)],
+                                        has_source_extension: bool|
+         -> String {
+            let help_target = if has_source_extension {
+                if let Some(alias) = object_alias(output) {
+                    write_make_rule(out, None, &alias, &[output.to_owned()], &[], true);
+                    alias
+                } else {
+                    output.to_owned()
                 }
             } else {
-                grouped.push((base, vec![(stem, r)]));
-            }
-        }
-        grouped.sort();
+                output.to_owned()
+            };
+            let commands: Vec<String> = entries
+                .iter()
+                .map(|(target_dir, _)| {
+                    format!(
+                        "{cdroot}$(MAKE) $(MAKESILENT) -f {target_dir}/build.make {target_dir}/{output}"
+                    )
+                })
+                .collect();
+            write_make_rule(out, Some(comment), output, &[], &commands, true);
+            help_target
+        };
         let mut help_objects = Vec::new();
-        for (base, target_calls) in grouped {
-            let aliasbase = base
-                .rsplit_once('.')
-                .map_or(base.as_str(), |(stem, _)| stem)
-                .to_owned();
-            for suffix in ["o", "i", "s"] {
-                write_make_rule(
+        for (object_name, (has_source_extension, entries)) in objects {
+            help_objects.push(write_object_convenience(
+                &mut out,
+                "target to build an object file",
+                &object_name,
+                &entries,
+                has_source_extension,
+            ));
+            let lang_has_rules = entries.iter().any(|(_, language)| {
+                matches!(
+                    language.as_str(),
+                    "C" | "CXX" | "CUDA" | "Fortran" | "HIP" | "ISPC"
+                )
+            });
+            let base = strip_last_extension(&object_name);
+            if lang_has_rules && do_preprocess_rules {
+                help_objects.push(write_object_convenience(
                     &mut out,
-                    None,
-                    &format!("{aliasbase}.{suffix}"),
-                    &[format!("{base}.{suffix}")],
-                    &[],
-                    true,
-                );
-                let comment = match suffix {
-                    "o" => "target to build an object file",
-                    "i" => "target to preprocess a source file",
-                    _ => "target to generate assembly for a file",
-                };
-                let commands: Vec<String> = target_calls
-                    .iter()
-                    .map(|(stem, r)| {
-                        format!("{cdroot}$(MAKE) $(MAKESILENT) -f {r}/build.make {stem}.{suffix}")
-                    })
-                    .collect();
-                write_make_rule(
+                    "target to preprocess a source file",
+                    &format!("{base}.i"),
+                    &entries,
+                    has_source_extension,
+                ));
+            }
+            if lang_has_rules && do_assembly_rules {
+                help_objects.push(write_object_convenience(
                     &mut out,
-                    Some(comment),
-                    &format!("{base}.{suffix}"),
-                    &[],
-                    &commands,
-                    true,
-                );
-                help_objects.push(format!("{aliasbase}.{suffix}"));
+                    "target to generate assembly for a file",
+                    &format!("{base}.s"),
+                    &entries,
+                    has_source_extension,
+                ));
             }
         }
         out.push_str("# Help Target\nhelp:\n\t@echo \"The following are some of the valid targets for this Makefile:\"\n\t@echo \"... all (the default if no target is provided)\"\n\t@echo \"... clean\"\n");

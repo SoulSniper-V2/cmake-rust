@@ -6,13 +6,13 @@ mod link;
 mod rule;
 pub(in crate::generator) mod standard;
 
-pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
 pub(crate) use compile::{
     BtFrag, compile_definitions, define_items, flag_fragments, include_directories, include_items,
     include_items_stripped, interface_values, pch_items, standard_option,
 };
 pub(crate) use compile::{FlagCls, classified_flags_for_source};
+pub use compile::{compile_target_vars, compile_vars_with_source_props, source_rule_flags};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{
     cuda_compile_language_flags, device_link_flag_vars, link_dependency_file, link_flag_vars,

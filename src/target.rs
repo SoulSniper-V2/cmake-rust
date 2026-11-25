@@ -747,11 +747,10 @@ impl Target {
         );
     }
 
-    pub fn add_dependency(&mut self, name: &str, backtrace: &[Frame]) {
+    pub fn add_utility_dependency(&mut self, name: &str, backtrace: &[Frame]) {
         self.dependencies
             .entry(name.to_owned())
             .or_insert_with(|| backtrace.to_vec());
-        self.codegen_dependencies.insert(name.to_owned());
         let list = self
             .dependencies
             .keys()
@@ -759,6 +758,11 @@ impl Target {
             .collect::<Vec<_>>()
             .join(";");
         self.props.set("MANUALLY_ADDED_DEPENDENCIES", list);
+    }
+
+    pub fn add_dependency(&mut self, name: &str, backtrace: &[Frame]) {
+        self.add_utility_dependency(name, backtrace);
+        self.codegen_dependencies.insert(name.to_owned());
     }
 }
 
@@ -1192,7 +1196,7 @@ pub fn write_target_property(
         let target = interp.ext.targets.get_mut(&key).unwrap();
         target.props.set(prop, origin.clone());
         target.props.set("COMPILE_PDB_NAME", origin.clone());
-        target.add_dependency(&origin, &interp.backtrace);
+        target.add_utility_dependency(&origin, &interp.backtrace);
         return Ok(());
     }
     if prop == "PRECOMPILE_HEADERS"
