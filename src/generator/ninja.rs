@@ -4551,8 +4551,16 @@ impl<'a> NinjaGenerator<'a> {
     fn write_labels(&self, target: &Target, directory: &str) -> std::io::Result<()> {
         let interp = self.ctx.interp;
         let mut seen = HashSet::new();
-        let sources = gt::sources(&self.ctx, target, &self.config)
+        let sources = self
+            .ctx
+            .configs
             .iter()
+            .flat_map(|config| {
+                gt::sources(&self.ctx, target, config)
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
             .filter(|source| seen.insert(source.path.clone()))
             .map(|source| {
                 let labels = crate::commands::target::find_known_source(

@@ -61,11 +61,20 @@ pub(super) fn transform(args: &[String]) -> i32 {
         }
         Err(_) => return 2,
     };
+    // cmReadGccDepfile: a relative path gets the prefix and "/", and only a
+    // full path is collapsed (so "a:b.h" is never taken for a drive root).
     let absolute = |path: &str| {
-        util::collapse_full_path(
-            &crate::cache::convert_to_unix_slashes(path),
-            &current_binary,
-        )
+        let path = crate::cache::convert_to_unix_slashes(path);
+        let path = if util::is_full_path(&path) {
+            path
+        } else {
+            format!("{current_binary}/{path}")
+        };
+        if util::is_full_path(&path) {
+            util::collapse_full_path(&path, "")
+        } else {
+            path
+        }
     };
     let format_gcc = |path: &str| {
         let path = absolute(path);

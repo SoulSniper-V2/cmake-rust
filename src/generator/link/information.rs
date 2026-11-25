@@ -379,7 +379,7 @@ pub(super) fn objects(query: &Query<'_, '_>, head: &Target) -> Vec<String> {
         }
         // The objects' source locations are normalized.
         let dir = query.generator.object_dir(query.ctx, target, query.config);
-        let dir = collapse_full_path(&dir, "");
+        let dir = crate::util::collapse_full_path(&dir, "");
         query
             .generator
             .sources(query.ctx, target, query.config)
