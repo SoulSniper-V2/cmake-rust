@@ -801,7 +801,10 @@ file(GENERATE OUTPUT $<CONFIG>-o.txt CONTENT "$<TARGET_FILE:tgt>" )
     ro, rc = ros
     # normalize build dir paths in stderr/stdout
     def norm(bts, tag):
-        bts = bts.replace(str(d / tag).encode(), b"<B>").replace(str(d).encode(), b"<S>")
+        # $<UPPER_CASE>/UPPERCASE genexes can uppercase the scratch path in
+        # output, so path normalization must be case-insensitive.
+        for pat, rep in ((str(d / tag), b"<B>"), (str(d), b"<S>")):
+            bts = re.sub(re.escape(pat.encode()), rep, bts, flags=re.IGNORECASE)
         return re.sub(rb"\(\d+\.\d+s\)", b"(<T>s)", bts)
     ro_n = (ro[0], norm(ro[1], "bo"), norm(ro[2], "bo"), norm(ro[3], "bo"))
     rc_n = (rc[0], norm(rc[1], "bc"), norm(rc[2], "bc"), norm(rc[3], "bc"))
