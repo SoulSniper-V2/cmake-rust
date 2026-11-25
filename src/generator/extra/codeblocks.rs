@@ -96,12 +96,14 @@ fn cb_target_type(s: &Shared, target: &Target) -> i64 {
                 target.props.get("WIN32_EXECUTABLE").unwrap_or("0"),
                 Some(target),
                 None,
-            ) == "1";
+            );
+            let win32 = util::is_on(&win32);
             let bundle = s.ctx.genex(
                 target.props.get("MACOSX_BUNDLE").unwrap_or("0"),
                 Some(target),
                 None,
-            ) == "1";
+            );
+            let bundle = util::is_on(&bundle);
             let _ = config;
             if win32 || bundle { 0 } else { 1 }
         }
@@ -194,7 +196,7 @@ fn append_target(
             xml.end_element();
         }
         let mut all_includes: Vec<String> =
-            crate::generator::flags::include_items(s.ctx, target, &build_type, "C")
+            crate::generator::flags::include_items_stripped(s.ctx, target, &build_type, "C")
                 .into_iter()
                 .map(|(path, _, _)| path)
                 .collect();

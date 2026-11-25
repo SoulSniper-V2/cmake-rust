@@ -278,7 +278,7 @@ impl<'a> Shared<'a> {
             target,
             config,
             target::ArtifactType::Runtime,
-            true,
+            false,
         )
     }
 
