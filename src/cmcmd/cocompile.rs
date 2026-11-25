@@ -12,16 +12,16 @@ use crate::commands::process::{exception_text, spawn_error_text};
 use crate::util;
 
 /// What `cmSystemTools::RunSingleCommand` captures with `OUTPUT_NONE`.
-struct Captured {
-    ok: bool,
-    ret: i32,
-    stdout: String,
-    stderr: String,
+pub(crate) struct Captured {
+    pub(crate) ok: bool,
+    pub(crate) ret: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 /// `cmSystemTools::RunSingleCommand(cmd, &out, &err, &ret, nullptr,
 /// OUTPUT_NONE)`; `merged` captures both streams into `stdout`.
-fn run_single_command(command: &[String], merged: bool) -> Captured {
+pub(crate) fn run_single_command(command: &[String], merged: bool) -> Captured {
     let mut captured = Captured {
         ok: false,
         ret: 0,

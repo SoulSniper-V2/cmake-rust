@@ -1,0 +1,666 @@
+[
+  {
+    "name": "create-def-usage",
+    "argv": [
+      "-E",
+      "__create_def"
+    ]
+  },
+  {
+    "name": "create-def-one-argument",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def"
+    ]
+  },
+  {
+    "name": "create-def-missing-list",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def",
+      "missing.lst"
+    ]
+  },
+  {
+    "name": "create-def-unknown-option-empty-list",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def",
+      "objs.lst",
+      "--bad"
+    ],
+    "files": {
+      "objs.lst": ""
+    },
+    "inspect": [
+      "out.def"
+    ]
+  },
+  {
+    "name": "create-def-nm-symbols-and-def-inputs",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def",
+      "objs.lst",
+      "--nm={work}/nm"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "NM_OUT": "alpha T 100\ndata_one D 200\nlower t 300\nweak W 400\nshared T 500\nignored "
+    },
+    "files": {
+      "a.obj": "a object\n",
+      "b.obj": "b object\n",
+      "input.def": "LIBRARY sample\nEXPORTS\n\tdef_data \t DATA\n\tdef_func\n",
+      "upper.DEF": "\tupper_data \t DATA\n\tupper_func\n",
+      "objs.lst": "{work}/a.obj\n{work}/input.def\n{work}/upper.DEF\n{work}/b.obj\n",
+      "nm": {
+        "text": "#!/bin/sh\nprintf 'nm' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf '%s\\n' \"$NM_OUT\"\nexit \"${NM_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "out.def",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "create-def-nm-malformed-line",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def",
+      "objs.lst",
+      "--nm={work}/nm"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "NM_OUT": "badline"
+    },
+    "files": {
+      "a.obj": "a object\n",
+      "b.obj": "b object\n",
+      "input.def": "LIBRARY sample\nEXPORTS\n\tdef_data \t DATA\n\tdef_func\n",
+      "upper.DEF": "\tupper_data \t DATA\n\tupper_func\n",
+      "objs.lst": "{work}/a.obj\n{work}/input.def\n{work}/upper.DEF\n{work}/b.obj\n",
+      "nm": {
+        "text": "#!/bin/sh\nprintf 'nm' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf '%s\\n' \"$NM_OUT\"\nexit \"${NM_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "out.def",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "create-def-nm-error",
+    "argv": [
+      "-E",
+      "__create_def",
+      "out.def",
+      "objs.lst",
+      "--nm={work}/nm"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "NM_OUT": "nm failed",
+      "NM_EXIT": "7"
+    },
+    "files": {
+      "a.obj": "a object\n",
+      "b.obj": "b object\n",
+      "input.def": "LIBRARY sample\nEXPORTS\n\tdef_data \t DATA\n\tdef_func\n",
+      "upper.DEF": "\tupper_data \t DATA\n\tupper_func\n",
+      "objs.lst": "{work}/a.obj\n{work}/input.def\n{work}/upper.DEF\n{work}/b.obj\n",
+      "nm": {
+        "text": "#!/bin/sh\nprintf 'nm' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf '%s\\n' \"$NM_OUT\"\nexit \"${NM_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "out.def",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "create-def-up-to-date",
+    "steps": [
+      {
+        "argv": [
+          "-E",
+          "touch",
+          "out.def"
+        ]
+      },
+      {
+        "argv": [
+          "-E",
+          "__create_def",
+          "out.def",
+          "objs.lst",
+          "--nm={work}/nm"
+        ]
+      }
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "NM_OUT": "alpha T 100"
+    },
+    "files": {
+      "a.obj": "a object\n",
+      "b.obj": "b object\n",
+      "input.def": "LIBRARY sample\nEXPORTS\n\tdef_data \t DATA\n\tdef_func\n",
+      "upper.DEF": "\tupper_data \t DATA\n\tupper_func\n",
+      "objs.lst": "{work}/a.obj\n{work}/input.def\n{work}/upper.DEF\n{work}/b.obj\n",
+      "nm": {
+        "text": "#!/bin/sh\nprintf 'nm' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf '%s\\n' \"$NM_OUT\"\nexit \"${NM_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "out.def": "already current\n"
+    },
+    "inspect": [
+      "out.def",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "vs-link-usage",
+    "argv": [
+      "-E",
+      "vs_link_exe"
+    ]
+  },
+  {
+    "name": "vs-link-unknown-option",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--bad",
+      "--",
+      "link"
+    ]
+  },
+  {
+    "name": "vs-link-missing-target",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--",
+      "link"
+    ]
+  },
+  {
+    "name": "vs-link-nonincremental-modern",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "{work}/link",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int"
+    ]
+  },
+  {
+    "name": "vs-link-dll-nonincremental-modern",
+    "argv": [
+      "-E",
+      "vs_link_dll",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "{work}/link",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int"
+    ]
+  },
+  {
+    "name": "vs-link-nonincremental-legacy-manifest",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--msvc-ver=1600",
+      "--manifests",
+      "user.manifest",
+      "--",
+      "{work}/link",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "user.manifest": "user manifest\n"
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int/intermediate.manifest",
+      "int/embed.manifest"
+    ]
+  },
+  {
+    "name": "vs-link-incremental",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "{work}/link",
+      "/INCREMENTAL:YES",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1",
+      "MT_NOTIFY_EXIT": "0"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int/manifest.rc",
+      "int/manifest.res",
+      "int/embed.manifest",
+      "int/intermediate.manifest"
+    ]
+  },
+  {
+    "name": "vs-link-incremental-update",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "{work}/link",
+      "/INCREMENTAL:YES",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1",
+      "MT_NOTIFY_EXIT": "187"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int/manifest.rc",
+      "int/embed.manifest"
+    ]
+  },
+  {
+    "name": "vs-link-incremental-user-manifests",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--manifests",
+      "user1.manifest",
+      "user2.manifest",
+      "--",
+      "{work}/link",
+      "/INCREMENTAL",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1",
+      "MT_NOTIFY_EXIT": "0"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "user1.manifest": "user one\n",
+      "user2.manifest": "user two\n"
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int/embed.manifest",
+      "int/manifest.rc"
+    ]
+  },
+  {
+    "name": "vs-link-failure",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "{work}/link",
+      "/out:app.exe"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1",
+      "LINK_EXIT": "7"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log"
+    ]
+  },
+  {
+    "name": "vs-link-response-file",
+    "argv": [
+      "-E",
+      "vs_link_exe",
+      "--intdir=int",
+      "--rc={work}/rc",
+      "--mt={work}/mt",
+      "--",
+      "@link.rsp"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "VERBOSE": "1"
+    },
+    "files": {
+      "link": {
+        "text": "#!/bin/sh\nprintf 'link' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'link stdout\\n'\nprintf 'link stderr\\n' >&2\nfor a in \"$@\"; do\n  case $a in\n    /MANIFESTFILE:*)\n      printf 'intermediate manifest\\n' > \"${a#/MANIFESTFILE:}\"\n      ;;\n  esac\ndone\nexit \"${LINK_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "mt": {
+        "text": "#!/bin/sh\nprintf 'mt' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'mt stdout\\n'\nprintf 'mt stderr\\n' >&2\nnotify=0\nfor a in \"$@\"; do\n  case $a in\n    /notify_update)\n      notify=1\n      ;;\n    /out:*)\n      printf 'mt manifest\\n' > \"${a#/out:}\"\n      ;;\n  esac\ndone\nif [ \"$notify\" = 1 ]; then\n  exit \"${MT_NOTIFY_EXIT:-0}\"\nfi\nexit \"${MT_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "rc": {
+        "text": "#!/bin/sh\nprintf 'rc' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'Resource Compiler Version fake\\n'\nprintf 'rc output\\n'\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = /fo ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\nif [ -n \"$out\" ]; then\n  printf 'resource\\n' > \"$out\"\nfi\nexit \"${RC_EXIT:-0}\"\n",
+        "mode": "755"
+      },
+      "link.rsp": "{work}/link /INCREMENTAL:YES /out:app.exe\n"
+    },
+    "dirs": [
+      "int"
+    ],
+    "inspect": [
+      "tool.log",
+      "int/manifest.rc"
+    ]
+  },
+  {
+    "name": "cl-depends-usage",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends"
+    ]
+  },
+  {
+    "name": "cl-depends-unknown-option",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file",
+      "dep.d",
+      "--",
+      "{work}/cl"
+    ],
+    "files": {
+      "cl": {
+        "text": "#!/bin/sh\nprintf 'cl' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'main.c\\n'\nprintf 'Note: including file:  {work}/include one.h\\n'\nprintf 'Note: including file: C:\\\\vendor\\\\two.h\\n'\nprintf 'CustomPrefix:  {work}/custom.h\\n'\nprintf 'compiler stderr\\n' >&2\nprintf 'partial-no-newline'\nexit \"${CL_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "dep.d",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "cl-depends-empty-command",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file=dep.d",
+      "--"
+    ],
+    "inspect": [
+      "dep.d"
+    ]
+  },
+  {
+    "name": "cl-depends-showincludes",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file=dep.d",
+      "--filter-prefix=Note: including file:",
+      "--working-dir={work}",
+      "--",
+      "{work}/cl",
+      "/showIncludes",
+      "/c",
+      "main.c"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log"
+    },
+    "files": {
+      "cl": {
+        "text": "#!/bin/sh\nprintf 'cl' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'main.c\\n'\nprintf 'Note: including file:  {work}/include one.h\\n'\nprintf 'Note: including file: C:\\\\vendor\\\\two.h\\n'\nprintf 'CustomPrefix:  {work}/custom.h\\n'\nprintf 'compiler stderr\\n' >&2\nprintf 'partial-no-newline'\nexit \"${CL_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "dep.d",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "cl-depends-custom-prefix",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file=dep.d",
+      "--filter-prefix=CustomPrefix:",
+      "--",
+      "{work}/cl",
+      "abc"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log"
+    },
+    "files": {
+      "cl": {
+        "text": "#!/bin/sh\nprintf 'cl' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'main.c\\n'\nprintf 'Note: including file:  {work}/include one.h\\n'\nprintf 'Note: including file: C:\\\\vendor\\\\two.h\\n'\nprintf 'CustomPrefix:  {work}/custom.h\\n'\nprintf 'compiler stderr\\n' >&2\nprintf 'partial-no-newline'\nexit \"${CL_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "dep.d",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "cl-depends-compile-failure-removes-depfile",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file=dep.d",
+      "--filter-prefix=Note: including file:",
+      "--",
+      "{work}/cl"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log",
+      "CL_EXIT": "4"
+    },
+    "files": {
+      "cl": {
+        "text": "#!/bin/sh\nprintf 'cl' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'main.c\\n'\nprintf 'Note: including file:  {work}/include one.h\\n'\nprintf 'Note: including file: C:\\\\vendor\\\\two.h\\n'\nprintf 'CustomPrefix:  {work}/custom.h\\n'\nprintf 'compiler stderr\\n' >&2\nprintf 'partial-no-newline'\nexit \"${CL_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "dep.d",
+      "tool.log"
+    ]
+  },
+  {
+    "name": "cl-depends-bad-working-dir",
+    "argv": [
+      "-E",
+      "cmake_cl_compile_depends",
+      "--dep-file=dep.d",
+      "--filter-prefix=Note: including file:",
+      "--working-dir={work}/missing",
+      "--",
+      "{work}/cl"
+    ],
+    "env": {
+      "LOG": "{work}/tool.log"
+    },
+    "files": {
+      "cl": {
+        "text": "#!/bin/sh\nprintf 'cl' >> \"$LOG\"\nfor a in \"$@\"; do printf ' <%s>' \"$a\" >> \"$LOG\"; done\nprintf '\\n' >> \"$LOG\"\nprintf 'main.c\\n'\nprintf 'Note: including file:  {work}/include one.h\\n'\nprintf 'Note: including file: C:\\\\vendor\\\\two.h\\n'\nprintf 'CustomPrefix:  {work}/custom.h\\n'\nprintf 'compiler stderr\\n' >&2\nprintf 'partial-no-newline'\nexit \"${CL_EXIT:-0}\"\n",
+        "mode": "755"
+      }
+    },
+    "inspect": [
+      "dep.d",
+      "tool.log"
+    ]
+  }
+]

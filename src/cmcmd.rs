@@ -7,6 +7,7 @@ mod depends;
 mod depfile;
 mod dyndep;
 mod fortran;
+mod msvc;
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -153,6 +154,10 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
             symlink_internal(command, &args[0], &args[1])
         }
         "cmake_transform_depfile" if args.len() == 8 => depfile::transform(args),
+        "__create_def" => msvc::create_def(args),
+        "vs_link_exe" => msvc::visual_studio_link(args, 1),
+        "vs_link_dll" => msvc::visual_studio_link(args, 2),
+        "cmake_cl_compile_depends" => msvc::cl_compile_depends(args),
         "__run_co_compile" => cocompile::run_co_compile(args),
         "cmake_llvm_rc" => cocompile::run_llvm_rc(args),
         "cmake_module_compile_db" => crate::build_database::module_compile_db(args),
