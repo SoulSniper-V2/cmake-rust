@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare every file in fresh Ninja configure trees produced by two cmakes.
 
-Usage: treediff.py --candidate <staged bin/cmake> SOURCE [cmake args...]
+Usage: treediff.py --candidate <staged bin/cmake> [--generator G] [--json OUT] SOURCE [cmake args...]
 
 The oracle and candidate configure the same unmodified source tree into
 separate build directories.  Every regular file and symlink in those trees is
@@ -12,6 +12,7 @@ are treated as inherently nondeterministic; all other file bytes matter.
 import argparse
 import difflib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,13 @@ def normalizer(build: Path, cmake: Path):
         (os.path.realpath(build), "<BUILD>"),
     ):
         rules.append((re.compile(esc_bytes(text)), b(replacement)))
+    # Extra-generator project files sometimes refer to the build directory by
+    # an unresolved source-relative path containing ../ components.  The tail
+    # <work>/<oracle|candidate> is the only part visible in either slash
+    # direction there.
+    for sep in ("/", "\\"):
+        tail = build.parent.name + sep + build.name
+        rules.append((re.compile(esc_bytes(tail) + rb"(?![\w.-])"), b"<BUILD-REL>"))
     for prefix in prefixes:
         rules.append((re.compile(esc_bytes(prefix) + rb"(/share/cmake-4\.1)?(?![\w.-])"), b"<PREFIX>"))
     for prefix_root in (root, f"{VALIDATION}/kitware"):
@@ -78,12 +86,12 @@ def normalizer(build: Path, cmake: Path):
     return apply
 
 
-def configure(cmake: Path, source: Path, build: Path, extra: list[str], log: Path) -> int:
+def configure(cmake: Path, source: Path, build: Path, extra: list[str], log: Path, generator: str) -> int:
     shutil.rmtree(build, ignore_errors=True)
     env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "CMAKE_RUST_DATA_ROOT")}
     with log.open("wb") as stream:
         proc = subprocess.run(
-            [str(cmake), "-S", str(source), "-B", str(build), "-G", "Ninja", *extra],
+            [str(cmake), "-S", str(source), "-B", str(build), "-G", generator, *extra],
             stdout=stream,
             stderr=subprocess.STDOUT,
             env=env,
@@ -96,7 +104,12 @@ def ignored(rel: str) -> bool:
     # FetchContent clones are inputs copied into the build tree.  Their .git
     # metadata contains timestamps, pack order, and filesystem-specific index
     # entries rather than CMake-generated configuration state.
-    return name in (".ninja_log", ".ninja_deps") or "/.git/" in f"/{rel}/"
+    # ABI probe executables contain DWARF paths to the cmake installation and
+    # try_compile scratch directory.  Replacing those byte strings in-place is
+    # not a valid ELF transformation because it changes string lengths, so the
+    # probe binaries themselves are inherently tool-location dependent.
+    abi_probe = name.startswith("CMakeDetermineCompilerABI_") and name.endswith(".bin")
+    return name in (".ninja_log", ".ninja_deps") or abi_probe or "/.git/" in f"/{rel}/"
 
 
 def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
@@ -153,6 +166,8 @@ def main() -> int:
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--oracle", type=Path, default=ORACLE)
     parser.add_argument("--work", type=Path, help="keep configure trees and logs here")
+    parser.add_argument("--generator", default="Ninja", help="CMake generator to use")
+    parser.add_argument("--json", type=Path, help="write machine-readable comparison results")
     parser.add_argument("--show", type=int, default=12)
     parser.add_argument("source", type=Path)
     parser.add_argument("cmake_args", nargs=argparse.REMAINDER)
@@ -163,8 +178,8 @@ def main() -> int:
     source = args.source.resolve()
     oracle_build = work / "oracle"
     candidate_build = work / "candidate"
-    oracle_rc = configure(args.oracle, source, oracle_build, args.cmake_args, work / "oracle-configure.log")
-    candidate_rc = configure(args.candidate, source, candidate_build, args.cmake_args, work / "candidate-configure.log")
+    oracle_rc = configure(args.oracle, source, oracle_build, args.cmake_args, work / "oracle-configure.log", args.generator)
+    candidate_rc = configure(args.candidate, source, candidate_build, args.cmake_args, work / "candidate-configure.log", args.generator)
 
     oracle = gather(oracle_build, normalizer(oracle_build, args.oracle))
     candidate = gather(candidate_build, normalizer(candidate_build, args.candidate))
@@ -177,6 +192,25 @@ def main() -> int:
     for key in differing[: args.show]:
         for line in describe_diff(key, oracle.get(key), candidate.get(key)):
             print("  " + line[:500])
+    if args.json:
+        missing = []
+        different = []
+        for key in differing:
+            if key not in oracle or key not in candidate:
+                missing.append(key)
+            else:
+                different.append(key)
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps({
+            "work": str(work),
+            "tree_files": len(keys),
+            "tree_differences": len(differing),
+            "missing": missing,
+            "different": different,
+            "configure_diffs": [],
+            "oracle_exit": oracle_rc,
+            "candidate_exit": candidate_rc,
+        }, indent=2) + "\n")
     return 1 if differing or oracle_rc != candidate_rc else 0
 
 
