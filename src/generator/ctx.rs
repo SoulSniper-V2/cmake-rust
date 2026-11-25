@@ -879,16 +879,20 @@ impl<'a> GenCtx<'a> {
             }
         }
         if !failed_before_targets {
-            // cmGlobalNinjaGenerator::Generate: bail before writing build
-            // files when earlier generation raised a fatal error (target
-            // generation itself precedes the install, test and export files).
-            let mut ninja = super::ninja::NinjaGenerator::new(self);
-            if let Err(error) = ninja.generate() {
-                self.error(Vec::new(), format!("Unable to write build files: {error}"));
+            if self.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+                super::makefile::generate(self);
+            } else {
+                // cmGlobalNinjaGenerator::Generate: bail before writing build
+                // files when earlier generation raised a fatal error (target
+                // generation itself precedes the install, test and export files).
+                let mut ninja = super::ninja::NinjaGenerator::new(self);
+                if let Err(error) = ninja.generate() {
+                    self.error(Vec::new(), format!("Unable to write build files: {error}"));
+                }
+                // cmGlobalGenerator::Generate finishes by invoking the extra
+                // (IDE project file) generator, if one was selected.
+                super::extra::generate(self, ninja.global_targets());
             }
-            // cmGlobalGenerator::Generate finishes by invoking the extra
-            // (IDE project file) generator, if one was selected.
-            super::extra::generate(self, ninja.global_targets());
         }
         // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
         // validation of the link structures memoized during generation.

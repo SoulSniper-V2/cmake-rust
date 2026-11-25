@@ -34,6 +34,7 @@ pub mod graphviz;
 pub mod install;
 mod install_name;
 pub mod link;
+pub mod makefile;
 mod module_support;
 pub mod ninja;
 pub mod osx_bundle;

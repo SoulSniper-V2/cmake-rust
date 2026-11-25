@@ -934,7 +934,7 @@ fn actual_configure(
         })
     });
     // cmake::EvaluateDefaultGlobalGenerator.  The default proper is Ninja:
-    // cmake-rust does not implement Kitware's Linux default (Unix Makefiles).
+    // cmake-rust keeps Ninja as its Linux default even though Unix Makefiles is implemented.
     if resolved.is_none()
         && let Some(environment) = options.environment_generator.as_deref()
     {
@@ -954,14 +954,14 @@ fn actual_configure(
             || (resolved.clone().unwrap_or_else(|| "Ninja".to_owned()), None),
             |(extra, global)| (global, Some(extra)),
         );
-    if generator != "Ninja" && generator != "Ninja Multi-Config" {
+    if generator != "Ninja" && generator != "Ninja Multi-Config" && generator != "Unix Makefiles" {
         let name = resolved.as_deref().unwrap_or(&generator);
         let mut message = format!("Could not create named generator {name}");
         if crate::cli::known_generator(name) {
             // The name is a Kitware CMake 4.1.0 generator, but cmake-rust
-            // ports only the Ninja global generators.
+            // does not port this global generator.
             message.push_str(&format!(
-                "\nThe \"{generator}\" generator is not implemented by cmake-rust; use \"Ninja\" or \"Ninja Multi-Config\"."
+                "\nThe \"{generator}\" generator is not implemented by cmake-rust; use a supported generator."
             ));
         }
         system_error(Some(interp), &message);
@@ -1368,7 +1368,11 @@ pub fn try_compile_project(
     inner.langs = outer.langs.clone();
     inner.langs.configured_files_path = Some(configured);
     inner.langs.in_progress.clear();
-    if let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned) {
+    if matches!(
+        outer.get_def("CMAKE_GENERATOR"),
+        Some("Ninja") | Some("Ninja Multi-Config")
+    ) && let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned)
+    {
         inner.cache.add(
             "CMAKE_MAKE_PROGRAM",
             Some(&make),

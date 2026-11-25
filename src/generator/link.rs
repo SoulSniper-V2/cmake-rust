@@ -72,6 +72,7 @@ pub(crate) fn base_link_line(
 ) -> LinkLine {
     let query = Query {
         base_computer: true,
+        local_binary: Some(target.makefile),
         ..Query::new(ctx, config, language)
     };
     information::compute(&query, target)
@@ -464,9 +465,11 @@ pub(crate) struct Query<'a, 'i> {
     /// Evaluate for `UseTo::Compile` (usage requirements only).
     compile_usage: bool,
     /// The base `cmLinkLineComputer` (of `cmake --find-package`) in place
-    /// of the Ninja one: link references stay full paths and the shell is
-    /// not Ninja's.
+    /// of the Ninja one: the shell is not Ninja's.
     base_computer: bool,
+    /// Makefile-local output conversion base for the base link-line
+    /// computer (`cmLocalUnixMakefileGenerator3`'s current binary dir).
+    local_binary: Option<usize>,
 }
 
 impl<'a, 'i> Query<'a, 'i> {
@@ -478,13 +481,19 @@ impl<'a, 'i> Query<'a, 'i> {
             generator: &Generator,
             compile_usage: false,
             base_computer: false,
+            local_binary: None,
         }
     }
 
     /// `cmLinkLineComputer::ConvertToLinkReference`.
     fn link_reference(&self, path: &str) -> String {
         if self.base_computer {
-            path.to_owned()
+            if let Some(dir) = self.local_binary {
+                let local = self.ctx.interp.makefiles[dir].binary_dir.clone();
+                super::custom::maybe_relative_to(self.ctx, dir, &local, path)
+            } else {
+                path.to_owned()
+            }
         } else {
             self.ninja_path(path)
         }

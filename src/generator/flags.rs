@@ -24,7 +24,6 @@ pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
 // kept visible to the oracle replay tests.
 #[cfg(test)]
 pub use compile::{compile_vars, object_dependencies};
-#[cfg(test)]
 pub use rule::{RuleStep, expand_rule_for_step};
 
 use super::ctx::GenCtx;

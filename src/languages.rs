@@ -114,22 +114,37 @@ fn set_language_enabled_maps(interp: &mut Interp, lang: &str) {
 /// `cmGlobalNinjaGenerator::FindMakeProgram`.
 fn find_make_program(interp: &mut Interp) -> bool {
     let current = interp.get_def("CMAKE_MAKE_PROGRAM").map(str::to_owned);
+    let generator = interp.get_def("CMAKE_GENERATOR").unwrap_or("Ninja");
     if current.as_deref().is_none_or(util::is_off) {
-        if let Some(path) = modules_file(interp, "CMakeNinjaFindMake.cmake") {
+        let module = if generator == "Unix Makefiles" {
+            "CMakeUnixFindMake.cmake"
+        } else {
+            "CMakeNinjaFindMake.cmake"
+        };
+        if let Some(path) = modules_file(interp, module) {
             read(interp, &path);
         }
     }
     let program = interp.get_def("CMAKE_MAKE_PROGRAM").map(str::to_owned);
     if program.as_deref().is_none_or(util::is_off) {
+        let generator = if interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+            "Unix Makefiles"
+        } else {
+            "Ninja"
+        };
         crate::configure::system_error(
             Some(interp),
-            "CMake was unable to find a build program corresponding to \"Ninja\".  CMAKE_MAKE_PROGRAM is not set.  You probably need to select a different build tool.",
+            &format!(
+                "CMake was unable to find a build program corresponding to \"{generator}\".  CMAKE_MAKE_PROGRAM is not set.  You probably need to select a different build tool."
+            ),
         );
         interp.set_fatal();
         return false;
     }
     let program = program.unwrap_or_default();
-    if interp.langs.ninja_version.is_none() {
+    if interp.get_def("CMAKE_GENERATOR") != Some("Unix Makefiles")
+        && interp.langs.ninja_version.is_none()
+    {
         match std::process::Command::new(&program)
             .arg("--version")
             .output()
