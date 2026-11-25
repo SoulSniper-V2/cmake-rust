@@ -103,7 +103,11 @@ fn write_file(interp: &mut Interp, args: &[String]) -> CmdResult {
             "attempted to write a file: {path} into a source directory."
         ));
     }
-    if let Err((action, error)) = write(&path, args[2..].concat().as_bytes(), args[0] == "APPEND") {
+    if let Err((action, error)) = write(
+        &path,
+        &crate::bytes::encode(&args[2..].concat()),
+        args[0] == "APPEND",
+    ) {
         let message = if action == "open" {
             "failed to open for writing"
         } else {
@@ -181,7 +185,7 @@ fn read(interp: &mut Interp, args: &[String]) -> CmdResult {
     let value = if hex {
         to_hex(&data)
     } else {
-        String::from_utf8_lossy(&data).into_owned()
+        crate::bytes::decode(&data)
     };
     interp.set_def(&args[2], value);
     Ok(())
@@ -882,7 +886,7 @@ fn format_timestamp(seconds: i64, micros: i64, format: &str, utc: bool) -> Strin
                         ptr,
                     )
                 };
-                result.push_str(&String::from_utf8_lossy(&buffer[..len]));
+                result.push_str(&crate::bytes::decode(&buffer[..len]));
             }
             Some(ch) => {
                 result.push('%');
@@ -977,7 +981,7 @@ fn configure(interp: &mut Interp, args: &[String]) -> CmdResult {
         at_only,
         escape_quotes,
     );
-    if let Err(error) = crate::fsutil::write_if_different(Path::new(&output), &data) {
+    if let Err(error) = crate::fsutil::write_if_different_bytes(Path::new(&output), &data) {
         raw_error(
             interp,
             &format!("Could not open file for write in copy operation {output}"),

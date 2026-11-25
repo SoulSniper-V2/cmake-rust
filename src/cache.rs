@@ -203,7 +203,7 @@ impl Cache {
         let Ok(bytes) = std::fs::read(&path) else {
             return Ok(false);
         };
-        let text = String::from_utf8_lossy(&bytes);
+        let text = crate::bytes::decode(&bytes);
         self.entries.clear();
         self.load_errors.clear();
         let lines: Vec<&str> = text.split('\n').collect();
@@ -371,7 +371,7 @@ impl Cache {
             }
         }
         out.push('\n');
-        crate::fsutil::write_if_different(&dir.join("CMakeCache.txt"), out.as_bytes())?;
+        crate::fsutil::write_if_different(&dir.join("CMakeCache.txt"), &out)?;
         std::fs::create_dir_all(dir.join("CMakeFiles"))?;
         std::fs::write(
             dir.join("CMakeFiles/cmake.check_cache"),
@@ -444,7 +444,7 @@ fn output_help(out: &mut String, help: &str) {
                 pos += 1;
                 out.push_str("\\n");
             }
-            out.push_str(&String::from_utf8_lossy(&bytes[pos..i]));
+            out.push_str(&crate::bytes::decode(&bytes[pos..i]));
             out.push('\n');
             pos = i;
         }

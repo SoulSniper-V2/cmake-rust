@@ -591,7 +591,7 @@ impl Evaluator<'_, '_> {
         let mut result = String::new();
         for part in parts {
             match part {
-                Part::Text(span) => result.push_str(&String::from_utf8_lossy(
+                Part::Text(span) => result.push_str(&crate::bytes::decode(
                     &compiled.input.as_bytes()[span.clone()],
                 )),
                 Part::Expr {

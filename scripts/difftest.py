@@ -49,14 +49,14 @@ def run(binary, script, args, env_extra):
                 cwd=work, env=env, capture_output=True, timeout=60,
             )
             code = proc.returncode
-            out = proc.stdout.decode(errors="replace")
-            err = proc.stderr.decode(errors="replace")
+            out = proc.stdout
+            err = proc.stderr
         except subprocess.TimeoutExpired:
-            code, out, err = "timeout", "", ""
-        def norm(text):
-            return (text.replace(str(work), "<WORK>")
-                        .replace(str(binary.parent.parent), "<PREFIX>")
-                        .replace(DATA_ROOT, "<ROOT>"))
+            code, out, err = "timeout", b"", b""
+        def norm(data):
+            return (data.replace(os.fsencode(work), b"<WORK>")
+                        .replace(os.fsencode(binary.parent.parent), b"<PREFIX>")
+                        .replace(os.fsencode(DATA_ROOT), b"<ROOT>"))
         return code, norm(out), norm(err)
 
 
@@ -100,7 +100,12 @@ def main():
                 for label, e, a in zip(("exit", "stdout", "stderr"), expected, actual):
                     if e != a:
                         print(f"  --- {label} differs")
-                        diff = difflib.unified_diff(str(e).splitlines(), str(a).splitlines(),
+                        if isinstance(e, bytes) and isinstance(a, bytes):
+                            left = list(map(repr, e.splitlines(keepends=True)))
+                            right = list(map(repr, a.splitlines(keepends=True)))
+                        else:
+                            left, right = str(e).splitlines(), str(a).splitlines()
+                        diff = difflib.unified_diff(left, right,
                                                     "oracle", "candidate", lineterm="")
                         for line in list(diff)[:60]:
                             print("    " + line)

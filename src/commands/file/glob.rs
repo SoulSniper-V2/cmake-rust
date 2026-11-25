@@ -104,7 +104,7 @@ pub fn save_verification_script(
             "  )\nif(NOT \"${{NEW_GLOB}}\" STREQUAL \"${{OLD_GLOB}}\")\n  message(\"-- GLOB mismatch!\")\n  file(TOUCH_NOCREATE \"{stamp}\")\nendif()\n"
         ));
     }
-    if crate::fsutil::write_if_different(Path::new(&script), out.as_bytes()).is_err() {
+    if crate::fsutil::write_if_different(Path::new(&script), &out).is_err() {
         return Err(format!(
             "Unable to open verification script file for save. {script}"
         ));

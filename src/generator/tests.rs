@@ -17,7 +17,7 @@ pub fn write_test_files(ctx: &GenCtx) -> std::io::Result<()> {
             // cmGeneratedFileStream without SetCopyIfDifferent.
             crate::fsutil::write_generated(
                 &Path::new(&mf.binary_dir).join("CTestTestfile.cmake"),
-                script.as_bytes(),
+                &script,
             )?;
         }
     }

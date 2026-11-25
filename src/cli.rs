@@ -16,14 +16,14 @@ const IMPLICIT_DIRECTORIES: &str = "No source or binary directory provided. Both
 
 pub fn main() -> i32 {
     let argv: Vec<String> = std::env::args_os()
-        .map(|arg| arg.to_string_lossy().into_owned())
+        .map(|arg| crate::bytes::decode_os(&arg))
         .collect();
     let Ok(current_dir) = std::env::current_dir() else {
         eprintln!("Current working directory cannot be established.");
         return 1;
     };
-    let cwd = std::env::var("PWD")
-        .ok()
+    let cwd = std::env::var_os("PWD")
+        .map(|value| crate::bytes::decode_os(&value))
         .filter(|pwd| {
             Path::new(pwd).is_absolute()
                 && std::fs::canonicalize(pwd).ok().as_ref() == Some(&current_dir)

@@ -193,7 +193,7 @@ impl InstallScriptHandler {
             print!(
                 "[{installed}/{total}] {}\n{}",
                 name_of(index),
-                String::from_utf8_lossy(&output)
+                crate::bytes::decode(&output)
             );
         }
         let manifest = if self.component.is_empty() {
@@ -222,7 +222,7 @@ impl InstallScriptHandler {
         // cmGeneratedFileStream with SetCopyIfDifferent(true).
         let _ = crate::fsutil::write_if_different(
             Path::new(&format!("{}/{manifest}", self.binary_dir)),
-            content.as_bytes(),
+            &content,
         );
         0
     }

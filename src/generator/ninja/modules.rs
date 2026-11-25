@@ -913,7 +913,7 @@ impl<'a> NinjaGenerator<'a> {
 
         db.sets.push(set);
         if let Err(err) =
-            crate::fsutil::write_generated(Path::new(path), stream_value(&db.to_value()).as_bytes())
+            crate::fsutil::write_generated(Path::new(path), &stream_value(&db.to_value()))
         {
             self.ctx.error(
                 target.backtrace.clone(),
@@ -1070,9 +1070,7 @@ impl<'a> NinjaGenerator<'a> {
             "exports": exports,
             "config": self.config,
         });
-        if let Err(err) =
-            crate::fsutil::write_generated(Path::new(tdi_path), stream_value(&tdi).as_bytes())
-        {
+        if let Err(err) = crate::fsutil::write_generated(Path::new(tdi_path), &stream_value(&tdi)) {
             self.ctx.error(
                 target.backtrace.clone(),
                 format!("Failed to write {tdi_path}: {err}"),

@@ -2341,7 +2341,7 @@ fn save(path: &str, value: &Value) -> std::io::Result<()> {
     };
     writer.write(value);
     writer.out.push('\n');
-    crate::fsutil::write_if_different(Path::new(path), writer.out.as_bytes()).map(|_| ())
+    crate::fsutil::write_if_different(Path::new(path), &writer.out).map(|_| ())
 }
 
 /// `Json::StyledStreamWriter` with its default tab indentation.

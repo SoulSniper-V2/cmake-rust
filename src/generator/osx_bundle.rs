@@ -423,7 +423,7 @@ fn configure_plist(
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         for chunk in line.utf8_chunks() {
             let text = expand_plist(ctx, makefile, chunk.valid(), defs);
-            output.extend(text.as_bytes());
+            output.extend_from_slice(&crate::bytes::encode(&text));
             output.extend(chunk.invalid());
         }
         if have_newline {
@@ -536,9 +536,9 @@ fn configure_file(
     if let Some(parent) = Path::new(outfile).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let text = String::from_utf8_lossy(&data);
+    let text = crate::bytes::decode(&data);
     let configured = configure_plist(ctx, makefile, &text, defs);
-    if crate::fsutil::write_generated(Path::new(outfile), &configured).is_err() {
+    if crate::fsutil::write_generated_bytes(Path::new(outfile), &configured).is_err() {
         ctx.system_error(format!(
             "Could not open file for write in copy operation {outfile}.tmp"
         ));

@@ -514,10 +514,7 @@ pub(super) fn write_build(
     }
     root.insert(skey("components"), Json::Object(components));
     package_requires(&ex, &mut root);
-    write_if_different(
-        Path::new(file),
-        write_json_indent2(&Json::Object(root)).as_bytes(),
-    )?;
+    write_if_different(Path::new(file), &write_json_indent2(&Json::Object(root)))?;
     Ok(())
 }
 
@@ -645,10 +642,7 @@ pub(super) fn write_install(
     }
     root.insert(skey("components"), Json::Object(components));
     package_requires(&ex, &mut root);
-    write_if_different(
-        Path::new(&file),
-        write_json_indent2(&Json::Object(root)).as_bytes(),
-    )?;
+    write_if_different(Path::new(&file), &write_json_indent2(&Json::Object(root)))?;
 
     // Install rules for the main file (`GenerateScriptActions`).
     let opts = InstallOptions {
@@ -732,7 +726,7 @@ pub(super) fn write_install(
         cfg_root.insert(skey("components"), Json::Object(cfg_components));
         write_if_different(
             Path::new(&config_file),
-            write_json_indent2(&Json::Object(cfg_root)).as_bytes(),
+            &write_json_indent2(&Json::Object(cfg_root)),
         )?;
         config_files.insert(config.clone(), config_file);
     }

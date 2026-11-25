@@ -546,7 +546,7 @@ impl Drop for EasyGuard<'_> {
 /// `push_back(0)`): everything before the first NUL.
 fn c_str_of(bytes: &[u8]) -> String {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..end]).into_owned()
+    crate::bytes::decode(&bytes[..end])
 }
 
 fn load(action: &str) -> Result<&'static Curl, crate::interp::CmdErr> {

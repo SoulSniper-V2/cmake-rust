@@ -185,7 +185,7 @@ fn write_pch_header(
         let _ = std::fs::create_dir_all(parent);
     }
     let tmp = format!("{header}.tmp");
-    let _ = std::fs::write(&tmp, &text);
+    let _ = std::fs::write(&tmp, &*crate::bytes::encode(&text));
     if let Some(first) = &first_on_disk {
         copy_file_times(first, &tmp);
     }

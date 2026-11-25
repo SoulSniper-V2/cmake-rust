@@ -1224,10 +1224,7 @@ impl Interp {
 
     /// Writes a line to stdout (message STATUS etc.).
     pub fn stdout_line(&mut self, text: &str) {
-        use std::io::Write;
-        let mut out = std::io::stdout().lock();
-        let _ = writeln!(out, "{text}");
-        let _ = out.flush();
+        crate::bytes::stdout_line(text);
     }
 
     pub fn set_fatal(&mut self) {
@@ -1266,22 +1263,31 @@ impl Interp {
             }
             _ => &bytes[..],
         };
-        let text = String::from_utf8_lossy(bytes).into_owned();
         // `cmListFileLexerInput` converts CRLF to LF for file input only
-        // (strings/EVAL keep their bytes).
-        let text = if text.contains("\r\n") {
-            text.replace("\r\n", "\n")
+        // (strings/EVAL keep their bytes). Do this before decoding so the
+        // original byte offsets and any non-UTF-8 bytes survive exactly.
+        let mut normalized;
+        let bytes = if bytes.contains(&b'\r') {
+            normalized = Vec::with_capacity(bytes.len());
+            for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+                normalized.extend_from_slice(line.strip_suffix(b"\r\n").unwrap_or(line));
+            }
+            normalized.as_slice()
         } else {
-            text
+            bytes
         };
         let rc_path: Rc<str> = Rc::from(path);
-        let parsed = self.parse_text(rc_path, &text)?;
+        let parsed = self.parse_bytes(rc_path, bytes)?;
         PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
         Some(parsed)
     }
 
     pub fn parse_text(&mut self, path: Rc<str>, text: &str) -> Option<Rc<ParsedFile>> {
-        let (commands, diags) = lexer::parse(&path, text);
+        self.parse_bytes(path, &crate::bytes::encode(text))
+    }
+
+    fn parse_bytes(&mut self, path: Rc<str>, bytes: &[u8]) -> Option<Rc<ParsedFile>> {
+        let (commands, diags) = lexer::parse_bytes(&path, bytes);
         for diag in &diags {
             let mut backtrace = self.backtrace.clone();
             backtrace.push(Frame {
@@ -2884,7 +2890,8 @@ impl Interp {
         replace_at: bool,
         no_escapes: bool,
     ) -> Result<String, (MessageType, String)> {
-        let bytes = source.as_bytes();
+        let encoded = crate::bytes::encode(source);
+        let bytes = encoded.as_ref();
         let mut result: Vec<u8> = Vec::with_capacity(bytes.len());
         // (domain, position in result where the name begins)
         let mut open: Vec<(u8, usize)> = Vec::new();
@@ -2901,7 +2908,7 @@ impl Interp {
                 b'}' => {
                     if let Some((domain, position)) = open.pop() {
                         result.extend_from_slice(&bytes[last..index]);
-                        let lookup = String::from_utf8_lossy(&result[position..]).into_owned();
+                        let lookup = crate::bytes::decode(&result[position..]);
                         let value: Option<String> = match domain {
                             b'N' => {
                                 if location.is_some() && lookup == "CMAKE_CURRENT_LIST_LINE" {
@@ -2924,8 +2931,8 @@ impl Interp {
                                     value
                                 }
                             }
-                            b'E' => std::env::var_os(&lookup)
-                                .map(|value| value.to_string_lossy().into_owned()),
+                            b'E' => std::env::var_os(crate::bytes::encode_os(&lookup))
+                                .map(|value| crate::bytes::decode_os(&value)),
                             _ => self.cache.get(&lookup).map(|entry| entry.value.clone()),
                         };
                         let value = value.unwrap_or_default();
@@ -2935,7 +2942,7 @@ impl Interp {
                             value
                         };
                         result.truncate(position);
-                        result.extend_from_slice(value.as_bytes());
+                        result.extend_from_slice(&crate::bytes::encode(&value));
                         last = index + 1;
                     }
                 }
@@ -2968,7 +2975,7 @@ impl Interp {
                         {
                             error = Some(format!(
                                 "Syntax ${}{{}} is not supported.  Only ${{}}, $ENV{{}}, and $CACHE{{}} are allowed.",
-                                String::from_utf8_lossy(&rest[..name_len])
+                                crate::bytes::decode(&rest[..name_len])
                             ));
                             fatal = true;
                             break;
@@ -3001,8 +3008,12 @@ impl Interp {
                     } else if next.is_ascii_alphanumeric() || next == 0 {
                         let mut message = String::from("Invalid character escape '\\");
                         if next != 0 {
-                            let ch = source[index + 1..].chars().next().unwrap_or('?');
-                            message.push(ch);
+                            let ch = if next.is_ascii() {
+                                (next as char).to_string()
+                            } else {
+                                crate::bytes::decode(&bytes[index + 1..index + 2])
+                            };
+                            message.push_str(&ch);
                             message.push_str("'.");
                         } else {
                             message.push_str("' (at end of input).");
@@ -3028,7 +3039,7 @@ impl Interp {
                                 || matches!(byte, b'/' | b'_' | b'.' | b'+' | b'-')
                         })
                     {
-                        let name = String::from_utf8_lossy(&rest[..close]).into_owned();
+                        let name = crate::bytes::decode(&rest[..close]);
                         let value = if location.is_some() && name == "CMAKE_CURRENT_LIST_LINE" {
                             line.to_string()
                         } else {
@@ -3045,7 +3056,7 @@ impl Interp {
                             value
                         };
                         result.extend_from_slice(&bytes[last..index]);
-                        result.extend_from_slice(value.as_bytes());
+                        result.extend_from_slice(&crate::bytes::encode(&value));
                         index = index + 1 + close;
                         last = index + 1;
                     } else {
@@ -3058,10 +3069,13 @@ impl Interp {
                 let ok =
                     ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'/' | b'.' | b'+' | b'-');
                 if !ok {
-                    let ch_text = source[index..].chars().next().unwrap_or('?');
+                    let ch_text = if ch.is_ascii() {
+                        (ch as char).to_string()
+                    } else {
+                        crate::bytes::decode(&bytes[index..index + 1])
+                    };
                     result.extend_from_slice(&bytes[last..index]);
-                    let partial =
-                        String::from_utf8_lossy(&result[open.last().unwrap().1..]).into_owned();
+                    let partial = crate::bytes::decode(&result[open.last().unwrap().1..]);
                     error = Some(format!(
                         "Invalid character ('{ch_text}') in a variable name: '{partial}'"
                     ));
@@ -3084,7 +3098,7 @@ impl Interp {
             return Err((MessageType::FatalError, text));
         }
         result.extend_from_slice(&bytes[last.min(bytes.len())..]);
-        Ok(String::from_utf8_lossy(&result).into_owned())
+        Ok(crate::bytes::decode(&result))
     }
 }
 

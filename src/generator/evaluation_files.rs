@@ -224,7 +224,7 @@ pub fn generate(ctx: &GenCtx) {
             }
             match std::fs::read(&input_name) {
                 Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    let text = crate::bytes::decode(&bytes);
                     // GetLineFromStream joins lines with "\n" and keeps a
                     // trailing separator after the last line.
                     let mut out = String::new();
@@ -332,7 +332,7 @@ pub fn generate(ctx: &GenCtx) {
                     }
                 }
                 let path = std::path::Path::new(&output);
-                if crate::fsutil::write_if_different(path, text.as_bytes()).is_err() {
+                if crate::fsutil::write_if_different(path, &text).is_err() {
                     ctx.error(
                         dir_backtrace.clone(),
                         format!("Could not open file for write in copy operation {output}"),

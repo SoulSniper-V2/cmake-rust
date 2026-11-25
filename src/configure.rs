@@ -625,7 +625,7 @@ fn prepare_run(interp: &mut Interp, options: &ConfigureOptions) -> bool {
     if let Some(report) = &options.preset_report {
         use std::io::Write;
         let mut out = std::io::stdout().lock();
-        let _ = out.write_all(report.as_bytes());
+        let _ = out.write_all(&crate::bytes::encode(report));
         let _ = out.flush();
     }
     // cmake::Run: MAKEFLAGS would leak into try_compile builds.
@@ -1488,9 +1488,9 @@ pub fn run_merged(command: &[String], cwd: &str) -> std::io::Result<(i32, String
             std::process::Stdio::from_raw_fd(writer_dup),
         )
     };
-    let mut child = std::process::Command::new(&command[0])
-        .args(&command[1..])
-        .current_dir(cwd)
+    let mut child = std::process::Command::new(crate::bytes::encode_os(&command[0]))
+        .args(command[1..].iter().map(|arg| crate::bytes::encode_os(arg)))
+        .current_dir(crate::bytes::path(cwd))
         .stdin(std::process::Stdio::null())
         .stdout(stdout)
         .stderr(stderr)
@@ -1502,7 +1502,7 @@ pub fn run_merged(command: &[String], cwd: &str) -> std::io::Result<(i32, String
     file.read_to_end(&mut buffer)?;
     let status = child.wait()?;
     let code = status.code().unwrap_or(1);
-    Ok((code, String::from_utf8_lossy(&buffer).into_owned()))
+    Ok((code, crate::bytes::decode(&buffer)))
 }
 
 fn os_pipe() -> std::io::Result<(i32, i32)> {

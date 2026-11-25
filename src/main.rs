@@ -2,6 +2,7 @@
 
 mod apple;
 mod build_database;
+mod bytes;
 mod cache;
 mod carchive;
 mod cli;

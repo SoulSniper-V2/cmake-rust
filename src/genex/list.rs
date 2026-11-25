@@ -526,20 +526,23 @@ impl<'a> Replacement<'a> {
     }
 
     fn replace(&self, input: &str, host: &mut dyn GenexHost) -> Result<String, String> {
+        let input_bytes = crate::bytes::encode(input);
         let mut result = Vec::new();
         let mut base = 0;
         let mut nonempty_at_offset = false;
         let bol_at_offset = self.anchor != PolicyStatus::New;
-        while let Some(found) = self
-            .regex
-            .find_with(input, base, bol_at_offset, nonempty_at_offset)
+        while let Some(found) =
+            self.regex
+                .find_bytes_with(&input_bytes, base, bol_at_offset, nonempty_at_offset)
         {
             let (start, end) = found.groups[0].unwrap();
             host.record_regex_match(input, &found.groups);
-            result.extend_from_slice(&input.as_bytes()[base..start]);
+            result.extend_from_slice(&input_bytes[base..start]);
             for part in &self.parts {
                 match *part {
-                    ReplacePart::Literal(value) => result.extend_from_slice(value.as_bytes()),
+                    ReplacePart::Literal(value) => {
+                        result.extend_from_slice(&crate::bytes::encode(value))
+                    }
                     ReplacePart::Capture(i) => {
                         if i > self.capture_count {
                             return Err(format!(
@@ -548,18 +551,18 @@ impl<'a> Replacement<'a> {
                             ));
                         }
                         if let Some((start, end)) = found.groups[i] {
-                            result.extend_from_slice(&input.as_bytes()[start..end]);
+                            result.extend_from_slice(&input_bytes[start..end]);
                         }
                     }
                 }
             }
             base = end;
-            if start == input.len() {
+            if start == input_bytes.len() {
                 break;
             }
             nonempty_at_offset = start == end;
         }
-        result.extend_from_slice(&input.as_bytes()[base..]);
-        Ok(String::from_utf8_lossy(&result).into_owned())
+        result.extend_from_slice(&input_bytes[base..]);
+        Ok(crate::bytes::decode(&result))
     }
 }

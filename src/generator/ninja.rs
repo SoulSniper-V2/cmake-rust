@@ -904,7 +904,7 @@ impl<'a> NinjaGenerator<'a> {
             let content = format!("[\n{}\n]\n", self.compile_commands.join(",\n"));
             crate::fsutil::write_generated(
                 std::path::Path::new(&format!("{}/compile_commands.json", self.home_binary)),
-                content.as_bytes(),
+                &content,
             )?;
         }
         // cmGlobalGenerator::WriteSummary: every build-system target's
@@ -945,7 +945,7 @@ impl<'a> NinjaGenerator<'a> {
                 "{}/CMakeFiles/TargetDirectories.txt",
                 self.home_binary
             )),
-            summary.as_bytes(),
+            &summary,
         )?;
         // cmSystemTools::GetErrorOccurredFlag: the streams are marked failed,
         // so neither file is replaced. Otherwise both are rewritten
@@ -954,9 +954,9 @@ impl<'a> NinjaGenerator<'a> {
         if self.ctx.interp.error || self.ctx.has_error() {
             return Ok(());
         }
-        crate::fsutil::write_generated(std::path::Path::new(&rules_path), rules_file.as_bytes())?;
+        crate::fsutil::write_generated(std::path::Path::new(&rules_path), &rules_file)?;
         for (path, content) in &build_files {
-            crate::fsutil::write_generated(std::path::Path::new(path), content.as_bytes())?;
+            crate::fsutil::write_generated(std::path::Path::new(path), content)?;
         }
         for dir in &self.tidy_fixes_dirs {
             remove_unknown_tidy_fixes(std::path::Path::new(dir), &self.tidy_fixes_files);
@@ -2337,9 +2337,7 @@ impl<'a> NinjaGenerator<'a> {
             }
             script.push_str("  )\nendif()\n");
         }
-        if crate::fsutil::write_generated(std::path::Path::new(&script_abs), script.as_bytes())
-            .is_err()
-        {
+        if crate::fsutil::write_generated(std::path::Path::new(&script_abs), &script).is_err() {
             return false;
         }
         let rule = Rule {
@@ -4748,10 +4746,7 @@ impl<'a> NinjaGenerator<'a> {
                 list.push_str(source);
                 list.push('\n');
             }
-            let _ = crate::fsutil::write_generated(
-                std::path::Path::new(&obj_list_file),
-                list.as_bytes(),
-            );
+            let _ = crate::fsutil::write_generated(std::path::Path::new(&obj_list_file), &list);
         }
         build.variables.insert(
             "PRE_LINK".into(),
@@ -5210,10 +5205,10 @@ impl<'a> NinjaGenerator<'a> {
         root.insert(b"target".to_vec(), Json::Object(target_json));
         let _ = std::fs::create_dir_all(directory);
         // cmGlobalGenerator::WriteSummary: plain cmGeneratedFileStreams.
-        crate::fsutil::write_generated(std::path::Path::new(&file), out.as_bytes())?;
+        crate::fsutil::write_generated(std::path::Path::new(&file), &out)?;
         crate::fsutil::write_generated(
             std::path::Path::new(&json_file),
-            write_json_ostream(&Json::Object(root)).as_bytes(),
+            &write_json_ostream(&Json::Object(root)),
         )
     }
 
@@ -5512,7 +5507,7 @@ impl<'a> NinjaGenerator<'a> {
                     content.push_str(&line.replace("$$", "$"));
                     content.push('\n');
                 }
-                let _ = std::fs::write(&script, &content);
+                let _ = std::fs::write(&script, &*crate::bytes::encode(&content));
                 let digest = <sha2::Sha256 as sha2::Digest>::digest(content.as_bytes());
                 let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
                 return format!(

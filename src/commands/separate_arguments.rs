@@ -17,13 +17,13 @@ fn is_space(c: u8) -> bool {
 }
 
 fn utf8(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes)
-        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
+    crate::bytes::decode(&bytes)
 }
 
 /// `cmSystemTools::ParseWindowsCommandLine`.
 fn parse_windows_command_line(command: &str) -> Vec<String> {
-    let bytes = command.as_bytes();
+    let encoded = crate::bytes::encode(command);
+    let bytes = encoded.as_ref();
     let mut args = Vec::new();
     let mut arg = Vec::new();
     let mut in_argument = false;
@@ -69,7 +69,8 @@ fn parse_windows_command_line(command: &str) -> Vec<String> {
 
 /// `cmSystemTools::SplitProgramFromArgs` — returns (program, args).
 fn split_program_from_args(command: &str) -> (String, String, bool) {
-    let bytes = command.as_bytes();
+    let encoded = crate::bytes::encode(command);
+    let bytes = encoded.as_ref();
     let mut c = 0usize;
     while c < bytes.len() && is_space(bytes[c]) {
         c += 1;
@@ -108,7 +109,7 @@ fn split_program_from_args(command: &str) -> (String, String, bool) {
         }
         c += 1;
     }
-    let args = command[c..].to_owned();
+    let args = crate::bytes::decode(&bytes[c..]);
     let ok = !in_single && !in_escape && !in_double;
     (utf8(program), args, ok)
 }

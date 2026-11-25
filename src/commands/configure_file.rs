@@ -92,10 +92,10 @@ pub(super) fn configure_text(
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         for chunk in line.utf8_chunks() {
             match configure_string(interp, chunk.valid(), at_only, escape_quotes) {
-                Ok(text) => output.extend(text.as_bytes()),
+                Ok(text) => output.extend_from_slice(&crate::bytes::encode(&text)),
                 Err(message) => {
                     fatal(interp, &message);
-                    output.extend(chunk.valid().as_bytes());
+                    output.extend_from_slice(chunk.valid().as_bytes());
                 }
             }
             output.extend(chunk.invalid());
@@ -319,7 +319,7 @@ pub(super) fn configure_file_core(
     // Only a configured output goes through `<output>.tmp`; a copy
     // (`cmSystemTools::CopyFileIfDifferent`) leaves such a file alone.
     let written = if copy_only {
-        crate::fsutil::write_if_different(Path::new(&output), &data)
+        crate::fsutil::write_if_different_bytes(Path::new(&output), &data)
     } else {
         write_configured(&output, &data)
     };

@@ -367,10 +367,7 @@ impl<'c, 'i> Writer<'c, 'i> {
         }
         self.global += "}\n";
         // cmGeneratedFileStream creates the parent directory.
-        let _ = crate::fsutil::write_generated(
-            std::path::Path::new(&self.file_name),
-            self.global.as_bytes(),
-        );
+        let _ = crate::fsutil::write_generated(std::path::Path::new(&self.file_name), &self.global);
     }
 
     fn visit_item(&mut self, item: &Item<'i>) {
@@ -521,7 +518,7 @@ impl<'c, 'i> Writer<'c, 'i> {
                 text += &self.connection(from, to, scope);
             }
             text += "}\n";
-            let _ = crate::fsutil::write_generated(std::path::Path::new(&file), text.as_bytes());
+            let _ = crate::fsutil::write_generated(std::path::Path::new(&file), &text);
         }
     }
 }

@@ -665,10 +665,11 @@ pub fn clear_matches(interp: &mut Interp) {
 /// `cmMakefile::StoreMatches`: only non-empty groups are stored.
 pub fn store_matches(interp: &mut Interp, text: &str, found: &crate::cmregex::Match) {
     // Mirrors the C++ quirk: the count is empty when no group matched text.
+    let bytes = crate::bytes::encode(text);
     let mut highest: Option<usize> = None;
     for index in 0..10 {
         let value = found.groups[index]
-            .map(|(start, end)| String::from_utf8_lossy(&text.as_bytes()[start..end]).into_owned())
+            .map(|(start, end)| crate::bytes::decode(&bytes[start..end]))
             .unwrap_or_default();
         if !value.is_empty() {
             interp.set_def(format!("CMAKE_MATCH_{index}"), value);

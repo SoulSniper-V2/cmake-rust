@@ -430,7 +430,7 @@ fn copy_pch_compile_pdb(
     }
     // cmGeneratedFileStream: written only when the content changes.
     let _ = std::fs::create_dir_all(&target_compile_pdb_dir);
-    let _ = crate::fsutil::write_if_different(std::path::Path::new(&copy_script), file.as_bytes());
+    let _ = crate::fsutil::write_if_different(std::path::Path::new(&copy_script), &file);
 
     let config_genex = |expr: &str| {
         if multi_config {
@@ -738,7 +738,7 @@ fn add_unity_build(ctx: &GenCtx, target: &Target) -> Changes {
                     &base,
                 );
             }
-            let _ = crate::fsutil::write_if_different(Path::new(name), text.as_bytes());
+            let _ = crate::fsutil::write_if_different(Path::new(name), &text);
             changes.add_sources.push((name.clone(), true));
             for (prop_name, value) in [
                 ("SKIP_UNITY_BUILD_INCLUSION", "ON"),

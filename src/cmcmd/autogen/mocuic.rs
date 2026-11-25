@@ -148,7 +148,7 @@ impl ParseCache {
                 out.push_str(&format!(" udp:{item}\n"));
             }
         }
-        crate::fsutil::write_if_different(std::path::Path::new(file_name), out.as_bytes()).is_ok()
+        crate::fsutil::write_if_different(std::path::Path::new(file_name), &out).is_ok()
     }
 }
 

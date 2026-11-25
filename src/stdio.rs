@@ -237,10 +237,10 @@ fn print_to(out: &mut impl Write, kind: TermKind, attrs: TermAttrSet, text: &str
     let kind = term_env_cached().unwrap_or(kind);
     if kind == TermKind::VT100 {
         let _ = write_attrs(out, attrs);
-        let _ = out.write_all(text.as_bytes());
+        let _ = out.write_all(&crate::bytes::encode(text));
         let _ = write_attrs(out, TermAttr::Normal.bit());
     } else {
-        let _ = out.write_all(text.as_bytes());
+        let _ = out.write_all(&crate::bytes::encode(text));
     }
 }
 
@@ -257,7 +257,7 @@ pub fn print_out(attrs: TermAttrSet, text: &str) {
 pub fn print_err_then_plain(attrs: TermAttrSet, text: &str, plain: &str) {
     let mut err = io::stderr().lock();
     print_to(&mut err, err_kind(), attrs, text);
-    let _ = err.write_all(plain.as_bytes());
+    let _ = err.write_all(&crate::bytes::encode(plain));
     let _ = err.flush();
 }
 

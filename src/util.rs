@@ -97,7 +97,8 @@ pub fn expand_list_into(value: &str, keep_empty: bool, out: &mut Vec<String>) {
         out.push(value.to_owned());
         return;
     }
-    let bytes = value.as_bytes();
+    let encoded = crate::bytes::encode(value);
+    let bytes = encoded.as_ref();
     let mut item: Vec<u8> = Vec::new();
     let mut square: i64 = 0;
     let mut last = 0usize;
@@ -115,7 +116,7 @@ pub fn expand_list_into(value: &str, keep_empty: bool, out: &mut Vec<String>) {
                 item.extend_from_slice(&bytes[last..index]);
                 last = index + 1;
                 if !item.is_empty() || keep_empty {
-                    out.push(String::from_utf8_lossy(&item).into_owned());
+                    out.push(crate::bytes::decode(&item));
                     item.clear();
                 }
             }
@@ -125,7 +126,7 @@ pub fn expand_list_into(value: &str, keep_empty: bool, out: &mut Vec<String>) {
     }
     item.extend_from_slice(&bytes[last..]);
     if !item.is_empty() || keep_empty {
-        out.push(String::from_utf8_lossy(&item).into_owned());
+        out.push(crate::bytes::decode(&item));
     }
 }
 
@@ -343,9 +344,10 @@ pub(crate) fn parse_unix_command_line(command: &str) -> Vec<String> {
     let mut in_single = false;
     let mut in_double = false;
     let push = |arg: &mut Vec<u8>, args: &mut Vec<String>| {
-        args.push(String::from_utf8_lossy(&std::mem::take(arg)).into_owned());
+        args.push(crate::bytes::decode(&std::mem::take(arg)));
     };
-    for &c in command.as_bytes() {
+    let command_bytes = crate::bytes::encode(command);
+    for &c in command_bytes.iter() {
         if in_escape {
             in_argument = true;
             arg.push(c);

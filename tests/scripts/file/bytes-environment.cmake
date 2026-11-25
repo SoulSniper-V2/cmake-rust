@@ -1,0 +1,6 @@
+string(ASCII 233 high)
+set(ENV{CMAKE_BYTES_TEST} "a${high}")
+execute_process(COMMAND /usr/bin/printenv CMAKE_BYTES_TEST OUTPUT_VARIABLE out)
+file(WRITE env.bin "${out}")
+file(READ env.bin hex HEX)
+message("${hex}")

@@ -1308,5 +1308,37 @@
   "inspect": [
    "subl.log"
   ]
+ },
+ {
+  "name": "cache-definition-nonutf8",
+  "dirs": [
+   "src",
+   "build"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 4.1)\nproject(bytecache NONE)\n",
+   "dump.cmake": "file(STRINGS build/CMakeCache.txt lines REGEX \"^HIGH\")\nforeach(l IN LISTS lines)\n  message(\"${l}\")\nendforeach()\n"
+  },
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "{work}/src",
+     "-B",
+     "{work}/build",
+     "-G",
+     "Ninja",
+     {
+      "hex": "2d44484947483d636166e9"
+     }
+    ]
+   },
+   {
+    "argv": [
+     "-P",
+     "dump.cmake"
+    ]
+   }
+  ]
  }
 ]

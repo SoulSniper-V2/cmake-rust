@@ -126,7 +126,8 @@ fn argument_needs_quotes(input: &[u8], flags: u32) -> bool {
 
 /// `cmOutputConverter::Shell_GetArgument`.
 pub fn shell_get_argument(input: &str, flags: u32) -> String {
-    let bytes = input.as_bytes();
+    let encoded = crate::bytes::encode(input);
+    let bytes = encoded.as_ref();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 2);
     let mut windows_backslashes = 0usize;
     let need_quotes = argument_needs_quotes(bytes, flags);
@@ -229,7 +230,7 @@ pub fn shell_get_argument(input: &str, flags: u32) -> String {
             out.push(b'"');
         }
     }
-    let mut result = String::from_utf8_lossy(&out).into_owned();
+    let mut result = crate::bytes::decode(&out);
     if flags & FLAG_UNESCAPE_NINJA_CONFIGURATION != 0 {
         let pattern = if flags & FLAG_IS_UNIX != 0 {
             "\\$${CONFIGURATION}"

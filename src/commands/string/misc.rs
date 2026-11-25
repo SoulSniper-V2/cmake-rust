@@ -24,7 +24,8 @@ fn hex(bytes: &[u8]) -> String {
 
 /// `cmCryptoHash::HashString` (lowercase hex digest).
 pub fn hash_string(algo: &str, input: &str) -> String {
-    let bytes = input.as_bytes();
+    let encoded = crate::bytes::encode(input);
+    let bytes = encoded.as_ref();
     let digest: Vec<u8> = match algo {
         "MD5" => <md5::Md5 as md5::Digest>::digest(bytes).to_vec(),
         "SHA1" => <sha1::Sha1 as sha1::Digest>::digest(bytes).to_vec(),
@@ -101,7 +102,7 @@ fn strftime_component(tm: &libc::tm, flag: u8) -> String {
             tm,
         )
     };
-    String::from_utf8_lossy(&buffer[..size.min(buffer.len())]).into_owned()
+    crate::bytes::decode(&buffer[..size.min(buffer.len())])
 }
 
 /// `cmTimestamp::CreateTimestampFromTimeT`.
@@ -150,7 +151,7 @@ fn create_timestamp(time: i64, micros: u32, format: &str, utc: bool) -> String {
         }
         i += 1;
     }
-    String::from_utf8_lossy(&result).into_owned()
+    crate::bytes::decode(&result)
 }
 
 pub fn handle_timestamp(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -304,7 +305,7 @@ pub fn handle_random(interp: &mut Interp, args: &[String]) -> CmdResult {
                 }
                 "ALPHABET" => {
                     i += 1;
-                    alphabet = args[i].as_bytes().to_vec();
+                    alphabet = crate::bytes::encode(&args[i]).into_owned();
                 }
                 "RANDOM_SEED" => {
                     i += 1;
@@ -345,7 +346,7 @@ pub fn handle_random(interp: &mut Interp, args: &[String]) -> CmdResult {
             let idx = (sizeof_alphabet * f64::from(rand.next()) / (2_147_483_647.0 + 1.0)) as usize;
             bytes.push(alphabet[idx]);
         }
-        result = String::from_utf8_lossy(&bytes).into_owned();
+        result = crate::bytes::decode(&bytes);
     });
 
     interp.set_def(variable_name.clone(), result);
@@ -508,7 +509,8 @@ fn strip_empty_list_elements(input: &str) -> String {
     if !input.contains(';') {
         return input.to_owned();
     }
-    let bytes = input.as_bytes();
+    let encoded = crate::bytes::encode(input);
+    let bytes = encoded.as_ref();
     let mut result: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut last = 0usize;
     let mut skip_semi_colons = true;
@@ -529,7 +531,7 @@ fn strip_empty_list_elements(input: &str) -> String {
     if result.last() == Some(&b';') {
         result.pop();
     }
-    String::from_utf8_lossy(&result).into_owned()
+    crate::bytes::decode(&result)
 }
 
 fn starts_with_genex(bytes: &[u8], i: usize) -> bool {

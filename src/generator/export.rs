@@ -2335,7 +2335,7 @@ fn build_module_files(
     }
     write_if_different(
         &dir.join(format!("cxx-modules-{name}.cmake")),
-        main_content.as_bytes(),
+        &main_content,
     )?;
     // GenerateImportCxxModuleConfigTargetInclusion.
     for config in &configs {
@@ -2353,7 +2353,7 @@ fn build_module_files(
         }
         write_if_different(
             &dir.join(format!("cxx-modules-{name}-{config}.cmake")),
-            content.as_bytes(),
+            &content,
         )?;
     }
     Ok(())
@@ -2552,9 +2552,9 @@ fn write_export_file(file: &str, append: bool, out: &str) -> std::io::Result<()>
         std::fs::OpenOptions::new()
             .append(true)
             .open(file)?
-            .write_all(out.as_bytes())?;
+            .write_all(&crate::bytes::encode(out))?;
     } else {
-        write_if_different(Path::new(file), out.as_bytes())?;
+        write_if_different(Path::new(file), out)?;
     }
     Ok(())
 }
@@ -2692,7 +2692,7 @@ fn write_install_android_mk<'a>(
         let props = ex.populate_interface_props(record);
         android_interface_properties(ex, &mut text, record.target, &props);
     }
-    write_if_different(Path::new(&file), text.as_bytes())?;
+    write_if_different(Path::new(&file), &text)?;
     let opts = crate::install_model::InstallOptions {
         optional: false,
         ..rule.options.clone()
@@ -2793,7 +2793,7 @@ pub(super) fn write_install_export(
     file_out.push_str(&body);
     file_out.push_str(IMPORT_FOOTER);
     file_out.push_str(END);
-    write_if_different(Path::new(&file), file_out.as_bytes())?;
+    write_if_different(Path::new(&file), &file_out)?;
     // Install rules for the main file.
     let opts = crate::install_model::InstallOptions {
         optional: false,
@@ -2854,7 +2854,7 @@ pub(super) fn write_install_export(
             import_header(&mut config_out, &config);
             ex.config_targets(&mut config_out, &all, &config);
             config_out.push_str(IMPORT_FOOTER);
-            write_if_different(Path::new(&config_file), config_out.as_bytes())?;
+            write_if_different(Path::new(&config_file), &config_out)?;
             config_files.insert(config, config_file);
         }
         for (config, config_file) in &config_files {
@@ -2878,7 +2878,7 @@ pub(super) fn write_install_export(
         let content = "# Load information for each installed configuration.\nfile(GLOB _cmake_cxx_module_includes \"${CMAKE_CURRENT_LIST_DIR}/cxx-modules-".to_owned()
             + set_name
             + "-*.cmake\")\nforeach(_cmake_cxx_module_include IN LISTS _cmake_cxx_module_includes)\n  include(\"${_cmake_cxx_module_include}\")\nendforeach()\nunset(_cmake_cxx_module_include)\nunset(_cmake_cxx_module_includes)\n";
-        write_if_different(&main, content.as_bytes())?;
+        write_if_different(&main, &content)?;
         let main = main.to_string_lossy().into_owned();
         replacement_check(
             config_rules,
@@ -2913,7 +2913,7 @@ pub(super) fn write_install_export(
                     }
                 }
                 let per_config = modules.join(format!("cxx-modules-{set_name}-{suffix}.cmake"));
-                write_if_different(&per_config, content.as_bytes())?;
+                write_if_different(&per_config, &content)?;
                 let per_config = per_config.to_string_lossy().into_owned();
                 module_files.insert(config, (per_config, target_files));
             }

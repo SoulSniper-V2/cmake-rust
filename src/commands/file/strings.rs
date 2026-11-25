@@ -196,7 +196,7 @@ impl Collector<'_> {
         if current.len() < self.options.min || (!allow_empty && current.is_empty()) {
             return true;
         }
-        let value = String::from_utf8_lossy(&current);
+        let value = crate::bytes::decode(&current);
         let found = if let Some(regex) = &self.options.regex {
             let Some(found) = regex.find(&value) else {
                 return true;

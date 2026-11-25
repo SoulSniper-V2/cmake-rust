@@ -324,7 +324,7 @@ fn write_file(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
     }
     message.push('\n');
-    if let Err(("open", _)) = write(path, message.as_bytes(), append) {
+    if let Err(("open", _)) = write(path, &crate::bytes::encode(&message), append) {
         return err(format!(
             "Internal CMake error when trying to open file: {path} for writing."
         ));

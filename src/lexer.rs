@@ -273,7 +273,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn text(&self, start: usize, end: usize) -> String {
-        String::from_utf8_lossy(&self.src[start..end]).into_owned()
+        crate::bytes::decode(&self.src[start..end])
     }
 
     fn advance(&mut self, length: usize) {
@@ -367,7 +367,7 @@ impl<'a> Lexer<'a> {
                         None | Some(0) => {
                             return Some(Token {
                                 kind: Tok::BadString,
-                                text: String::from_utf8_lossy(&value).into_owned(),
+                                text: crate::bytes::decode(&value),
                                 line,
                                 column,
                             });
@@ -376,7 +376,7 @@ impl<'a> Lexer<'a> {
                             self.advance(1);
                             return Some(Token {
                                 kind: Tok::ArgQuoted,
-                                text: String::from_utf8_lossy(&value).into_owned(),
+                                text: crate::bytes::decode(&value),
                                 line,
                                 column,
                             });
@@ -428,11 +428,15 @@ impl<'a> Lexer<'a> {
 
 /// Parses a list file. Returns the commands and any diagnostics; when the
 /// final diagnostic is not a warning, parsing failed.
+#[allow(dead_code)]
 pub fn parse(path: &str, text: &str) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
-    // Byte-order marks are handled by the caller: `cmListFileLexer` only
-    // sees file content after `ReadBOM` consumed a UTF-8 BOM, and string
-    // input is never BOM-checked.
-    let bytes = text.as_bytes();
+    parse_bytes(path, &crate::bytes::encode(text))
+}
+
+/// Parses list-file bytes. Byte-order marks are handled by the caller:
+/// `cmListFileLexer` only sees file content after `ReadBOM` consumed a UTF-8
+/// BOM, and string input is never BOM-checked.
+pub fn parse_bytes(path: &str, bytes: &[u8]) -> (Option<Vec<Command>>, Vec<ParseDiag>) {
     let mut lexer = Lexer {
         src: bytes,
         pos: 0,

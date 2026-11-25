@@ -30,11 +30,13 @@ fn set(interp: &mut Interp, args: &[String]) -> CmdResult {
     let variable = &args[0];
     if variable.starts_with("ENV{") && variable.len() > 5 {
         let name = &variable[4..variable.len() - 1];
-        let current = std::env::var_os(name);
+        let key = crate::bytes::encode_os(name);
+        let current = std::env::var_os(&key);
         if args.len() > 1 && !args[1].is_empty() {
-            if current.as_deref() != Some(std::ffi::OsStr::new(&args[1])) {
+            let value = crate::bytes::encode_os(&args[1]);
+            if current.as_ref() != Some(&value) {
                 // SAFETY: single-threaded interpreter.
-                unsafe { std::env::set_var(name, &args[1]) };
+                unsafe { std::env::set_var(&key, value) };
             }
             if args.len() > 2 {
                 let text = format!(
@@ -47,7 +49,7 @@ fn set(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         if current.is_some() {
             // SAFETY: single-threaded interpreter.
-            unsafe { std::env::remove_var(name) };
+            unsafe { std::env::remove_var(&key) };
         }
         return Ok(());
     }
@@ -130,7 +132,7 @@ fn unset(interp: &mut Interp, args: &[String]) -> CmdResult {
     if variable.starts_with("ENV{") && variable.len() > 5 {
         let name = &variable[4..variable.len() - 1];
         // SAFETY: single-threaded interpreter.
-        unsafe { std::env::remove_var(name) };
+        unsafe { std::env::remove_var(crate::bytes::encode_os(name)) };
         return Ok(());
     }
     if args.len() == 1 {

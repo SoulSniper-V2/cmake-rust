@@ -30,7 +30,7 @@ pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
         let script = install_script(ctx, index)?;
         // cmGeneratedFileStream without SetCopyIfDifferent: always rewritten,
         // so the RERUN_CMAKE outputs are newer than CMakeCache.txt.
-        crate::fsutil::write_generated(Path::new(&file), script.as_bytes())?;
+        crate::fsutil::write_generated(Path::new(&file), &script)?;
     }
     Ok(())
 }
@@ -52,7 +52,7 @@ pub fn write_install_index(ctx: &GenCtx) -> std::io::Result<()> {
         .then(|| ctx.default_configs.iter().cloned().collect());
     crate::fsutil::write_generated(
         &Path::new(&ctx.interp.home_binary).join("CMakeFiles/InstallScripts.json"),
-        install_index(&files, parallel, configs.as_deref()).as_bytes(),
+        &install_index(&files, parallel, configs.as_deref()),
     )
 }
 

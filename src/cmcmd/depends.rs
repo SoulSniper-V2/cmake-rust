@@ -332,11 +332,11 @@ impl LocalGen {
 fn write_generated(path: &str, content: &str, copy_if_different: bool) -> bool {
     if copy_if_different
         && let Ok(existing) = std::fs::read(path)
-        && existing == content.as_bytes()
+        && existing == crate::bytes::encode(content).as_ref()
     {
         return true;
     }
-    std::fs::write(path, content).is_ok()
+    std::fs::write(path, &*crate::bytes::encode(content)).is_ok()
 }
 
 /// `cmLocalUnixMakefileGenerator3::WriteDisclaimer`.

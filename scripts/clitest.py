@@ -28,6 +28,10 @@ def run(binary, case, *, oracle):
         work = Path(temp).resolve()
 
         def expand(value):
+            if isinstance(value, dict) and "hex" in value:
+                # os.fsdecode uses surrogateescape on POSIX, so subprocess
+                # encodes the argument back to the exact original bytes.
+                return os.fsdecode(bytes.fromhex(value["hex"]))
             return value.replace("{work}", str(work)).replace("{cmake}", str(binary))
 
         def normalize(data):

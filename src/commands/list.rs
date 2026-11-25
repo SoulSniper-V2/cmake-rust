@@ -585,7 +585,7 @@ impl ReplaceHelper {
     /// Repeated find with the CMP0186 anchor semantics.
     fn find_at(
         &self,
-        input: &str,
+        input: &[u8],
         base: usize,
         bol_at_offset: bool,
         nonempty_at_offset: bool,
@@ -595,7 +595,7 @@ impl ReplaceHelper {
             // `^` can match at `start` when bol_at_offset (regbol == offset)
             // or when start is the beginning of the full text.
             let not_bol = if bol_at_offset { false } else { start != 0 };
-            let found = self.regex.find_at(input, start, not_bol)?;
+            let found = self.regex.find_bytes(input, start, not_bol)?;
             if nonempty_at_offset && found.groups[0] == Some((base, base)) {
                 // Match ending at the reject position: skip to next offset.
                 start = base + 1;
@@ -607,23 +607,24 @@ impl ReplaceHelper {
 
     fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
         // Byte ranges may split multi-byte characters; assemble bytes.
+        let input_bytes = crate::bytes::encode(input);
         let mut bytes = Vec::<u8>::new();
         let bol_at_offset = interp.policy_status("CMP0186") != PolicyStatus::New;
 
         let mut base = 0usize;
         let mut nonempty = false;
-        while let Some(found) = self.find_at(input, base, bol_at_offset, nonempty) {
+        while let Some(found) = self.find_at(&input_bytes, base, bol_at_offset, nonempty) {
             let (start, end) = found.groups[0].unwrap_or((0, 0));
             crate::state::clear_matches(interp);
             crate::state::store_matches(interp, input, &found);
 
             // Concatenate the part of the input that was not matched.
-            bytes.extend_from_slice(&input.as_bytes()[base..start]);
+            bytes.extend_from_slice(&input_bytes[base..start]);
 
             // Concatenate the replacement for the match.
             for replacement in &self.replacements {
                 match replacement {
-                    Replacement::Text(text) => bytes.extend_from_slice(text.as_bytes()),
+                    Replacement::Text(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
                     Replacement::Group(n) => {
                         if *n > self.num_groups {
                             return Err(OutOfRange(format!(
@@ -632,7 +633,7 @@ impl ReplaceHelper {
                             )));
                         }
                         if let Some((s, e)) = found.groups[*n] {
-                            bytes.extend_from_slice(&input.as_bytes()[s..e]);
+                            bytes.extend_from_slice(&input_bytes[s..e]);
                         }
                     }
                 }
@@ -640,13 +641,13 @@ impl ReplaceHelper {
 
             // Move past the match.
             base = end;
-            if start == input.len() {
+            if start == input_bytes.len() {
                 break;
             }
             nonempty = start == end;
         }
-        bytes.extend_from_slice(&input.as_bytes()[base..]);
-        *output = String::from_utf8_lossy(&bytes).into_owned();
+        bytes.extend_from_slice(&input_bytes[base..]);
+        *output = crate::bytes::decode(&bytes);
         Ok(())
     }
 }

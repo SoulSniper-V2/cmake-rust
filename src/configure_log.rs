@@ -78,7 +78,7 @@ impl ConfigureLog {
     #[allow(dead_code)]
     pub fn text(&self) -> Option<String> {
         match &self.sink {
-            Some(Sink::Buffer(buffer)) => Some(String::from_utf8_lossy(buffer).into_owned()),
+            Some(Sink::Buffer(buffer)) => Some(crate::bytes::decode(buffer)),
             _ => None,
         }
     }
@@ -104,9 +104,9 @@ impl ConfigureLog {
         if let Some(sink) = self.sink.as_mut() {
             match sink {
                 Sink::File(file) => {
-                    let _ = file.write_all(text.as_bytes());
+                    let _ = file.write_all(&crate::bytes::encode(text));
                 }
-                Sink::Buffer(buffer) => buffer.extend_from_slice(text.as_bytes()),
+                Sink::Buffer(buffer) => buffer.extend_from_slice(&crate::bytes::encode(text)),
             }
         }
     }
@@ -303,7 +303,8 @@ impl ConfigureLog {
         self.out(&format!("{key}: |"));
         self.end_line();
 
-        let bytes = text.as_bytes();
+        let encoded = crate::bytes::encode(text);
+        let bytes = encoded.as_ref();
         if bytes.is_empty() {
             return;
         }

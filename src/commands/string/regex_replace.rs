@@ -108,20 +108,22 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
     let input = cm_join(&args[5..], "", "");
     let old_policy = old_bol(interp);
 
+    let input_bytes = crate::bytes::encode(&input);
     // Byte ranges may split multi-byte characters; assemble bytes.
     let mut output = Vec::<u8>::new();
     let mut base = 0usize;
     let mut nonempty_at_offset = false;
-    while let Some(found) = regex_find_next(&re, &input, base, nonempty_at_offset, old_policy) {
+    while let Some(found) = regex_find_next(&re, &input_bytes, base, nonempty_at_offset, old_policy)
+    {
         clear_matches(interp);
         store_matches(interp, &input, &found);
 
         let (start, end) = found.groups[0].unwrap_or((base, base));
-        output.extend_from_slice(&input.as_bytes()[base..start]);
+        output.extend_from_slice(&input_bytes[base..start]);
 
         for replacement in &replacements {
             match replacement {
-                Segment::Literal(text) => output.extend_from_slice(text.as_bytes()),
+                Segment::Literal(text) => output.extend_from_slice(&crate::bytes::encode(text)),
                 Segment::Group(n) => {
                     if *n > num_groups {
                         return err(format!(
@@ -130,23 +132,20 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
                         ));
                     }
                     if let Some(Some((s, e))) = found.groups.get(*n) {
-                        output.extend_from_slice(&input.as_bytes()[*s..*e]);
+                        output.extend_from_slice(&input_bytes[*s..*e]);
                     }
                 }
             }
         }
 
         base = end;
-        if start == input.len() {
+        if start == input_bytes.len() {
             break;
         }
         nonempty_at_offset = start == end;
     }
 
-    output.extend_from_slice(&input.as_bytes()[base..]);
-    interp.set_def(
-        outvar.clone(),
-        String::from_utf8_lossy(&output).into_owned(),
-    );
+    output.extend_from_slice(&input_bytes[base..]);
+    interp.set_def(outvar.clone(), crate::bytes::decode(&output));
     Ok(())
 }

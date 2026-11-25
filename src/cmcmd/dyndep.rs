@@ -33,8 +33,7 @@ fn write_file(path: &str, text: &str, if_different: bool) -> Result<(), String> 
     } else {
         write_generated
     };
-    writer(Path::new(path), text.as_bytes())
-        .map_err(|err| format!("{path}:1: failed to write: {err}"))
+    writer(Path::new(path), text).map_err(|err| format!("{path}:1: failed to write: {err}"))
 }
 
 pub(super) fn run(command: &str, args: &[String]) -> Result<(), String> {

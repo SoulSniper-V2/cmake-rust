@@ -68,11 +68,11 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
     match command.as_str() {
         "capabilities" => capabilities(args),
         "echo" => {
-            println!("{}", args.join(" "));
+            crate::bytes::stdout_line(&args.join(" "));
             0
         }
         "echo_append" => {
-            print!("{}", args.join(" "));
+            crate::bytes::write_stdout(&args.join(" "));
             0
         }
         "cmake_echo_color" => echo_color(args),
@@ -84,7 +84,11 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         }
         "environment" => {
             for (name, val) in std::env::vars_os() {
-                println!("{}={}", name.to_string_lossy(), val.to_string_lossy());
+                crate::bytes::stdout_line(&format!(
+                    "{}={}",
+                    crate::bytes::decode_os(&name),
+                    crate::bytes::decode_os(&val)
+                ));
             }
             0
         }

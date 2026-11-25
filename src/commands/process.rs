@@ -302,13 +302,13 @@ impl Capture {
                 result.pop();
             }
         }
-        String::from_utf8_lossy(&result).into_owned()
+        crate::bytes::decode(&result)
     }
 }
 
 fn stream(capture: &mut Capture, filename: &str) -> io::Result<Option<File>> {
     if !filename.is_empty() {
-        return Ok(File::create(filename).ok());
+        return Ok(File::create(crate::bytes::path(filename)).ok());
     }
     let (reader, writer) = pipe()?;
     capture.reader = Some(reader);
@@ -372,16 +372,16 @@ fn run_pipeline(
     let mut stages = Pipeline(Vec::with_capacity(options.commands.len()));
     for (index, args) in options.commands.iter().enumerate() {
         let last = index + 1 == options.commands.len();
-        let mut cmd = Command::new(&args[0]);
-        cmd.args(&args[1..]);
+        let mut cmd = Command::new(crate::bytes::encode_os(&args[0]));
+        cmd.args(args[1..].iter().map(|arg| crate::bytes::encode_os(arg)));
         if !cwd.is_empty() {
-            cmd.current_dir(cwd);
+            cmd.current_dir(crate::bytes::path(cwd));
         }
         if index == 0 {
             cmd.stdin(if input.is_empty() {
                 Stdio::inherit()
             } else {
-                duplicate(File::open(&input).ok().as_ref())?
+                duplicate(File::open(crate::bytes::path(&input)).ok().as_ref())?
             });
         } else {
             cmd.stdin(duplicate(previous.as_ref())?);
@@ -524,7 +524,7 @@ fn execute_process(interp: &mut Interp, args: &[String]) -> CmdResult {
                 if echo == "STDOUT" {
                     interp.stdout_line(&line);
                 } else {
-                    eprintln!("{line}");
+                    crate::bytes::stderr_line(&line);
                 }
             }
         }

@@ -102,9 +102,7 @@ pub(super) fn add_targets(interp: &mut Interp) -> bool {
             let content = format!(
                 "/* NOLINTNEXTLINE(misc-header-include-cycle,misc-include-cleaner) */\n#include <{header}> /* IWYU pragma: associated */\n"
             );
-            if let Err(error) =
-                crate::fsutil::write_if_different(Path::new(&file), content.as_bytes())
-            {
+            if let Err(error) = crate::fsutil::write_if_different(Path::new(&file), &content) {
                 interp.issue_at(
                     crate::messages::MessageType::FatalError,
                     &format!("Cannot write header verification source \"{file}\": {error}"),

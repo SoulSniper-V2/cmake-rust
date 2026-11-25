@@ -875,7 +875,7 @@ impl<'a> Reader<'a> {
             Some(value) => Some(Json::Real(value)),
             None => {
                 self.add_error(
-                    &format!("'{}' is not a number.", String::from_utf8_lossy(text)),
+                    &format!("'{}' is not a number.", crate::bytes::decode(text)),
                     token,
                     None,
                 );
@@ -1090,7 +1090,8 @@ pub(crate) fn parse_jsoncpp(doc: &[u8]) -> Result<Json, String> {
 }
 
 fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
-    let mut reader = Reader::new(jsonstr.as_bytes());
+    let encoded = crate::bytes::encode(jsonstr);
+    let mut reader = Reader::new(&encoded);
     match reader.parse() {
         Some(json) => Ok(json),
         None => Err(JsonError {
@@ -1106,7 +1107,7 @@ fn read_json(jsonstr: &str) -> Result<Json, JsonError> {
 /// `operator<<(std::ostream&, Json::Value const&)` with the builder's default
 /// `commentStyle = "All"`: every nonempty array goes on multiple lines.
 pub fn write_json_ostream(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write_indented(value, b"\t", true)).into_owned()
+    crate::bytes::decode(&Writer::write_indented(value, b"\t", true))
 }
 
 /// Serialize generator metadata with the same writer as jsoncpp's operator<<.
@@ -1121,18 +1122,18 @@ pub(crate) fn stream_value(value: &serde_json::Value) -> String {
                 .map(Json::Int)
                 .or_else(|| n.as_u64().map(Json::UInt))
                 .unwrap_or_else(|| Json::Real(n.as_f64().unwrap())),
-            Value::String(s) => Json::Str(s.as_bytes().to_vec()),
+            Value::String(s) => Json::Str(crate::bytes::encode(s).into_owned()),
             Value::Array(a) => Json::Array(a.iter().map(convert).collect()),
             Value::Object(o) => Json::Object(
                 o.iter()
-                    .map(|(k, v)| (k.as_bytes().to_vec(), convert(v)))
+                    .map(|(k, v)| (crate::bytes::encode(k).into_owned(), convert(v)))
                     .collect(),
             ),
         }
     }
     // StreamWriterBuilder's default commentStyle=All sets every nonempty
     // array on multiple lines, including single-element path lists.
-    String::from_utf8_lossy(&Writer::write_indented(&convert(value), b"\t", true)).into_owned()
+    crate::bytes::decode(&Writer::write_indented(&convert(value), b"\t", true))
 }
 
 /// `Json::StreamWriterBuilder` with `indentation = "  "` and
@@ -1141,11 +1142,11 @@ pub(crate) fn stream_value(value: &serde_json::Value) -> String {
 /// `"key" : value`, and no trailing newline (StreamWriter does not emit
 /// one; `cmGeneratedFileStream` does not add one either).
 pub fn write_json_indent2(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write_indented(value, b"  ", false)).into_owned()
+    crate::bytes::decode(&Writer::write_indented(value, b"  ", false))
 }
 
 fn write_json(value: &Json) -> String {
-    String::from_utf8_lossy(&Writer::write(value)).into_owned()
+    crate::bytes::decode(&Writer::write(value))
 }
 
 /// `Json::writeString` with `indentation = ""`: BuiltStyledStreamWriter
@@ -1193,7 +1194,7 @@ pub fn write_json_compact(value: &Json) -> String {
     }
     let mut out = Vec::new();
     write(value, &mut out);
-    String::from_utf8_lossy(&out).into_owned()
+    crate::bytes::decode(&out)
 }
 
 // ---------------------------------------------------------------------
@@ -1271,13 +1272,13 @@ fn resolve_path<'a>(json: &'a mut Json, path: &[String]) -> Result<&'a mut Json,
                 search = &mut items[index as usize];
             }
             Json::Object(map) => {
-                if !map.contains_key(field.as_bytes()) {
+                if !map.contains_key(crate::bytes::encode(field).as_ref()) {
                     return Err(JsonError {
                         message: format!("member '{}' not found", cm_join(progress, " ", "")),
                         error_path: Some(progress.to_vec()),
                     });
                 }
-                search = object_get_mut(map, field.as_bytes()).unwrap();
+                search = object_get_mut(map, crate::bytes::encode(field).as_ref()).unwrap();
             }
             other => {
                 return Err(JsonError {
@@ -1297,10 +1298,7 @@ fn resolve_path<'a>(json: &'a mut Json, path: &[String]) -> Result<&'a mut Json,
 }
 
 fn set_def_bytes(interp: &mut Interp, name: &str, value: Vec<u8>) {
-    interp.set_def(
-        name.to_owned(),
-        String::from_utf8_lossy(&value).into_owned(),
-    );
+    interp.set_def(name.to_owned(), crate::bytes::decode(&value));
 }
 
 pub fn handle_json(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -1408,7 +1406,7 @@ pub fn handle_json(interp: &mut Interp, args: &[String]) -> CmdResult {
                         }
                     }
                     Json::Object(map) => {
-                        map.remove(to_remove.as_bytes());
+                        map.remove(crate::bytes::encode(&to_remove).as_ref());
                     }
                     other => {
                         return Err(JsonError {
@@ -1431,7 +1429,7 @@ pub fn handle_json(interp: &mut Interp, args: &[String]) -> CmdResult {
                 let new_value = read_json(&new_value_str)?;
                 match value {
                     Json::Object(map) => {
-                        let key = to_add.into_bytes();
+                        let key = crate::bytes::encode(&to_add).into_owned();
                         if let Some(slot) = map.get_mut(&key) {
                             *slot = new_value;
                         } else {

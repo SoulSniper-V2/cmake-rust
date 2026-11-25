@@ -360,8 +360,7 @@ impl<'a> NinjaGenerator<'a> {
             "include-dirs":includes,"linked-target-dirs":direct,"forward-modules-from-target-dirs":forward,
             "sources":tdi_sources,"cxx-modules":{},"database-info":null,"bmi-installation":bmi,"exports":exports,"config":self.config
         });
-        if let Err(err) =
-            crate::fsutil::write_generated(Path::new(&tdi_path), stream_value(&tdi).as_bytes())
+        if let Err(err) = crate::fsutil::write_generated(Path::new(&tdi_path), &stream_value(&tdi))
         {
             self.ctx.error(
                 target.backtrace.clone(),

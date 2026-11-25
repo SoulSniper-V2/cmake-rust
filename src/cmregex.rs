@@ -125,8 +125,12 @@ impl Match {
     /// The text of group `n` in `text`.  Groups are byte ranges and may split
     /// a multi-byte character; such bytes are kept lossily instead of
     /// panicking on a char boundary.
-    pub fn text<'a>(&self, text: &'a str, n: usize) -> Option<std::borrow::Cow<'a, str>> {
-        self.groups[n].map(|(start, end)| String::from_utf8_lossy(&text.as_bytes()[start..end]))
+    pub fn text<'a>(&self, text: &str, n: usize) -> Option<std::borrow::Cow<'a, str>> {
+        self.groups[n].map(|(start, end)| {
+            std::borrow::Cow::Owned(crate::bytes::decode(
+                &crate::bytes::encode(text)[start..end],
+            ))
+        })
     }
 }
 
@@ -145,8 +149,9 @@ impl Regex {
     /// const*)`, including the C-string convention that the pattern ends
     /// at its first NUL byte.
     pub fn new(pattern: &str) -> Result<Regex, String> {
+        let pattern_bytes = crate::bytes::encode(pattern);
         let mut comp = Compiler {
-            pat: c_str(pattern.as_bytes()),
+            pat: c_str(&pattern_bytes),
             parse: 0,
             regnpar: 1,
             code: Vec::new(),
@@ -211,9 +216,10 @@ impl Regex {
     /// kwsys `find` options and CMP0186.
     pub fn find_at(&self, text: &str, start: usize, not_bol: bool) -> Option<Match> {
         let options = if not_bol { 0 } else { BOL_AT_OFFSET };
-        self.find_opts(text.as_bytes(), start, options)
+        self.find_opts(&crate::bytes::encode(text), start, options)
     }
 
+    #[allow(dead_code)]
     /// `RegularExpression::find(text, offset, options)` with explicit
     /// BOL_AT_OFFSET / NONEMPTY_AT_OFFSET flags (the repeated-search loops
     /// of string(REGEX MATCHALL/REPLACE)).
@@ -231,7 +237,25 @@ impl Regex {
         if nonempty_at_offset {
             options |= NONEMPTY_AT_OFFSET;
         }
-        self.find_opts(text.as_bytes(), offset, options)
+        self.find_opts(&crate::bytes::encode(text), offset, options)
+    }
+
+    /// [`find_with`] over already encoded bytes.
+    pub fn find_bytes_with(
+        &self,
+        text: &[u8],
+        offset: usize,
+        bol_at_offset: bool,
+        nonempty_at_offset: bool,
+    ) -> Option<Match> {
+        let mut options = 0;
+        if bol_at_offset {
+            options |= BOL_AT_OFFSET;
+        }
+        if nonempty_at_offset {
+            options |= NONEMPTY_AT_OFFSET;
+        }
+        self.find_opts(text, offset, options)
     }
 
     /// Search `text` from the beginning.

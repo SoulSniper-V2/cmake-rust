@@ -147,10 +147,7 @@ fn handle_ascii(interp: &mut Interp, args: &[String]) -> CmdResult {
             return err(format!("Character with code {arg} does not exist."));
         }
     }
-    interp.set_def(
-        outvar.clone(),
-        String::from_utf8_lossy(&output).into_owned(),
-    );
+    interp.set_def(outvar.clone(), crate::bytes::decode(&output));
     Ok(())
 }
 
@@ -158,8 +155,9 @@ fn handle_hex(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 3 {
         return err("Incorrect number of arguments");
     }
-    let mut output = String::with_capacity(args[1].len() * 2);
-    for byte in args[1].as_bytes() {
+    let input = crate::bytes::encode(&args[1]);
+    let mut output = String::with_capacity(input.len() * 2);
+    for byte in input.iter() {
         output.push_str(&format!("{byte:02x}"));
     }
     interp.set_def(args[2].clone(), output);
@@ -327,12 +325,12 @@ fn old_bol(interp: &Interp) -> bool {
 /// where `^` can no longer match (regbol stays at `base`).
 fn regex_find_next(
     re: &crate::cmregex::Regex,
-    input: &str,
+    input: &[u8],
     base: usize,
     nonempty_at_offset: bool,
     old_policy: bool,
 ) -> Option<crate::cmregex::Match> {
-    re.find_with(input, base, old_policy, nonempty_at_offset)
+    re.find_bytes_with(input, base, old_policy, nonempty_at_offset)
 }
 
 fn regex_match(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -354,7 +352,7 @@ fn regex_match(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(found) = re.find_at(&input, 0, false) {
         store_matches(interp, &input, &found);
         if let Some((start, end)) = found.groups[0] {
-            output = String::from_utf8_lossy(&input.as_bytes()[start..end]).into_owned();
+            output = crate::bytes::decode(&crate::bytes::encode(&input)[start..end]);
         }
     }
     interp.set_def(outvar.clone(), output);
@@ -381,28 +379,27 @@ fn regex_match_all(interp: &mut Interp, args: &[String]) -> CmdResult {
 
     // Matches are byte ranges; a range may split a multi-byte character, so
     // the list is assembled as bytes.
+    let input_bytes = crate::bytes::encode(&input);
     let mut output = Vec::<u8>::new();
     let mut base = 0usize;
     let mut nonempty_at_offset = false;
-    while let Some(found) = regex_find_next(&re, &input, base, nonempty_at_offset, old_policy) {
+    while let Some(found) = regex_find_next(&re, &input_bytes, base, nonempty_at_offset, old_policy)
+    {
         clear_matches(interp);
         store_matches(interp, &input, &found);
         if !output.is_empty() || nonempty_at_offset {
             output.push(b';');
         }
         let (start, end) = found.groups[0].unwrap_or((base, base));
-        output.extend_from_slice(&input.as_bytes()[start..end]);
+        output.extend_from_slice(&input_bytes[start..end]);
         base = end;
-        if start == input.len() {
+        if start == input_bytes.len() {
             break;
         }
         nonempty_at_offset = start == end;
     }
 
-    interp.set_def(
-        outvar.clone(),
-        String::from_utf8_lossy(&output).into_owned(),
-    );
+    interp.set_def(outvar.clone(), crate::bytes::decode(&output));
     Ok(())
 }
 
@@ -423,10 +420,12 @@ fn handle_find(interp: &mut Interp, args: &[String]) -> CmdResult {
              Maybe you missed the actual output variable?",
         );
     }
+    let haystack = crate::bytes::encode(haystack);
+    let needle = crate::bytes::encode(needle);
     let pos = if reverse {
-        haystack.rfind(needle)
+        crate::bytes::rfind(&haystack, &needle)
     } else {
-        haystack.find(needle)
+        crate::bytes::find(&haystack, &needle)
     };
     match pos {
         Some(pos) => interp.set_def(outvar.clone(), pos.to_string()),
@@ -450,6 +449,8 @@ fn handle_compare(interp: &mut Interp, args: &[String]) -> CmdResult {
             ));
         }
         let (left, right, outvar) = (&args[2], &args[3], &args[4]);
+        let left = crate::bytes::encode(left);
+        let right = crate::bytes::encode(right);
         let result = match mode {
             "LESS" => left < right,
             "LESS_EQUAL" => left <= right,
@@ -485,7 +486,8 @@ fn handle_substring(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 5 {
         return err("sub-command SUBSTRING requires four arguments.");
     }
-    let value = args[1].as_bytes();
+    let encoded = crate::bytes::encode(&args[1]);
+    let value = encoded.as_ref();
     let begin = atoi(&args[2]);
     let end = atoi(&args[3]);
     let variable_name = &args[4];
@@ -504,10 +506,7 @@ fn handle_substring(interp: &mut Interp, args: &[String]) -> CmdResult {
     } else {
         (end as usize).min(tail.len())
     };
-    interp.set_def(
-        variable_name.clone(),
-        String::from_utf8_lossy(&tail[..count]).into_owned(),
-    );
+    interp.set_def(variable_name.clone(), crate::bytes::decode(&tail[..count]));
     Ok(())
 }
 
@@ -515,7 +514,10 @@ fn handle_length(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 3 {
         return err("sub-command LENGTH requires two arguments.");
     }
-    interp.set_def(args[2].clone(), args[1].len().to_string());
+    interp.set_def(
+        args[2].clone(),
+        crate::bytes::encode(&args[1]).len().to_string(),
+    );
     Ok(())
 }
 
@@ -591,7 +593,8 @@ fn handle_strip(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 3 {
         return err("sub-command STRIP requires two arguments.");
     }
-    let bytes = args[1].as_bytes();
+    let encoded = crate::bytes::encode(&args[1]);
+    let bytes = encoded.as_ref();
     let mut start = bytes.len() + 1;
     let mut end = 0usize;
     for (index, &byte) in bytes.iter().enumerate() {
@@ -609,7 +612,7 @@ fn handle_strip(interp: &mut Interp, args: &[String]) -> CmdResult {
     };
     interp.set_def(
         args[2].clone(),
-        String::from_utf8_lossy(&bytes[start..start + length]).into_owned(),
+        crate::bytes::decode(&bytes[start..start + length]),
     );
     Ok(())
 }
@@ -632,7 +635,8 @@ fn handle_repeat(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.set_fatal();
         return Ok(());
     };
-    let value = args[1].as_bytes();
+    let encoded = crate::bytes::encode(&args[1]);
+    let value = encoded.as_ref();
     let result: Vec<u8> = match value.len() {
         0 => Vec::new(),
         1 => vec![value[0]; times as usize],
@@ -644,9 +648,6 @@ fn handle_repeat(interp: &mut Interp, args: &[String]) -> CmdResult {
             result
         }
     };
-    interp.set_def(
-        args[3].clone(),
-        String::from_utf8_lossy(&result).into_owned(),
-    );
+    interp.set_def(args[3].clone(), crate::bytes::decode(&result));
     Ok(())
 }

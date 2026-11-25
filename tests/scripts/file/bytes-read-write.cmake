@@ -1,0 +1,7 @@
+file(READ data/in.txt c)
+file(WRITE out.txt "${c}")
+file(READ out.txt hex HEX)
+file(READ data/in.txt part OFFSET 1 LIMIT 5)
+file(WRITE part.txt "${part}")
+file(READ part.txt parthex HEX)
+message("${hex}|${parthex}")
