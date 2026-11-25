@@ -18,7 +18,7 @@ The configured trees, the CMake self-build and RunCMake were measured at commit 
 
 ### Real-world projects
 
-Beyond those four, about 60 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match:
+Beyond those four, about 60 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
 
 | Group | Projects |
 |---|---|
@@ -30,7 +30,7 @@ Beyond those four, about 60 unmodified open-source projects were configured with
 
 Twelve of the libraries were also run in Ninja Multi-Config, Debug and RelWithDebInfo with shared libraries, and the CodeBlocks generator, comparing installed trees as well. LLVM was compared in ten more configurations: more subprojects (lld, mlir, polly, bolt, flang, lldb, clang-tools-extra), the runtimes (both from the top level and standalone), Debug with assertions and shared libraries, the dylib build, all targets, Ninja Multi-Config, and the nested native tablegen build. Every one of those is identical as well.
 
-The sweeps found and fixed seven bugs, each with a regression test. The few remaining test failures were checked against the Kitware-configured build and are environmental (fixed ports, missing model files, Docker).
+The sweeps found and fixed six bugs, each with a regression test. The only remaining byte differences are outside CMake's control: a Meson subbuild that cpr runs at configure time (timestamps, random directory names), and linker build IDs in libjpeg-turbo's installed executables, which embed the differing install prefix. The few remaining test failures were checked against the Kitware-configured build and are environmental (fixed ports, missing model files, Docker).
 
 About 134,000 lines of Rust. The only dependencies are small crates for hashing, compression, tar, regex and JSON; the CMake language, generator expressions, policies, the target model, link computation and the Ninja generator are all implemented here.
 
