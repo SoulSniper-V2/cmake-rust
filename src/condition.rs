@@ -25,21 +25,19 @@ fn is_keyword(arg: &CArg, keyword: &str) -> bool {
     !arg.quoted && arg.value == keyword
 }
 
-fn get_definition_if_unquoted<'a>(interp: &'a Interp, arg: &CArg) -> Option<&'a str> {
+fn get_definition_if_unquoted(interp: &mut Interp, arg: &CArg) -> Option<String> {
     if arg.quoted {
         None
     } else {
-        interp.get_def(&arg.value)
+        interp.read_definition(&arg.value)
     }
 }
 
-fn get_variable_or_string(interp: &Interp, arg: &CArg) -> String {
-    get_definition_if_unquoted(interp, arg)
-        .map(str::to_owned)
-        .unwrap_or_else(|| arg.value.clone())
+fn get_variable_or_string(interp: &mut Interp, arg: &CArg) -> String {
+    get_definition_if_unquoted(interp, arg).unwrap_or_else(|| arg.value.clone())
 }
 
-fn get_boolean_value(interp: &Interp, arg: &CArg) -> bool {
+fn get_boolean_value(interp: &mut Interp, arg: &CArg) -> bool {
     if util::is_on(&arg.value) {
         return true;
     }
@@ -51,7 +49,7 @@ fn get_boolean_value(interp: &Interp, arg: &CArg) -> bool {
     {
         return number != 0.0;
     }
-    !util::is_off_opt(get_definition_if_unquoted(interp, arg))
+    !util::is_off_opt(get_definition_if_unquoted(interp, arg).as_deref())
 }
 
 /// Evaluates expanded arguments `(value, quoted)`. Returns the result and an
@@ -162,7 +160,16 @@ fn level1(interp: &mut Interp, list: &mut Vec<CArg>, _error: &mut CondError) -> 
             } else if len >= 8 && next.starts_with("CACHE{") && next.ends_with('}') {
                 Some(interp.cache.get(&next[6..len - 1]).is_some())
             } else {
-                Some(interp.is_def_set(&next))
+                let defined = interp.is_def_set(&next);
+                if !defined && interp.ext.variable_watches.contains_key(&next) {
+                    crate::commands::sysinfo::notify_variable(
+                        interp,
+                        &next,
+                        "UNKNOWN_DEFINED_ACCESS",
+                        "",
+                    );
+                }
+                Some(defined)
             }
         } else if is_keyword(current, "TEST") {
             Some(crate::state::has_test(interp, &next))
@@ -227,7 +234,6 @@ fn level2(interp: &mut Interp, list: &mut Vec<CArg>, error: &mut CondError) -> b
         let mut reduced: Option<bool> = None;
         if is_keyword(&op, "MATCHES") {
             let def = get_definition_if_unquoted(interp, &lhs_arg)
-                .map(str::to_owned)
                 .unwrap_or_else(|| lhs_arg.value.clone());
             crate::state::clear_matches(interp);
             let regex = match crate::cmregex::Regex::new(&rhs_arg.value) {
@@ -300,8 +306,8 @@ fn level2(interp: &mut Interp, list: &mut Vec<CArg>, error: &mut CondError) -> b
                     } else if is_keyword(&op, "IN_LIST") {
                         let l = get_variable_or_string(interp, &lhs_arg);
                         let found = interp
-                            .get_def(&rhs_arg.value)
-                            .is_some_and(|list| util::expand_list(list, true).contains(&l));
+                            .read_definition(&rhs_arg.value)
+                            .is_some_and(|list| util::expand_list(&list, true).contains(&l));
                         reduced = Some(found);
                     } else if is_keyword(&op, "PATH_EQUAL") {
                         match interp.policy_status("CMP0139") {
