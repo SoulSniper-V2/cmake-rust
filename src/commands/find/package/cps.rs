@@ -1068,7 +1068,11 @@ impl Package {
             // `cmMakefile::CallRAII` for the file declaring the dependency.
             push_file_frame(interp, file_path);
             let mut nested = self.cps_nested(&dep, required);
-            let found = nested.run(interp, &[]).is_ok() && !nested.file_found.is_empty();
+            // FindPackageDependencies gives the nested search its own
+            // cmExecutionStatus, so its errors do not count as nested
+            // errors of this find_package().
+            let found = interp.with_fresh_status(|interp| nested.run(interp, &[]).is_ok())
+                && !nested.file_found.is_empty();
             interp.backtrace.pop();
             if !found {
                 return err(format!(

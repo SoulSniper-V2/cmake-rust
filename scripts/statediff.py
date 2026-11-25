@@ -72,7 +72,7 @@ def normalizer(build: Path, cmake: Path):
 
 
 def run(cmake: Path, source: Path, build: Path, props: Path, extra: list[str],
-        reconfigure: bool) -> list[str]:
+        reconfigure: bool, generator: str) -> list[str]:
     shutil.rmtree(build, ignore_errors=True)  # always a fresh configure
     log = build.with_suffix(".log")
     dump = build / "statediff-dump.txt"
@@ -80,7 +80,7 @@ def run(cmake: Path, source: Path, build: Path, props: Path, extra: list[str],
         for _ in range(2 if reconfigure else 1):
             dump.unlink(missing_ok=True)
             proc = subprocess.run(
-                [str(cmake), "-S", str(source), "-B", str(build), "-G", "Ninja",
+                [str(cmake), "-S", str(source), "-B", str(build), "-G", generator,
                  f"-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES={DUMP}",
                  f"-DCMAKE_RUST_STATEDIFF_PROPS={props}", *extra],
                 stdout=stream, stderr=subprocess.STDOUT,
@@ -102,6 +102,7 @@ def main() -> int:
     parser.add_argument("--show", type=int, default=40)
     parser.add_argument("--reconfigure", action="store_true",
                         help="configure twice and compare the state of the second run")
+    parser.add_argument("--generator", default="Ninja", help="CMake generator to use")
     parser.add_argument("source", type=Path)
     parser.add_argument("cmake_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -110,9 +111,9 @@ def main() -> int:
     props = work / "props.cmake"
     property_list(args.oracle, props)
     oracle = run(args.oracle, args.source.resolve(), work / "oracle", props, args.cmake_args,
-                 args.reconfigure)
+                 args.reconfigure, args.generator)
     candidate = run(args.candidate, args.source.resolve(), work / "candidate", props,
-                    args.cmake_args, args.reconfigure)
+                    args.cmake_args, args.reconfigure, args.generator)
     diff = [line for line in difflib.unified_diff(oracle, candidate, "oracle", "candidate",
                                                   n=0, lineterm="")
             if not line.startswith(("---", "+++", "@@"))]

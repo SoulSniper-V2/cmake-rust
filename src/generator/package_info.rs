@@ -32,7 +32,7 @@ fn skey(k: &str) -> Vec<u8> {
 }
 
 fn jstr(v: &str) -> Json {
-    Json::Str(v.as_bytes().to_vec())
+    Json::Str(crate::bytes::encode(v).into_owned())
 }
 
 fn jarr<'a>(items: impl Iterator<Item = &'a String>) -> Json {

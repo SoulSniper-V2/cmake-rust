@@ -5159,7 +5159,7 @@ impl<'a> NinjaGenerator<'a> {
             let _ = std::fs::remove_file(&json_file);
             return Ok(());
         }
-        let text = |value: &str| Json::Str(value.as_bytes().to_vec());
+        let text = |value: &str| Json::Str(crate::bytes::encode(value).into_owned());
         let mut out = String::new();
         let mut all_labels = Vec::new();
         let labels = util::expand_list(target_labels.unwrap_or_default(), false);

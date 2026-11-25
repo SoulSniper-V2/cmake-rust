@@ -476,7 +476,7 @@ fn strverscmp(lhs: &str, rhs: &str) -> std::cmp::Ordering {
             }
         }
     }
-    (at(l, i) as i32 - at(r, i) as i32).cmp(&0)
+    (at(l, i) as i8 as i32 - at(r, i) as i8 as i32).cmp(&0)
 }
 
 // ------------------------------------------------------------------
@@ -970,7 +970,7 @@ impl Selector {
                 self.tag(),
                 index,
                 count,
-                count as i64 - 1
+                (count as u64).wrapping_sub(1)
             )));
         }
         Ok(index as usize)

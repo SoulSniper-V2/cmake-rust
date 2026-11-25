@@ -10,7 +10,7 @@ pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
 pub(crate) use compile::{
     BtFrag, compile_definitions, define_items, flag_fragments, include_directories, include_items,
-    interface_values, pch_items, standard_option,
+    include_items_stripped, interface_values, pch_items, standard_option,
 };
 pub(crate) use compile::{FlagCls, classified_flags_for_source};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};

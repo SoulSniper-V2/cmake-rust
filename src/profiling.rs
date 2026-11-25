@@ -108,8 +108,14 @@ pub fn start_entry(category: &str, name: &str, args: impl FnOnce() -> Option<Jso
         }
         let mut object = BTreeMap::new();
         object.insert(b"ph".to_vec(), Json::Str(b"B".to_vec()));
-        object.insert(b"name".to_vec(), Json::Str(name.as_bytes().to_vec()));
-        object.insert(b"cat".to_vec(), Json::Str(category.as_bytes().to_vec()));
+        object.insert(
+            b"name".to_vec(),
+            Json::Str(crate::bytes::encode(name).into_owned()),
+        );
+        object.insert(
+            b"cat".to_vec(),
+            Json::Str(crate::bytes::encode(category).into_owned()),
+        );
         common(&mut object);
         if let Some(args) = args() {
             object.insert(b"args".to_vec(), args);

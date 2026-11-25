@@ -960,7 +960,18 @@ pub(crate) fn include_items(
     config: &str,
     lang: &str,
 ) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
-    include_directories(ctx, target, config, lang, false)
+    include_directories_impl(ctx, target, config, lang, false, true)
+}
+
+/// `cmLocalGenerator::GetIncludeDirectories` with implicit directories
+/// stripped, as used directly by extra generators.
+pub(crate) fn include_items_stripped(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
+    include_directories_impl(ctx, target, config, lang, false, false)
 }
 
 /// `cmLocalGenerator::GetIncludeDirectoriesImplicit` without
@@ -971,6 +982,17 @@ pub(crate) fn include_directories(
     config: &str,
     lang: &str,
     append_implicit: bool,
+) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
+    include_directories_impl(ctx, target, config, lang, append_implicit, true)
+}
+
+fn include_directories_impl(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+    append_implicit: bool,
+    reemit_user_implicit: bool,
 ) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
     let inputs = Flags {
         ctx,
@@ -1087,11 +1109,14 @@ pub(crate) fn include_directories(
     for dir in &standard {
         emit((dir.clone(), false, Vec::new(), false), &mut result);
     }
-    // Re-emit user-requested dirs that are implicit (stripImplicitDirs path
-    // appends implicitDirs only on demand, which the codemodel does not use).
-    for entry in &users {
-        if implicit.contains(&real_path(&entry.0)) {
-            emit(entry.clone(), &mut result);
+    // Re-emit user-requested dirs that are implicit when the caller wants
+    // the unstripped codemodel view.  GetIncludeDirectories itself strips
+    // these entries unless appendAllImplicitDirs is requested.
+    if reemit_user_implicit {
+        for entry in &users {
+            if implicit.contains(&real_path(&entry.0)) {
+                emit(entry.clone(), &mut result);
+            }
         }
     }
     if append_implicit {

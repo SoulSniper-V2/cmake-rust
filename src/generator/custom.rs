@@ -8,9 +8,7 @@
 use std::path::Path;
 
 use super::ctx::GenCtx;
-use super::target::{
-    ArtifactType, force_to_relative_path, full_path, source_prop, target_in_directory,
-};
+use super::target::{ArtifactType, force_to_relative_path, full_path, target_in_directory};
 use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, NINJA_UNIX, escape_for_shell};
 use crate::state::TargetKind;
 use crate::util::{
@@ -516,19 +514,38 @@ fn resolve_dependency<'a>(
     // cmMakefile::GetSource + cmSourceFile::ResolveFullPath.
     let source = collapse_full_path(dependency, &directory.source_dir);
     let binary = collapse_full_path(dependency, &directory.binary_dir);
-    if crate::commands::target::find_source_index(ctx.interp, makefile, dependency).is_some() {
-        let generated =
-            |path: &str| is_on_opt(source_prop(ctx, makefile, path, "GENERATED").as_deref());
-        // cmSourceFile::FindFullPath: generated files are located in the
-        // binary directory without checking the disk.
-        if generated(&binary) || generated(dependency) {
-            return (Some(binary), None);
+    if let Some(index) =
+        crate::commands::target::find_source_index(ctx.interp, makefile, dependency)
+    {
+        let sf = &ctx.interp.ext.sources[&makefile][index];
+        let location = &sf.location;
+        let lpath = location.path();
+        let generated = sf.generated || is_on_opt(sf.props.get("GENERATED"));
+        if generated {
+            // cmSourceFile::FindFullPath: generated files are located in the
+            // binary directory without checking the disk.
+            let mut resolved = location.clone();
+            if resolved.ambiguous_directory {
+                resolved.directory = collapse_full_path(&resolved.directory, &directory.binary_dir);
+                resolved.ambiguous_directory = false;
+            }
+            return (Some(resolved.path()), None);
         }
-        if Path::new(&source).exists() {
-            return (Some(source), None);
-        }
-        if Path::new(&binary).exists() {
-            return (Some(binary), None);
+        // cmSourceFile::FindFullPath: non-generated files are sought in the
+        // source directory and then in the binary directory for ambiguous
+        // relative locations.  Crucially, resolve the source object matched
+        // by this dependency rather than independently preferring a generated
+        // output that merely has the same relative name.
+        let directories: &[&str] = if location.ambiguous_directory {
+            &[directory.source_dir.as_str(), directory.binary_dir.as_str()]
+        } else {
+            &[""]
+        };
+        for dir in directories {
+            let full = collapse_full_path(&lpath, dir);
+            if ctx.interp.ext.generated_sources.contains(&full) || Path::new(&full).exists() {
+                return (Some(full), None);
+            }
         }
     }
     // Relative to the source directory in which it was given, else assume it

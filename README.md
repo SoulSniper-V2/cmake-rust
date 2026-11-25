@@ -16,7 +16,24 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 
 The configured trees, the CMake self-build and RunCMake were measured at commit `b24ded6`; `check-clang` was last run at `a609c6b`, whose LLVM build tree is byte-identical to `b24ded6`'s. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
 
-Smaller real-world projects (googletest, freetype2, xz) also configure to identical trees and interpreter state, and build cleanly.
+### Real-world projects
+
+Beyond those four, about 70 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
+
+| Group | Projects |
+|---|---|
+| Libraries | fmt, spdlog, nlohmann/json, abseil, protobuf, libpng, curl, SDL2, glfw, Catch2, google benchmark, yaml-cpp, tinyxml2, libjpeg-turbo, brotli, zstd, lz4, libuv, pugixml, cJSON, flatbuffers, OpenCV (core, imgproc), googletest, freetype2, xz |
+| More libraries | libgit2, libarchive, expat, libxml2, mbedtls, wolfssl, libssh2, jsoncpp, eigen, gflags, glog, leveldb, raylib, assimp, box2d, bullet3, llama.cpp, whisper.cpp, libwebp, openjpeg, harfbuzz, double-conversion, snappy, nghttp2, libevent, SQLiteCpp, cmocka, Unity, CUDA deviceQuery |
+| Fetch at configure time | CLI11, cpr, magic_enum, a CPM.cmake project, an ExternalProject superbuild |
+| Install, then `find_package` from a consumer | fmt, spdlog, yaml-cpp, glfw, nlohmann/json, libjpeg-turbo: the installed trees match too |
+| Python extensions, KDE, presets | pybind11, nanobind, extra-cmake-modules (its 88 tests give identical per-test results), Catch2 and microsoft/GSL through their CMake presets (`--preset`, `--build --preset`, `ctest --preset`) |
+| Configure-only, large | grpc, VTK (minimal modules), Kokkos |
+| Toolchain file (`CMAKE_SYSROOT`, `CMAKE_FIND_ROOT_PATH` modes) | double-conversion, jsoncpp, snappy |
+| Host packages via Find modules | SDL2, TBB, GTest, Vulkan, BLAS, OpenBLAS, LAPACK, PkgConfig, Threads, OpenSSL, ZLIB, CURL, Python3 |
+
+Twelve of the libraries were also run in Ninja Multi-Config, Debug and RelWithDebInfo with shared libraries, and the CodeBlocks generator, comparing installed trees as well. LLVM was compared in ten more configurations: more subprojects (lld, mlir, polly, bolt, flang, lldb, clang-tools-extra), the runtimes (both from the top level and standalone), Debug with assertions and shared libraries, the dylib build, all targets, Ninja Multi-Config, and the nested native tablegen build. Every one of those is identical as well.
+
+The sweeps found and fixed six bugs, each with a regression test. The only remaining byte differences are outside CMake's control: a Meson subbuild that cpr runs at configure time (timestamps, random directory names), and linker build IDs in libjpeg-turbo's installed executables, which embed the differing install prefix. The few remaining test failures were checked against the Kitware-configured build and are environmental (fixed ports, missing model files, Docker).
 
 About 134,000 lines of Rust. The only dependencies are small crates for hashing, compression, tar, regex and JSON; the CMake language, generator expressions, policies, the target model, link computation and the Ninja generator are all implemented here.
 

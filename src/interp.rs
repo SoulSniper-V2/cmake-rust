@@ -270,6 +270,11 @@ pub struct Interp {
     pub commands: HashMap<String, CommandDef>,
     pub global_props: Props,
     pub fatal: bool,
+    /// `cmExecutionStatus::SetNestedError` for the innermost command being
+    /// executed: a FATAL_ERROR or INTERNAL_ERROR diagnostic was issued while
+    /// it ran, so cmMakefile::ExecuteCommand treats it as failed and does not
+    /// add the command's own status error.
+    nested_error: bool,
     pub error: bool,
     pub exit_code: Option<i32>,
     pub cmake_root: String,
@@ -362,6 +367,7 @@ impl Interp {
             commands: HashMap::new(),
             global_props: Props::default(),
             fatal: false,
+            nested_error: false,
             error: false,
             exit_code: None,
             cmake_root: cmake_root.to_owned(),
@@ -1139,6 +1145,9 @@ impl Interp {
     }
 
     pub fn issue_at(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
+        if matches!(kind, MessageType::FatalError | MessageType::InternalError) {
+            self.nested_error = true;
+        }
         // `cmake::SetCacheArgs` syncs these messenger flags on every cache
         // write, so read the cache entries live here.
         let suppress_dev = self
@@ -1193,6 +1202,28 @@ impl Interp {
     }
 
     /// Displays a diagnostic whose category was already selected by the caller.
+    /// Run `f` under its own `cmExecutionStatus` pushed by
+    /// `cmMakefile::CallRAII`: nested errors it raises stay out of the
+    /// current command's status.
+    pub fn with_fresh_status<R>(&mut self, f: impl FnOnce(&mut Interp) -> R) -> R {
+        let saved = std::mem::replace(&mut self.nested_error, false);
+        let result = f(self);
+        self.nested_error = saved;
+        result
+    }
+
+    /// `cmMessenger::IssueMessage` (or `cmake::IssueMessage`) with an
+    /// explicit backtrace: like [`Self::issue_at`] but without marking the
+    /// current command's status with a nested error.
+    pub fn issue_at_messenger(&mut self, kind: MessageType, text: &str, backtrace: &[Frame]) {
+        let saved = self.nested_error;
+        self.issue_at(kind, text, backtrace);
+        self.nested_error = saved;
+    }
+
+    /// `cmMessenger::DisplayMessage` as message() uses it: it bypasses
+    /// cmMakefile::IssueMessage, so it never marks the command's status
+    /// with a nested error (SEND_ERROR keeps a -P script running).
     pub fn issue_at_unsuppressed(&mut self, kind: MessageType, text: &str) {
         self.sarif_log.message(kind, text, &self.backtrace);
         let rendered = messages::render(kind, text, &self.backtrace, self.top_source());
@@ -1385,8 +1416,13 @@ impl Interp {
             bytes
         };
         let rc_path: Rc<str> = Rc::from(path);
-        let parsed = self.parse_bytes(rc_path, bytes)?;
-        PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
+        let (parsed, diagnosed) = self.parse_bytes_reporting(rc_path, bytes);
+        let parsed = parsed?;
+        // Kitware re-parses on every read, so a file whose parse issued
+        // diagnostics must issue them again: cache only clean parses.
+        if !diagnosed {
+            PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
+        }
         Some(parsed)
     }
 
@@ -1395,6 +1431,16 @@ impl Interp {
     }
 
     fn parse_bytes(&mut self, path: Rc<str>, bytes: &[u8]) -> Option<Rc<ParsedFile>> {
+        self.parse_bytes_reporting(path, bytes).0
+    }
+
+    /// Parses and issues the parser's diagnostics; also reports whether
+    /// there were any.
+    fn parse_bytes_reporting(
+        &mut self,
+        path: Rc<str>,
+        bytes: &[u8],
+    ) -> (Option<Rc<ParsedFile>>, bool) {
         let (commands, diags) = lexer::parse_bytes(&path, bytes);
         for diag in &diags {
             let mut backtrace = self.backtrace.clone();
@@ -1409,12 +1455,19 @@ impl Interp {
             } else {
                 MessageType::FatalError
             };
-            self.issue_at(kind, &diag.message, &backtrace);
+            // cmListFileParser::IssueError goes through cmMessenger, not
+            // cmMakefile::IssueMessage: no nested error for the command
+            // that read the file (include() still adds its own error).
+            self.issue_at_messenger(kind, &diag.message, &backtrace);
             if diag.fatal {
                 self.set_fatal();
             }
         }
-        commands.map(|commands| Rc::new(ParsedFile::new(path, commands)))
+        let diagnosed = !diags.is_empty();
+        (
+            commands.map(|commands| Rc::new(ParsedFile::new(path, commands))),
+            diagnosed,
+        )
     }
 
     fn push_list_file_vars(&mut self, path: &str) -> (Option<String>, String) {
@@ -1481,15 +1534,26 @@ impl Interp {
     }
 
     /// Pops policy frames down to `depth`, diagnosing unbalanced PUSH.
-    fn end_policy_scope(&mut self, depth: usize) {
-        let current = self.mf().policies.len();
-        if current > depth + 1 && !self.fatal {
-            self.issue(
-                MessageType::FatalError,
-                "cmake_policy PUSH without matching POP",
-            );
+    /// Start of a `cmStateSnapshot` whose PolicyScope is the current
+    /// policy stack top: cmake_policy(POP) cannot reach past it.
+    fn enter_policy_snapshot(&mut self) {
+        let depth = self.mf().policies.len();
+        self.policy_barriers.push((self.mf_index(), depth));
+    }
+
+    /// `cmMakefile::PopSnapshot(reportError)`: reject policy scopes still
+    /// open in the closing snapshot, then end it.
+    fn exit_policy_snapshot(&mut self, report_error: bool) {
+        let (_, barrier) = self.policy_barriers.pop().expect("policy snapshot barrier");
+        if self.mf().policies.len() > barrier {
+            if report_error {
+                self.issue(
+                    MessageType::FatalError,
+                    "cmake_policy PUSH without matching POP",
+                );
+            }
+            self.mf_mut().policies.truncate(barrier);
         }
-        self.mf_mut().policies.truncate(depth);
     }
 
     pub fn project_list_file(&self, source: &str) -> String {
@@ -1549,6 +1613,8 @@ impl Interp {
             name: None,
             deferred: false,
         });
+        // ListFileScope: an inline list-file snapshot (a new policy scope).
+        self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(path);
         self.debug_begin_parse(path);
         let parsed = self.parse_file(path);
@@ -1562,6 +1628,9 @@ impl Interp {
             self.ext.file_locks.files.pop();
         }
         self.pop_list_file_vars(saved);
+        // ~ListFileScope: PopSnapshot, quiet after a fatal error.
+        let report = !self.fatal;
+        self.exit_policy_snapshot(report);
         self.backtrace.pop();
         ok
     }
@@ -1575,6 +1644,8 @@ impl Interp {
             name: None,
             deferred: false,
         });
+        // ListFileScope, as for ReadListFile.
+        self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(&path);
         let parsed = self.parse_text(Rc::from(path.as_str()), code);
         let ok = parsed.is_some();
@@ -1583,6 +1654,8 @@ impl Interp {
             self.run_file_body(&parsed);
         }
         self.pop_list_file_vars(saved);
+        let report = !self.fatal;
+        self.exit_policy_snapshot(report);
         self.backtrace.pop();
         ok
     }
@@ -1591,7 +1664,11 @@ impl Interp {
         self.loop_depth.push(0);
         let ctl = self.run_range(parsed, 0, parsed.commands.len(), None);
         self.loop_depth.pop();
-        if let Ctl::Return(Some(vars)) = ctl {
+        // cmMakefile::RunListFile stops on a fatal error before it handles
+        // a return(PROPAGATE).
+        if let Ctl::Return(Some(vars)) = ctl
+            && !self.fatal
+        {
             self.propagate(&vars);
         }
     }
@@ -1672,6 +1749,9 @@ impl Interp {
             // Flow commands run their own blocks here but are traced like
             // any command invocation (cmMakefile::ExecuteCommand).
             self.announce_flow_command(file, command, subst);
+            if self.fatal {
+                return Ctl::Normal;
+            }
             let ctl = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(file, index, subst);
@@ -1760,20 +1840,30 @@ impl Interp {
             use crate::commands::string::json::Json;
             let mut val: std::collections::BTreeMap<Vec<u8>, Json> =
                 std::collections::BTreeMap::new();
-            val.insert(b"file".to_vec(), Json::Str(full_path.as_bytes().to_vec()));
+            val.insert(
+                b"file".to_vec(),
+                Json::Str(crate::bytes::encode(full_path).into_owned()),
+            );
             val.insert(b"line".to_vec(), Json::Int(command.line as i64));
             if command.line != command.line_end {
                 val.insert(b"line_end".to_vec(), Json::Int(command.line_end as i64));
             }
             if let Some(id) = &defer_id {
-                val.insert(b"defer".to_vec(), Json::Str(id.as_bytes().to_vec()));
+                val.insert(
+                    b"defer".to_vec(),
+                    Json::Str(crate::bytes::encode(id).into_owned()),
+                );
             }
-            val.insert(b"cmd".to_vec(), Json::Str(command.name.as_bytes().to_vec()));
+            val.insert(
+                b"cmd".to_vec(),
+                Json::Str(crate::bytes::encode(&command.name).into_owned()),
+            );
             val.insert(
                 b"args".to_vec(),
                 Json::Array(
+                    // Raw value bytes: jsoncpp decodes them leniently.
                     args.iter()
-                        .map(|a| Json::Str(a.as_bytes().to_vec()))
+                        .map(|a| Json::Str(crate::bytes::encode(a).into_owned()))
                         .collect(),
                 ),
             );
@@ -1920,6 +2010,44 @@ impl Interp {
         if self.fatal { None } else { Some(out) }
     }
 
+    /// Expansion for `if()`/`while()`/`elseif()` conditions.  Kitware expands
+    /// condition arguments inside the condition evaluator, so even when
+    /// expansion reports a fatal error the condition is still evaluated;
+    /// each argument individually keeps its unexpanded original text on
+    /// failure (see cmMakefile::ExpandVariablesInString).  The fatal state
+    /// only stops execution after the command completes.
+    pub fn expand_arguments_lenient(
+        &mut self,
+        file: &str,
+        args: &[Arg],
+        subst: Option<&MacroSubst>,
+    ) -> Vec<(String, bool)> {
+        let fatal = self.fatal;
+        self.fatal = false;
+        let mut out = Vec::with_capacity(args.len());
+        for arg in args {
+            if arg.delim == Delim::Bracket {
+                out.push((arg.value.clone(), true));
+                continue;
+            }
+            let raw = match subst {
+                Some(subst) => subst.apply(&arg.value),
+                None => arg.value.clone(),
+            };
+            let value = self.expand_variables(&raw, Some((file, arg.line)), false, false);
+            match arg.delim {
+                Delim::Quoted => out.push((value, true)),
+                _ => {
+                    for item in util::expand_list(&value, false) {
+                        out.push((item, false));
+                    }
+                }
+            }
+        }
+        self.fatal |= fatal;
+        out
+    }
+
     /// Executes a single non-flow command. Returns (succeeded, control).
     pub fn execute(
         &mut self,
@@ -1962,12 +2090,14 @@ impl Interp {
                     .collect();
                 object.insert(
                     b"functionArgs".to_vec(),
-                    Json::Str(values.join(" ").into_bytes()),
+                    Json::Str(crate::bytes::encode(&values.join(" ")).into_owned()),
                 );
             }
             object.insert(
                 b"location".to_vec(),
-                Json::Str(format!("{}:{}", file.path, command.line).into_bytes()),
+                Json::Str(
+                    crate::bytes::encode(&format!("{}:{}", file.path, command.line)).into_owned(),
+                ),
             );
             Some(Json::Object(object))
         })
@@ -2000,10 +2130,15 @@ impl Interp {
         let limit = self.recursion_depth_limit();
         if depth > limit {
             self.recursion_depth -= 1;
+            // Issued inside the failing command's own CallScope, so the
+            // nested error belongs to that (discarded) status, not to the
+            // enclosing command.
+            let saved = self.nested_error;
             self.issue(
                 MessageType::FatalError,
                 &format!("Maximum recursion depth of {limit} exceeded"),
             );
+            self.nested_error = saved;
             self.set_fatal();
             return (false, Ctl::Normal);
         }
@@ -2035,7 +2170,11 @@ impl Interp {
         }
         match def {
             CommandDef::Flow => self.run_flow_command(file, command, subst),
-            CommandDef::Raw(function) => function(self, file, command, subst),
+            CommandDef::Raw(function) => {
+                let saved = std::mem::replace(&mut self.nested_error, false);
+                let (ok, ctl) = function(self, file, command, subst);
+                self.finish_command(saved, ok, ctl)
+            }
             CommandDef::Unexpected(message) => {
                 self.issue(
                     MessageType::FatalError,
@@ -2049,19 +2188,26 @@ impl Interp {
                     return (true, Ctl::Normal);
                 };
                 let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
+                let saved = std::mem::replace(&mut self.nested_error, false);
                 match function(self, &values) {
                     Ok(()) => {
-                        if std::mem::take(&mut self.request_return) {
-                            (true, Ctl::Return(None))
+                        let ctl = if std::mem::take(&mut self.request_return) {
+                            Ctl::Return(None)
                         } else {
-                            (true, Ctl::Normal)
-                        }
+                            Ctl::Normal
+                        };
+                        self.finish_command(saved, true, ctl)
                     }
                     Err(error) => {
-                        if let CmdErr::Error(message) = error {
+                        // The status error is reported only when the
+                        // command did not already issue a fatal error.
+                        if let CmdErr::Error(message) = error
+                            && !self.nested_error
+                        {
                             let text = format!("{} {}", command.name, message);
                             self.issue(MessageType::FatalError, &text);
                         }
+                        self.nested_error = saved;
                         self.command_failed();
                         (false, Ctl::Normal)
                     }
@@ -2072,9 +2218,24 @@ impl Interp {
                     return (true, Ctl::Normal);
                 };
                 let values: Vec<String> = args.into_iter().map(|(value, _)| value).collect();
-                self.invoke_callable(&callable, &values, &command.name)
+                let saved = std::mem::replace(&mut self.nested_error, false);
+                let (ok, ctl) = self.invoke_callable(&callable, &values, &command.name);
+                self.finish_command(saved, ok, ctl)
             }
         }
+    }
+
+    /// The end of cmMakefile::ExecuteCommand for a command that returned
+    /// `ok`: a nested fatal error marks it failed (and, outside project
+    /// mode, stops processing per cmake::CommandFailureAction). Restores
+    /// the enclosing command's nested-error state.
+    fn finish_command(&mut self, saved: bool, ok: bool, ctl: Ctl) -> (bool, Ctl) {
+        let nested = std::mem::replace(&mut self.nested_error, saved);
+        if ok && nested {
+            self.command_failed();
+            return (false, ctl);
+        }
+        (ok, ctl)
     }
 
     pub fn set_fatal_if_script(&mut self) {
@@ -2133,10 +2294,14 @@ impl Interp {
                     .argv
                     .push((format!("${{ARGV{index}}}"), value.clone()));
             }
+            // PushMacroScope: a new snapshot (and so policy scope), then a
+            // weak policy entry.
+            self.enter_policy_snapshot();
             self.push_policy(true, callable.policies.clone());
-            let depth = self.mf().policies.len();
             let ctl = self.run_body(callable, Some(&subst));
-            self.end_policy_scope(depth - 1);
+            // PopMacroScope: PopPolicy, then PopSnapshot.
+            self.pop_policy();
+            self.exit_policy_snapshot(!matches!(ctl, BodyResult::Error));
             self.ext.execution_files.pop();
             match ctl {
                 BodyResult::Error => (false, Ctl::Normal),
@@ -2144,8 +2309,10 @@ impl Interp {
             }
         } else {
             self.push_scope();
+            // PushFunctionScope: a new snapshot (and so policy scope), then
+            // a weak policy entry.
+            self.enter_policy_snapshot();
             self.push_policy(true, callable.policies.clone());
-            let depth = self.mf().policies.len();
             self.set_def("ARGC", args.len().to_string());
             for (index, value) in args.iter().enumerate() {
                 self.set_def(format!("ARGV{index}"), value.clone());
@@ -2177,7 +2344,10 @@ impl Interp {
                 let vars = vars.clone();
                 self.propagate(&vars);
             }
-            self.end_policy_scope(depth - 1);
+            // PopFunctionScope: PopPolicy, then PopSnapshot (quiet when a
+            // body command failed).
+            self.pop_policy();
+            self.exit_policy_snapshot(!matches!(result, BodyResult::Error));
             self.pop_scope();
             self.ext.execution_files.pop();
             match result {
@@ -2204,6 +2374,22 @@ impl Interp {
         {
             return;
         }
+        // cmMakefile::ExecuteCommand checks the recursion depth for the
+        // flow command itself (its body is replayed one level up, outside
+        // its CallScope).
+        let limit = self.recursion_depth_limit();
+        if self.recursion_depth + 1 + self.recursion_depth_base > limit {
+            self.backtrace.push(self.frame_for(file, command));
+            let saved = self.nested_error;
+            self.issue(
+                MessageType::FatalError,
+                &format!("Maximum recursion depth of {limit} exceeded"),
+            );
+            self.nested_error = saved;
+            self.backtrace.pop();
+            self.set_fatal();
+            return;
+        }
         if self.trace.is_some() {
             let depth = self.recursion_depth + 1;
             self.print_command_trace(file, command, subst, depth);
@@ -2224,6 +2410,9 @@ impl Interp {
             let command = &file.commands[index];
             let jumps = &file.jumps[index];
             self.announce_flow_command(&file, command, subst);
+            if self.fatal {
+                return BodyResult::Error;
+            }
             let (ok, ctl) = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(&file, index, subst);
@@ -2606,9 +2795,7 @@ impl Interp {
         subst: Option<&MacroSubst>,
         name: &str,
     ) -> bool {
-        let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
-            return false;
-        };
+        let args = self.expand_arguments_lenient(&file.path, &command.args, subst);
         let (result, error) = crate::condition::evaluate(self, &args);
         if let Some((kind, message)) = error {
             // `cmIfCommand` prepends "if " to the condition error;
@@ -2795,15 +2982,17 @@ impl Interp {
         // `cmWhileFunctionBlocker::Replay`: the condition is re-expanded and
         // re-evaluated every iteration; the last evaluation's error is
         // enforced after the loop per CMP0130.
-        let mut last_args: Vec<(String, bool)> = Vec::new();
-        let mut last_error: Option<(MessageType, String)> = None;
+        // Every loop iteration assigns both before any break, so the
+        // post-loop reads always see the final evaluation.
+        let mut last_args: Vec<(String, bool)>;
+        let mut last_error: Option<(MessageType, String)>;
         let mut completed = false;
         loop {
+            // The condition is expanded with the makefile's own backtrace
+            // (the blocker replays before endwhile's context is pushed);
+            // only the condition evaluator gets the while() context.
+            let args = self.expand_arguments_lenient(&file.path, &command.args, subst);
             self.backtrace.push(self.frame_for(file, command));
-            let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
-                self.backtrace.pop();
-                break;
-            };
             last_args = args.clone();
             let (condition, error) = crate::condition::evaluate(self, &args);
             last_error = error;
@@ -2914,12 +3103,16 @@ impl Interp {
         drop(dbg);
         // `cmBlockFunctionBlocker`: `endblock` takes no arguments.
         self.warn_end_args(file, command, end, true, false);
-        let policy_depth = self.mf().policies.len();
-        if options.variables {
-            self.push_scope();
-        }
+        // `BlockScopePushPop`: the policy entry is pushed before the
+        // variable scope, whose snapshot then starts a new policy scope
+        // (cmake_policy(POP) cannot reach past it).
         if options.policies {
             self.push_policy(false, PolicyMap::default());
+        }
+        if options.variables {
+            self.push_scope();
+            let depth = self.mf().policies.len();
+            self.policy_barriers.push((self.mf_index(), depth));
         }
         let ctl = self.run_range(file, index + 1, end, subst);
         // `return()` inside a block propagates outward; block PROPAGATE
@@ -2938,10 +3131,21 @@ impl Interp {
                     self.propagate(&vars);
                 }
             }
+            // cmMakefile::PopScope -> PopSnapshot: reject policy scopes
+            // still open inside the variable scope.
+            let (_, barrier) = self.policy_barriers.pop().expect("block policy barrier");
+            if self.mf().policies.len() > barrier {
+                self.issue(
+                    MessageType::FatalError,
+                    "cmake_policy PUSH without matching POP",
+                );
+                self.mf_mut().policies.truncate(barrier);
+            }
             self.pop_scope();
         }
         if options.policies {
-            self.end_policy_scope(policy_depth);
+            // ~PolicyPushPop: a single cmMakefile::PopPolicy.
+            self.pop_policy();
         }
         (true, ctl)
     }
@@ -3039,9 +3243,26 @@ impl Interp {
                                     value
                                 }
                             }
-                            b'E' => std::env::var_os(crate::bytes::encode_os(&lookup))
-                                .map(|value| crate::bytes::decode_os(&value)),
-                            _ => self.cache.get(&lookup).map(|entry| entry.value.clone()),
+                            b'E' => {
+                                let value = std::env::var_os(crate::bytes::encode_os(&lookup))
+                                    .map(|value| crate::bytes::decode_os(&value));
+                                // ExpandVariablesInStringImpl warns for any
+                                // missing value, whatever its domain.
+                                if value.is_none() {
+                                    let file = location.map(|(file, _)| file);
+                                    self.maybe_warn_uninitialized(&lookup, file);
+                                }
+                                value
+                            }
+                            _ => {
+                                let value =
+                                    self.cache.get(&lookup).map(|entry| entry.value.clone());
+                                if value.is_none() {
+                                    let file = location.map(|(file, _)| file);
+                                    self.maybe_warn_uninitialized(&lookup, file);
+                                }
+                                value
+                            }
                         };
                         let value = value.unwrap_or_default();
                         let value = if escape_quotes {

@@ -2,3 +2,4 @@
 /.upstream/
 /.build/
 /target/
+__pycache__/
