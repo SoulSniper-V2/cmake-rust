@@ -1923,7 +1923,7 @@ impl Interp {
     /// Expansion for `if()`/`while()`/`elseif()` conditions.  Kitware expands
     /// condition arguments inside the condition evaluator, so even when
     /// expansion reports a fatal error the condition is still evaluated;
-    //  each argument individually keeps its unexpanded original text on
+    /// each argument individually keeps its unexpanded original text on
     /// failure (see cmMakefile::ExpandVariablesInString).  The fatal state
     /// only stops execution after the command completes.
     pub fn expand_arguments_lenient(
@@ -1954,9 +1954,7 @@ impl Interp {
                 }
             }
         }
-        let failed = self.fatal;
-        self.fatal = failed || fatal;
-        let _ = failed;
+        self.fatal |= fatal;
         out
     }
 
@@ -2839,8 +2837,11 @@ impl Interp {
         let mut last_error: Option<(MessageType, String)>;
         let mut completed = false;
         loop {
-            self.backtrace.push(self.frame_for(file, command));
+            // The condition is expanded with the makefile's own backtrace
+            // (the blocker replays before endwhile's context is pushed);
+            // only the condition evaluator gets the while() context.
             let args = self.expand_arguments_lenient(&file.path, &command.args, subst);
+            self.backtrace.push(self.frame_for(file, command));
             last_args = args.clone();
             let (condition, error) = crate::condition::evaluate(self, &args);
             last_error = error;
