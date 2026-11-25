@@ -1416,8 +1416,13 @@ impl Interp {
             bytes
         };
         let rc_path: Rc<str> = Rc::from(path);
-        let parsed = self.parse_bytes(rc_path, bytes)?;
-        PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
+        let (parsed, diagnosed) = self.parse_bytes_reporting(rc_path, bytes);
+        let parsed = parsed?;
+        // Kitware re-parses on every read, so a file whose parse issued
+        // diagnostics must issue them again: cache only clean parses.
+        if !diagnosed {
+            PARSE_CACHE.with(|cache| cache.borrow_mut().insert(key, parsed.clone()));
+        }
         Some(parsed)
     }
 
@@ -1426,6 +1431,16 @@ impl Interp {
     }
 
     fn parse_bytes(&mut self, path: Rc<str>, bytes: &[u8]) -> Option<Rc<ParsedFile>> {
+        self.parse_bytes_reporting(path, bytes).0
+    }
+
+    /// Parses and issues the parser's diagnostics; also reports whether
+    /// there were any.
+    fn parse_bytes_reporting(
+        &mut self,
+        path: Rc<str>,
+        bytes: &[u8],
+    ) -> (Option<Rc<ParsedFile>>, bool) {
         let (commands, diags) = lexer::parse_bytes(&path, bytes);
         for diag in &diags {
             let mut backtrace = self.backtrace.clone();
@@ -1448,7 +1463,11 @@ impl Interp {
                 self.set_fatal();
             }
         }
-        commands.map(|commands| Rc::new(ParsedFile::new(path, commands)))
+        let diagnosed = !diags.is_empty();
+        (
+            commands.map(|commands| Rc::new(ParsedFile::new(path, commands))),
+            diagnosed,
+        )
     }
 
     fn push_list_file_vars(&mut self, path: &str) -> (Option<String>, String) {
@@ -1821,20 +1840,30 @@ impl Interp {
             use crate::commands::string::json::Json;
             let mut val: std::collections::BTreeMap<Vec<u8>, Json> =
                 std::collections::BTreeMap::new();
-            val.insert(b"file".to_vec(), Json::Str(full_path.as_bytes().to_vec()));
+            val.insert(
+                b"file".to_vec(),
+                Json::Str(crate::bytes::encode(full_path).into_owned()),
+            );
             val.insert(b"line".to_vec(), Json::Int(command.line as i64));
             if command.line != command.line_end {
                 val.insert(b"line_end".to_vec(), Json::Int(command.line_end as i64));
             }
             if let Some(id) = &defer_id {
-                val.insert(b"defer".to_vec(), Json::Str(id.as_bytes().to_vec()));
+                val.insert(
+                    b"defer".to_vec(),
+                    Json::Str(crate::bytes::encode(id).into_owned()),
+                );
             }
-            val.insert(b"cmd".to_vec(), Json::Str(command.name.as_bytes().to_vec()));
+            val.insert(
+                b"cmd".to_vec(),
+                Json::Str(crate::bytes::encode(&command.name).into_owned()),
+            );
             val.insert(
                 b"args".to_vec(),
                 Json::Array(
+                    // Raw value bytes: jsoncpp decodes them leniently.
                     args.iter()
-                        .map(|a| Json::Str(a.as_bytes().to_vec()))
+                        .map(|a| Json::Str(crate::bytes::encode(a).into_owned()))
                         .collect(),
                 ),
             );
@@ -2061,12 +2090,14 @@ impl Interp {
                     .collect();
                 object.insert(
                     b"functionArgs".to_vec(),
-                    Json::Str(values.join(" ").into_bytes()),
+                    Json::Str(crate::bytes::encode(&values.join(" ")).into_owned()),
                 );
             }
             object.insert(
                 b"location".to_vec(),
-                Json::Str(format!("{}:{}", file.path, command.line).into_bytes()),
+                Json::Str(
+                    crate::bytes::encode(&format!("{}:{}", file.path, command.line)).into_owned(),
+                ),
             );
             Some(Json::Object(object))
         })

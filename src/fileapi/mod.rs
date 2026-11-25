@@ -17,7 +17,7 @@ mod codemodel;
 // Json::Value construction helpers
 
 pub(crate) fn jstr(s: impl AsRef<str>) -> Json {
-    Json::Str(s.as_ref().as_bytes().to_vec())
+    Json::Str(crate::bytes::encode(s.as_ref()).into_owned())
 }
 
 pub(crate) fn jobj() -> Json {

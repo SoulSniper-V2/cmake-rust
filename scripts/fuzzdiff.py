@@ -17,6 +17,7 @@ import argparse
 import concurrent.futures
 import difflib
 import json
+import os
 import re
 import random
 import shutil
@@ -49,6 +50,18 @@ def value_pool(rng):
         "1.5", "1e3", ".5", "5.", "1.0.2", "v1.2.3",
     ]
 
+KNOWN_POLICIES = [
+    "CMP0002", "CMP0003", "CMP0004", "CMP0005", "CMP0006", "CMP0011", "CMP0012",
+    "CMP0021", "CMP0022", "CMP0037", "CMP0041", "CMP0043", "CMP0045", "CMP0046",
+    "CMP0048", "CMP0049", "CMP0053", "CMP0054", "CMP0055", "CMP0057", "CMP0059",
+    "CMP0064", "CMP0065", "CMP0071", "CMP0074", "CMP0077", "CMP0079", "CMP0081",
+    "CMP0087", "CMP0110", "CMP0115", "CMP0116", "CMP0121", "CMP0126", "CMP0128",
+    "CMP0130", "CMP0132", "CMP0135", "CMP0139", "CMP0141", "CMP0144", "CMP0147",
+    "CMP0148", "CMP0149", "CMP0153", "CMP0155", "CMP0159", "CMP0162", "CMP0164",
+    "CMP0165", "CMP0167", "CMP0168", "CMP0169", "CMP0170", "CMP0171", "CMP0174",
+    "CMP0175", "CMP0176", "CMP0177", "CMP0178", "CMP0179", "CMP0181", "CMP0182",
+]
+
 def esc_quote(v):
     return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
@@ -76,6 +89,7 @@ class ScriptGen:
         self.lines = []
         self.depth = 0
         self.protected = set()
+        self.include_files = {}
 
     def v(self):
         return self.rng.choice(self.pool)
@@ -477,9 +491,122 @@ class ScriptGen:
             self.emit(f"separate_arguments({out} UNIX_COMMAND {self.av()})" if r.random() < 0.5 else f"separate_arguments({out} WINDOWS_COMMAND {self.av()})")
 
     def st_message(self):
-        mode = self.rng.choice(("", "", "STATUS", "STATUS", "NOTICE", "VERBOSE", "DEBUG", "WARNING", "AUTHOR_WARNING", "DEPRECATION", "TRACE"))
-        vals = " ".join(self.av() for _ in range(self.rng.randint(1, 3)))
+        r = self.rng
+        mode = r.choice(("", "", "STATUS", "STATUS", "NOTICE", "VERBOSE", "DEBUG", "WARNING", "AUTHOR_WARNING", "DEPRECATION", "TRACE",
+                         "CHECK_START", "CHECK_PASS", "CHECK_FAIL", "SEND_ERROR"))
+        if r.random() < 0.2:
+            ctx = r.choice(("ctxA", "ctxB", "x;y", ""))
+            self.emit(f"list(APPEND CMAKE_MESSAGE_CONTEXT {ctx})".rstrip() + (")" if not ctx else ""))
+            if not ctx:
+                self.lines[-1] = "list(APPEND CMAKE_MESSAGE_CONTEXT)"
+        if mode in ("CHECK_START", "CHECK_PASS", "CHECK_FAIL"):
+            self.emit(f"message({mode} {argform(r, 'checking ' + r.choice(('alpha', 'beta', 'x y')))})")
+            return
+        vals = " ".join(self.av() for _ in range(r.randint(1, 3)))
         self.emit(f"message({mode} {vals})".replace("  ", " ", 1) if mode else f"message({vals})")
+
+    def st_include(self):
+        # include()s a generated file; contents are fixed per case via
+        # self.include_files, written by the case worker.
+        r = self.rng
+        n = r.choice((1, 1, 2, 3))
+        if f"inc{n}.cmake" not in self.include_files:
+            sub = ScriptGen(r)
+            body = []
+            for _ in range(r.randint(1, 5)):
+                sub.depth = min(self.depth + 1, 2)
+                sub.stmt()
+            body = list(sub.lines)
+            if r.random() < 0.5:
+                err = ScriptGen(r)
+                err.lines = body
+                err.depth = sub.depth
+                err.error_tail()
+                body = err.lines
+            self.include_files[f"inc{n}.cmake"] = "\n".join(body) + "\n"
+        extra = r.choice(("", "", " OPTIONAL", " NO_POLICY_SCOPE"))
+        self.emit(f"include(inc{n}.cmake{extra})")
+
+    def st_cmake_language(self):
+        r = self.rng
+        kind = r.choice(("CALL", "EVAL", "DEFER"))
+        if kind == "CALL":
+            sub = r.choice(("message", "set", "nosuch_cmd_xyz", "string"))
+            if sub == "message":
+                self.emit(f"cmake_language(CALL message STATUS {self.av()})")
+            elif sub == "set":
+                self.emit(f"cmake_language(CALL set {self.var()} {self.av()})")
+            elif sub == "string":
+                self.emit(f"cmake_language(CALL string LENGTH abc {self.var()})")
+            else:
+                self.emit("cmake_language(CALL nosuch_cmd_xyz)")
+        elif kind == "EVAL":
+            inner = r.choice((
+                "message(STATUS eval1)",
+                "set(evalv outer)",
+                "message(WARNING evalwarn)",
+                "nosuch_eval_cmd()",
+                "math(EXPR evalbad \"1+\")",
+            ))
+            self.emit(f"cmake_language(EVAL CODE \"{inner}\")")
+        else:
+            call = r.choice((
+                "message(STATUS deferred)",
+                "nosuch_deferred_cmd",
+                "message(WARNING deferredwarn)",
+            ))
+            idv = f"defer_var_{self.counter}"
+            self.emit(f"cmake_language(DEFER CALL {call})")
+            if r.random() < 0.4:
+                self.emit(f"cmake_language(DEFER GET_IDS ids_{self.counter})")
+
+    def st_block(self):
+        if self.depth >= 2:
+            return self.st_set()
+        r = self.rng
+        self.emit("block()")
+        self.depth += 1
+        for _ in range(r.randint(1, 4)):
+            self.stmt()
+        if r.random() < 0.5:
+            n = self.var()
+            self.emit(f"set({n} {self.av()})")
+            self.emit(f"return(PROPAGATE {n})")
+        self.depth -= 1
+        self.emit("endblock()")
+
+    def st_policy(self):
+        r = self.rng
+        act = r.choice(("PUSH", "POP", "SET", "GET", "VERSION"))
+        if act in ("PUSH", "POP"):
+            self.emit(f"cmake_policy({act})")
+        elif act == "SET":
+            pol = r.choice(KNOWN_POLICIES)
+            val = r.choice(("NEW", "OLD", "NEW"))
+            self.emit(f"cmake_policy(SET {pol} {val})")
+        elif act == "GET":
+            pol = r.choice(KNOWN_POLICIES)
+            self.emit(f"cmake_policy(GET {pol} {self.var()})")
+        else:
+            self.emit(f"cmake_policy(VERSION {r.choice(('3.5', '3.10', '3.20', '3.27', '4.0', '4.1'))})")
+
+    def st_warninj(self):
+        """Non-fatal diagnostic injection: exercises warning/backtrace paths
+        without ending the script."""
+        r = self.rng
+        kind = r.choice(("warn", "authwarn", "deprec", "uninit", "badmath-if", "devwarn"))
+        if kind == "warn":
+            self.emit(f"message(WARNING {self.av()})")
+        elif kind == "authwarn":
+            self.emit(f"message(AUTHOR_WARNING {self.av()})")
+        elif kind == "deprec":
+            self.emit(f"message(DEPRECATION {self.av()})")
+        elif kind == "uninit":
+            self.emit(f"message(STATUS \"U=[${{uninit_var_{r.randint(0,3)}}}]\")")
+        elif kind == "badmath-if":
+            self.emit(f"if(1+2 GREATER matherr)\n" + "  " * (self.depth + 1) + "message(STATUS unreachable)\n" + "  " * self.depth + "endif()")
+        else:
+            self.emit("cmake_policy(SET CMP0000 OLD)")
 
     def st_expand(self):
         r = self.rng
@@ -511,8 +638,9 @@ class ScriptGen:
         # recursion guard for block-ish statements
         simple = (self.st_set, self.st_unset, self.st_string, self.st_list, self.st_math,
                   self.st_separgs, self.st_file, self.st_message, self.st_printvar,
-                  self.st_cmake_path, self.st_cpa, self.st_expand)
-        compound = (self.st_if, self.st_foreach, self.st_while, self.st_function)
+                  self.st_cmake_path, self.st_cpa, self.st_expand, self.st_include,
+                  self.st_cmake_language, self.st_policy, self.st_warninj, self.st_warninj)
+        compound = (self.st_if, self.st_foreach, self.st_while, self.st_function, self.st_block)
         if self.depth >= 2:
             choice = self.rng.choice(simple)
         else:
@@ -550,14 +678,21 @@ class ScriptGen:
         else:
             self.emit(f"list(TRANSFORM nosuchlist NOSUCHACTION)")
 
-    def generate(self):
-        n = self.rng.randint(6, 16)
+    def generate(self, header=True):
+        r = self.rng
+        if header:
+            ver = r.choice(("3.5", "3.10", "3.15", "3.20", "3.24", "3.27", "3.31", "4.0", "4.1"))
+            self.emit(f"cmake_minimum_required(VERSION {ver})")
+            for _ in range(r.randint(0, 2)):
+                pol = r.choice(KNOWN_POLICIES)
+                self.emit(f"cmake_policy(SET {pol} {r.choice(('NEW', 'OLD'))})")
+        n = r.randint(6, 16)
         for _ in range(n):
             self.stmt()
         # print all vars at end for state comparison
         for name in sorted(set(self.vars)):
             self.emit(f"message(STATUS \"F:{name}=[${{{name}}}]\")")
-        if self.rng.random() < 0.4:
+        if r.random() < 0.4:
             self.error_tail()
         return "\n".join(self.lines) + "\n"
 
@@ -598,10 +733,95 @@ def run_cmake(cmake: Path, args, cwd: Path, timeout=10):
         return -99, b"", b"TIMEOUT"
 
 
-def compare_case(cmake_o: Path, cmake_c: Path, d: Path, scriptname: str):
-    ro = run_cmake(cmake_o, ["-P", scriptname], d)
-    rc = run_cmake(cmake_c, ["-P", scriptname], d)
-    return ro, rc
+def pick_diag_mode(rng):
+    """Deterministic per-case diagnostic mode.  Returns (argv, redirect)
+    where redirect is the --trace-redirect file basename or None."""
+    r = rng.random()
+    if r < 0.45:
+        return [], None
+    if r < 0.52:
+        return ["--trace"], None
+    if r < 0.59:
+        return ["--trace-expand"], None
+    if r < 0.67:
+        return ["--trace-expand", "--trace-format=json-v1"], "trace.json"
+    if r < 0.72:
+        return ["--warn-uninitialized"], None
+    if r < 0.77:
+        return ["--debug-output"], None
+    if r < 0.84:
+        lvl = rng.choice(("VERBOSE", "DEBUG", "TRACE", "STATUS", "NOTICE"))
+        argv = [f"--log-level={lvl}"]
+        if rng.random() < 0.5:
+            argv.append("--log-context")
+        return argv, None
+    if r < 0.88:
+        return ["-Wdev"], None
+    if r < 0.91:
+        return ["-Wno-dev"], None
+    if r < 0.95:
+        return ["-Werror=dev"], None
+    if r < 0.98:
+        return ["-Werror=deprecated"], None
+    return ["-Wno-dev", "-Wno-deprecated"], None
+
+
+def compare_case(cmake_o: Path, cmake_c: Path, d: Path, scriptname: str,
+                 argv=None, redirect=None):
+    argv = argv or []
+    extra = []
+    if redirect:
+        # Same redirect file name for both sides (it is echoed on stdout);
+        # read and remove it between runs.
+        trf = d / "tr.json"
+        ro = run_cmake(cmake_o, [*argv, "--trace-redirect=tr.json", "-P", scriptname], d)
+        to = trf.read_bytes() if trf.is_file() else b"<NOTRACE>"
+        trf.unlink(missing_ok=True)
+        rc = run_cmake(cmake_c, [*argv, "--trace-redirect=tr.json", "-P", scriptname], d)
+        tc = trf.read_bytes() if trf.is_file() else b"<NOTRACE>"
+        trf.unlink(missing_ok=True)
+        to = re.sub(rb'"time":[0-9.]+', b'"time":0', norm_prefix(to, cmake_o))
+        tc = re.sub(rb'"time":[0-9.]+', b'"time":0', norm_prefix(tc, cmake_c))
+        ro = (ro[0], norm_prefix(ro[1], cmake_o), norm_prefix(ro[2], cmake_o), to)
+        rc = (rc[0], norm_prefix(rc[1], cmake_c), norm_prefix(rc[2], cmake_c), tc)
+        return ro, rc
+    ro = run_cmake(cmake_o, [*argv, "-P", scriptname], d)
+    rc = run_cmake(cmake_c, [*argv, "-P", scriptname], d)
+    ro = (ro[0], norm_prefix(ro[1], cmake_o), norm_prefix(ro[2], cmake_o))
+    rc = (rc[0], norm_prefix(rc[1], cmake_c), norm_prefix(rc[2], cmake_c))
+    return (ro[0], ro[1], ro[2]), (rc[0], rc[1], rc[2])
+
+
+KITWARE_ROOT = "/tmp/cmake-rust-validation.hSLgEZHR/kitware"
+
+
+def cmake_prefix(cmake):
+    # resolve symlinks: the oracle validation dir is itself a symlink, and
+    # diagnostics embed the resolved path.
+    return str(Path(cmake).resolve().parent.parent).encode()
+
+
+def norm_prefix(bts, cmake):
+    if not bts:
+        return bts
+    # the oracle may run from a build tree whose CMAKE_ROOT is a source
+    # Modules/ directory rather than <prefix>/share/cmake-x.y; fold any
+    # absolute Modules/ path prefix first, so the staged candidate's
+    # <prefix>/share/cmake-4.1/Modules/ folds the same way.
+    bts = re.sub(rb"/\S*/Modules/", b"<MOD>/Modules/", bts)
+    # The data directory itself, as expanded by Platform/UnixPaths.cmake
+    # (_CMAKE_INSTALL_DIR) in traces: the staged candidate's
+    # <prefix>/share/cmake-4.1 and the oracle's source checkout play the
+    # same role, as do their parent and grandparent.
+    prefix = cmake_prefix(cmake)
+    data = prefix + b"/share/cmake-4.1"
+    if not Path(data.decode()).is_dir():
+        data = os.path.realpath(KITWARE_ROOT).encode()
+    parent = os.path.dirname(data)
+    grand = os.path.dirname(parent)
+    for path, rep in ((data, b"<DATA>"), (parent, b"<DATA>/.."), (grand, b"<DATA>/../..")):
+        bts = re.sub(re.escape(path) + rb"(?![\w.-])", rep, bts)
+    return bts.replace(prefix, b"<CMAKE_ROOT>")
 
 
 def outputs_equal(ro, rc):
@@ -625,6 +845,8 @@ def diffkey(ro, rc):
             else:
                 parts.append(f"{label}:len")
             break
+    if len(ro) > 3 and len(rc) > 3 and ro[3] != rc[3]:
+        parts.append("tracefile")
     return "|".join(parts) or "unknown"
 
 
@@ -689,18 +911,22 @@ def script_case(task):
     rng = random.Random((seed * 1000003 + idx * 7919) ^ 0x5F3759DF)
     gen = ScriptGen(rng)
     text = gen.generate()
+    argv, redirect = pick_diag_mode(rng)
     d = Path(outdir) / "tmp" / f"s-{seed}-{idx}"
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
     write_data_tree(d, rng)
     (d / "script.cmake").write_bytes(text.encode(errors="surrogateescape"))
-    ro, rc = compare_case(Path(cmake_o), Path(cmake_c), d, "script.cmake")
+    for name, body in gen.include_files.items():
+        (d / name).write_bytes(body.encode(errors="surrogateescape"))
+    ro, rc = compare_case(Path(cmake_o), Path(cmake_c), d, "script.cmake", argv, redirect)
     if not outputs_equal(ro, rc) and (ro[0] == -99) != (rc[0] == -99):
         # Exactly one side timed out.  This is usually core-dump handler
         # latency racing the timeout under parallelism, not a real
         # difference: re-run both serially with a generous timeout.
-        ro = run_cmake(Path(cmake_o), ["-P", "script.cmake"], d, timeout=90)
-        rc = run_cmake(Path(cmake_c), ["-P", "script.cmake"], d, timeout=90)
+        ro = run_cmake(Path(cmake_o), [*argv, "-P", "script.cmake"], d, timeout=90)
+        rc = run_cmake(Path(cmake_c), [*argv, "-P", "script.cmake"], d, timeout=90)
+        ro, rc = (ro[0], ro[1], ro[2]), (rc[0], rc[1], rc[2])
     if outputs_equal(ro, rc):
         shutil.rmtree(d, ignore_errors=True)
         return {"idx": idx, "ok": True}
@@ -709,6 +935,9 @@ def script_case(task):
     shutil.rmtree(faildir, ignore_errors=True)
     faildir.mkdir(parents=True)
     (faildir / "script.cmake").write_bytes(text.encode(errors="surrogateescape"))
+    for name, body in gen.include_files.items():
+        (faildir / name).write_bytes(body.encode(errors="surrogateescape"))
+    (faildir / "mode.txt").write_text(f"argv={argv} redirect={redirect}\n")
     write_data_tree(faildir, rng)
     (faildir / "oracle.out").write_bytes(ro[1])
     (faildir / "oracle.err").write_bytes(ro[2])
@@ -831,6 +1060,71 @@ file(GENERATE OUTPUT $<CONFIG>-o.txt CONTENT "$<TARGET_FILE:tgt>" )
 
 
 # ---------------------------------------------------------------------------
+# project-mode lane: configure-time diagnostics with project(x NONE)
+# ---------------------------------------------------------------------------
+
+def project_case(task):
+    seed, idx, cmake_o, cmake_c, outdir, do_min = task
+    rng = random.Random((seed * 1000081 + idx * 7919) ^ 0x3C6EF372)
+    gen = ScriptGen(rng)
+    body = gen.generate(header=False)
+    argv, redirect = pick_diag_mode(rng)
+    ver = rng.choice(("3.5", "3.15", "3.27", "4.0"))
+    cmakelists = f"cmake_minimum_required(VERSION {ver})\nproject(x NONE)\n" + body
+    d = Path(outdir) / "tmp" / f"p-{seed}-{idx}"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    write_data_tree(d, rng)
+    (d / "CMakeLists.txt").write_bytes(cmakelists.encode(errors="surrogateescape"))
+    for name, body2 in gen.include_files.items():
+        (d / name).write_bytes(body2.encode(errors="surrogateescape"))
+    ros = []
+    for cmake, tag in ((cmake_o, "bo"), (cmake_c, "bc")):
+        # Build trees live beside the source tree, so neither side's
+        # file(GLOB) sees the other's build tree.
+        b = d.parent / f"{d.name}-{tag}"
+        shutil.rmtree(b, ignore_errors=True)
+        av = list(argv)
+        if redirect:
+            av = av + [f"--trace-redirect={b / 'trace.json'}"]
+        p = run_cmake(Path(cmake), [*av, "-S", str(d), "-B", str(b), "-G", "Ninja"], d, timeout=60)
+        tb = b / "trace.json"
+        extra = tb.read_bytes() if tb.is_file() else (b"<NOTRACE>" if redirect else b"")
+        ros.append((p[0], norm_prefix(p[1], cmake), norm_prefix(p[2], cmake), norm_prefix(extra, cmake)))
+
+    def norm(bts, tag):
+        for pat, rep in ((str(d.parent / f"{d.name}-{tag}"), b"<B>"), (str(d), b"<S>")):
+            bts = re.sub(re.escape(pat.encode()), rep, bts, flags=re.IGNORECASE)
+        return re.sub(rb"\(\d+\.\d+s\)", b"(<T>s)", bts)
+
+    ro, rc = ros
+    for tag in ("bo", "bc"):
+        shutil.rmtree(d.parent / f"{d.name}-{tag}", ignore_errors=True)
+    ro_n = (ro[0], norm(ro[1], "bo"), norm(ro[2], "bo"), norm(ro[3], "bo"))
+    rc_n = (rc[0], norm(rc[1], "bc"), norm(rc[2], "bc"), norm(rc[3], "bc"))
+    if ro_n == rc_n:
+        shutil.rmtree(d, ignore_errors=True)
+        return {"idx": idx, "ok": True}
+    key = diffkey((ro_n[0], ro_n[1], ro_n[2]), (rc_n[0], rc_n[1], rc_n[2]))
+    if ro_n[3] != rc_n[3]:
+        key += "|tracefile"
+    faildir = Path(outdir) / "fails" / f"project-{seed}-{idx}"
+    shutil.rmtree(faildir, ignore_errors=True)
+    faildir.mkdir(parents=True)
+    (faildir / "CMakeLists.txt").write_bytes(cmakelists.encode(errors="surrogateescape"))
+    for name, body2 in gen.include_files.items():
+        (faildir / name).write_bytes(body2.encode(errors="surrogateescape"))
+    (faildir / "mode.txt").write_text(f"argv={argv} redirect={redirect}\n")
+    (faildir / "oracle.out").write_bytes(ro_n[1])
+    (faildir / "oracle.err").write_bytes(ro_n[2])
+    (faildir / "candidate.out").write_bytes(rc_n[1])
+    (faildir / "candidate.err").write_bytes(rc_n[2])
+    (faildir / "rc.txt").write_text(f"oracle={ro_n[0]} candidate={rc_n[0]}\nkey={key}\n")
+    shutil.rmtree(d, ignore_errors=True)
+    return {"idx": idx, "ok": False, "key": key, "dir": str(faildir), "min": ""}
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -840,6 +1134,7 @@ def main():
     ap.add_argument("-j", type=int, default=4)
     ap.add_argument("--script-count", type=int, default=1000)
     ap.add_argument("--genex-count", type=int, default=0)
+    ap.add_argument("--project-count", type=int, default=0)
     ap.add_argument("--out", type=Path, default=Path("/tmp/fuzzdiff-out"))
     ap.add_argument("--no-minimize", action="store_true")
     args = ap.parse_args()
@@ -849,7 +1144,7 @@ def main():
     (out / "fails").mkdir(parents=True, exist_ok=True)
     co = str(args.oracle)
     cc = str(args.candidate)
-    results = {"script": {"total": 0, "ok": 0}, "genex": {"total": 0, "ok": 0}}
+    results = {"script": {"total": 0, "ok": 0}, "genex": {"total": 0, "ok": 0}, "project": {"total": 0, "ok": 0}}
     buckets = {}
 
     def run_lane(lane, count, worker):
@@ -872,6 +1167,7 @@ def main():
 
     run_lane("script", args.script_count, script_case)
     run_lane("genex", args.genex_count, genex_case)
+    run_lane("project", args.project_count, project_case)
     summary = {
         "seed": args.seed,
         "results": results,
@@ -880,7 +1176,7 @@ def main():
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     shutil.rmtree(out / "tmp", ignore_errors=True)
     print(json.dumps(summary, indent=2))
-    return 0 if results["script"]["total"] == results["script"]["ok"] and results["genex"]["total"] == results["genex"]["ok"] else 1
+    return 0 if all(r["total"] == r["ok"] for r in results.values()) else 1
 
 
 if __name__ == "__main__":

@@ -681,7 +681,9 @@ impl Evaluator<'_, '_> {
                                 b"genexArgs".to_vec(),
                                 Json::Array(
                                     args.iter()
-                                        .map(|arg| Json::Str(arg.as_bytes().to_vec()))
+                                        .map(|arg| {
+                                            Json::Str(crate::bytes::encode(arg).into_owned())
+                                        })
                                         .collect(),
                                 ),
                             );
