@@ -7,12 +7,14 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 | Project | What was compared | Result |
 |---|---|---|
 | **LLVM + Clang 20.1.8** | every configured and generated file | **614 / 614 identical** (after tool-path normalization) |
-| | `ninja check-clang` on the candidate's build | 3,808 / 3,808 steps; test counts identical to the Kitware-configured build |
-| **Kitware CMake 4.1.0** (CMake building itself) | configured tree, then the upstream CTest suite | **312 / 312** files identical; **683 / 683** tests pass |
+| | `ninja check-clang` on the candidate's build | 3,808 / 3,808 steps; 42,430 tests pass, 0 fail, counts identical to the Kitware-configured build |
+| **Kitware CMake 4.1.0** (CMake building itself) | configured tree, build, then the upstream CTest suite | **312 / 312** files identical; 1,198 / 1,198 build steps; **683 / 683** tests pass |
 | **zlib 1.3.1** | configure, generate, build, install, tests | all match |
 | **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
 
-LLVM, CMake and RunCMake were measured at commit `67963ae`, against Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
+The configured trees, the CMake self-build and RunCMake were measured at commit `b24ded6`; `check-clang` was last run at `a609c6b`, whose LLVM build tree is byte-identical to `b24ded6`'s. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
+
+Smaller real-world projects (googletest, freetype2, xz) also configure to identical trees and interpreter state, and build cleanly.
 
 About 134,000 lines of Rust. The only dependencies are small crates for hashing, compression, tar, regex and JSON; the CMake language, generator expressions, policies, the target model, link computation and the Ninja generator are all implemented here.
 
@@ -48,14 +50,14 @@ The harnesses in `scripts/`:
 
 | Harness | Compares | Size |
 |---|---|---|
-| `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,253 cases |
-| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 446 cases |
-| `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 135 projects |
+| `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,261 cases |
+| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 512 cases |
+| `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 160 projects (14 CUDA) |
 | `statediff.py` | end-of-configure interpreter state: every variable, cache entry and property | LLVM: 94,998 lines, 0 differences |
 | `conformance/` | Kitware's own RunCMake test suite | see [`docs/conformance.md`](docs/conformance.md) |
 | `ninjadiff.py`, `dapdiff.py`, `autogendiff.py` | `build.ninja` structure, the debugger protocol, Qt AUTOGEN | |
 
-`statediff.py` injects itself through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`, so it compares the full interpreter state without modifying the project under test. At `01c6813` it shows no differing lines for LLVM, Kitware CMake, zlib, or any of the 128 `tests/projects` cases whose configure completes, including on a second `--reconfigure` pass.
+`statediff.py` injects itself through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`, so it compares the full interpreter state without modifying the project under test. At `daa1f60` it shows no differing lines for LLVM, Kitware CMake, zlib, or any of the 128 `tests/projects` cases whose configure completes, including on a second `--reconfigure` pass.
 
 To reproduce the zlib check:
 
@@ -74,8 +76,9 @@ The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.
 - **The CMake language:** lexer, interpreter, scoping, `if()` conditions, lists, strings, math, regex (a port of CMake's own regex engine), `file()`, and the policy table up to 4.1.
 - **Generator expressions:** the full evaluator, including context checks and diagnostics.
 - **The target model:** usage requirements, link features and strategies, link-line and runtime-path computation, imported targets, `install()` and `export()`, CPS and pkg-config package info.
-- **Generators:** Ninja and Ninja Multi-Config, with the CodeBlocks, CodeLite, Eclipse CDT4, Kate and Sublime Text 2 extra generators. Also C++20 module scanning, precompiled headers and unity builds, and the Fortran pipeline.
-- **Around the generator:** `try_compile` / `try_run`, CMake presets, the file API, the DAP debugger, Qt AUTOGEN, instrumentation, SARIF output, and `cmake -E`.
+- **Generators:** Ninja and Ninja Multi-Config, with the CodeBlocks, CodeLite, Eclipse CDT4, Kate and Sublime Text 2 extra generators. Also C++20 module scanning, precompiled headers and unity builds, the Fortran pipeline, and CUDA (separable compilation and device linking, checked against nvcc 12; HIP is ported but untested here).
+- **Around the generator:** `try_compile` / `try_run`, CMake presets, the file API, the DAP debugger, Qt AUTOGEN, instrumentation, SARIF output, `--system-information`, `--graphviz`, and `cmake -E` including the MSVC-side `vs_link_*` / `__create_def` tools.
+- **Byte-exact values:** CMake strings are byte strings, not UTF-8. Latin-1 files, high-byte tool output and non-UTF-8 cache entries round-trip unchanged, and terminal colors match CMake 4.1.
 - **Cross-compiling configurations** (Darwin, MSVC/clang-cl, Android, AIX, Cygwin/MSYS and others) are generated to match the reference. The build itself runs on the host toolchain.
 - **`--explain <target> <flag>`** prints the dependency path and the source line that put a compile definition, include directory or option on a target. The integration tests check that an explained definition really reaches the compiler.
 
@@ -86,6 +89,7 @@ Each of these fails with an explicit error, never silently:
 - The Unix Makefiles, Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
 - Makefile-only dependency scanning for Fortran and Java in `cmake -E cmake_depends`.
 - XCFramework linking, which needs macOS `plutil`.
+- ISPC and Swift sources in the Ninja generator.
 
 Two upstream outputs are ordered by pointer or hash value and can't be reproduced exactly: the file-API `dependencies` order, and the order of some reserved-name build-database errors.
 

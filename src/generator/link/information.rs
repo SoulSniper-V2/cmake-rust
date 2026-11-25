@@ -13,7 +13,7 @@ use crate::apple::{
 };
 use crate::cmregex::Regex;
 use crate::commands::install::unix_slashes;
-use crate::util::{collapse_full_path, filename_name, filename_path, is_subdirectory};
+use crate::util::{filename_name, filename_path, is_subdirectory};
 
 /// `cmComputeLinkInformation` after `Compute()`.
 pub(in crate::generator) struct LinkInformation {
