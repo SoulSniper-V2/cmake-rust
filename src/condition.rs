@@ -68,6 +68,9 @@ pub fn evaluate(interp: &mut Interp, args: &[(String, bool)]) -> (bool, CondErro
 }
 
 fn is_true(interp: &mut Interp, args: Vec<CArg>, error: &mut CondError) -> bool {
+    // cmConditionEvaluator::IsTrue clears the diagnostic at entry, so a later
+    // parenthesized group's recursion discards an earlier group's error.
+    *error = None;
     if args.is_empty() {
         return false;
     }
