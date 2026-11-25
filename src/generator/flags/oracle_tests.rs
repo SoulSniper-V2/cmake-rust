@@ -311,6 +311,12 @@ fn standards_inherit_from_paired_language() {
         props.set(&format!("{paired}_STANDARD"), inherited.to_owned());
         props.set(&format!("{paired}_EXTENSIONS"), "OFF".to_owned());
         props.set(&format!("{paired}_STANDARD_REQUIRED"), "ON".to_owned());
+        if lang == "HIP" {
+            props.set("HIP_ARCHITECTURES", "OFF".to_owned());
+        }
+        if lang == "CUDA" {
+            props.set("CUDA_ARCHITECTURES", "OFF".to_owned());
+        }
         let key =
             crate::state::register_target(&mut interp, target("x", TargetKind::Executable, props));
         let source = SourceInfo {

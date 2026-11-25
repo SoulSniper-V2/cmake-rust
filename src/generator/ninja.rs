@@ -2594,6 +2594,38 @@ impl<'a> NinjaGenerator<'a> {
         )
     }
 
+    /// The concrete `<CUDA_COMPILE_MODE>` replacement of
+    /// `cmNinjaTargetGenerator::WriteCompileRule` and
+    /// `ExportObjectCompileCommand`.
+    fn cuda_compile_mode(&self, target: &Target) -> String {
+        let mut mode = String::new();
+        if target
+            .props
+            .get("CUDA_SEPARABLE_COMPILATION")
+            .is_some_and(util::is_on)
+        {
+            mode.push_str(&self.ctx.var_safe(target.makefile, "_CMAKE_CUDA_RDC_FLAG"));
+            mode.push(' ');
+        }
+        let mut normal = true;
+        for (property, variable) in [
+            ("CUDA_PTX_COMPILATION", "_CMAKE_CUDA_PTX_FLAG"),
+            ("CUDA_CUBIN_COMPILATION", "_CMAKE_CUDA_CUBIN_FLAG"),
+            ("CUDA_FATBIN_COMPILATION", "_CMAKE_CUDA_FATBIN_FLAG"),
+            ("CUDA_OPTIX_COMPILATION", "_CMAKE_CUDA_OPTIX_FLAG"),
+        ] {
+            if target.props.get(property).is_some_and(util::is_on) {
+                mode.push_str(&self.ctx.var_safe(target.makefile, variable));
+                normal = false;
+                break;
+            }
+        }
+        if normal {
+            mode.push_str(&self.ctx.var_safe(target.makefile, "_CMAKE_CUDA_WHOLE_FLAG"));
+        }
+        mode
+    }
+
     /// `cmNinjaNormalTargetGenerator::LanguageLinkerRule`.
     fn linker_rule_name(&self, language: &str, target: &Target) -> String {
         format!(
@@ -2726,6 +2758,14 @@ impl<'a> NinjaGenerator<'a> {
             ("FLAGS", flags_text),
             ("DEP_FILE", rule.depfile.clone()),
             ("DEP_TARGET", "$out".into()),
+            (
+                "CUDA_COMPILE_MODE",
+                if language == "CUDA" {
+                    self.cuda_compile_mode(target)
+                } else {
+                    String::new()
+                },
+            ),
         ];
         let expanded: Vec<String> = commands
             .iter()
@@ -3832,7 +3872,505 @@ impl<'a> NinjaGenerator<'a> {
         }
     }
 
-    /// `cmNinjaNormalTargetGenerator::WriteLinkStatement` (no device link).
+    /// `cmNinjaNormalTargetGenerator::LanguageLinkerDeviceRule`.
+    fn device_linker_rule_name(&self, language: &str, target: &Target) -> String {
+        format!(
+            "{}_{}_DEVICE_LINKER__{}_{}",
+            language,
+            target.kind.type_name(),
+            encode_rule_name(&target.name),
+            self.config
+        )
+    }
+
+    /// `cmNinjaNormalTargetGenerator::WriteNvidiaDeviceLinkRule`.
+    fn write_device_link_rule(&mut self, language: &str, target: &Target, use_rsp: bool) {
+        let name = self.device_linker_rule_name(language, target);
+        if self.has_rule(&name) {
+            return;
+        }
+        let variable = if target.kind == TargetKind::Executable {
+            "CMAKE_CUDA_DEVICE_LINK_EXECUTABLE"
+        } else {
+            "CMAKE_CUDA_DEVICE_LINK_LIBRARY"
+        };
+        let Some(template) = self.ctx.var(target.makefile, variable) else {
+            self.ctx.error(
+                target.backtrace.clone(),
+                format!("{variable} is not defined"),
+            );
+            return;
+        };
+        let mut objects = "$in".to_owned();
+        let mut libraries = "$LINK_PATH $LINK_LIBRARIES";
+        let mut rspfile = String::new();
+        let mut rspcontent = String::new();
+        let response_flag = self
+            .ctx
+            .var_safe(target.makefile, "CMAKE_CUDA_RESPONSE_FILE_DEVICE_LINK_FLAG");
+        if use_rsp && !response_flag.is_empty() {
+            rspfile = "$RSP_FILE".into();
+            objects = format!("{response_flag}$RSP_FILE");
+            rspcontent = if self.is_gcc_on_windows() {
+                "$in".into()
+            } else {
+                "$in_newline".into()
+            };
+            if self
+                .ctx
+                .var(
+                    target.makefile,
+                    "CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES",
+                )
+                .is_none_or(|value| util::is_on(&value))
+            {
+                rspcontent.push_str(" $LINK_LIBRARIES");
+                libraries = "";
+            }
+        }
+        let vars: Vec<(&str, String)> = vec![
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            (
+                "TARGET_LABELS",
+                target
+                    .props
+                    .get("LABELS")
+                    .map(|labels| labels.replace(';', ","))
+                    .unwrap_or_default(),
+            ),
+            ("LANGUAGE", "CUDA".into()),
+            ("OBJECTS", objects),
+            ("LINK_LIBRARIES", libraries.into()),
+            ("OBJECT_DIR", "$OBJECT_DIR".into()),
+            ("TARGET", "$TARGET_FILE".into()),
+            ("SONAME_FLAG", "$SONAME_FLAG".into()),
+            ("TARGET_SONAME", "$SONAME".into()),
+            ("TARGET_PDB", "$TARGET_PDB".into()),
+            ("TARGET_COMPILE_PDB", "$TARGET_COMPILE_PDB".into()),
+            ("FLAGS", "$FLAGS".into()),
+            ("LINK_FLAGS", "$LINK_FLAGS".into()),
+            ("MANIFESTS", "$MANIFESTS".into()),
+            ("CONFIG", "$CONFIG".into()),
+            ("LANGUAGE_COMPILE_FLAGS", "$LANGUAGE_COMPILE_FLAGS".into()),
+        ];
+        let launcher = rule_launcher(&self.ctx, target, "RULE_LAUNCH_LINK");
+        let expanded: Vec<String> = util::expand_list(&template, false)
+            .iter()
+            .map(|command| {
+                flags::expand_rule(&self.ctx, target, &format!("{launcher}{command}"), &vars)
+            })
+            .filter(|command| !command.is_empty() && !command.starts_with(':'))
+            .collect();
+        let command = self.build_command_line(&expanded);
+        self.add_rule(&Rule {
+            name,
+            command,
+            rspfile,
+            rspcontent,
+            comment: format!(
+                "Rule for linking {} {}.",
+                language,
+                visible_type_name(target)
+            ),
+            description: format!(
+                "Linking {} {} $TARGET_FILE",
+                language,
+                visible_type_name(target)
+            ),
+            restat: "$RESTAT".into(),
+            ..Rule::default()
+        });
+    }
+
+    /// `cmNinjaNormalTargetGenerator::WriteDeviceLinkRules`: the three rules
+    /// used by Clang CUDA device linking (`nvlink`, `fatbinary`, and the
+    /// registration-stub compile).
+    fn write_clang_device_link_rules(&mut self, language: &str, target: &Target) {
+        let makefile = target.makefile;
+        let linker_rule = format!(
+            "{}_DEVICE_LINK__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        if !self.has_rule(&linker_rule) {
+            let linker = self.ctx.var_safe(makefile, "CMAKE_CUDA_DEVICE_LINKER");
+            self.add_rule(&Rule {
+                name: linker_rule,
+                command: format!("{linker} -arch=$ARCH $REGISTER -o=$out $in"),
+                comment: "Rule for CUDA device linking.".into(),
+                description: "Linking CUDA $out".into(),
+                ..Rule::default()
+            });
+        }
+
+        let compile_rule = format!(
+            "{}_DEVICE_LINK_COMPILE__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        if !self.has_rule(&compile_rule)
+            && let Some(template) = self.ctx.var(makefile, "CMAKE_CUDA_DEVICE_LINK_COMPILE")
+        {
+            let compile_flags = flags::cuda_compile_language_flags(&self.ctx, target, &self.config);
+            let command = flags::expand_rule(
+                &self.ctx,
+                target,
+                &template,
+                &[
+                    ("LANGUAGE", "CUDA".into()),
+                    ("OBJECT", "$out".into()),
+                    ("FATBINARY", "$FATBIN".into()),
+                    ("REGISTER_FILE", "$REGISTER".into()),
+                    ("LINK_FLAGS", "$LINK_FLAGS".into()),
+                    ("FLAGS", compile_flags),
+                    ("CONFIG", "$CONFIG".into()),
+                ],
+            );
+            self.add_rule(&Rule {
+                name: compile_rule,
+                command,
+                comment: "Rule for compiling CUDA device stubs.".into(),
+                description: "Compiling CUDA device stub $out".into(),
+                ..Rule::default()
+            });
+        }
+
+        let fatbinary_rule = format!(
+            "{}_FATBINARY__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        if !self.has_rule(&fatbinary_rule) {
+            let fatbinary = self.ctx.var_safe(makefile, "CMAKE_CUDA_FATBINARY");
+            self.add_rule(&Rule {
+                name: fatbinary_rule,
+                command: format!(
+                    "{fatbinary} -64 -cmdline=--compile-only -compress-all -link --embedded-fatbin=$out $PROFILES"
+                ),
+                comment: "Rule for CUDA fatbinaries.".into(),
+                description: "Creating fatbinary $out".into(),
+                ..Rule::default()
+            });
+        }
+    }
+
+    /// `cmNinjaNormalTargetGenerator::WriteDeviceLinkStatements` for Clang
+    /// CUDA: per-architecture cubins, one embedded fatbinary header and the
+    /// compiled registration stub.  Returns the final stub object.
+    fn write_clang_device_link_statements(
+        &mut self,
+        target: &'a Target,
+        language: &str,
+        objects: &[String],
+        output: &str,
+    ) {
+        let config = self.config.clone();
+        let architectures = util::expand_list(
+            target.props.get("CUDA_ARCHITECTURES").unwrap_or_default(),
+            false,
+        );
+        self.write_clang_device_link_rules(language, target);
+
+        let object_dir_abs = self.object_dir(target);
+        let object_dir = self.ninja_path(&object_dir_abs);
+        let line = link::device_link_line(&self.ctx, target, &config, language);
+        let mut explicit_deps = Vec::new();
+        let mut push_dep = |dep: String| {
+            if !explicit_deps.contains(&dep) {
+                explicit_deps.push(dep);
+            }
+        };
+        for dep in line.depends.iter().map(|dep| self.ninja_path(dep)) {
+            push_dep(dep);
+        }
+        for object in objects {
+            push_dep(object.clone());
+        }
+
+        let linker_rule = format!(
+            "{}_DEVICE_LINK__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        let fatbinary_rule = format!(
+            "{}_FATBINARY__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        let compile_rule = format!(
+            "{}_DEVICE_LINK_COMPILE__{}_{}",
+            language,
+            encode_rule_name(&target.name),
+            self.config
+        );
+        let fatbinary_output = format!("{object_dir}/cmake_cuda_fatbin.h");
+        let mut fatbinary = Build::new(&fatbinary_rule);
+        fatbinary.outputs.push(fatbinary_output.clone());
+        let mut profiles = String::new();
+        for architecture_kind in architectures {
+            let architecture = architecture_kind
+                .split('-')
+                .next()
+                .unwrap_or(&architecture_kind);
+            let cubin = format!("{object_dir}/sm_{architecture}.cubin");
+            let mut dlink = Build::new(&linker_rule);
+            dlink.explicit_deps = explicit_deps.clone();
+            dlink.outputs.push(cubin.clone());
+            dlink
+                .variables
+                .insert("ARCH".into(), format!("sm_{architecture}"));
+            if fatbinary.explicit_deps.is_empty() {
+                dlink.variables.insert(
+                    "REGISTER".into(),
+                    format!(
+                        "--register-link-binaries={}/cmake_cuda_register.h",
+                        object_dir
+                    ),
+                );
+            }
+            profiles.push_str(&format!(" -im=profile=sm_{architecture},file={cubin}"));
+            fatbinary.explicit_deps.push(cubin);
+            write_build(self.out_at(&Stream::Common), &dlink, 0);
+        }
+        fatbinary
+            .variables
+            .insert("PROFILES".into(), profiles.trim_start().to_owned());
+        write_build(self.out_at(&Stream::Common), &fatbinary, 0);
+
+        let mut compile = Build::new(&compile_rule);
+        compile.outputs.push(output.to_owned());
+        compile.explicit_deps.push(fatbinary_output);
+        compile.variables.insert(
+            "FATBIN".into(),
+            self.shell(&format!("{object_dir_abs}/cmake_cuda_fatbin.h")),
+        );
+        compile.variables.insert(
+            "REGISTER".into(),
+            self.shell(&format!("{object_dir_abs}/cmake_cuda_register.h")),
+        );
+        compile.variables.insert(
+            "LINK_FLAGS".into(),
+            flags::device_link_flag_vars(&self.ctx, target, &config, false).link_flags,
+        );
+        write_build(self.out_at(&Stream::Common), &compile, 0);
+    }
+
+    /// `cmNinjaNormalTargetGenerator::WriteDeviceLinkStatement` and
+    /// `WriteNvidiaDeviceLinkStatement` for the NVIDIA driver device-link
+    /// mode.  Returns the `cmake_device_link` object when one is needed.
+    fn write_device_link_statement(
+        &mut self,
+        target: &'a Target,
+        language: &str,
+        objects: &[String],
+    ) -> Option<String> {
+        let config = self.config.clone();
+        if !link::requires_device_linking(&self.ctx, target, &config, language) {
+            return None;
+        }
+        let makefile = target.makefile;
+        let object_extension = self.ctx.var_safe(makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+        let object_dir = self.ninja_path(&self.object_dir(target));
+        let output = self.ninja_path(&format!(
+            "{}/cmake_device_link{object_extension}",
+            self.object_dir(target)
+        ));
+        let clang_cuda = self
+            .ctx
+            .var(target.makefile, "CMAKE_CUDA_COMPILER_ID")
+            .as_deref()
+            == Some("Clang");
+        if clang_cuda {
+            let architectures = target.props.get("CUDA_ARCHITECTURES").unwrap_or_default();
+            if util::is_off(architectures) {
+                self.ctx.error(
+                    target.backtrace.clone(),
+                    "CUDA_SEPARABLE_COMPILATION on Clang requires CUDA_ARCHITECTURES to be set.",
+                );
+                return None;
+            }
+        }
+
+        let mut out = String::new();
+        write_divider(&mut out);
+        let _ = write!(
+            out,
+            "# Device Link build statements for {} target {}\n\n",
+            target.kind.type_name(),
+            target.name
+        );
+        if clang_cuda {
+            self.out_at(&Stream::Common).push_str(&out);
+            self.write_clang_device_link_statements(target, language, objects, &output);
+            return Some(output);
+        }
+
+        let mut build = Build::new(&self.device_linker_rule_name(language, target));
+        build.comment = format!("Link the {} {}", visible_type_name(target), output);
+        build.outputs.push(output.clone());
+        build.explicit_deps = objects.to_vec();
+
+        let dependency_ipo = link::link_information(&self.ctx, target, &config, language)
+            .map(|info| {
+                info.items.iter().any(|item| {
+                    item.target
+                        .as_deref()
+                        .and_then(|key| self.ctx.interp.ext.targets.get(key))
+                        .is_some_and(|dependency| {
+                            dependency.kind == TargetKind::StaticLibrary
+                                && !dependency
+                                    .props
+                                    .get("CUDA_RESOLVE_DEVICE_SYMBOLS")
+                                    .is_some_and(util::is_on)
+                                && dependency
+                                    .props
+                                    .get("CUDA_SEPARABLE_COMPILATION")
+                                    .is_some_and(util::is_on)
+                                && flags::ipo_enabled(&self.ctx, dependency, &config, "CUDA")
+                        })
+                })
+            })
+            .unwrap_or(false);
+        let device_flags = flags::device_link_flag_vars(&self.ctx, target, &config, dependency_ipo);
+        let line = link::device_link_line(&self.ctx, target, &config, language);
+        let mut device_libraries = line.libraries;
+        let mut device_link_path = line.framework_path.clone() + &line.link_path;
+        if self.is_gcc_on_windows() {
+            device_libraries = device_libraries.replace('\\', "/");
+            device_link_path = device_link_path.replace('\\', "/");
+        }
+        build
+            .variables
+            .insert("LINK_LIBRARIES".into(), device_libraries);
+        build
+            .variables
+            .insert("LINK_FLAGS".into(), device_flags.link_flags);
+        build.variables.insert("LINK_PATH".into(), device_link_path);
+        build.variables.insert(
+            "LANGUAGE_COMPILE_FLAGS".into(),
+            device_flags.language_compile_flags,
+        );
+        build.implicit_deps = line
+            .depends
+            .iter()
+            .map(|dep| self.ninja_path(dep))
+            .collect();
+        if let Some(mdi) = gt::module_definition_info(&self.ctx, target, &config) {
+            for source in &mdi.sources {
+                build.implicit_deps.push(self.ninja_path(source));
+            }
+        }
+        for source in gt::sources(&self.ctx, target, &config).iter() {
+            if source.kind == SourceKind::Manifest {
+                build.implicit_deps.push(self.ninja_path(&source.path));
+            }
+        }
+        build
+            .implicit_deps
+            .extend(line.link_depends.iter().map(|dep| self.ninja_path(dep)));
+
+        build
+            .variables
+            .insert("TARGET_FILE".into(), self.shell(&output));
+        let manifest_flag = self
+            .ctx
+            .var_safe(makefile, &format!("CMAKE_{language}_LINKER_MANIFEST_FLAG"));
+        let manifests: Vec<String> = gt::sources(&self.ctx, target, &config)
+            .iter()
+            .filter(|source| source.kind == SourceKind::Manifest)
+            .map(|source| {
+                format!(
+                    "{manifest_flag}{}",
+                    self.shell(&self.ninja_path(&source.path))
+                )
+            })
+            .collect();
+        build
+            .variables
+            .insert("MANIFESTS".into(), manifests.join(" "));
+        let names = gt::names(&self.ctx, target, &config);
+        if (matches!(
+            target.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) && gt::has_soname(&self.ctx, target, &config))
+            || target.is_archived_aix_shared_library()
+        {
+            build.variables.insert(
+                "SONAME_FLAG".into(),
+                self.ctx.var_safe(
+                    makefile,
+                    &format!("CMAKE_SHARED_LIBRARY_SONAME_{language}_FLAG"),
+                ),
+            );
+            build
+                .variables
+                .insert("SONAME".into(), self.shell(&names.shared_object));
+            if target.kind == TargetKind::SharedLibrary {
+                let install_dir =
+                    install_name::install_name_dir_for_build_tree(&self.ctx, target, &config);
+                if !install_dir.is_empty() {
+                    build
+                        .variables
+                        .insert("INSTALLNAME_DIR".into(), self.shell(&install_dir));
+                }
+            }
+        }
+        if !names.import_library.is_empty() {
+            build.variables.insert(
+                "TARGET_IMPLIB".into(),
+                self.shell(&self.ninja_path(&gt::full_path(
+                    &self.ctx,
+                    target,
+                    &config,
+                    ArtifactType::Import,
+                    false,
+                ))),
+            );
+        }
+        build
+            .variables
+            .insert("OBJECT_DIR".into(), self.shell(&object_dir));
+        self.ensure_directory_exists(&self.object_dir(target));
+        if !self.set_msvc_target_pdb_variable(target, &mut build.variables) {
+            let parts = gt::full_name_components(&self.ctx, target, &config, ArtifactType::Runtime);
+            let suffix = self
+                .ctx
+                .var(makefile, "CMAKE_DEBUG_SYMBOL_SUFFIX")
+                .unwrap_or_else(|| ".dbg".to_owned());
+            build.variables.insert(
+                "TARGET_PDB".into(),
+                format!("{}{}{suffix}", parts.base, parts.suffix),
+            );
+        }
+        if let Some(pool) = target.props.get("JOB_POOL_LINK") {
+            build.variables.insert("pool".into(), pool.to_owned());
+        }
+        let mut order = Vec::new();
+        self.append_target_depends(target, &mut order, DependOn::TargetArtifact);
+        build.order_only_deps = order;
+        build.rsp_file = self.ninja_path(&format!(
+            "CMakeFiles/{}{}.rsp",
+            target.name,
+            if self.ctx.multi_config {
+                format!(".{config}")
+            } else {
+                String::new()
+            }
+        ));
+        let limit = command_line_length_limit() - self.rule_command_length(&build.rule);
+        let use_rsp = write_build(&mut out, &build, limit);
+        self.out_at(&Stream::Common).push_str(&out);
+        self.write_device_link_rule(language, target, use_rsp);
+        Some(output)
+    }
+
+    /// `cmNinjaNormalTargetGenerator::WriteLinkStatement`.
     fn write_link_statement(
         &mut self,
         target: &'a Target,
@@ -3929,6 +4467,8 @@ impl<'a> NinjaGenerator<'a> {
             osx_bundle::create_cf_bundle(&self.ctx, target, &names.output, &directory, &config);
         }
 
+        let device_link_object = self.write_device_link_statement(target, language, objects);
+
         let rule_name = self.linker_rule_name(language, target);
         let link_depfile = flags::link_dependency_file(&self.ctx, target, language);
         let has_depfile = link_depfile.is_some();
@@ -3946,8 +4486,15 @@ impl<'a> NinjaGenerator<'a> {
         build.outputs.push(target_real.clone());
         // GetByproductsForCleanTarget(config) (firstForConfig: always,
         // without cross-config builds).
-        let mut clean_outputs = vec![target_real.clone()];
+        let mut clean_outputs = Vec::new();
         build.explicit_deps = objects.to_vec();
+        if let Some(device_link_object) = device_link_object {
+            if first_for_config {
+                clean_outputs.push(device_link_object.clone());
+            }
+            build.explicit_deps.push(device_link_object);
+        }
+        clean_outputs.push(target_real.clone());
         // Static libraries only need the diagnostics of their link items.
         let _ = link::link_information(&self.ctx, target, &config, language);
         let link_vars = flags::link_flag_vars(&self.ctx, target, &config, language);
@@ -4511,6 +5058,14 @@ impl<'a> NinjaGenerator<'a> {
             ("INCLUDES", var("INCLUDES")),
             ("TARGET_COMPILE_PDB", var("TARGET_COMPILE_PDB")),
             ("TARGET_PDB", var("TARGET_PDB")),
+            (
+                "CUDA_COMPILE_MODE",
+                if language == "CUDA" {
+                    self.cuda_compile_mode(target)
+                } else {
+                    String::new()
+                },
+            ),
         ];
         let template = self
             .ctx

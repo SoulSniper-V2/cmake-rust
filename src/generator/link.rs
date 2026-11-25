@@ -86,6 +86,70 @@ pub fn link_line(ctx: &GenCtx, target: &Target, config: &str, language: &str) ->
         .unwrap_or_default()
 }
 
+/// `requireDeviceLinking` from `cmLinkLineDeviceComputer.cxx`.
+pub(super) fn requires_device_linking(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> bool {
+    if target.kind == TargetKind::ObjectLibrary
+        || !is_on(&ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_HAS_DEVICE_LINK_PHASE"))
+    {
+        return false;
+    }
+    if let Some(resolve) = target.props.get("CUDA_RESOLVE_DEVICE_SYMBOLS") {
+        return is_on(resolve);
+    }
+    if !target::closure_languages(ctx, target, config)
+        .iter()
+        .any(|language| language == "CUDA")
+    {
+        return false;
+    }
+    if target
+        .props
+        .get("CUDA_SEPARABLE_COMPILATION")
+        .is_some_and(is_on)
+    {
+        return matches!(
+            target.kind,
+            TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        );
+    }
+    link_information(ctx, target, config, language).is_some_and(|info| {
+        info.items.iter().any(|item| {
+            item.target
+                .as_deref()
+                .and_then(|key| ctx.interp.ext.targets.get(key))
+                .is_some_and(|dependency| {
+                    dependency.kind == TargetKind::StaticLibrary
+                        && !dependency
+                            .props
+                            .get("CUDA_RESOLVE_DEVICE_SYMBOLS")
+                            .is_some_and(is_on)
+                        && dependency
+                            .props
+                            .get("CUDA_SEPARABLE_COMPILATION")
+                            .is_some_and(is_on)
+                })
+        })
+    })
+}
+
+/// The device-link line (`cmLinkLineDeviceComputer`) for `target`.
+pub(super) fn device_link_line(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> LinkLine {
+    let query = Query::new(ctx, config, language);
+    link_information(ctx, target, config, language)
+        .map(|info| information::device_line(&query, target, &info))
+        .unwrap_or_default()
+}
+
 /// The targets among the link items of `target`, and the providers of the
 /// object files among them, whose modules are forwarded.
 pub(super) fn module_link_targets<'i>(

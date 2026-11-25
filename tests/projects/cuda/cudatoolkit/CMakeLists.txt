@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.26)
+project(cudatoolkit LANGUAGES CUDA)
+find_package(CUDAToolkit REQUIRED)
+add_executable(cudatoolkit main.cu)
+target_link_libraries(cudatoolkit PRIVATE CUDA::cudart)

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.26)
+project(compile_modes LANGUAGES CUDA)
+add_library(ptx_objects OBJECT kernel.cu)
+set_target_properties(ptx_objects PROPERTIES CUDA_PTX_COMPILATION ON)
+add_library(fatbin_objects OBJECT kernel.cu)
+set_target_properties(fatbin_objects PROPERTIES CUDA_FATBIN_COMPILATION ON)

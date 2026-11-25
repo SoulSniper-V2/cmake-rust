@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.26)
+project(multiconfig LANGUAGES CUDA)
+add_library(kernels STATIC kernels.cu)
+set_target_properties(kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_executable(multiconfig main.cu)
+target_link_libraries(multiconfig PRIVATE kernels)

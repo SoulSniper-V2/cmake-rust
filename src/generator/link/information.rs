@@ -341,6 +341,128 @@ pub(super) fn line(query: &Query<'_, '_>, head: &Target, info: &LinkInformation)
     }
 }
 
+/// The `cmLinkLineDeviceComputer` view of the link information of `head`.
+///
+/// Device linking accepts ordinary link items and only the `-l`, `-L` and
+/// `--library` flags.  Shared, module, object and interface libraries do not
+/// participate in the device link, nor do static libraries whose device
+/// symbols were already resolved.  Since the device linker does not use
+/// static-library order semantics, duplicate items are emitted once.
+pub(super) fn device_line(
+    query: &Query<'_, '_>,
+    head: &Target,
+    info: &LinkInformation,
+) -> LinkLine {
+    let reporter = Reporter {
+        query,
+        target: head,
+    };
+    let var = |name: &str| query.var(head, name);
+    let lookup = |name: &str| {
+        query
+            .ctx
+            .var(head.makefile, &format!("CMAKE_{}_{name}", info.language))
+            .unwrap_or_else(|| var(&format!("CMAKE_{name}")))
+    };
+    let framework_path = query
+        .ctx
+        .var(
+            head.makefile,
+            &format!("CMAKE_{}_FRAMEWORK_SEARCH_FLAG", info.language),
+        )
+        .map(|flag| {
+            info.framework_paths
+                .iter()
+                .map(|dir| format!("{flag}{} ", query.shell(dir)))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let flag = lookup("LIBRARY_PATH_FLAG");
+    let terminator = lookup("LIBRARY_PATH_TERMINATOR");
+    let mut link_path = Vec::new();
+    for dir in info.linker_search_path.ordered(&reporter).to_vec() {
+        link_path.push((
+            format!(" {flag}{}{terminator} ", query.shell(&dir)),
+            Some(dir.clone()),
+        ));
+    }
+    for dir in expand_list(
+        &var(&format!(
+            "CMAKE_{}_STANDARD_LINK_DIRECTORIES",
+            info.language
+        )),
+        false,
+    ) {
+        link_path.push((format!(" {flag}{}{terminator} ", query.shell(&dir)), None));
+    }
+
+    let valid_item = |item: &str| {
+        !item.starts_with('-')
+            || item.starts_with("-l")
+            || item.starts_with("-L")
+            || item.starts_with("--library")
+    };
+    let mut emitted = HashSet::new();
+    let mut skip_after_framework = false;
+    let mut fragments: Vec<(String, Vec<Frame>)> = Vec::new();
+    for item in &info.items {
+        if skip_after_framework {
+            skip_after_framework = false;
+            continue;
+        }
+        if let Some(key) = &item.target {
+            if let Some(target) = query.ctx.interp.ext.targets.get(key) {
+                let skip = match target.kind {
+                    TargetKind::SharedLibrary
+                    | TargetKind::ModuleLibrary
+                    | TargetKind::ObjectLibrary
+                    | TargetKind::InterfaceLibrary => true,
+                    TargetKind::StaticLibrary => target
+                        .props
+                        .get("CUDA_RESOLVE_DEVICE_SYMBOLS")
+                        .is_some_and(is_on),
+                    _ => false,
+                };
+                if skip {
+                    continue;
+                }
+            }
+        }
+        let mut text = String::new();
+        if item.is_path {
+            if [".o", ".obj", ".a", ".lib"]
+                .iter()
+                .any(|suffix| item.value.ends_with(suffix))
+            {
+                text = item.formatted(&query.shell(&query.link_reference(&item.value)));
+            }
+        } else if item.value == "-framework" {
+            skip_after_framework = true;
+            continue;
+        } else if valid_item(&item.value) {
+            text = item.value.clone();
+        }
+        if emitted.insert(text.clone()) {
+            fragments.push((text, item.backtrace.clone()));
+        }
+    }
+    let standard = var(&format!("CMAKE_{}_STANDARD_LIBRARIES", info.language));
+    if !standard.is_empty() {
+        fragments.push((standard, Vec::new()));
+    }
+
+    LinkLine {
+        libraries: append_flags(fragments.iter().map(|(text, _)| text.as_str())),
+        link_path: append_flags(link_path.iter().map(|(text, _)| text.as_str())),
+        framework_path,
+        depends: info.depends.clone(),
+        link_depends: usage_property(query, head, "LINK_DEPENDS"),
+        lib_fragments: fragments,
+        path_fragments: link_path,
+        ..LinkLine::default()
+    }
+}
+
 /// `cmLocalGenerator::AppendFlags`.
 fn append_flags<'a>(flags: impl Iterator<Item = &'a str>) -> String {
     flags

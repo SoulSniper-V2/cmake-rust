@@ -14,7 +14,9 @@ pub(crate) use compile::{
 };
 pub(crate) use compile::{FlagCls, classified_flags_for_source};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
-pub use link::{link_dependency_file, link_flag_vars};
+pub use link::{
+    cuda_compile_language_flags, device_link_flag_vars, link_dependency_file, link_flag_vars,
+};
 pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
 
@@ -241,7 +243,7 @@ impl Flags<'_, '_> {
         {
             standard::append_standard(self, &mut flags);
         }
-        self.language_flags_tail(&mut flags);
+        self.language_flags_tail(&mut flags, linking);
         if self.ipo_enabled() {
             self.append_feature(&mut flags, "IPO");
         }
@@ -251,7 +253,7 @@ impl Flags<'_, '_> {
     /// The `AddLanguageFlags` tail after the language standard option:
     /// compiler-ABI flag additions (Clang VFS overlay, MSVC runtime
     /// library/checks/debug format, Watcom runtime library).
-    fn language_flags_tail(&self, flags: &mut String) {
+    fn language_flags_tail(&self, flags: &mut String, linking: bool) {
         let mut compiler_id = self.lang_var("COMPILER_ID").unwrap_or_default();
         let mut simulate_id = self.lang_var("SIMULATE_ID").unwrap_or_default();
         if self.lang == "RC"
@@ -270,6 +272,13 @@ impl Flags<'_, '_> {
         }
         let msvc_abi = compiler_id == "MSVC" || simulate_id == "MSVC";
         let watcom_abi = compiler_id == "OpenWatcom" || simulate_id == "OpenWatcom";
+
+        if self.lang == "CUDA" {
+            self.add_cuda_architecture_flags(flags, linking);
+            self.add_cuda_toolkit_flags(flags);
+        } else if self.lang == "HIP" {
+            self.add_hip_architecture_flags(flags, linking);
+        }
 
         // CMAKE_CLANG_VFS_OVERLAY for Clang compilers.
         if compiler_id == "Clang"
@@ -394,6 +403,205 @@ impl Flags<'_, '_> {
                     self.lang
                 ));
             }
+        }
+    }
+
+    /// `cmGeneratorTarget::AddCUDAArchitectureFlags`.
+    fn add_cuda_architecture_flags(&self, flags: &mut String, linking: bool) {
+        let arch = self.prop("CUDA_ARCHITECTURES").unwrap_or_default();
+        if arch.is_empty() {
+            let policy = crate::policy::index_of("CMP0104")
+                .map(|index| self.policy(index))
+                .unwrap_or(PolicyStatus::Warn);
+            match policy {
+                PolicyStatus::Warn => {
+                    if !self.ctx.interp.in_try_compile {
+                        self.ctx.warning(
+                            super::target::directory_backtrace(self.ctx, self.target.makefile),
+                            format!(
+                                "{}\nCUDA_ARCHITECTURES is empty for target \"{}\".",
+                                crate::policy::policy_warning(
+                                    crate::policy::index_of("CMP0104").unwrap()
+                                ),
+                                self.target.name
+                            ),
+                        );
+                    }
+                }
+                PolicyStatus::Old => {}
+                PolicyStatus::New => {
+                    self.local_error(format!(
+                        "CUDA_ARCHITECTURES is empty for target \"{}\".",
+                        self.target.name
+                    ));
+                }
+            }
+        }
+        if crate::util::is_off(arch) {
+            return;
+        }
+        self.add_cuda_architecture_flags_impl(flags, linking, "CUDA", arch.to_owned());
+    }
+
+    /// `cmGeneratorTarget::AddCUDAArchitectureFlagsImpl` (shared by CUDA and
+    /// HIP on the NVIDIA platform).
+    fn add_cuda_architecture_flags_impl(
+        &self,
+        flags: &mut String,
+        linking: bool,
+        lang: &str,
+        mut arch: String,
+    ) {
+        let compiler = self
+            .var(&format!("CMAKE_{lang}_COMPILER_ID"))
+            .unwrap_or_default();
+        let version = self
+            .var(&format!("CMAKE_{lang}_COMPILER_VERSION"))
+            .unwrap_or_default();
+        let ipo = self.ipo_enabled();
+        let nvidia_at_least =
+            |minimum: &str| compiler == "NVIDIA" && version_at_least(&version, minimum);
+
+        if arch == "all" || arch == "all-major" {
+            if nvidia_at_least("11.5") {
+                flags.push_str(&format!(" -arch={arch}"));
+                return;
+            }
+            let key = if arch == "all" {
+                format!("CMAKE_{lang}_ARCHITECTURES_ALL")
+            } else {
+                format!("CMAKE_{lang}_ARCHITECTURES_ALL_MAJOR")
+            };
+            arch = self.var(&key).unwrap_or_default();
+        } else if arch == "native" {
+            let native = self
+                .var(&format!("CMAKE_{lang}_ARCHITECTURES_NATIVE"))
+                .unwrap_or_default();
+            if native.is_empty() {
+                self.local_error(format!(
+                    "{lang}_ARCHITECTURES is set to \"native\", but no NVIDIA GPU was detected."
+                ));
+            }
+            if nvidia_at_least("11.6") {
+                flags.push_str(" -arch=native");
+                return;
+            }
+            arch = native;
+        }
+
+        #[derive(Default)]
+        struct CudaArchitecture {
+            name: String,
+            real: bool,
+            virtual_: bool,
+        }
+        let mut architectures = Vec::new();
+        for option in expand_list(&arch, false) {
+            let mut architecture = CudaArchitecture {
+                real: true,
+                virtual_: true,
+                ..CudaArchitecture::default()
+            };
+            let (name, specifier) = option
+                .split_once('-')
+                .map_or((option.as_str(), None), |(name, specifier)| {
+                    (name, Some(specifier))
+                });
+            architecture.name = name.to_owned();
+            if let Some(specifier) = specifier {
+                match specifier {
+                    "real" => {
+                        architecture.real = true;
+                        architecture.virtual_ = false;
+                    }
+                    "virtual" => {
+                        architecture.real = false;
+                        architecture.virtual_ = true;
+                    }
+                    _ => self.local_error(format!(
+                        "Unknown CUDA architecture specifier \"{specifier}\"."
+                    )),
+                }
+            }
+            architectures.push(architecture);
+        }
+
+        if compiler == "NVIDIA" {
+            if ipo
+                && linking
+                && let Some(ipo_flags) = self.var(&format!("CMAKE_{lang}_LINK_OPTIONS_IPO"))
+            {
+                flags.push_str(&ipo_flags);
+            }
+            for architecture in architectures {
+                flags.push_str(&format!(
+                    " \"--generate-code=arch=compute_{},code=[",
+                    architecture.name
+                ));
+                if architecture.virtual_ {
+                    flags.push_str(&format!("compute_{}", architecture.name));
+                    if ipo || architecture.real {
+                        flags.push(',');
+                    }
+                }
+                if ipo {
+                    if linking {
+                        flags.push_str(&format!("sm_{}", architecture.name));
+                    } else {
+                        flags.push_str(&format!("lto_{}", architecture.name));
+                    }
+                } else if architecture.real {
+                    flags.push_str(&format!("sm_{}", architecture.name));
+                }
+                flags.push_str("]\"");
+            }
+        } else if compiler == "Clang" && !linking {
+            for architecture in architectures {
+                flags.push_str(&format!(" --cuda-gpu-arch=sm_{}", architecture.name));
+                if !architecture.real {
+                    self.ctx.warning(
+                        super::target::directory_backtrace(self.ctx, self.target.makefile),
+                        "Clang doesn't support disabling CUDA real code generation.",
+                    );
+                }
+                if !architecture.virtual_ {
+                    flags.push_str(&format!(" --no-cuda-include-ptx=sm_{}", architecture.name));
+                }
+            }
+        }
+    }
+
+    /// `cmGeneratorTarget::AddCUDAToolkitFlags`.
+    fn add_cuda_toolkit_flags(&self, flags: &mut String) {
+        if self.var("CMAKE_CUDA_COMPILER_ID").as_deref() == Some("Clang") {
+            let root = self
+                .var("CMAKE_CUDA_COMPILER_LIBRARY_ROOT")
+                .unwrap_or_default();
+            if !root.is_empty() {
+                flags.push_str(" --cuda-path=");
+                flags.push_str(&shell_with_make_vars(&root));
+            }
+        }
+    }
+
+    /// `cmGeneratorTarget::AddHIPArchitectureFlags`.
+    fn add_hip_architecture_flags(&self, flags: &mut String, linking: bool) {
+        let arch = self.prop("HIP_ARCHITECTURES").unwrap_or_default();
+        if arch.is_empty() {
+            self.local_error(format!(
+                "HIP_ARCHITECTURES is empty for target \"{}\".",
+                self.target.name
+            ));
+        }
+        if crate::util::is_off(arch) {
+            return;
+        }
+        if self.var("CMAKE_HIP_PLATFORM").as_deref() == Some("nvidia") {
+            self.add_cuda_architecture_flags_impl(flags, linking, "HIP", arch.to_owned());
+            return;
+        }
+        for option in expand_list(arch, false) {
+            flags.push_str(&format!(" --offload-arch={option}"));
         }
     }
 
@@ -673,6 +881,20 @@ impl Flags<'_, '_> {
             .then_some(true)
         })
     }
+}
+
+fn version_at_least(version: &str, minimum: &str) -> bool {
+    let parse = |text: &str| {
+        text.split('.')
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect::<Vec<_>>()
+    };
+    let mut actual = parse(version);
+    let mut required = parse(minimum);
+    let len = actual.len().max(required.len());
+    actual.resize(len, 0);
+    required.resize(len, 0);
+    actual >= required
 }
 
 fn cmake_space(ch: char) -> bool {

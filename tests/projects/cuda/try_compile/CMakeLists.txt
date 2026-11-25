@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.26)
+project(cuda_try_compile LANGUAGES CUDA)
+set(CMAKE_CUDA_ARCHITECTURES 61)
+try_compile(CUDA_TRY_RESULT ${CMAKE_BINARY_DIR}/try ${CMAKE_CURRENT_SOURCE_DIR}/test.cu)
+if(NOT CUDA_TRY_RESULT)
+  message(FATAL_ERROR "CUDA try_compile failed")
+endif()
+add_executable(app main.cu)

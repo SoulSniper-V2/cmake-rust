@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.26)
+project(device_link_options LANGUAGES CUDA)
+add_library(kernels STATIC kernels.cu)
+set_target_properties(kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_executable(app main.cu)
+target_link_libraries(app PRIVATE kernels)
+target_link_options(app PRIVATE -fPIC $<HOST_LINK:-Wl,--as-needed> $<DEVICE_LINK:-Wno-deprecated-gpu-targets>)

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.26)
+project(separable LANGUAGES CUDA)
+add_library(kernels STATIC kernels.cu)
+set_target_properties(kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+add_executable(app main.cu)
+target_link_libraries(app PRIVATE kernels)

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.26)
+project(architectures LANGUAGES CUDA)
+add_executable(list_arch main.cu)
+set_target_properties(list_arch PROPERTIES CUDA_ARCHITECTURES "52;60-real")
+add_executable(all_major main.cu)
+set_target_properties(all_major PROPERTIES CUDA_ARCHITECTURES all-major OUTPUT_NAME all_major_exe)
+add_executable(no_arch main.cu)
+set_target_properties(no_arch PROPERTIES CUDA_ARCHITECTURES OFF OUTPUT_NAME no_arch_exe)

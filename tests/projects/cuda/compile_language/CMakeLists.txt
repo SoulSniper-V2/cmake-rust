@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.26)
+project(compile_language LANGUAGES CUDA)
+add_executable(compile_language main.cu)
+target_compile_options(compile_language PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+target_compile_definitions(compile_language PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:CUDA_SOURCE=1>)

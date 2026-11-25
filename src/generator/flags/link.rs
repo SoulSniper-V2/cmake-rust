@@ -175,6 +175,105 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
     result
 }
 
+/// Values for a CUDA device-link build statement.
+#[derive(Clone, Debug, Default)]
+pub struct DeviceLinkFlagVars {
+    pub language_compile_flags: String,
+    pub link_flags: String,
+}
+
+/// `cmLocalGenerator::GetDeviceLinkFlags` and the CUDA language flags passed
+/// to the device-link step (`AddLanguageFlagsForLinking(..., "CUDA", ...)`).
+pub fn device_link_flag_vars(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    dependency_ipo: bool,
+) -> DeviceLinkFlagVars {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: "CUDA",
+    };
+    let mut result = DeviceLinkFlagVars::default();
+    let mut link_flags = String::new();
+    let ipo = inputs.ipo_enabled() || dependency_ipo;
+    if ipo && let Some(options) = inputs.var("CMAKE_CUDA_DEVICE_LINK_OPTIONS_IPO") {
+        link_flags.push_str(&options);
+    }
+    let visibility = "CUDA_VISIBILITY_PRESET";
+    if let (Some(prefix), Some(preset)) = (
+        inputs.lang_var("COMPILE_OPTIONS_VISIBILITY"),
+        inputs.prop(visibility),
+    ) {
+        if matches!(preset, "default" | "hidden" | "protected" | "internal") {
+            append(&mut link_flags, &format!("{prefix}{preset}"));
+        } else {
+            inputs.ctx.system_error(format!(
+                "Target {} uses unsupported value \"{preset}\" for {visibility}. The supported values are: default, hidden, protected, and internal.",
+                inputs.target.name
+            ));
+        }
+    }
+    let mut encoded = encode_literal(&link_flags);
+    for option in device_link_options(&inputs) {
+        append(&mut encoded, &option);
+    }
+    result.link_flags = encoded.trim_matches(cmake_space).to_owned();
+    result.language_compile_flags = inputs
+        .language_flags(true)
+        .trim_matches(cmake_space)
+        .to_owned();
+    result
+}
+
+/// `cmGeneratorTarget::GetLinkOptions` with the generator-expression
+/// device-link context enabled.
+fn device_link_options(inputs: &Flags<'_, '_>) -> Vec<String> {
+    if inputs
+        .target
+        .policies
+        .get(crate::policy::index_of("CMP0105").unwrap())
+        != Some(PolicyStatus::New)
+    {
+        return Vec::new();
+    }
+    let key = inputs.ctx.target_key(inputs.target);
+    let mut host = crate::generator::genex_host::CtxHost::new(inputs.ctx, inputs.target.makefile);
+    let mut eval = crate::genex::EvalContext {
+        config: inputs.config,
+        language: Some("CUDA"),
+        device_link: true,
+        ..crate::genex::EvalContext::default()
+    };
+    let items = match crate::genex::usage_requirements(&mut host, &key, "LINK_OPTIONS", &mut eval) {
+        Ok(items) => items,
+        Err(error) => {
+            if !error.quiet {
+                let backtrace = inputs.ctx.backtrace(error.backtrace);
+                inputs.ctx.genex_error(backtrace, &error);
+            }
+            Vec::new()
+        }
+    };
+    items.into_iter().map(|item| item.value).collect()
+}
+
+/// CUDA language flags in compile context, used by the Clang CUDA
+/// registration-stub compile rule (`GetFlags("CUDA", config)`).
+pub fn cuda_compile_language_flags(ctx: &GenCtx, target: &Target, config: &str) -> String {
+    Flags {
+        ctx,
+        target,
+        config,
+        lang: "CUDA",
+    }
+    .language_flags(false)
+    .trim_matches(cmake_space)
+    .to_owned()
+}
+
 fn creation_flags(inputs: &Flags<'_, '_>) -> String {
     let lang = inputs.lang;
     match inputs.target.kind {
