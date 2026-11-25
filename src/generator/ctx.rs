@@ -98,7 +98,7 @@ pub struct GenCtx<'a> {
     /// `cmMakefile::OutputFiles` appended at generation time
     /// (`AddCMakeOutputFile`); recorded for parity though only the Makefile
     /// generators consult them.
-    pub cmake_output_files: Rc<RefCell<Vec<String>>>,
+    pub cmake_output_files: Rc<RefCell<Vec<(usize, String)>>>,
 }
 
 /// The memoized computations of a [`GenCtx`].

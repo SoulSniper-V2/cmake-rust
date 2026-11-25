@@ -315,6 +315,9 @@ pub fn generate(ctx: &GenCtx) {
                 }
                 files.insert(output.clone());
                 outputs.insert(output.clone(), value.clone());
+                ctx.cmake_output_files
+                    .borrow_mut()
+                    .push((file.dir, output.clone()));
                 let mut text = String::new();
                 let mut lines: Vec<&str> = value.split('\n').collect();
                 let trailing = lines.last() == Some(&"");

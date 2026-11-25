@@ -1,8 +1,8 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-3`
+Branch: `t3/unix-makefiles-4`
 
-Most recent completed full Unix Makefiles lane before Batch 5: **103/161** (`/tmp/pd-umf-baseline.log`).  Ninja lane: 161/161.  Batch 5 focused fixes are documented below; a fresh full lane has not yet been run after them.
+Most recent completed full Unix Makefiles lane after merging `main` into Batch 6: **108/161** (`/tmp/pd-umf-batch7-baseline.log`).  The pre-Batch-5 baseline was 103/161 (`/tmp/pd-umf-baseline.log`).  Ninja lane must remain 161/161.
 
 Known remaining projdiff failure groups: autogen, CUDA, C++ modules,
 install/platform variants, ASM dependency scanning, object-library corners,
@@ -11,9 +11,27 @@ ordering, and try_compile nested logs.  `link/items` still has target-specific
 link model differences.  `install/subdir_dest` is down to object-file `./`
 normalization in `sub/cmake_install.cmake`.
 
-Evidence still pending: fresh full Unix Makefiles lane after this batch, zlib
-byte parity/build, Kitware CMake self-configure/build, RunCMake lane, and CLI
-regression additions.
+Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
+Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
+
+## Batch 7 (summary labels, depend inputs, generated outputs)
+
+Started from the fresh post-merge full lane: **108/161**
+(`/tmp/pd-umf-batch7-baseline.log`).  Focused results are `ninja/labels` PASS,
+`targets/wrap_commands` PASS, `targets/custom_relative_generated_dep` PASS, and
+`install/target_objects` PASS (`/tmp/pd-batch7-focus1.log`).
+
+- Unix Makefiles now writes target/global `Labels.txt` and `Labels.json`
+  summaries with the same target, directory, CMAKE_DIRECTORY_LABELS, and
+  source-label layout as `cmGlobalGenerator::WriteSummary`.
+- Target `depend` rules depend on the sorted custom-command output set, so
+  generated wrapper/moc/uic sources exist before dependency scanning.
+- `progress.marks` excludes targets excluded from the default build, matching
+  `InitializeProgressMarks`/`IsExcluded`; explicit target builds still use the
+  target's own progress numbers.
+- Generation-time output files (`file(GENERATE)`, Apple bundle/plist outputs)
+  are recorded with their owning directory and appear in
+  `CMAKE_MAKEFILE_PRODUCTS` in `Makefile.cmake`.
 
 ## Batch 6 (custom source properties and Fortran object modules)
 

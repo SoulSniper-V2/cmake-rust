@@ -254,14 +254,18 @@ pub fn create_app_bundle(
         gt::app_bundle_directory(ctx, target, config, gt::BundleLevel::Full)
     );
     let _ = std::fs::create_dir_all(&out);
-    ctx.cmake_output_files.borrow_mut().push(out.clone());
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, out.clone()));
     // Configure the Info.plist file (needs the executable name set).
     let plist = format!(
         "{outpath}/{}/Info.plist",
         gt::app_bundle_directory(ctx, target, config, gt::BundleLevel::Content)
     );
     generate_apple_info_plist(ctx, target, target_name, &plist);
-    ctx.cmake_output_files.borrow_mut().push(plist);
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, plist));
     out
 }
 
@@ -309,11 +313,15 @@ pub fn create_framework(
     // Current -> version
     let current = format!("{versions}/Current");
     create_symlink(framework_version, &current);
-    ctx.cmake_output_files.borrow_mut().push(current);
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, current));
     // foo -> Versions/Current/foo
     let link = format!("{contentdir}{name}");
     create_symlink(&format!("Versions/Current/{name}"), &link);
-    ctx.cmake_output_files.borrow_mut().push(link);
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, link));
     if !skip.text_stubs {
         // foo.tbd -> Versions/Current/foo.tbd
         let tbd = ctx
@@ -321,13 +329,17 @@ pub fn create_framework(
             .to_owned();
         let link = format!("{contentdir}{name}{tbd}");
         create_symlink(&format!("Versions/Current/{name}{tbd}"), &link);
-        ctx.cmake_output_files.borrow_mut().push(link);
+        ctx.cmake_output_files
+            .borrow_mut()
+            .push((target.makefile, link));
     }
     for folder in ["Resources", "Headers", "PrivateHeaders"] {
         if folders.contains(folder) {
             let link = format!("{contentdir}{folder}");
             create_symlink(&format!("Versions/Current/{folder}"), &link);
-            ctx.cmake_output_files.borrow_mut().push(link);
+            ctx.cmake_output_files
+                .borrow_mut()
+                .push((target.makefile, link));
         }
     }
 }
@@ -348,14 +360,18 @@ pub fn create_cf_bundle(
         gt::cf_bundle_directory(ctx, target, config, gt::BundleLevel::Full)
     );
     let _ = std::fs::create_dir_all(&out);
-    ctx.cmake_output_files.borrow_mut().push(out);
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, out));
     let plist = format!(
         "{root}/{}/Info.plist",
         gt::cf_bundle_directory(ctx, target, config, gt::BundleLevel::Content)
     );
     let name = filename_name(target_name);
     generate_apple_info_plist(ctx, target, &name, &plist);
-    ctx.cmake_output_files.borrow_mut().push(plist);
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((target.makefile, plist));
 }
 
 /// `cmMakefile::CanIWriteThisFile`.
@@ -520,7 +536,9 @@ fn configure_file(
         return;
     }
     ctx.cmake_depend_files.borrow_mut().push(infile.to_owned());
-    ctx.cmake_output_files.borrow_mut().push(outfile.to_owned());
+    ctx.cmake_output_files
+        .borrow_mut()
+        .push((makefile, outfile.to_owned()));
     let mut data = Vec::new();
     let mut input = match std::fs::File::open(infile) {
         Ok(input) => input,

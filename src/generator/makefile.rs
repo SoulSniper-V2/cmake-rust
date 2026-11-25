@@ -7,7 +7,7 @@
 //! target names are home-relative while commands are prefixed with `cd` to
 //! the owning directory.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -1404,7 +1404,7 @@ impl<'a> MakefileGenerator<'a> {
         support: &str,
         support_rel_cur: &str,
         support_rel_top: &str,
-        _custom_outputs: &[String],
+        custom_outputs: &[String],
         out: &mut String,
     ) {
         let clean = format!("{support_rel_top}/clean");
@@ -1420,6 +1420,12 @@ impl<'a> MakefileGenerator<'a> {
         }
         write_make_rule(out, None, &clean, &[], &[command], true);
         let dep_target = format!("{support_rel_top}/depend");
+        let mut depend_inputs: Vec<String> = custom_outputs
+            .iter()
+            .map(|output| self.top_rule_path(output))
+            .collect();
+        depend_inputs.sort();
+        depend_inputs.dedup();
         let mf = &self.ctx.interp.makefiles[target.makefile];
         let mut command = String::new();
         command.push_str(&format!(
@@ -1438,7 +1444,7 @@ impl<'a> MakefileGenerator<'a> {
         if self.color() {
             command.push_str(" \"--color=$(COLOR)\"");
         }
-        write_make_rule(out, None, &dep_target, &[], &[command], true);
+        write_make_rule(out, None, &dep_target, &depend_inputs, &[command], true);
     }
 
     fn write_flags(&self, target: &Target) {
@@ -2214,7 +2220,10 @@ impl<'a> MakefileGenerator<'a> {
                 let Some(target) = self.ctx.target(name) else {
                     continue;
                 };
-                if !is_in_build_system(target) {
+                if !is_in_build_system(target)
+                    || util::is_on_opt(target.props.get("EXCLUDE_FROM_ALL"))
+                    || self.ctx.interp.makefiles[target.makefile].exclude_from_all
+                {
                     continue;
                 }
                 let mut at = Some(target.makefile);
@@ -2292,6 +2301,121 @@ impl<'a> MakefileGenerator<'a> {
         self.count_progress_marks_in_target(target, &mut std::collections::HashSet::new())
     }
 
+    /// `cmGlobalGenerator::WriteSummary(target)`: Labels.txt/Labels.json in
+    /// the target's support directory when any labels apply.
+    fn write_labels(&self, target: &Target, directory: &str) {
+        let interp = self.ctx.interp;
+        let mut seen = HashSet::new();
+        let sources = self
+            .ctx
+            .configs
+            .iter()
+            .flat_map(|config| {
+                gt::sources(self.ctx, target, config)
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|source| seen.insert(source.path.clone()))
+            .map(|source| {
+                let labels = crate::commands::target::find_known_source(
+                    interp,
+                    target.makefile,
+                    &source.path,
+                )
+                .and_then(|index| {
+                    interp.ext.sources[&target.makefile][index]
+                        .props
+                        .get("LABELS")
+                        .map(str::to_owned)
+                });
+                (source.path.clone(), labels)
+            })
+            .collect();
+        self.write_labels_files(
+            &target.name,
+            target.props.get("LABELS"),
+            target.makefile,
+            sources,
+            directory,
+        );
+    }
+
+    /// The shared body of `WriteSummary(target)`.  Default global targets
+    /// have no LABELS property or sources, but still get the files when
+    /// their directory has labels.
+    fn write_labels_files(
+        &self,
+        name: &str,
+        target_labels: Option<&str>,
+        makefile: usize,
+        sources: Vec<(String, Option<String>)>,
+        directory: &str,
+    ) {
+        use crate::commands::string::json::{Json, write_json_ostream};
+        let interp = self.ctx.interp;
+        let file = format!("{directory}/Labels.txt");
+        let json_file = format!("{directory}/Labels.json");
+        let directory_labels = interp.makefiles[makefile].props.get("LABELS");
+        let cmake_directory_labels = self.ctx.var(makefile, "CMAKE_DIRECTORY_LABELS");
+        if target_labels.is_none() && directory_labels.is_none() && cmake_directory_labels.is_none()
+        {
+            let _ = std::fs::remove_file(&file);
+            let _ = std::fs::remove_file(&json_file);
+            return;
+        }
+        let text = |value: &str| Json::Str(crate::bytes::encode(value).into_owned());
+        let mut out = String::new();
+        let mut all_labels = Vec::new();
+        let labels = util::expand_list(target_labels.unwrap_or_default(), false);
+        if !labels.is_empty() {
+            out.push_str("# Target labels\n");
+            for label in labels {
+                out.push_str(&format!(" {label}\n"));
+                all_labels.push(text(&label));
+            }
+        }
+        let directory_list = util::expand_list(directory_labels.unwrap_or_default(), false);
+        let cmake_list =
+            util::expand_list(cmake_directory_labels.as_deref().unwrap_or_default(), false);
+        if !directory_list.is_empty() || !cmake_list.is_empty() {
+            out.push_str("# Directory labels\n");
+        }
+        for label in directory_list.iter().chain(&cmake_list) {
+            out.push_str(&format!(" {label}\n"));
+            all_labels.push(text(label));
+        }
+        out.push_str("# Source files and their labels\n");
+        let mut source_json = Vec::new();
+        for (path, labels) in sources {
+            out.push_str(&path);
+            out.push('\n');
+            let mut entry = BTreeMap::new();
+            entry.insert(b"file".to_vec(), text(&path));
+            if let Some(labels) = labels {
+                let mut list = Vec::new();
+                for label in util::expand_list(&labels, false) {
+                    out.push_str(&format!(" {label}\n"));
+                    list.push(text(&label));
+                }
+                entry.insert(b"labels".to_vec(), Json::Array(list));
+            }
+            source_json.push(Json::Object(entry));
+        }
+        let mut target_json = BTreeMap::new();
+        target_json.insert(b"labels".to_vec(), Json::Array(all_labels));
+        target_json.insert(b"name".to_vec(), text(name));
+        let mut root = BTreeMap::new();
+        root.insert(b"sources".to_vec(), Json::Array(source_json));
+        root.insert(b"target".to_vec(), Json::Object(target_json));
+        let _ = std::fs::create_dir_all(directory);
+        let _ = crate::fsutil::write_generated(Path::new(&file), &out);
+        let _ = crate::fsutil::write_generated(
+            Path::new(&json_file),
+            &write_json_ostream(&Json::Object(root)),
+        );
+    }
+
     fn write_target_directories(&self) {
         let mut out = String::new();
         let testing = self
@@ -2308,7 +2432,7 @@ impl<'a> MakefileGenerator<'a> {
                 .ctx
                 .var(0, "CMAKE_SKIP_INSTALL_RULES")
                 .is_some_and(|v| crate::util::is_on(&v));
-        for mf in self.ctx.interp.makefiles.iter() {
+        for (mf_index, mf) in self.ctx.interp.makefiles.iter().enumerate() {
             for key in &mf.targets {
                 if let Some(target) = self.ctx.interp.ext.targets.get(key) {
                     if is_in_build_system(target)
@@ -2322,7 +2446,9 @@ impl<'a> MakefileGenerator<'a> {
                                 | TargetKind::Utility
                         )
                     {
-                        let _ = writeln!(out, "{}", gt::support_directory(self.ctx, target));
+                        let directory = gt::support_directory(self.ctx, target);
+                        self.write_labels(target, &directory);
+                        let _ = writeln!(out, "{directory}");
                     }
                 }
             }
@@ -2340,7 +2466,9 @@ impl<'a> MakefileGenerator<'a> {
                 ]);
             }
             for name in names {
-                let _ = writeln!(out, "{}/CMakeFiles/{name}.dir", mf.binary_dir);
+                let directory = format!("{}/CMakeFiles/{name}.dir", mf.binary_dir);
+                self.write_labels_files(name, None, mf_index, Vec::new(), &directory);
+                let _ = writeln!(out, "{directory}");
             }
         }
         let path = format!(
@@ -2371,6 +2499,11 @@ impl<'a> MakefileGenerator<'a> {
         for (dir, mf) in self.ctx.interp.makefiles.iter().enumerate() {
             for file in &mf.output_files {
                 let _ = writeln!(out, "  \"{}\"", maybe_relative_top(self.ctx, file));
+            }
+            for (output_dir, file) in self.ctx.cmake_output_files.borrow().iter() {
+                if *output_dir == dir {
+                    let _ = writeln!(out, "  \"{}\"", maybe_relative_top(self.ctx, file));
+                }
             }
             let info = dir_support(self.ctx, dir);
             let _ = writeln!(out, "  \"{}\"", maybe_relative_top(self.ctx, &info));
@@ -2637,10 +2770,7 @@ impl<'a> MakefileGenerator<'a> {
 
     fn object_keeps_source_extension(&self, target: &Target, source: &gt::SourceInfo) -> bool {
         let properties = self.source_props(target, &source.path);
-        if properties
-            .get("KEEP_EXTENSION")
-            .is_some_and(|value| is_on(value))
-        {
+        if properties.get("KEEP_EXTENSION").is_some_and(is_on) {
             return true;
         }
         let cuda_custom = [
@@ -2650,12 +2780,7 @@ impl<'a> MakefileGenerator<'a> {
             "CUDA_OPTIX_COMPILATION",
         ]
         .iter()
-        .any(|property| {
-            target
-                .props
-                .get(*property)
-                .is_some_and(|value| is_on(value))
-        });
+        .any(|property| target.props.get(property).is_some_and(is_on));
         if properties.get("PCH_EXTENSION").is_some()
             || source.object_name.contains("cmake_pch")
             || cuda_custom
