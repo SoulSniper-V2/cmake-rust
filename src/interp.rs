@@ -760,9 +760,10 @@ impl Interp {
         let mut kind = kind;
         if let Some(existing) = self.cache.get(name)
             && existing.kind == CacheType::Uninitialized
+            && existing.initialized
         {
-            // Existing UNINITIALIZED entry (from -D): keep its value unless
-            // forced, and convert relative paths for PATH/FILEPATH.
+            // Existing initialized UNINITIALIZED entry (from -D): keep its
+            // value unless forced, and convert relative paths for PATH/FILEPATH.
             if !force {
                 value = Some(existing.value.clone());
             }
