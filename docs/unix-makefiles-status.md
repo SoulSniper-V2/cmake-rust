@@ -2,7 +2,7 @@
 
 Branch: `t3/unix-makefiles-2`
 
-Current projdiff Unix Makefiles lane: **93/160** at the start of this work batch
+Current projdiff Unix Makefiles lane: **102/161** after the DependInfo overhaul batch and merge of main (ba16ad0).  Ninja lane: 161/161.
 (`/tmp/projdiff-umf-current.log`).  The working tree additionally fixes
 `basic/c_libs`, `export/build_export`, `export/compatible_transitive`,
 `targets/custom`, and one local-Makefile header regression; a fresh full lane
