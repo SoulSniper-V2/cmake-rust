@@ -386,6 +386,15 @@ impl<'a> MakefileGenerator<'a> {
                 source.object_name
             );
             let obj_rel_top = format!("{rel_home}{obj_rel_cur}");
+            // cmMakefileTargetGenerator creates the object file directory at
+            // generate time so compiler-generated depfiles can be written.
+            let obj_abs = format!(
+                "{}/{obj_rel_cur}",
+                self.ctx.interp.makefiles[dir].binary_dir
+            );
+            if let Some(parent) = Path::new(&obj_abs).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             object_paths.push(obj_rel_cur.clone());
             let progress = self.add_progress_file(target, obj_rel_top.clone());
             self.write_object_rule(

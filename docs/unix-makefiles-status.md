@@ -69,3 +69,18 @@ Focused results: `targets/object_files` bad 0, `asm_extension_precedence`
 6->2 (remaining: flags.make language ordering, Makefile), `asm_mixed_linker`
 10->3, `link/items` 9->3.  Validation before commit: fmt/clippy clean, 939/939
 tests, Ninja projdiff 160/160, difftest 1263/1263, clitest 515/515.
+
+## Batch 4 (object directories + zlib build evidence)
+
+- Object file directories are now created at generate time
+  (cmMakefileTargetGenerator behavior), so compiler-generated depfiles in
+  source-mirroring subdirectories (e.g. `CMakeFiles/example.dir/test/`)
+  actually work.
+- zlib evidence: candidate configures zlib with `-G "Unix Makefiles"` and
+  `make -j6` builds example, minigzip, libz.so.1.3.1; `ctest` 2/2 passed;
+  incremental rebuild after touching compress.c rebuilds compress.c.o.
+  Logs: /tmp/zlib-cand-conf.log, /tmp/zlib-cand-build.log,
+  /tmp/zlib-cand-test.log, /tmp/zlib-cand-rebuild.log.
+  Normalized byte parity vs oracle: 58/75 identical; remaining diffs in
+  Makefile, Makefile2, Makefile.cmake, compiler_depend.make and zlib target
+  build.make files.
