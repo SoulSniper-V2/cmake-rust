@@ -1270,7 +1270,13 @@ impl Interp {
         let bytes = if bytes.contains(&b'\r') {
             normalized = Vec::with_capacity(bytes.len());
             for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-                normalized.extend_from_slice(line.strip_suffix(b"\r\n").unwrap_or(line));
+                match line.strip_suffix(b"\r\n") {
+                    Some(text) => {
+                        normalized.extend_from_slice(text);
+                        normalized.push(b'\n');
+                    }
+                    None => normalized.extend_from_slice(line),
+                }
             }
             normalized.as_slice()
         } else {
