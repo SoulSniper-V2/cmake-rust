@@ -49,5 +49,31 @@
     "files": {
       "a.cmake": "function(f)\n  message(SEND_ERROR \"e\")\nendfunction()\nf()\nmessage(\"reached\")\n"
     }
+  },
+  {
+    "name": "warn-uninitialized-env-and-cache",
+    "argv": [
+      "--warn-uninitialized",
+      "-P",
+      "a.cmake"
+    ],
+    "files": {
+      "a.cmake": "message(\"[$ENV{CMAKE_RUST_NO_SUCH_ENV}] [$CACHE{NO_SUCH_CACHE}] [${nope}]\")\nset(Q)\nmessage(\"[$ENV{Q}] [$CACHE{Q}]\")\n"
+    }
+  },
+  {
+    "name": "debug-output-notice-stack",
+    "argv": [
+      "--debug-output",
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\nmessage(NOTICE \"n1\")\nmessage(\"n2\")\n"
+    }
   }
 ]

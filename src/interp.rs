@@ -1515,15 +1515,26 @@ impl Interp {
     }
 
     /// Pops policy frames down to `depth`, diagnosing unbalanced PUSH.
-    fn end_policy_scope(&mut self, depth: usize) {
-        let current = self.mf().policies.len();
-        if current > depth + 1 && !self.fatal {
-            self.issue(
-                MessageType::FatalError,
-                "cmake_policy PUSH without matching POP",
-            );
+    /// Start of a `cmStateSnapshot` whose PolicyScope is the current
+    /// policy stack top: cmake_policy(POP) cannot reach past it.
+    fn enter_policy_snapshot(&mut self) {
+        let depth = self.mf().policies.len();
+        self.policy_barriers.push((self.mf_index(), depth));
+    }
+
+    /// `cmMakefile::PopSnapshot(reportError)`: reject policy scopes still
+    /// open in the closing snapshot, then end it.
+    fn exit_policy_snapshot(&mut self, report_error: bool) {
+        let (_, barrier) = self.policy_barriers.pop().expect("policy snapshot barrier");
+        if self.mf().policies.len() > barrier {
+            if report_error {
+                self.issue(
+                    MessageType::FatalError,
+                    "cmake_policy PUSH without matching POP",
+                );
+            }
+            self.mf_mut().policies.truncate(barrier);
         }
-        self.mf_mut().policies.truncate(depth);
     }
 
     pub fn project_list_file(&self, source: &str) -> String {
@@ -1583,6 +1594,8 @@ impl Interp {
             name: None,
             deferred: false,
         });
+        // ListFileScope: an inline list-file snapshot (a new policy scope).
+        self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(path);
         self.debug_begin_parse(path);
         let parsed = self.parse_file(path);
@@ -1596,6 +1609,9 @@ impl Interp {
             self.ext.file_locks.files.pop();
         }
         self.pop_list_file_vars(saved);
+        // ~ListFileScope: PopSnapshot, quiet after a fatal error.
+        let report = !self.fatal;
+        self.exit_policy_snapshot(report);
         self.backtrace.pop();
         ok
     }
@@ -1609,6 +1625,8 @@ impl Interp {
             name: None,
             deferred: false,
         });
+        // ListFileScope, as for ReadListFile.
+        self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(&path);
         let parsed = self.parse_text(Rc::from(path.as_str()), code);
         let ok = parsed.is_some();
@@ -1617,6 +1635,8 @@ impl Interp {
             self.run_file_body(&parsed);
         }
         self.pop_list_file_vars(saved);
+        let report = !self.fatal;
+        self.exit_policy_snapshot(report);
         self.backtrace.pop();
         ok
     }
@@ -1625,7 +1645,11 @@ impl Interp {
         self.loop_depth.push(0);
         let ctl = self.run_range(parsed, 0, parsed.commands.len(), None);
         self.loop_depth.pop();
-        if let Ctl::Return(Some(vars)) = ctl {
+        // cmMakefile::RunListFile stops on a fatal error before it handles
+        // a return(PROPAGATE).
+        if let Ctl::Return(Some(vars)) = ctl
+            && !self.fatal
+        {
             self.propagate(&vars);
         }
     }
@@ -1706,6 +1730,9 @@ impl Interp {
             // Flow commands run their own blocks here but are traced like
             // any command invocation (cmMakefile::ExecuteCommand).
             self.announce_flow_command(file, command, subst);
+            if self.fatal {
+                return Ctl::Normal;
+            }
             let ctl = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(file, index, subst);
@@ -2236,10 +2263,14 @@ impl Interp {
                     .argv
                     .push((format!("${{ARGV{index}}}"), value.clone()));
             }
+            // PushMacroScope: a new snapshot (and so policy scope), then a
+            // weak policy entry.
+            self.enter_policy_snapshot();
             self.push_policy(true, callable.policies.clone());
-            let depth = self.mf().policies.len();
             let ctl = self.run_body(callable, Some(&subst));
-            self.end_policy_scope(depth - 1);
+            // PopMacroScope: PopPolicy, then PopSnapshot.
+            self.pop_policy();
+            self.exit_policy_snapshot(!matches!(ctl, BodyResult::Error));
             self.ext.execution_files.pop();
             match ctl {
                 BodyResult::Error => (false, Ctl::Normal),
@@ -2247,8 +2278,10 @@ impl Interp {
             }
         } else {
             self.push_scope();
+            // PushFunctionScope: a new snapshot (and so policy scope), then
+            // a weak policy entry.
+            self.enter_policy_snapshot();
             self.push_policy(true, callable.policies.clone());
-            let depth = self.mf().policies.len();
             self.set_def("ARGC", args.len().to_string());
             for (index, value) in args.iter().enumerate() {
                 self.set_def(format!("ARGV{index}"), value.clone());
@@ -2280,7 +2313,10 @@ impl Interp {
                 let vars = vars.clone();
                 self.propagate(&vars);
             }
-            self.end_policy_scope(depth - 1);
+            // PopFunctionScope: PopPolicy, then PopSnapshot (quiet when a
+            // body command failed).
+            self.pop_policy();
+            self.exit_policy_snapshot(!matches!(result, BodyResult::Error));
             self.pop_scope();
             self.ext.execution_files.pop();
             match result {
@@ -2307,6 +2343,22 @@ impl Interp {
         {
             return;
         }
+        // cmMakefile::ExecuteCommand checks the recursion depth for the
+        // flow command itself (its body is replayed one level up, outside
+        // its CallScope).
+        let limit = self.recursion_depth_limit();
+        if self.recursion_depth + 1 + self.recursion_depth_base > limit {
+            self.backtrace.push(self.frame_for(file, command));
+            let saved = self.nested_error;
+            self.issue(
+                MessageType::FatalError,
+                &format!("Maximum recursion depth of {limit} exceeded"),
+            );
+            self.nested_error = saved;
+            self.backtrace.pop();
+            self.set_fatal();
+            return;
+        }
         if self.trace.is_some() {
             let depth = self.recursion_depth + 1;
             self.print_command_trace(file, command, subst, depth);
@@ -2327,6 +2379,9 @@ impl Interp {
             let command = &file.commands[index];
             let jumps = &file.jumps[index];
             self.announce_flow_command(&file, command, subst);
+            if self.fatal {
+                return BodyResult::Error;
+            }
             let (ok, ctl) = match command.lname.as_str() {
                 "if" if self.is_flow("if") => {
                     let ctl = self.run_if(&file, index, subst);
@@ -3017,12 +3072,16 @@ impl Interp {
         drop(dbg);
         // `cmBlockFunctionBlocker`: `endblock` takes no arguments.
         self.warn_end_args(file, command, end, true, false);
-        let policy_depth = self.mf().policies.len();
-        if options.variables {
-            self.push_scope();
-        }
+        // `BlockScopePushPop`: the policy entry is pushed before the
+        // variable scope, whose snapshot then starts a new policy scope
+        // (cmake_policy(POP) cannot reach past it).
         if options.policies {
             self.push_policy(false, PolicyMap::default());
+        }
+        if options.variables {
+            self.push_scope();
+            let depth = self.mf().policies.len();
+            self.policy_barriers.push((self.mf_index(), depth));
         }
         let ctl = self.run_range(file, index + 1, end, subst);
         // `return()` inside a block propagates outward; block PROPAGATE
@@ -3041,10 +3100,21 @@ impl Interp {
                     self.propagate(&vars);
                 }
             }
+            // cmMakefile::PopScope -> PopSnapshot: reject policy scopes
+            // still open inside the variable scope.
+            let (_, barrier) = self.policy_barriers.pop().expect("block policy barrier");
+            if self.mf().policies.len() > barrier {
+                self.issue(
+                    MessageType::FatalError,
+                    "cmake_policy PUSH without matching POP",
+                );
+                self.mf_mut().policies.truncate(barrier);
+            }
             self.pop_scope();
         }
         if options.policies {
-            self.end_policy_scope(policy_depth);
+            // ~PolicyPushPop: a single cmMakefile::PopPolicy.
+            self.pop_policy();
         }
         (true, ctl)
     }
@@ -3142,9 +3212,26 @@ impl Interp {
                                     value
                                 }
                             }
-                            b'E' => std::env::var_os(crate::bytes::encode_os(&lookup))
-                                .map(|value| crate::bytes::decode_os(&value)),
-                            _ => self.cache.get(&lookup).map(|entry| entry.value.clone()),
+                            b'E' => {
+                                let value = std::env::var_os(crate::bytes::encode_os(&lookup))
+                                    .map(|value| crate::bytes::decode_os(&value));
+                                // ExpandVariablesInStringImpl warns for any
+                                // missing value, whatever its domain.
+                                if value.is_none() {
+                                    let file = location.map(|(file, _)| file);
+                                    self.maybe_warn_uninitialized(&lookup, file);
+                                }
+                                value
+                            }
+                            _ => {
+                                let value =
+                                    self.cache.get(&lookup).map(|entry| entry.value.clone());
+                                if value.is_none() {
+                                    let file = location.map(|(file, _)| file);
+                                    self.maybe_warn_uninitialized(&lookup, file);
+                                }
+                                value
+                            }
                         };
                         let value = value.unwrap_or_default();
                         let value = if escape_quotes {

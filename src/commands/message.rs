@@ -163,8 +163,10 @@ fn message(interp: &mut Interp, args: &[String]) -> CmdResult {
             interp.issue_at_unsuppressed(kind, &text);
         }
         LogLevel::Notice => {
+            // cmSystemTools::Message: the message callback adds the
+            // --debug-output call stack.
             let text = indent_text(interp, &text);
-            interp.stderr_line(&text);
+            interp.system_message(&text);
         }
         LogLevel::Status => match check {
             Some("start") => {
