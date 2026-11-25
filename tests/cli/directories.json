@@ -110,5 +110,21 @@
       "s.cmake": "string(ASCII 195 13 10 65 127 v)\nmessage(STATUS \"v=[${v}]\")\n",
       "show.cmake": "file(READ t.json text)\nstring(REGEX REPLACE \"\\\"time\\\":[0-9.e+]*\" \"\" text \"${text}\")\nstring(REGEX REPLACE \"\\\"file\\\":\\\"[^\\\"]*\\\",\" \"\" text \"${text}\")\nmessage(\"${text}\")\n"
     }
+  },
+  {
+    "name": "debug-output-stack-at-include-scope-exit",
+    "argv": [
+      "--debug-output",
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\ninclude(inc.cmake)\nmessage(STATUS done)\n",
+      "src/inc.cmake": "cmake_policy(POP)\n"
+    }
   }
 ]

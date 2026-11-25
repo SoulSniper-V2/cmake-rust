@@ -1517,7 +1517,9 @@ impl Interp {
             self.mf_mut().list_files.push(path.clone());
             self.run_file_body(&parsed);
         }
-        self.pop_list_file_vars(saved);
+        // ~IncludeScope: PopPolicy and PopSnapshot run while the include's
+        // snapshot is still the current execution list file (the
+        // --debug-output stack still shows it), then it is popped.
         if !no_policy_scope {
             self.pop_policy();
         }
@@ -1529,6 +1531,7 @@ impl Interp {
             );
         }
         self.mf_mut().policies.truncate(depth_before);
+        self.pop_list_file_vars(saved);
         self.backtrace.pop();
         ok
     }
@@ -1627,10 +1630,11 @@ impl Interp {
             self.run_file_body(&parsed);
             self.ext.file_locks.files.pop();
         }
-        self.pop_list_file_vars(saved);
-        // ~ListFileScope: PopSnapshot, quiet after a fatal error.
+        // ~ListFileScope: PopSnapshot (quiet after a fatal error) while the
+        // file is still the current execution list file.
         let report = !self.fatal;
         self.exit_policy_snapshot(report);
+        self.pop_list_file_vars(saved);
         self.backtrace.pop();
         ok
     }
@@ -1653,9 +1657,9 @@ impl Interp {
             self.debug_file_parsed(&path, &parsed.commands);
             self.run_file_body(&parsed);
         }
-        self.pop_list_file_vars(saved);
         let report = !self.fatal;
         self.exit_policy_snapshot(report);
+        self.pop_list_file_vars(saved);
         self.backtrace.pop();
         ok
     }
