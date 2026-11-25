@@ -70,11 +70,7 @@ fn command(interp: &mut Interp, args: &[String]) -> CmdResult {
         "ARCHIVE_CREATE" => archive::archive_create(interp, args),
         "ARCHIVE_EXTRACT" => archive::archive_extract(interp, args),
         "GET_RUNTIME_DEPENDENCIES" => runtime_deps::get_runtime_dependencies(interp, args),
-        "READ_MACHO" => {
-            // SetError prefixes the command name. The unsupported command is
-            // named explicitly in the diagnostic.
-            Err(fatal(interp, &format!("file({action}) not yet supported")))
-        }
+        "READ_MACHO" => read_macho(interp, args),
         _ => err(format!("does not recognize sub-command {action}")),
     }
 }
@@ -1062,4 +1058,52 @@ fn copy_file_always(source: &str, dest: &str) -> io::Result<()> {
         mkdir(&crate::util::filename_path(&unix_slashes(&dest)))?;
         copy_file(source, &dest).map_err(|(error, _)| error)
     }
+}
+
+/// `HandleReadMachoCommand` as built off Apple (no CMake_USE_MACH_PARSER):
+/// arguments are validated and the file checked, then the platform error.
+fn read_macho(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.len() < 4 {
+        return err("READ_MACHO must be called with at least three additional arguments.");
+    }
+    let file = &args[1];
+    // cmArgumentParser: single-value keywords take the next argument
+    // (the last occurrence wins); anything else is unparsed.
+    let (mut architectures, mut error) = (String::new(), String::new());
+    let mut pending: Option<&str> = None;
+    for arg in &args[2..] {
+        match arg.as_str() {
+            "ARCHITECTURES" | "CAPTURE_ERROR" => {
+                if arg == "ARCHITECTURES" {
+                    architectures.clear();
+                } else {
+                    error.clear();
+                }
+                pending = Some(arg.as_str());
+            }
+            value => match pending.take() {
+                Some("ARCHITECTURES") => architectures = value.to_owned(),
+                Some(_) => error = value.to_owned(),
+                None => {}
+            },
+        }
+    }
+    if !architectures.is_empty() {
+        interp.set_def(&architectures, "unknown");
+    }
+    // cmSystemTools::FileExists(name, isFile = true).
+    if !fs::metadata(file).is_ok_and(|m| !m.is_dir()) {
+        if error.is_empty() {
+            return err(format!(
+                "READ_MACHO given FILE \"{file}\" that does not exist."
+            ));
+        }
+        interp.set_def(&error, format!("{file} does not exist"));
+        return Ok(());
+    }
+    if error.is_empty() {
+        return err("READ_MACHO support not available on this platform.");
+    }
+    interp.set_def(&error, "READ_MACHO support not available on this platform.");
+    Ok(())
 }
