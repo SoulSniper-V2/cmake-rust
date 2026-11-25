@@ -1920,6 +1920,46 @@ impl Interp {
         if self.fatal { None } else { Some(out) }
     }
 
+    /// Expansion for `if()`/`while()`/`elseif()` conditions.  Kitware expands
+    /// condition arguments inside the condition evaluator, so even when
+    /// expansion reports a fatal error the condition is still evaluated;
+    //  each argument individually keeps its unexpanded original text on
+    /// failure (see cmMakefile::ExpandVariablesInString).  The fatal state
+    /// only stops execution after the command completes.
+    pub fn expand_arguments_lenient(
+        &mut self,
+        file: &str,
+        args: &[Arg],
+        subst: Option<&MacroSubst>,
+    ) -> Vec<(String, bool)> {
+        let fatal = self.fatal;
+        self.fatal = false;
+        let mut out = Vec::with_capacity(args.len());
+        for arg in args {
+            if arg.delim == Delim::Bracket {
+                out.push((arg.value.clone(), true));
+                continue;
+            }
+            let raw = match subst {
+                Some(subst) => subst.apply(&arg.value),
+                None => arg.value.clone(),
+            };
+            let value = self.expand_variables(&raw, Some((file, arg.line)), false, false);
+            match arg.delim {
+                Delim::Quoted => out.push((value, true)),
+                _ => {
+                    for item in util::expand_list(&value, false) {
+                        out.push((item, false));
+                    }
+                }
+            }
+        }
+        let failed = self.fatal;
+        self.fatal = failed || fatal;
+        let _ = failed;
+        out
+    }
+
     /// Executes a single non-flow command. Returns (succeeded, control).
     pub fn execute(
         &mut self,
@@ -2606,9 +2646,7 @@ impl Interp {
         subst: Option<&MacroSubst>,
         name: &str,
     ) -> bool {
-        let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
-            return false;
-        };
+        let args = self.expand_arguments_lenient(&file.path, &command.args, subst);
         let (result, error) = crate::condition::evaluate(self, &args);
         if let Some((kind, message)) = error {
             // `cmIfCommand` prepends "if " to the condition error;
@@ -2795,15 +2833,14 @@ impl Interp {
         // `cmWhileFunctionBlocker::Replay`: the condition is re-expanded and
         // re-evaluated every iteration; the last evaluation's error is
         // enforced after the loop per CMP0130.
-        let mut last_args: Vec<(String, bool)> = Vec::new();
-        let mut last_error: Option<(MessageType, String)> = None;
+        // Every loop iteration assigns both before any break, so the
+        // post-loop reads always see the final evaluation.
+        let mut last_args: Vec<(String, bool)>;
+        let mut last_error: Option<(MessageType, String)>;
         let mut completed = false;
         loop {
             self.backtrace.push(self.frame_for(file, command));
-            let Some(args) = self.expand_arguments(&file.path, &command.args, subst) else {
-                self.backtrace.pop();
-                break;
-            };
+            let args = self.expand_arguments_lenient(&file.path, &command.args, subst);
             last_args = args.clone();
             let (condition, error) = crate::condition::evaluate(self, &args);
             last_error = error;
