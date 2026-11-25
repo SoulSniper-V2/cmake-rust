@@ -751,6 +751,7 @@ impl Target {
         self.dependencies
             .entry(name.to_owned())
             .or_insert_with(|| backtrace.to_vec());
+        self.codegen_dependencies.insert(name.to_owned());
         let list = self
             .dependencies
             .keys()

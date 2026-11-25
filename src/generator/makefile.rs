@@ -136,6 +136,7 @@ impl ImplicitDepends {
             .or_default()
             .push(src.to_owned());
     }
+    #[allow(dead_code)]
     fn enabled(&self) -> bool {
         !self.cmake.is_empty() || !self.compiler.is_empty()
     }
@@ -190,6 +191,7 @@ impl<'a> MakefileGenerator<'a> {
             if target.makefile != dir || !is_in_build_system(target) {
                 continue;
             }
+            self.target_mut_progress(target);
             match target.kind {
                 TargetKind::Executable
                 | TargetKind::StaticLibrary
@@ -341,6 +343,11 @@ impl<'a> MakefileGenerator<'a> {
 
         // Custom commands and objects.
         let mut object_paths = Vec::new();
+        let external_paths: Vec<String> = sources
+            .iter()
+            .filter(|s| s.kind == SourceKind::ExternalObject)
+            .map(|s| s.path.clone())
+            .collect();
         let mut custom_outputs = Vec::new();
         let codegen_outputs = self.write_custom_commands(
             target,
@@ -389,6 +396,7 @@ impl<'a> MakefileGenerator<'a> {
             self.write_link(
                 target,
                 &object_paths,
+                &external_paths,
                 &support_rel_cur,
                 &support_rel_top,
                 compiler_depends,
@@ -960,10 +968,12 @@ impl<'a> MakefileGenerator<'a> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_link(
         &mut self,
         target: &Target,
         objects: &[String],
+        externals: &[String],
         support_rel_cur: &str,
         support_rel_top: &str,
         compiler_depends: bool,
@@ -972,20 +982,38 @@ impl<'a> MakefileGenerator<'a> {
         let varname = target
             .name
             .replace(['+', '-', '*', '/', '(', ')', '$', '@', '~'], "_");
+        let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
+        let variable_objects: Vec<&String> = objects
+            .iter()
+            .filter(|object| {
+                pch_extension
+                    .as_ref()
+                    .is_none_or(|extension| !object.ends_with(extension.as_str()))
+            })
+            .collect();
+        let write_objects_variable = |out: &mut String, name: &str, entries: &[String]| {
+            let _ = write!(out, "{varname}{name} =");
+            for object in entries {
+                let _ = write!(
+                    out,
+                    " \\
+\"{}\"",
+                    quote_output_path(object)
+                );
+            }
+            out.push_str("\n\n");
+        };
         let _ = writeln!(out, "# Object files for target {}", target.name);
-        let _ = writeln!(out, "{varname}_OBJECTS = \\");
-        for (index, object) in objects.iter().enumerate() {
-            let continuation = if index + 1 == objects.len() {
-                ""
-            } else {
-                " \\"
-            };
-            let _ = writeln!(out, "\"{}\"{continuation}", quote_output_path(object));
-        }
-        let _ = writeln!(out);
+        write_objects_variable(
+            out,
+            "_OBJECTS",
+            &variable_objects
+                .iter()
+                .map(|o| (*o).clone())
+                .collect::<Vec<_>>(),
+        );
         let _ = writeln!(out, "# External object files for target {}", target.name);
-        let _ = writeln!(out, "{varname}_EXTERNAL_OBJECTS =");
-        let _ = writeln!(out);
+        write_objects_variable(out, "_EXTERNAL_OBJECTS", externals);
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
@@ -1003,6 +1031,7 @@ impl<'a> MakefileGenerator<'a> {
             .iter()
             .map(|o| format!("{}{}", home_relative_output_path(self.ctx, dir), o))
             .collect();
+        depends.extend(externals.iter().map(|o| maybe_relative_top(self.ctx, o)));
         depends.push(format!("{support_rel_top}/build.make"));
         let line = if target.kind == TargetKind::StaticLibrary {
             super::link::LinkLine::default()
@@ -1013,14 +1042,7 @@ impl<'a> MakefileGenerator<'a> {
             if compiler_depends {
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
-            depends.extend(line.depends.iter().map(|p| {
-                let rel = maybe_relative_cur(self.ctx, dir, p);
-                if util::is_full_path(&rel) {
-                    rel
-                } else {
-                    format!("{}{}", home_relative_output_path(self.ctx, dir), rel)
-                }
-            }));
+            depends.extend(line.depends.iter().map(|p| maybe_relative_top(self.ctx, p)));
         }
         let link_script = format!("{support_rel_cur}/link.txt");
         depends.push(format!("{support_rel_top}/link.txt"));
@@ -1112,7 +1134,14 @@ impl<'a> MakefileGenerator<'a> {
                 );
             }
         }
-        self.write_link_script(target, objects, &language, support_rel_cur, &line);
+        self.write_link_script(
+            target,
+            objects,
+            externals,
+            &language,
+            support_rel_cur,
+            &line,
+        );
         let driver = format!(
             "{support_rel_top}/{}",
             if false { "preinstall" } else { "build" }
@@ -1136,6 +1165,7 @@ impl<'a> MakefileGenerator<'a> {
         &self,
         target: &Target,
         objects: &[String],
+        externals: &[String],
         language: &str,
         _support_rel_cur: &str,
         line: &super::link::LinkLine,
@@ -1146,9 +1176,20 @@ impl<'a> MakefileGenerator<'a> {
         let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
         let target_full = format!("{directory}/{}", names.real);
         let target_shell = shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_full));
+        let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
         let object_list = objects
             .iter()
+            .filter(|object| {
+                pch_extension
+                    .as_ref()
+                    .is_none_or(|extension| !object.ends_with(extension.as_str()))
+            })
             .map(|o| shell_path(self.ctx, o))
+            .chain(
+                externals
+                    .iter()
+                    .map(|o| shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, o))),
+            )
             .collect::<Vec<_>>()
             .join(" ");
         let create_var = match target.kind {
@@ -1359,7 +1400,7 @@ impl<'a> MakefileGenerator<'a> {
             let _ = writeln!(out, "  \"{lang}\" \"\"");
         }
         out.push_str("  )\n");
-        if implicit.enabled() || target.kind == TargetKind::Utility {
+        {
             out.push_str("\n# The set of dependency files which are needed:\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n");
             for (lang, objects) in implicit.compiler.iter().chain(implicit.cmake.iter()) {
                 for (obj, srcs) in objects {
@@ -1792,37 +1833,6 @@ impl<'a> MakefileGenerator<'a> {
 
     fn write_progress_marks(&mut self) {
         let total: usize = self.progress.iter().map(|(_, p)| p.total).sum();
-        let _ = crate::fsutil::write_if_different(
-            Path::new(&format!(
-                "{}/CMakeFiles/progress.marks",
-                self.ctx.interp.home_binary
-            )),
-            &format!("{total}\n"),
-        );
-        for dir in 1..self.ctx.interp.makefiles.len() {
-            let mut count = 0usize;
-            for (name, progress) in &self.progress {
-                if let Some(target) = self.ctx.target(name) {
-                    let mut at = Some(target.makefile);
-                    while let Some(cur) = at {
-                        if cur == dir {
-                            count += progress.total;
-                            break;
-                        }
-                        at = self.ctx.interp.makefiles[cur].parent;
-                    }
-                }
-            }
-            let path = format!(
-                "{}/CMakeFiles/progress.marks",
-                self.ctx.interp.makefiles[dir].binary_dir
-            );
-            let _ = std::fs::create_dir_all(format!(
-                "{}/CMakeFiles",
-                self.ctx.interp.makefiles[dir].binary_dir
-            ));
-            let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{count}\n"));
-        }
         let mut ordered: Vec<(String, String, usize)> = self
             .progress
             .iter()
@@ -1874,6 +1884,57 @@ impl<'a> MakefileGenerator<'a> {
                 Path::new(&format!("{support}/progress.make")),
                 &text,
             );
+        }
+
+        // `cmGlobalUnixMakefileGenerator3::CountProgressMarksInAll` for each
+        // directory: targets in the directory subtree plus their direct
+        // dependencies, counted recursively with a shared emitted set.
+        for dir in 0..self.ctx.interp.makefiles.len() {
+            let mut targetset: Vec<String> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for (name, _) in &self.progress {
+                let Some(target) = self.ctx.target(name) else {
+                    continue;
+                };
+                if !is_in_build_system(target) {
+                    continue;
+                }
+                let mut at = Some(target.makefile);
+                let mut in_tree = false;
+                while let Some(cur) = at {
+                    if cur == dir {
+                        in_tree = true;
+                        break;
+                    }
+                    at = self.ctx.interp.makefiles[cur].parent;
+                }
+                if !in_tree {
+                    continue;
+                }
+                if seen.insert(name.clone()) {
+                    targetset.push(name.clone());
+                }
+                for depend in super::link::target_depends(self.ctx, target).iter() {
+                    if seen.insert(depend.key.clone()) {
+                        targetset.push(depend.key.clone());
+                    }
+                }
+            }
+            let mut emitted = std::collections::HashSet::new();
+            let mut count = 0usize;
+            for key in &targetset {
+                if let Some(target) = self.ctx.interp.ext.targets.get(key) {
+                    count += self.count_progress_marks_in_target(target, &mut emitted);
+                }
+            }
+            let path = if dir == 0 {
+                format!("{}/CMakeFiles/progress.marks", self.ctx.interp.home_binary)
+            } else {
+                let binary = &self.ctx.interp.makefiles[dir].binary_dir;
+                let _ = std::fs::create_dir_all(format!("{binary}/CMakeFiles"));
+                format!("{binary}/CMakeFiles/progress.marks")
+            };
+            let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{count}\n"));
         }
     }
 
@@ -2222,11 +2283,17 @@ impl<'a> MakefileGenerator<'a> {
                 &[],
                 true,
             );
+            let codegen_deps: Vec<String> = super::link::target_depends(self.ctx, t)
+                .iter()
+                .filter_map(|d| self.ctx.interp.ext.targets.get(&d.key))
+                .filter(|d| t.codegen_dependencies.contains(&d.name))
+                .map(|d| format!("{}/all", rel(d)))
+                .collect();
             write_make_rule(
                 &mut out,
                 Some("codegen rule for target."),
                 &format!("{r}/codegen"),
-                &[],
+                &codegen_deps,
                 &[
                     format!("$(MAKE) $(MAKESILENT) -f {r}/build.make {r}/codegen"),
                     format!(

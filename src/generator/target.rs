@@ -839,12 +839,17 @@ pub fn target_compile_pdb(ctx: &GenCtx, target: &Target, config: &str) -> String
 /// configuration's intermediate directory: "." for a single configuration,
 /// and `${CONFIGURATION}`, which `ExpandCFGIntDir` replaces, otherwise.
 pub fn object_directory(ctx: &GenCtx, target: &Target, config: &str) -> String {
-    let int_dir = if ctx.multi_config && !config.is_empty() {
-        config
+    if ctx.multi_config && !config.is_empty() {
+        return format!("{}/{config}/", support_directory(ctx, target));
+    }
+    // `cmGlobalUnixMakefileGenerator3::ComputeTargetObjectDirectory` has no
+    // intermediate configuration directory, while the Ninja generators use
+    // `.` for their single-config `$<CONFIG>` expansion.
+    if ctx.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+        format!("{}/", support_directory(ctx, target))
     } else {
-        "."
-    };
-    format!("{}/{int_dir}/", support_directory(ctx, target))
+        format!("{}/./", support_directory(ctx, target))
+    }
 }
 
 /// `cmGeneratorTarget::HasSOName`.

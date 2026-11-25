@@ -31,3 +31,17 @@ normalization in `sub/cmake_install.cmake`.
 Evidence still pending: fresh full Unix Makefiles lane after this batch, zlib
 byte parity/build, Kitware CMake self-configure/build, RunCMake lane, and CLI
 regression additions.
+
+## Batch 2 (progress + external objects)
+
+- `targets/usage`, `targets/object_files`, `install/subdir_dest`,
+  `export/shared_deps` now pass; full lane was 100/160 before this batch.
+- Fixed: codegen target dependencies in Makefile2 (add_dependencies entries are
+  codegen deps), unconditional CMAKE_DEPENDS_DEPENDENCY_FILES block,
+  zero-action progress.make files, external object (`$<TARGET_OBJECTS>` in
+  sources) handling in build.make/link.txt, generator-aware object directory
+  (`/./` only for Ninja), oracle progress.marks counting (direct deps of
+  in-directory targets counted recursively).
+- Remaining known: Fortran/ASM scanner-kind DependInfo layout (CMAKE_DEPENDS_CHECK_*
+  blocks, depfile-format tags), per-source custom flag comments, AUTOGEN, CUDA,
+  PCH/unity, install/target_objects file(GENERATE) deps.
