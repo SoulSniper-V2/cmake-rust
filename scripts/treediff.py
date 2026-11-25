@@ -99,6 +99,40 @@ def configure(cmake: Path, source: Path, build: Path, extra: list[str], log: Pat
     return proc.returncode
 
 
+def normalize_rebuild_manifest(data: bytes) -> bytes:
+    """Canonicalize order-only variation in CMake regeneration dependency lists.
+
+    Kitware sorts these dependencies before writing them.  The oracle and
+    candidate necessarily sort different literal strings because their cmake
+    data roots are installed in different prefixes, even when the normalized
+    dependency sets are identical.  Dependency order is not semantically
+    significant here, so sort the normalized tokens for comparison.
+    """
+    out = []
+    missing_inputs = False
+    for line in data.splitlines(keepends=True):
+        ending = b""
+        body = line
+        if body.endswith(b"\n"):
+            body, ending = body[:-1], b"\n"
+        if body.endswith(b"\r"):
+            body, ending = body[:-1], b"\r" + ending
+        if b": RERUN_CMAKE" in body:
+            head, deps = body.split(b": RERUN_CMAKE", 1)
+            tokens = deps.strip().split()
+            body = head + b": RERUN_CMAKE " + b" ".join(sorted(tokens))
+        elif missing_inputs and body.startswith(b"build "):
+            tokens = body.strip().split()
+            body = b"build " + b" ".join(sorted(tokens[1:]))
+            missing_inputs = False
+        elif missing_inputs and body.strip() and not body.startswith(b"#"):
+            missing_inputs = False
+        if b"A missing CMake input file is not an error." in body:
+            missing_inputs = True
+        out.append(body + ending)
+    return b"".join(out)
+
+
 def ignored(rel: str) -> bool:
     name = Path(rel).name
     # FetchContent clones are inputs copied into the build tree.  Their .git
@@ -124,7 +158,14 @@ def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
         if path.is_symlink():
             files[norm_rel] = ("symlink", normalize(os.readlink(path).encode(errors="surrogateescape")))
         elif path.is_file():
-            files[norm_rel] = ("file", normalize(path.read_bytes()))
+            data = normalize(path.read_bytes())
+            is_rebuild_manifest = (
+                rel == "build.ninja" or rel.endswith("/build.ninja")
+                or rel == "CMakeFiles/common.ninja" or rel.endswith("/CMakeFiles/common.ninja")
+            )
+            if is_rebuild_manifest:
+                data = normalize_rebuild_manifest(data)
+            files[norm_rel] = ("file", data)
     return files
 
 
