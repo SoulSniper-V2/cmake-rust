@@ -16,6 +16,7 @@ pub(crate) use compile::{FlagCls, classified_flags_for_source};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{
     cuda_compile_language_flags, device_link_flag_vars, link_dependency_file, link_flag_vars,
+    link_language_flag_vars, makefile_link_flags,
 };
 pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};

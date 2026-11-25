@@ -175,6 +175,177 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
     result
 }
 
+/// Language and architecture flags for a link rule, without evaluating
+/// target link options.  Generators whose link-flag ordering differs from
+/// Ninja use this together with their own link-flag computation.
+pub fn link_language_flag_vars(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> LinkFlagVars {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: language,
+    };
+    let mut result = LinkFlagVars::default();
+    let language_flags = inputs
+        .language_flags(true)
+        .trim_matches(cmake_space)
+        .to_owned();
+    if target.kind == TargetKind::Executable {
+        let mut flags = language_flags;
+        inputs.add_architecture_flags(&mut flags, "");
+        result.flags = flags;
+    } else {
+        result.language_compile_flags = language_flags;
+        inputs.add_architecture_flags(&mut result.arch_flags, "");
+    }
+    result
+}
+
+/// `cmMakefileTargetGenerator::GetTargetLinkFlags` combined with the
+/// executable/library-specific flag ordering used by the Unix Makefiles
+/// generator.  This differs from Ninja: Makefile link rules put target link
+/// flags (including the linker depfile flag) before shared-library creation
+/// flags, while executable creation/export flags come first.
+pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language: &str) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: language,
+    };
+    let upper_config = config.to_ascii_uppercase();
+    if target.kind == TargetKind::StaticLibrary {
+        return link_flag_vars(ctx, target, config, language).link_flags;
+    }
+
+    // cmMakefileTargetGenerator::GetTargetLinkFlags.
+    let mut target_flags = String::new();
+    let mut raw = String::new();
+    if let Some(value) = inputs.prop("LINK_FLAGS") {
+        raw.push_str(value);
+        raw.push(' ');
+    }
+    if !config.is_empty()
+        && let Some(value) = inputs.prop(&format!("LINK_FLAGS_{upper_config}"))
+    {
+        raw.push_str(value);
+        raw.push(' ');
+    }
+    append(&mut target_flags, &encode_literal(&raw));
+    let options = inputs
+        .usage("LINK_OPTIONS")
+        .into_iter()
+        .scan(false, |device_only, item| {
+            if item == "<DEVICE_LINK>" || item == "</DEVICE_LINK>" {
+                *device_only = item == "<DEVICE_LINK>";
+                Some(None)
+            } else {
+                Some((!*device_only).then_some(item))
+            }
+        })
+        .flatten()
+        .collect();
+    append_options(
+        &mut target_flags,
+        resolve_wrapper(&inputs, options, "LINKER"),
+    );
+    let mut extra = String::new();
+    if inputs
+        .lang_var("LINK_MODE")
+        .as_deref()
+        .is_none_or(|mode| mode == "DRIVER")
+        && let Some(options) = selected_linker(&inputs)
+    {
+        for flag in resolve_wrapper(&inputs, expand_list(&options, false), "LINKER") {
+            append(&mut extra, &flag);
+        }
+    }
+    if target.kind == TargetKind::Executable
+        && inputs.policy(83) == PolicyStatus::New
+        && let Some(pic) = inputs.pic()
+    {
+        let mode = if pic { "PIE" } else { "NO_PIE" };
+        if !is_off_opt(
+            inputs
+                .lang_var(&format!("LINK_{mode}_SUPPORTED"))
+                .as_deref(),
+        ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
+        {
+            append_options(&mut extra, expand_list(&options, false));
+        }
+    }
+    warning_as_error(&inputs, &mut extra);
+    append(&mut target_flags, &encode_literal(&extra));
+    append_depfile_flag(&inputs, &mut target_flags);
+
+    let mut flags = String::new();
+    if target.kind == TargetKind::Executable {
+        append_link_variable(&inputs, &mut flags, &creation_flags(&inputs));
+        append_link_variable(
+            &inputs,
+            &mut flags,
+            &inputs.config_flags("CMAKE_EXE_LINKER_FLAGS"),
+        );
+        let exe = if is_on_opt(inputs.prop("WIN32_EXECUTABLE")) {
+            "WIN32"
+        } else {
+            "CONSOLE"
+        };
+        append_link_variable(
+            &inputs,
+            &mut flags,
+            &inputs
+                .lang_var(&format!("CREATE_{exe}_EXE"))
+                .unwrap_or_default(),
+        );
+        if is_on_opt(inputs.prop("ENABLE_EXPORTS")) {
+            append(
+                &mut flags,
+                &inputs
+                    .var(&format!("CMAKE_EXE_EXPORTS_{language}_FLAG"))
+                    .unwrap_or_default(),
+            );
+        }
+        let export = exe_export_flags(&inputs, language);
+        if !export.is_empty() {
+            append(&mut flags, &export);
+        }
+        if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
+            && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
+        {
+            append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
+        }
+        append(&mut flags, &target_flags);
+    } else {
+        flags = target_flags;
+        append_link_variable(&inputs, &mut flags, &creation_flags(&inputs));
+        let config_var = if target.kind == TargetKind::ModuleLibrary {
+            "CMAKE_MODULE_LINKER_FLAGS"
+        } else {
+            "CMAKE_SHARED_LINKER_FLAGS"
+        };
+        append_link_variable(&inputs, &mut flags, &inputs.config_flags(config_var));
+    }
+    append_module_definition_flag(&inputs, &mut flags);
+    if target.kind != TargetKind::Executable
+        && is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
+        && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
+    {
+        append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
+    }
+    if inputs.ipo_enabled()
+        && let Some(options) = inputs.lang_var("LINK_OPTIONS_IPO")
+    {
+        append_options(&mut flags, expand_list(&options, false));
+    }
+    flags.trim_matches(cmake_space).to_owned()
+}
+
 /// Values for a CUDA device-link build statement.
 #[derive(Clone, Debug, Default)]
 pub struct DeviceLinkFlagVars {
@@ -491,7 +662,11 @@ fn resolve_wrapper(inputs: &Flags<'_, '_>, options: Vec<String>, prefix: &str) -
     result
 }
 
-/// The Ninja DEP_FILE binding, before Ninja path escaping.
+/// The linker DEP_FILE binding, before generator-specific path escaping.
+///
+/// Ninja wants the path relative to the top-level build directory.  Unix
+/// Makefiles executes the link inside the target's directory and wants the
+/// path relative to that directory instead.
 pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Option<String> {
     let inputs = Flags {
         ctx,
@@ -515,7 +690,8 @@ pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Op
     // INTEGRATION: Use target.rs's support/object directory when available.
     let directory = &ctx.interp.makefiles[target.makefile].binary_dir;
     // cmLocalNinjaGenerator::GetLinkDependencyFile: the support directory
-    // plus `ConfigDirectory(config)`.
+    // plus `ConfigDirectory(config)`.  The Makefile generator's local
+    // variant has no per-config component.
     let mut path = Path::new(directory)
         .join("CMakeFiles")
         .join(format!("{}.dir", target.name));
@@ -523,6 +699,14 @@ pub fn link_dependency_file(ctx: &GenCtx, target: &Target, language: &str) -> Op
         path = path.join(&ctx.config);
     }
     let path = path.join("link.d");
+    if ctx.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+        return Some(
+            path.strip_prefix(directory)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     let relative = path
         .strip_prefix(&ctx.interp.home_binary)
         .unwrap_or(&path)

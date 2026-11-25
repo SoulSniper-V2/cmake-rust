@@ -43,7 +43,9 @@ pub struct EvaluatedCommand {
     /// INTEGRATION: also merge genex target references reported by the engine.
     pub target_dependencies: Vec<String>,
     pub job_pool: String,
+    pub job_server_aware: bool,
     pub uses_terminal: bool,
+    pub codegen: bool,
     pub escape_old_style: bool,
     pub escape_allow_make_vars: bool,
 }
@@ -65,7 +67,9 @@ pub struct CustomCommandSpec {
     pub comment: Option<String>,
     pub depfile: String,
     pub job_pool: String,
+    pub job_server_aware: bool,
     pub uses_terminal: bool,
+    pub codegen: bool,
     pub verbatim: bool,
     pub escape_allow_make_vars: bool,
     pub command_expand_lists: bool,
@@ -91,7 +95,9 @@ impl Default for EvaluatedCommand {
             full_depfile: String::new(),
             target_dependencies: Vec::new(),
             job_pool: String::new(),
+            job_server_aware: false,
             uses_terminal: false,
+            codegen: false,
             escape_old_style: true,
             escape_allow_make_vars: false,
         }
@@ -128,7 +134,9 @@ pub fn evaluate_spec_cfg(
     let cross_compiling = is_on_opt(ctx.var(dir, "CMAKE_CROSSCOMPILING").as_deref());
     let mut result = EvaluatedCommand {
         job_pool: spec.job_pool.clone(),
+        job_server_aware: spec.job_server_aware,
         uses_terminal: spec.uses_terminal,
+        codegen: spec.codegen,
         escape_old_style: !spec.verbatim,
         escape_allow_make_vars: spec.escape_allow_make_vars,
         ..EvaluatedCommand::default()
@@ -377,10 +385,7 @@ pub fn make_generators(
 }
 
 /// A configured custom command as the generator's input.
-pub fn spec_from_command(
-    _ctx: &GenCtx,
-    command: &crate::state::CustomCommand,
-) -> CustomCommandSpec {
+pub fn spec_from_command(ctx: &GenCtx, command: &crate::state::CustomCommand) -> CustomCommandSpec {
     let mut spec = CustomCommandSpec {
         makefile: command.makefile,
         target: command.target.clone(),
@@ -392,7 +397,9 @@ pub fn spec_from_command(
         comment: command.comment.clone(),
         depfile: command.depfile.clone(),
         job_pool: command.job_pool.clone(),
+        job_server_aware: command.job_server_aware,
         uses_terminal: command.uses_terminal,
+        codegen: command.codegen,
         verbatim: command.verbatim,
         escape_allow_make_vars: command.escape_allow_make_vars,
         command_expand_lists: command.command_expand_lists,
@@ -402,7 +409,10 @@ pub fn spec_from_command(
     // MakeCustomCommandGenerators: transformDepfile with CMP0116 NEW. The
     // internal depfile path is computed per configuration by evaluate_spec.
     let cmp0116 = crate::policy::index_of("CMP0116").and_then(|index| command.policies.get(index));
-    if cmp0116 == Some(crate::policy::PolicyStatus::New) && !command.depfile.is_empty() {
+    if cmp0116 == Some(crate::policy::PolicyStatus::New)
+        && !command.depfile.is_empty()
+        && ctx.interp.get_def("CMAKE_GENERATOR") != Some("Unix Makefiles")
+    {
         spec.transform_depfile = true;
     }
     spec

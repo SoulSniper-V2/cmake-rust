@@ -87,7 +87,7 @@ def gather(build_dir):
                      "link.txt", "relink.txt", "DependInfo.cmake", "depend.make",
                      "compiler_depend.make", "compiler_depend.ts", "progress.make",
                      "progress.marks", "cmake_clean.cmake", "cmake_clean_target.cmake",
-                     "cmake.check_cache", "CMakeDirectoryInformation.cmake")
+                     "cmake.check_cache", "cmake_directory_clean.cmake", "CMakeDirectoryInformation.cmake")
                 or (name.startswith("AutoRcc_") and name.endswith("_Info.json"))
                 or name.endswith((".mk", ".cps", "_build_database.json.in"))
                 or rel.startswith("CMakeFiles/Export/")

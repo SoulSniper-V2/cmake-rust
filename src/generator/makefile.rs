@@ -15,7 +15,6 @@ use super::ctx::GenCtx;
 use super::custom;
 use super::flags;
 use super::target::{self as gt, ArtifactType, SourceKind};
-use crate::commands::custom_actions::utility_command;
 use crate::state::CustomCommandKind;
 use crate::state::{Target, TargetKind};
 use crate::util::{self, is_on};
@@ -121,6 +120,7 @@ fn build_file_header(_name: &str) -> String {
 struct ImplicitDepends {
     cmake: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     compiler: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    output_pairs: Vec<(String, String)>,
 }
 
 impl ImplicitDepends {
@@ -257,9 +257,6 @@ impl<'a> MakefileGenerator<'a> {
     }
 
     fn add_progress_file(&mut self, target: &Target, file: String) -> usize {
-        if target.kind == TargetKind::Utility {
-            return 0;
-        }
         let p = self.target_mut_progress(target);
         if let Some(number) = p.var_by_file.get(&file) {
             return *number;
@@ -342,21 +339,24 @@ impl<'a> MakefileGenerator<'a> {
             "# Include the progress variables for this target.\ninclude {support_rel_top}/progress.make\n\n# Include the compile flags for this target's objects.\ninclude {support_rel_top}/flags.make\n"
         );
 
-        // codegen driver.
-        let codegen = format!("{support_rel_top}/codegen");
-        write_make_rule(&mut build, None, &codegen, &[], &[], true);
-
         // Custom commands and objects.
         let mut object_paths = Vec::new();
         let mut custom_outputs = Vec::new();
-        self.write_custom_commands(
+        let codegen_outputs = self.write_custom_commands(
             target,
             dir,
             &support_rel_cur,
             &support_rel_top,
             &mut build,
             &mut custom_outputs,
+            &mut impl_depends,
         );
+        let codegen = format!("{support_rel_top}/codegen");
+        let codegen_depends: Vec<String> = codegen_outputs
+            .iter()
+            .map(|output| self.top_rule_path(output))
+            .collect();
+        write_make_rule(&mut build, None, &codegen, &codegen_depends, &[], true);
         for source in sources
             .iter()
             .filter(|s| s.kind == SourceKind::ObjectSource)
@@ -383,14 +383,18 @@ impl<'a> MakefileGenerator<'a> {
             );
         }
 
-        self.write_link(
-            target,
-            &object_paths,
-            &support_rel_cur,
-            &support_rel_top,
-            compiler_depends,
-            &mut build,
-        );
+        if target.kind == TargetKind::ObjectLibrary {
+            self.write_object_library_rule(target, &object_paths, &support_rel_top, &mut build);
+        } else {
+            self.write_link(
+                target,
+                &object_paths,
+                &support_rel_cur,
+                &support_rel_top,
+                compiler_depends,
+                &mut build,
+            );
+        }
         self.write_clean_and_depend(
             target,
             &support,
@@ -533,7 +537,7 @@ impl<'a> MakefileGenerator<'a> {
         if let Some((dep_path, dep_flags)) = depinfo {
             let dep_vars = vec![
                 ("DEP_FILE", shell_path(self.ctx, &dep_path)),
-                ("DEP_TARGET", object_shell),
+                ("DEP_TARGET", shell_path(self.ctx, obj_rel_top)),
             ];
             let expanded = flags::expand_rule_for_step(
                 self.ctx,
@@ -634,6 +638,11 @@ impl<'a> MakefileGenerator<'a> {
             if template.is_empty() {
                 continue;
             }
+            let echo_output = format!(
+                "{}.{}",
+                obj_rel_cur.strip_suffix(".o").unwrap_or(obj_rel_cur),
+                if action == "PREPROCESS" { "i" } else { "s" }
+            );
             let echo_text = format!(
                 "{verb} {lang} source {} {}",
                 if action == "PREPROCESS" {
@@ -641,7 +650,7 @@ impl<'a> MakefileGenerator<'a> {
                 } else {
                     "to assembly"
                 },
-                target_name
+                echo_output
             );
             let vars = vec![
                 ("DEFINES", format!("$({lang}_DEFINES)")),
@@ -719,77 +728,236 @@ impl<'a> MakefileGenerator<'a> {
         )
     }
 
+    fn attached_command(&self, dir: usize, path: &str) -> Option<(usize, usize)> {
+        let index = crate::commands::target::find_known_source(self.ctx.interp, dir, path)?;
+        self.ctx.interp.ext.sources[&dir][index]
+            .custom_command
+            .as_ref()?;
+        Some((dir, index))
+    }
+
+    fn top_rule_path(&self, path: &str) -> String {
+        if util::is_full_path(path)
+            && let Ok(rel) = Path::new(path).strip_prefix(&self.ctx.interp.home_binary)
+        {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+        path.to_owned()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn write_custom_commands(
         &mut self,
         target: &Target,
         dir: usize,
-        _support_rel_cur: &str,
-        _support_rel_top: &str,
+        support_rel_cur: &str,
+        support_rel_top: &str,
         out: &mut String,
         custom_outputs: &mut Vec<String>,
-    ) {
-        for command in target.custom_commands.iter().filter(|c| {
-            matches!(
-                c.kind,
-                CustomCommandKind::Output | CustomCommandKind::Utility
-            )
-        }) {
-            let spec = custom::spec_from_command(self.ctx, command);
+        implicit: &mut ImplicitDepends,
+    ) -> Vec<String> {
+        let _ = support_rel_cur;
+        let mut codegen_outputs = Vec::new();
+        let sources = gt::sources(self.ctx, target, &self.ctx.config);
+        let mut visited = std::collections::HashSet::new();
+        for source in sources
+            .iter()
+            .filter(|source| source.kind == SourceKind::CustomCommandOutput)
+        {
+            let Some((cc_dir, cc_index)) = self.attached_command(target.makefile, &source.path)
+            else {
+                continue;
+            };
+            if !visited.insert((cc_dir, cc_index)) {
+                continue;
+            }
+            let (spec, command_implicit_depends) = {
+                let command = self.ctx.interp.ext.sources[&cc_dir][cc_index]
+                    .custom_command
+                    .as_ref()
+                    .expect("attached custom command");
+                (
+                    custom::spec_from_command(self.ctx, command),
+                    command.implicit_depends.clone(),
+                )
+            };
             let evaluated =
                 custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
             for output in &evaluated.outputs {
                 custom_outputs.push(output.clone());
             }
-            let mut depends = evaluated.depends.clone();
+            let mut depends: Vec<String> = evaluated
+                .depends
+                .iter()
+                .map(|dep| self.top_rule_path(dep))
+                .collect();
+            if !evaluated.full_depfile.is_empty() {
+                depends.push(format!("{support_rel_top}/compiler_depend.ts"));
+            }
             let mut commands = Vec::new();
-            if let Some(comment) = &evaluated.comment {
+            if let Some(comment) = &evaluated.comment
+                && !comment.is_empty()
+            {
                 let progress = self.add_progress_file(
                     target,
-                    evaluated.outputs.first().cloned().unwrap_or_default(),
+                    self.top_rule_path(evaluated.outputs.first().map(String::as_str).unwrap_or("")),
                 );
                 commands.push(format!(
                     "@{}",
-                    self.echo(comment, "--blue", Some(progress), target)
+                    self.echo(comment, "--blue --bold", Some(progress), target)
                 ));
             }
-            for line in self.custom_command_lines(&evaluated, target) {
-                commands.push(if dir == 0 {
-                    line
-                } else {
-                    format!(
-                        "cd {} && {line}",
-                        shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir)
-                    )
-                });
+            commands.extend(self.custom_command_lines(
+                &evaluated,
+                target,
+                &self.ctx.interp.home_binary,
+            ));
+            if evaluated.outputs.is_empty() {
+                continue;
             }
-            for output in &evaluated.outputs {
-                write_make_rule(out, None, output, &depends, &commands, false);
-                if depends.is_empty() {
-                    // later outputs share the same commands
-                }
-                depends.clear();
+            let first = self.top_rule_path(&evaluated.outputs[0]);
+            write_make_rule(out, None, &first, &depends, &commands, false);
+            for output in evaluated.outputs.iter().skip(1) {
+                let extra = self.top_rule_path(output);
+                write_make_rule(
+                    out,
+                    None,
+                    &extra,
+                    std::slice::from_ref(&first),
+                    &[format!(
+                        "@$(CMAKE_COMMAND) -E touch_nocreate {}",
+                        shell_path(self.ctx, &extra)
+                    )],
+                    false,
+                );
+                implicit
+                    .output_pairs
+                    .push((output.clone(), evaluated.outputs[0].clone()));
+            }
+            for (language, file) in &command_implicit_depends {
+                let obj = util::collapse_full_path(
+                    &evaluated.outputs[0],
+                    &self.ctx.interp.makefiles[dir].binary_dir,
+                );
+                let src =
+                    util::collapse_full_path(file, &self.ctx.interp.makefiles[dir].binary_dir);
+                implicit.add(language, &obj, &src, false);
+            }
+            if evaluated.codegen {
+                codegen_outputs.push(evaluated.outputs[0].clone());
+            }
+            if !evaluated.full_depfile.is_empty() {
+                let obj = util::collapse_full_path(
+                    &evaluated.outputs[0],
+                    &self.ctx.interp.makefiles[dir].binary_dir,
+                );
+                implicit.add("CUSTOM", &obj, &evaluated.full_depfile, true);
             }
         }
+        codegen_outputs
     }
 
     fn custom_command_lines(
         &self,
         evaluated: &custom::EvaluatedCommand,
-        _target: &Target,
+        target: &Target,
+        relative_dir: &str,
     ) -> Vec<String> {
-        // Match the Ninja generator's launcher expansion closely enough for
-        // Makefile link scripts; cmLocalGenerator::AppendCustomCommand handles
-        // VERBATIM escaping already in custom.rs.
-        evaluated
-            .command_lines
+        let makefile = target.makefile;
+        let working_directory = if evaluated.working_directory.is_empty() {
+            self.ctx.interp.makefiles[makefile].binary_dir.clone()
+        } else {
+            evaluated.working_directory.clone()
+        };
+        let launcher = {
+            let value = target
+                .props
+                .get("RULE_LAUNCH_CUSTOM")
+                .or_else(|| {
+                    self.ctx.interp.makefiles[makefile]
+                        .props
+                        .get("RULE_LAUNCH_CUSTOM")
+                })
+                .or_else(|| self.ctx.interp.global_props.get("RULE_LAUNCH_CUSTOM"))
+                .filter(|value| !value.is_empty());
+            match value {
+                Some(value) => format!("{} ", value.replace("<TARGET_NAME>", &target.name)),
+                None => String::new(),
+            }
+        };
+        let mut lines = Vec::new();
+        for (index, argv) in evaluated.command_lines.iter().enumerate() {
+            if argv.first().is_none_or(|program| program.is_empty()) {
+                continue;
+            }
+            let program = shell_path(self.ctx, &argv[0]);
+            let mut line = format!("{launcher}{program}");
+            evaluated.append_arguments(self.ctx, index, &mut line);
+            lines.push(line);
+        }
+        if working_directory != relative_dir {
+            let prefix = format!("cd {} && ", shell_path(self.ctx, &working_directory));
+            for line in &mut lines {
+                *line = format!("{prefix}{line}");
+            }
+        }
+        if evaluated.job_server_aware {
+            for line in &mut lines {
+                *line = format!("+{line}");
+            }
+        }
+        lines
+    }
+
+    fn write_object_library_rule(
+        &mut self,
+        target: &Target,
+        objects: &[String],
+        support_rel_top: &str,
+        out: &mut String,
+    ) {
+        let dir = target.makefile;
+        let mut depends: Vec<String> = objects
             .iter()
-            .map(|argv| {
-                argv.iter()
-                    .map(|arg| shell_path(self.ctx, arg))
-                    .collect::<Vec<_>>()
-                    .join(" ")
+            .map(|object| {
+                if util::is_full_path(object) {
+                    object.clone()
+                } else {
+                    format!("{}{}", home_relative_output_path(self.ctx, dir), object)
+                }
             })
-            .collect()
+            .collect();
+        depends.push(format!("{support_rel_top}/build.make"));
+        let mut commands = Vec::new();
+        for command in target
+            .custom_commands
+            .iter()
+            .filter(|command| command.kind == CustomCommandKind::PostBuild)
+        {
+            let spec = custom::spec_from_command(self.ctx, command);
+            let evaluated =
+                custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+            commands.extend(self.custom_command_lines(
+                &evaluated,
+                target,
+                &self.ctx.interp.makefiles[dir].binary_dir,
+            ));
+        }
+        if dir != 0 {
+            let cur = shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir);
+            for command in commands.iter_mut() {
+                *command = format!("cd {cur} && {command}");
+            }
+        }
+        write_make_rule(out, None, &target.name, &depends, &commands, true);
+        write_make_rule(
+            out,
+            Some("Rule to build all files generated by this target."),
+            &format!("{support_rel_top}/build"),
+            std::slice::from_ref(&target.name),
+            &[],
+            true,
+        );
     }
 
     fn write_link(
@@ -836,17 +1004,22 @@ impl<'a> MakefileGenerator<'a> {
             .map(|o| format!("{}{}", home_relative_output_path(self.ctx, dir), o))
             .collect();
         depends.push(format!("{support_rel_top}/build.make"));
+        let line = if target.kind == TargetKind::StaticLibrary {
+            super::link::LinkLine::default()
+        } else {
+            super::link::base_link_line(self.ctx, target, &config, &language)
+        };
         if target.kind != TargetKind::StaticLibrary {
             if compiler_depends {
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
-            let line = super::link::base_link_line(self.ctx, target, &config, &language);
             depends.extend(line.depends.iter().map(|p| {
-                format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, p)
-                )
+                let rel = maybe_relative_cur(self.ctx, dir, p);
+                if util::is_full_path(&rel) {
+                    rel
+                } else {
+                    format!("{}{}", home_relative_output_path(self.ctx, dir), rel)
+                }
             }));
         }
         let link_script = format!("{support_rel_cur}/link.txt");
@@ -939,7 +1112,7 @@ impl<'a> MakefileGenerator<'a> {
                 );
             }
         }
-        self.write_link_script(target, objects, &language, support_rel_cur);
+        self.write_link_script(target, objects, &language, support_rel_cur, &line);
         let driver = format!(
             "{support_rel_top}/{}",
             if false { "preinstall" } else { "build" }
@@ -965,6 +1138,7 @@ impl<'a> MakefileGenerator<'a> {
         objects: &[String],
         language: &str,
         _support_rel_cur: &str,
+        line: &super::link::LinkLine,
     ) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
@@ -997,7 +1171,7 @@ impl<'a> MakefileGenerator<'a> {
                 .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
             template = format!("{create};{finish}");
         }
-        let link_vars = flags::link_flag_vars(self.ctx, target, &config, language);
+        let link_vars = flags::link_language_flag_vars(self.ctx, target, &config, language);
         let flags = if target.kind == TargetKind::Executable {
             link_vars.flags.clone()
         } else {
@@ -1005,12 +1179,7 @@ impl<'a> MakefileGenerator<'a> {
             flags::append(&mut s, &link_vars.arch_flags);
             s
         };
-        let line = if target.kind == TargetKind::StaticLibrary {
-            super::link::LinkLine::default()
-        } else {
-            super::link::base_link_line(self.ctx, target, &config, language)
-        };
-        let mut link_flags = link_vars.link_flags.clone();
+        let mut link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
         link_flags = link_flags
             .split_whitespace()
             .map(|flag| {
@@ -1022,17 +1191,6 @@ impl<'a> MakefileGenerator<'a> {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        if link_flags.contains("--dependency-file=") {
-            let mut parts: Vec<String> = link_flags.split_whitespace().map(str::to_owned).collect();
-            if let Some(pos) = parts
-                .iter()
-                .position(|part| part.contains("--dependency-file="))
-            {
-                let dep = parts.remove(pos);
-                parts.insert(0, dep);
-                link_flags = parts.join(" ");
-            }
-        }
         let object_dir = shell_path(
             self.ctx,
             &maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target)),
@@ -1050,8 +1208,8 @@ impl<'a> MakefileGenerator<'a> {
             ),
             ("ARCH_FLAGS", link_vars.arch_flags.clone()),
             ("LINK_FLAGS", link_flags),
-            ("LINK_LIBRARIES", makefile_link_libraries(&line)),
-            ("LINK_PATH", line.framework_path + &line.link_path),
+            ("LINK_LIBRARIES", makefile_link_libraries(line)),
+            ("LINK_PATH", line.framework_path.clone() + &line.link_path),
             ("CONFIG", config.clone()),
             ("TARGET_PDB", String::new()),
             ("TARGET_IMPLIB", String::new()),
@@ -1108,16 +1266,17 @@ impl<'a> MakefileGenerator<'a> {
         out: &mut String,
     ) {
         let clean = format!("{support_rel_top}/clean");
-        write_make_rule(
-            out,
-            None,
-            &clean,
-            &[],
-            &[format!(
-                "$(CMAKE_COMMAND) -P {support_rel_cur}/cmake_clean.cmake"
-            )],
-            true,
-        );
+        let mut command = format!("$(CMAKE_COMMAND) -P {support_rel_cur}/cmake_clean.cmake");
+        if target.makefile != 0 {
+            command = format!(
+                "cd {} && {command}",
+                shell_path(
+                    self.ctx,
+                    &self.ctx.interp.makefiles[target.makefile].binary_dir
+                )
+            );
+        }
+        write_make_rule(out, None, &clean, &[], &[command], true);
         let dep_target = format!("{support_rel_top}/depend");
         let mf = &self.ctx.interp.makefiles[target.makefile];
         let mut command = String::new();
@@ -1204,12 +1363,25 @@ impl<'a> MakefileGenerator<'a> {
             out.push_str("\n# The set of dependency files which are needed:\nset(CMAKE_DEPENDS_DEPENDENCY_FILES\n");
             for (lang, objects) in implicit.compiler.iter().chain(implicit.cmake.iter()) {
                 for (obj, srcs) in objects {
-                    let obj_rel = format!(
-                        "{}{}",
-                        home_relative_output_path(self.ctx, dir),
-                        maybe_relative_cur(self.ctx, dir, obj)
-                    );
+                    let obj_rel = if util::is_full_path(obj) {
+                        self.top_rule_path(obj)
+                    } else {
+                        format!(
+                            "{}{}",
+                            home_relative_output_path(self.ctx, dir),
+                            maybe_relative_cur(self.ctx, dir, obj)
+                        )
+                    };
                     for src in srcs {
+                        if lang == "CUSTOM" {
+                            let dep = self.top_rule_path(src);
+                            let _ = writeln!(
+                                out,
+                                "  \"\" \"{obj_rel}\" \"custom\" \"{}\"",
+                                escape_cmake(&dep)
+                            );
+                            continue;
+                        }
                         let dep = if implicit
                             .compiler
                             .get(lang)
@@ -1250,6 +1422,8 @@ impl<'a> MakefileGenerator<'a> {
             out.push_str("  )\n");
         }
         let names = gt::names(self.ctx, target, &self.ctx.config);
+        let mut output_pairs: std::collections::BTreeSet<(String, String)> =
+            implicit.output_pairs.iter().cloned().collect();
         if names.output != names.real
             && (target.kind == TargetKind::SharedLibrary
                 || target.kind == TargetKind::ModuleLibrary)
@@ -1257,11 +1431,21 @@ impl<'a> MakefileGenerator<'a> {
             let directory =
                 gt::directory(self.ctx, target, &self.ctx.config, ArtifactType::Runtime);
             let real = format!("{directory}/{}", names.real);
-            out.push_str("\n# Pairs of files generated by the same build rule.\nset(CMAKE_MULTIPLE_OUTPUT_PAIRS\n");
             for name in [&names.output, &names.shared_object] {
                 if !name.is_empty() && *name != names.real {
-                    let _ = writeln!(out, "  \"{directory}/{name}\" \"{real}\"");
+                    output_pairs.insert((format!("{directory}/{name}"), real.clone()));
                 }
+            }
+        }
+        if !output_pairs.is_empty() {
+            out.push_str("\n# Pairs of files generated by the same build rule.\nset(CMAKE_MULTIPLE_OUTPUT_PAIRS\n");
+            for (extra, first) in output_pairs {
+                let _ = writeln!(
+                    out,
+                    "  \"{}\" \"{}\"",
+                    escape_cmake(&extra),
+                    escape_cmake(&first)
+                );
             }
             out.push_str("  )\n\n");
         }
@@ -1305,86 +1489,156 @@ impl<'a> MakefileGenerator<'a> {
     fn write_clean_files(&self, target: &Target, objects: &[String]) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
+        let mf = &self.ctx.interp.makefiles[dir];
         let names = gt::names(self.ctx, target, &config);
-        let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let mut clean = Vec::new();
-        // Versioned ELF shared libraries have a historical oddity in the
-        // generated clean file: the bare soname suffix (".1" for
-        // libfoo.so.1) is listed before the other files.
-        if matches!(
-            target.kind,
-            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
-        ) && names.shared_object != names.real
-            && let Some((_, suffix)) = names.shared_object.rsplit_once(".so")
-        {
-            clean.push(suffix.to_owned());
+        let directory = if matches!(target.kind, TargetKind::Utility | TargetKind::ObjectLibrary) {
+            String::new()
+        } else {
+            gt::directory(self.ctx, target, &config, ArtifactType::Runtime)
+        };
+        let mut clean_set = std::collections::BTreeSet::new();
+
+        // Legacy directory property (cmMakefileTargetGenerator::WriteTargetBuildRules).
+        if let Some(value) = mf.props.get("ADDITIONAL_MAKE_CLEAN_FILES") {
+            let evaluated = self.ctx.genex(value, Some(target), None);
+            for file in util::expand_list(&evaluated, false) {
+                clean_set.insert(file);
+            }
         }
+        // Target clean files are collapsed against the current binary directory
+        // before entering cmMakefileTargetGenerator::CleanFiles.  Keeping the
+        // absolute form here matters for the byte order of the final set.
+        if let Some(value) = target.props.get("ADDITIONAL_CLEAN_FILES") {
+            let evaluated = self.ctx.genex(value, Some(target), None);
+            for file in util::expand_list(&evaluated, false) {
+                clean_set.insert(util::collapse_full_path(&file, &mf.binary_dir));
+            }
+        }
+
         let language = gt::linker_language(self.ctx, target, &config);
-        if let Some(depfile) = flags::link_dependency_file(self.ctx, target, &language) {
-            clean.push(maybe_relative_cur(self.ctx, dir, &depfile));
+        if flags::link_dependency_file(self.ctx, target, &language).is_some() {
+            // WriteTargetLinkDependRules stores the full path in CleanFiles;
+            // conversion to the current binary directory happens only when
+            // the clean script is written.  The full path also affects the
+            // byte ordering of the sorted clean set.
+            clean_set.insert(format!(
+                "{}/link.d",
+                gt::support_directory(self.ctx, target)
+            ));
         }
-        for object in objects {
-            clean.push(object.clone());
-            if self
-                .depfile_for_source(
-                    target,
-                    &gt::SourceInfo {
-                        path: String::new(),
-                        language: "C".into(),
-                        kind: SourceKind::ObjectSource,
-                        object_name: object.rsplit('/').next().unwrap_or(object).into(),
-                        generated: false,
-                        object_library: None,
-                        backtrace: vec![],
-                    },
-                    object,
+        let clean_sources = gt::sources(self.ctx, target, &config);
+        let object_sources: Vec<&gt::SourceInfo> = clean_sources
+            .iter()
+            .filter(|source| source.kind == SourceKind::ObjectSource)
+            .collect();
+        for (index, object) in objects.iter().enumerate() {
+            clean_set.insert(object.clone());
+            if let Some(source) = object_sources.get(index)
+                && let Some((depfile, _)) = self.depfile_for_source(target, source, object)
+            {
+                clean_set.insert(depfile);
+            }
+        }
+
+        // Custom command outputs and byproducts are cleaned unless the directory
+        // opts out with CLEAN_NO_CUSTOM.
+        if !mf.props.get("CLEAN_NO_CUSTOM").is_some_and(is_on) {
+            let mut visited = std::collections::HashSet::new();
+            for source in gt::sources(self.ctx, target, &config)
+                .iter()
+                .filter(|source| source.kind == SourceKind::CustomCommandOutput)
+            {
+                if let Some((cc_dir, cc_index)) =
+                    self.attached_command(target.makefile, &source.path)
+                    && visited.insert((cc_dir, cc_index))
+                {
+                    let command = self.ctx.interp.ext.sources[&cc_dir][cc_index]
+                        .custom_command
+                        .as_ref()
+                        .expect("attached custom command");
+                    let spec = custom::spec_from_command(self.ctx, command);
+                    let evaluated = custom::evaluate_spec_cfg(
+                        self.ctx,
+                        &spec,
+                        &self.ctx.config,
+                        &self.ctx.config,
+                    );
+                    for file in evaluated.outputs.iter().chain(evaluated.byproducts.iter()) {
+                        clean_set.insert(maybe_relative_cur(self.ctx, dir, file));
+                    }
+                }
+            }
+            for command in target.custom_commands.iter().filter(|command| {
+                matches!(
+                    command.kind,
+                    CustomCommandKind::PreBuild
+                        | CustomCommandKind::PreLink
+                        | CustomCommandKind::PostBuild
                 )
+            }) {
+                let spec = custom::spec_from_command(self.ctx, command);
+                let evaluated =
+                    custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+                for file in evaluated.byproducts.iter() {
+                    clean_set.insert(maybe_relative_cur(self.ctx, dir, file));
+                }
+            }
+        }
+
+        let mut artifacts = Vec::new();
+        if target.kind == TargetKind::Utility {
+            // Utility targets have no linked artifact.  Targets with a utility
+            // command get a nominal symbolic output at CMakeFiles/<target>.
+            if crate::commands::custom_actions::utility_command(self.ctx.interp, &target.name)
                 .is_some()
             {
-                clean.push(format!("{object}.d"));
+                artifacts.push(format!("{}/CMakeFiles/{}", mf.binary_dir, target.name));
             }
-        }
-        let mut artifacts = Vec::new();
-        if target.kind != TargetKind::ObjectLibrary {
+        } else if target.kind != TargetKind::ObjectLibrary {
             artifacts.push(format!("{directory}/{}", names.pdb));
-        }
-        for name in [&names.output, &names.shared_object, &names.real] {
-            if !name.is_empty() {
-                artifacts.push(format!("{directory}/{name}"));
+            for name in [
+                &names.output,
+                &names.shared_object,
+                &names.real,
+                &names.import_library,
+            ] {
+                if !name.is_empty() {
+                    artifacts.push(format!("{directory}/{name}"));
+                }
             }
         }
-        artifacts.sort();
-        artifacts.dedup();
         for artifact in artifacts {
-            clean.push(maybe_relative_cur(self.ctx, dir, &artifact));
+            clean_set.insert(maybe_relative_cur(self.ctx, dir, &artifact));
         }
-        clean.dedup();
-        let mut files = String::from("file(REMOVE_RECURSE\n");
-        for file in clean {
-            let _ = writeln!(
-                files,
-                "  \"{}\"",
-                crate::cache::convert_to_unix_slashes(&file)
-            );
+
+        let mut files = String::new();
+        if !clean_set.is_empty() {
+            files.push_str("file(REMOVE_RECURSE\n");
+            for file in clean_set {
+                let converted = if util::is_full_path(&file) {
+                    maybe_relative_cur(self.ctx, dir, &file)
+                } else {
+                    file
+                };
+                let _ = writeln!(
+                    files,
+                    "  \"{}\"",
+                    escape_cmake(&crate::cache::convert_to_unix_slashes(&converted))
+                );
+            }
+            files.push_str(")\n");
         }
-        files.push_str(")\n");
         let found = gt::sources(self.ctx, target, &config);
         let mut langset = std::collections::BTreeSet::new();
         gt::target_languages(self.ctx, target, &config, &found, &mut langset);
         let langs: Vec<String> = langset.into_iter().collect();
-        if !langs.is_empty() {
-            let _ = writeln!(
-                files,
-                "\n# Per-language clean rules from dependency scanning.\nforeach(lang {})",
-                langs.join(" ")
-            );
-            let rel = self.support_rel(target, dir);
-            let _ = writeln!(
-                files,
-                "  include({rel}/cmake_clean_${{lang}}.cmake OPTIONAL)\nendforeach()"
-            );
-        }
         let support = gt::support_directory(self.ctx, target);
+        let support_rel_cur = maybe_relative_cur(self.ctx, dir, &support);
+        let _ = writeln!(
+            files,
+            "\n# Per-language clean rules from dependency scanning.\nforeach(lang {})\n  include({support_rel_cur}/cmake_clean_${{lang}}.cmake OPTIONAL)\nendforeach()",
+            langs.join(" ")
+        );
         let _ = crate::fsutil::write_if_different(
             Path::new(&format!("{support}/cmake_clean.cmake")),
             &files,
@@ -1430,40 +1684,69 @@ impl<'a> MakefileGenerator<'a> {
             build,
             "# Include any custom commands dependencies for this target.\ninclude {support_rel_top}/compiler_depend.make\n\n# Include the progress variables for this target.\ninclude {support_rel_top}/progress.make\n"
         );
-        let mut util_rules = Vec::new();
-        if let Some(command) = utility_command(self.ctx.interp, &target.name) {
-            let spec = custom::spec_from_command(self.ctx, command);
-            let evaluated =
-                custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
-            let lines = self.custom_command_lines(&evaluated, target);
-            for output in &evaluated.outputs {
-                let output_rel = format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, output)
-                );
-                write_make_rule(&mut build, None, &output_rel, &[], &lines, false);
-                util_rules.push(output_rel);
-            }
-        }
+        let mut custom_outputs = Vec::new();
+        let mut implicit = ImplicitDepends::default();
+        let codegen_outputs = self.write_custom_commands(
+            target,
+            dir,
+            &support_rel_cur,
+            &support_rel_top,
+            &mut build,
+            &mut custom_outputs,
+            &mut implicit,
+        );
+        custom_outputs.sort();
+        custom_outputs.dedup();
         write_make_rule(
             &mut build,
             None,
             &format!("{support_rel_top}/codegen"),
-            &[],
+            &codegen_outputs
+                .iter()
+                .map(|output| self.top_rule_path(output))
+                .collect::<Vec<_>>(),
             &[],
             true,
         );
+        let mut utility_depends = Vec::new();
+        let mut utility_commands = Vec::new();
+        for stage in [CustomCommandKind::PreBuild, CustomCommandKind::PostBuild] {
+            for command in target
+                .custom_commands
+                .iter()
+                .filter(|command| command.kind == stage)
+            {
+                let spec = custom::spec_from_command(self.ctx, command);
+                let evaluated =
+                    custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+                utility_depends.extend(evaluated.depends.iter().map(|dep| self.top_rule_path(dep)));
+                if let Some(comment) = &evaluated.comment
+                    && !comment.is_empty()
+                {
+                    utility_commands.push(format!(
+                        "@{}",
+                        self.echo(comment, "--blue --bold", None, target)
+                    ));
+                }
+                utility_commands.extend(self.custom_command_lines(
+                    &evaluated,
+                    target,
+                    &self.ctx.interp.makefiles[dir].binary_dir,
+                ));
+            }
+        }
+        utility_depends.extend(
+            custom_outputs
+                .iter()
+                .map(|output| self.top_rule_path(output)),
+        );
+        utility_depends.push(format!("{support_rel_top}/build.make"));
         write_make_rule(
             &mut build,
             None,
             &target.name,
-            &util_rules
-                .iter()
-                .cloned()
-                .chain(std::iter::once(format!("{support_rel_top}/build.make")))
-                .collect::<Vec<_>>(),
-            &[],
+            &utility_depends,
+            &utility_commands,
             true,
         );
         write_make_rule(
@@ -1487,7 +1770,7 @@ impl<'a> MakefileGenerator<'a> {
 
         // Utility targets use dependency scanning only for their custom
         // commands.  The DependInfo file is intentionally empty of languages.
-        self.write_depend_info(target, &ImplicitDepends::default());
+        self.write_depend_info(target, &implicit);
         let depend = "# Empty custom commands generated dependencies file for ".to_string()
             + &target.name
             + ".\n# This may be replaced when dependencies are built.\n";
@@ -1504,41 +1787,7 @@ impl<'a> MakefileGenerator<'a> {
         );
         let _ =
             crate::fsutil::write_if_different(Path::new(&format!("{support}/progress.make")), "\n");
-        let mut clean_entries = Vec::new();
-        if let Some(command) = utility_command(self.ctx.interp, &target.name) {
-            let spec = custom::spec_from_command(self.ctx, command);
-            let evaluated =
-                custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
-            clean_entries.extend(evaluated.byproducts.iter().map(|b| {
-                format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, b)
-                )
-            }));
-            clean_entries.extend(evaluated.outputs.iter().map(|b| {
-                format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, b)
-                )
-            }));
-        }
-        let mut clean = String::from("file(REMOVE_RECURSE\n");
-        for entry in clean_entries {
-            let _ = writeln!(clean, "  \"{}\"", escape_cmake(&entry));
-        }
-        clean.push_str(
-            ")\n\n# Per-language clean rules from dependency scanning.\nforeach(lang )\n  include(",
-        );
-        clean.push_str(&format!(
-            "{support_rel_cur}/cmake_clean_${{lang}}.cmake OPTIONAL"
-        ));
-        clean.push_str(")\nendforeach()\n");
-        let _ = crate::fsutil::write_if_different(
-            Path::new(&format!("{support}/cmake_clean.cmake")),
-            &clean,
-        );
+        self.write_clean_files(target, &[]);
     }
 
     fn write_progress_marks(&mut self) {
@@ -1666,6 +1915,20 @@ impl<'a> MakefileGenerator<'a> {
 
     fn write_target_directories(&self) {
         let mut out = String::new();
+        let testing = self
+            .ctx
+            .var(0, "CMAKE_TESTING_ENABLED")
+            .is_some_and(|v| crate::util::is_on(&v));
+        let install_enabled = self
+            .ctx
+            .interp
+            .ext
+            .misc
+            .contains_key("install-target-enabled")
+            && !self
+                .ctx
+                .var(0, "CMAKE_SKIP_INSTALL_RULES")
+                .is_some_and(|v| crate::util::is_on(&v));
         for mf in self.ctx.interp.makefiles.iter() {
             for key in &mf.targets {
                 if let Some(target) = self.ctx.interp.ext.targets.get(key) {
@@ -1684,22 +1947,6 @@ impl<'a> MakefileGenerator<'a> {
                     }
                 }
             }
-        }
-        let testing = self
-            .ctx
-            .var(0, "CMAKE_TESTING_ENABLED")
-            .is_some_and(|v| crate::util::is_on(&v));
-        let install_enabled = self
-            .ctx
-            .interp
-            .ext
-            .misc
-            .contains_key("install-target-enabled")
-            && !self
-                .ctx
-                .var(0, "CMAKE_SKIP_INSTALL_RULES")
-                .is_some_and(|v| crate::util::is_on(&v));
-        for mf in self.ctx.interp.makefiles.iter() {
             let mut names = vec![];
             if testing {
                 names.push("test");
@@ -1788,6 +2035,29 @@ impl<'a> MakefileGenerator<'a> {
         );
     }
 
+    fn write_directory_clean_script(&self, dir: usize) -> Option<String> {
+        let mf = &self.ctx.interp.makefiles[dir];
+        let value = mf.props.get("ADDITIONAL_CLEAN_FILES")?;
+        let evaluated = self.ctx.genex_full(value, dir, None, None, true, &[]);
+        let files = util::expand_list(&evaluated, false);
+        if files.is_empty() {
+            return None;
+        }
+        let cleanfile = format!("{}/CMakeFiles/cmake_directory_clean.cmake", mf.binary_dir);
+        let mut out = String::from("file(REMOVE_RECURSE\n");
+        for file in files {
+            let collapsed = util::collapse_full_path(&file, &mf.binary_dir);
+            let relative = maybe_relative_top(self.ctx, &collapsed);
+            let _ = writeln!(out, "  \"{}\"", escape_cmake(&relative));
+        }
+        out.push_str(")\n");
+        let _ = crate::fsutil::write_if_different(Path::new(&cleanfile), &out);
+        Some(format!(
+            "$(CMAKE_COMMAND) -P {}",
+            shell_path(self.ctx, &maybe_relative_top(self.ctx, &cleanfile))
+        ))
+    }
+
     fn write_main_makefile2(&self) {
         let mut out = build_file_header("");
         out = out
@@ -1851,6 +2121,11 @@ impl<'a> MakefileGenerator<'a> {
                 ("preinstall", "preinstall"),
                 ("clean", "clean"),
             ] {
+                let commands = if rule == "clean" {
+                    self.write_directory_clean_script(dir).into_iter().collect()
+                } else {
+                    Vec::new()
+                };
                 let mut deps = Vec::new();
                 if rule != "preinstall" {
                     deps.extend(
@@ -1885,7 +2160,7 @@ impl<'a> MakefileGenerator<'a> {
                         rule
                     )
                 };
-                write_make_rule(&mut out, Some(&comment), &name, &deps, &[], true);
+                write_make_rule(&mut out, Some(&comment), &name, &deps, &commands, true);
             }
         }
         for t in &targets {
@@ -2279,11 +2554,13 @@ impl<'a> MakefileGenerator<'a> {
                             | TargetKind::Utility
                     ) && (dir == 0 || t.makefile == dir)
                     {
-                        let _ = writeln!(
-                            out,
-                            "#=============================================================================\n# Target rules for targets named {}\n",
-                            t.name
-                        );
+                        if dir == 0 {
+                            let _ = writeln!(
+                                out,
+                                "#=============================================================================\n# Target rules for targets named {}\n",
+                                t.name
+                            );
+                        }
                         if dir == 0 {
                             write_make_rule(
                                 &mut out,
@@ -2327,7 +2604,7 @@ impl<'a> MakefileGenerator<'a> {
                             true,
                         );
                     }
-                    if dir != 0 && t.makefile != dir {
+                    if t.makefile != dir {
                         continue;
                     }
                     for src in gt::sources(self.ctx, t, &self.ctx.config)
@@ -2422,18 +2699,45 @@ impl<'a> MakefileGenerator<'a> {
         if testing {
             out.push_str("\t@echo \"... test\"\n");
         }
-        let mut names: Vec<String> = self
+        let mut utility_names = std::collections::BTreeSet::new();
+        let mut global_names = std::collections::BTreeSet::new();
+        let mut project_names = std::collections::BTreeSet::new();
+        for t in self
             .ctx
             .interp
             .makefiles
             .iter()
             .flat_map(|mf| mf.targets.iter())
             .filter_map(|k| self.ctx.interp.ext.targets.get(k))
-            .filter(|t| is_in_build_system(t))
-            .map(|t| t.name.clone())
-            .collect();
-        names.reverse();
-        for n in names {
+            .filter(|t| dir == 0 || t.makefile == dir)
+        {
+            match t.kind {
+                TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+                    if is_in_build_system(t) =>
+                {
+                    project_names.insert(t.name.clone());
+                }
+                TargetKind::InterfaceLibrary if is_in_build_system(t) => {
+                    project_names.insert(t.name.clone());
+                }
+                TargetKind::Utility => {
+                    utility_names.insert(t.name.clone());
+                }
+                TargetKind::GlobalTarget => {
+                    global_names.insert(t.name.clone());
+                }
+                _ => {}
+            }
+        }
+        for n in global_names
+            .into_iter()
+            .chain(utility_names)
+            .chain(project_names)
+        {
             let _ = writeln!(out, "\t@echo \"... {n}\"");
         }
         for o in help_objects {
