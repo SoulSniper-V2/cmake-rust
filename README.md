@@ -69,12 +69,12 @@ The harnesses in `scripts/`:
 
 | Harness | Compares | Size |
 |---|---|---|
-| `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,276 cases |
-| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 522 cases |
-| `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 161 projects (14 CUDA) |
+| `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,282 cases |
+| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 527 cases |
+| `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 163 projects (14 CUDA) |
 | `statediff.py` | end-of-configure interpreter state: every variable, cache entry and property | LLVM: 94,998 lines, 0 differences |
 | `treediff.py` | every file of a freshly configured build tree, for any generator | ~70 real-world projects, 0 differences |
-| `fuzzdiff.py` | random scripts, generator expressions and projects (deterministic per `--seed`): output, errors, traces, debug and warning modes | 53,000+ cases across 8 seeds, 0 differences outside a crash case |
+| `fuzzdiff.py`, `fuzz_regex.py`, `fuzz_file.py`, `fuzz_project.py` | random scripts, generator expressions, regexes, `file()` sequences and whole projects (target graphs, usage requirements, PCH, unity, install/export), deterministic per `--seed`; output, errors, traces, generated build trees, builds | 80,000+ cases across Ninja, Ninja Multi-Config and every extra generator: 0 differences outside one crash case |
 | `conformance/` | Kitware's own RunCMake test suite | see [`docs/conformance.md`](docs/conformance.md) |
 | `ninjadiff.py`, `dapdiff.py`, `autogendiff.py` | `build.ninja` structure, the debugger protocol, Qt AUTOGEN | |
 
