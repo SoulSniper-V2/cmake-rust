@@ -4,6 +4,7 @@ mod archive;
 pub(crate) mod autogen;
 mod cocompile;
 mod depends;
+mod depends_fortran;
 mod depfile;
 mod dyndep;
 mod fortran;
@@ -192,6 +193,7 @@ pub(crate) fn dispatch(program: &str, args: &[String]) -> i32 {
         // other generators' UpdateDependencies succeeds trivially and an
         // unknown generator name fails without a message.
         "cmake_depends" if args.len() >= 4 => depends::depends(args),
+        "cmake_copy_f90_mod" if args.len() >= 2 => i32::from(!depends_fortran::copy_module(args)),
         "cmake_autogen" if args.len() >= 2 => i32::from(!autogen::moc_uic(
             &args[0],
             &args[1],

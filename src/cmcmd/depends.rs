@@ -233,9 +233,9 @@ fn split_extra_generator(name: &str) -> Option<(String, String)> {
 
 /// A Makefile-family global generator's output settings
 /// (`cmGlobalUnixMakefileGenerator3`).
-struct MakefileGlobal {
-    line_continue: &'static str,
-    supports_long_line_deps: bool,
+pub(super) struct MakefileGlobal {
+    pub(super) line_continue: &'static str,
+    pub(super) supports_long_line_deps: bool,
 }
 
 /// Map the global generator name to a Makefile generator when the name is
@@ -266,18 +266,18 @@ fn makefile_global(name: &str) -> Option<Option<MakefileGlobal>> {
 
 /// `cmLocalUnixMakefileGenerator3` subset used by the scanners: relative
 /// path top dirs and makefile path conversion.
-struct LocalGen {
+pub(super) struct LocalGen {
     relative_top_source: String,
     relative_top_binary: String,
     /// `GetState()->GetBinaryDirectory()`: the home output directory.
     top_binary: String,
     /// `GetCurrentBinaryDirectory()`: the directory being scanned.
-    current_binary: String,
+    pub(super) current_binary: String,
     /// `GetCurrentSourceDirectory()` (retained for upstream parity).
     #[allow(dead_code)]
     current_source: String,
     /// `GetSourceDirectory()`/`GetBinaryDirectory()`... unused, kept for clarity.
-    global: MakefileGlobal,
+    pub(super) global: MakefileGlobal,
 }
 
 impl LocalGen {
@@ -304,8 +304,13 @@ impl LocalGen {
     }
 
     /// `cmOutputConverter::MaybeRelativeToTopBinDir`.
-    fn maybe_relative_to_top_bin_dir(&self, path: &str) -> String {
+    pub(super) fn maybe_relative_to_top_bin_dir(&self, path: &str) -> String {
         self.maybe_relative_to(&self.top_binary, path)
+    }
+
+    /// `cmOutputConverter::MaybeRelativeToCurBinDir`.
+    pub(super) fn maybe_relative_to_cur_bin_dir(&self, path: &str) -> String {
+        self.maybe_relative_to(&self.current_binary, path)
     }
 
     /// `cmGlobalUnixMakefileGenerator3::ConvertToMakefilePath` (Unix form).
@@ -329,7 +334,7 @@ impl LocalGen {
 /// `cmGeneratedFileStream`: writes to a temp file first, then moves into
 /// place.  With `copy_if_different` the destination is left untouched when
 /// the content is identical.  `None` result mirrors a failed open.
-fn write_generated(path: &str, content: &str, copy_if_different: bool) -> bool {
+pub(super) fn write_generated(path: &str, content: &str, copy_if_different: bool) -> bool {
     if copy_if_different
         && let Ok(existing) = std::fs::read(path)
         && existing == crate::bytes::encode(content).as_ref()
@@ -981,8 +986,10 @@ fn scan_dependencies(
     );
     for lang in &langs {
         match lang.as_str() {
-            "C" | "CXX" | "RC" | "ASM" | "OBJC" | "OBJCXX" | "CUDA" | "HIP" | "ISPC"
-                if !write_target_dependencies(
+            "C" | "CXX" | "RC" | "ASM" | "OBJC" | "OBJCXX" | "CUDA" | "HIP" | "ISPC" => {
+                // cmDepends::Write's result is not checked: the next
+                // language is still scanned and the files are written.
+                let _ = write_target_dependencies(
                     lg,
                     interp,
                     target_dir,
@@ -991,21 +998,34 @@ fn scan_dependencies(
                     verbose,
                     &mut make_depends,
                     &mut internal_depends,
-                ) =>
-            {
-                return false;
+                );
             }
             "Fortran" => {
-                super::error(
-                    "cmake_depends: dependency scanning for the Fortran language (cmDependsFortran) is not implemented by cmake-rust",
+                make_depends.push_str(
+                    "# Note that incremental build could trigger a call to cmake_copy_f90_mod on each re-build\n",
                 );
-                return false;
+                let mut scanner =
+                    super::depends_fortran::DependsFortran::new(lg, interp, target_dir);
+                // cmDepends::Write's result is not checked.
+                let _ = scanner.write(&mut make_depends, &mut internal_depends);
             }
             "Java" => {
-                super::error(
-                    "cmake_depends: dependency scanning for the Java language (cmDependsJava) is not implemented by cmake-rust",
+                // cmDependsJava::WriteDependencies only checks that each
+                // object has a source and writes nothing.
+                let pairs = util::expand_list(
+                    interp.get_def("CMAKE_DEPENDS_CHECK_Java").unwrap_or(""),
+                    false,
                 );
-                return false;
+                let mut objects: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+                for pair in pairs.chunks_exact(2) {
+                    objects.entry(&pair[1]).or_default().insert(&pair[0]);
+                }
+                if objects
+                    .values()
+                    .any(|srcs| srcs.iter().next().is_some_and(|src| src.is_empty()))
+                {
+                    super::error("Cannot scan dependencies without an source file.");
+                }
             }
             _ => {}
         }

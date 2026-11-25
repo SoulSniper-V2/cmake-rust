@@ -217,6 +217,8 @@ pub(super) struct Parser {
     pub includes: BTreeSet<String>,
     pub provides: BTreeSet<String>,
     pub requires: BTreeSet<String>,
+    /// `cmFortranSourceInfo::Intrinsics`: `use, intrinsic :: name`.
+    pub intrinsics: BTreeSet<String>,
     search: Vec<String>,
     separator: String,
     extension: String,
@@ -239,6 +241,13 @@ impl Parser {
             .into(),
             ..Self::default()
         }
+    }
+
+    /// The preprocessor symbols defined before scanning
+    /// (`cmFortranParser` constructed with `PPDefinitions`).
+    pub fn with_definitions(mut self, definitions: &BTreeSet<String>) -> Self {
+        self.defines.extend(definitions.iter().cloned());
+        self
     }
 
     fn submodule(&self, parent: &str, child: &str) -> String {
@@ -348,6 +357,11 @@ impl Parser {
                 if nature.eq_ignore_ascii_case("non_intrinsic") =>
             {
                 self.requires.insert(module(name));
+            }
+            [K("use"), Comma, Word(nature), Dcolon, Word(name), ..]
+                if nature.eq_ignore_ascii_case("intrinsic") =>
+            {
+                self.intrinsics.insert(module(name));
             }
             [K("submodule"), Left, Word(parent), Right, Word(child)] => {
                 self.requires.insert(module(parent));
