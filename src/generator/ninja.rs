@@ -952,6 +952,16 @@ impl<'a> NinjaGenerator<'a> {
         // (cmGeneratedFileStream without copy-if-different), so build.ninja
         // is always newer than the CMakeCache.txt it depends on.
         if self.ctx.interp.error || self.ctx.has_error() {
+            // Only the rules, impl, config and common streams are marked
+            // failed: Ninja Multi-Config's default build.ninja is still
+            // written.
+            if self.ctx.multi_config {
+                let default = format!("{}/build.ninja", self.home_binary);
+                if let Some((path, content)) = build_files.iter().find(|(path, _)| *path == default)
+                {
+                    crate::fsutil::write_generated(std::path::Path::new(path), content)?;
+                }
+            }
             return Ok(());
         }
         crate::fsutil::write_generated(std::path::Path::new(&rules_path), &rules_file)?;

@@ -183,9 +183,9 @@ def make_case(seed, index):
     return files
 
 
-def run_side(cmake, src, build, do_build):
+def run_side(cmake, src, build, do_build, generator="Ninja"):
     log = build.parent / f"{build.name}.log"
-    rc = treediff.configure(Path(cmake), src, build, [], log, "Ninja")
+    rc = treediff.configure(Path(cmake), src, build, [], log, generator)
     out = log.read_bytes()
     norm = treediff.normalizer(build, Path(cmake))
     # Compare the configured tree before building: built binaries embed
@@ -193,7 +193,9 @@ def run_side(cmake, src, build, do_build):
     tree = treediff.gather(build, norm)
     built = None
     if do_build and rc == 0:
-        proc = subprocess.run(["ninja", "-C", str(build), "-k", "0"], capture_output=True)
+        proc = subprocess.run(["ninja", "-C", str(build), "-k", "0",
+                               *(["-f", "build-Debug.ninja"] if generator == "Ninja Multi-Config" else [])],
+                              capture_output=True)
         built = proc.returncode
     out = re.sub(rb"done \(\d+\.\d+s\)", b"done (<T>s)", norm(out).replace(str(src).encode(), b"<SRC>"))
     return rc, out, built, tree
@@ -208,8 +210,8 @@ def check(args, index):
             path = src / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        oracle = run_side(args.oracle, src, root / "oracle", args.build)
-        candidate = run_side(args.candidate, src, root / "candidate", args.build)
+        oracle = run_side(args.oracle, src, root / "oracle", args.build, args.generator)
+        candidate = run_side(args.candidate, src, root / "candidate", args.build, args.generator)
         if oracle == candidate:
             return None
         diffs = []
@@ -240,6 +242,7 @@ def main():
     parser.add_argument("-n", type=int, default=100)
     parser.add_argument("-j", type=int, default=6)
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--generator", default="Ninja")
     parser.add_argument("--out", default="fuzz-project-out")
     args = parser.parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
