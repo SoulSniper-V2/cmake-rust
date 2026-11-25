@@ -108,7 +108,6 @@ The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.
 Each of these fails with an explicit error, never silently:
 
 - The Unix Makefiles, Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
-- Makefile-only dependency scanning for Fortran and Java in `cmake -E cmake_depends`.
 - XCFramework linking, which needs macOS `plutil`.
 - ISPC and Swift sources in the Ninja generator.
 
