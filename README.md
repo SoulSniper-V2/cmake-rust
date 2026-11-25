@@ -18,7 +18,7 @@ The configured trees, the CMake self-build and RunCMake were measured at commit 
 
 ### Real-world projects
 
-Beyond those four, about 60 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
+Beyond those four, about 70 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
 
 | Group | Projects |
 |---|---|
@@ -26,6 +26,9 @@ Beyond those four, about 60 unmodified open-source projects were configured with
 | More libraries | libgit2, libarchive, expat, libxml2, mbedtls, wolfssl, libssh2, jsoncpp, eigen, gflags, glog, leveldb, raylib, assimp, box2d, bullet3, llama.cpp, whisper.cpp, libwebp, openjpeg, harfbuzz, double-conversion, snappy, nghttp2, libevent, SQLiteCpp, cmocka, Unity, CUDA deviceQuery |
 | Fetch at configure time | CLI11, cpr, magic_enum, a CPM.cmake project, an ExternalProject superbuild |
 | Install, then `find_package` from a consumer | fmt, spdlog, yaml-cpp, glfw, nlohmann/json, libjpeg-turbo: the installed trees match too |
+| Python extensions, KDE, presets | pybind11, nanobind, extra-cmake-modules (its 88 tests give identical per-test results), Catch2 and microsoft/GSL through their CMake presets (`--preset`, `--build --preset`, `ctest --preset`) |
+| Configure-only, large | grpc, VTK (minimal modules), Kokkos |
+| Toolchain file (`CMAKE_SYSROOT`, `CMAKE_FIND_ROOT_PATH` modes) | double-conversion, jsoncpp, snappy |
 | Host packages via Find modules | SDL2, TBB, GTest, Vulkan, BLAS, OpenBLAS, LAPACK, PkgConfig, Threads, OpenSSL, ZLIB, CURL, Python3 |
 
 Twelve of the libraries were also run in Ninja Multi-Config, Debug and RelWithDebInfo with shared libraries, and the CodeBlocks generator, comparing installed trees as well. LLVM was compared in ten more configurations: more subprojects (lld, mlir, polly, bolt, flang, lldb, clang-tools-extra), the runtimes (both from the top level and standalone), Debug with assertions and shared libraries, the dylib build, all targets, Ninja Multi-Config, and the nested native tablegen build. Every one of those is identical as well.
