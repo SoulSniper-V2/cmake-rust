@@ -191,10 +191,7 @@ pub fn link_language_flag_vars(
         lang: language,
     };
     let mut result = LinkFlagVars::default();
-    let language_flags = inputs
-        .language_flags(true)
-        .trim_matches(cmake_space)
-        .to_owned();
+    let language_flags = inputs.language_flags(true);
     if target.kind == TargetKind::Executable {
         let mut flags = language_flags;
         inputs.add_architecture_flags(&mut flags, "");
@@ -225,18 +222,14 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
 
     // cmMakefileTargetGenerator::GetTargetLinkFlags.
     let mut target_flags = String::new();
-    let mut raw = String::new();
     if let Some(value) = inputs.prop("LINK_FLAGS") {
-        raw.push_str(value);
-        raw.push(' ');
+        append(&mut target_flags, &encode_literal(value));
     }
     if !config.is_empty()
         && let Some(value) = inputs.prop(&format!("LINK_FLAGS_{upper_config}"))
     {
-        raw.push_str(value);
-        raw.push(' ');
+        append(&mut target_flags, &encode_literal(value));
     }
-    append(&mut target_flags, &encode_literal(&raw));
     let options = inputs
         .usage("LINK_OPTIONS")
         .into_iter()
@@ -343,7 +336,7 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
     {
         append_options(&mut flags, expand_list(&options, false));
     }
-    flags.trim_matches(cmake_space).to_owned()
+    flags.trim_end_matches(cmake_space).to_owned()
 }
 
 /// Values for a CUDA device-link build statement.

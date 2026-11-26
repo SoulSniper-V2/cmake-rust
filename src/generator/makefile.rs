@@ -1667,18 +1667,7 @@ impl<'a> MakefileGenerator<'a> {
             flags::append(&mut s, &link_vars.arch_flags);
             s
         };
-        let mut link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
-        link_flags = link_flags
-            .split_whitespace()
-            .map(|flag| {
-                if flag.starts_with("LINKER:") {
-                    flags::resolve_linker_wrapper_joined(self.ctx, target, language, flag)
-                } else {
-                    flag.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        let link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
         let object_dir = shell_path(
             self.ctx,
             &maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target)),

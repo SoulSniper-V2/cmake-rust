@@ -1,6 +1,6 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-4`
+Branch: `t3/unix-makefiles-5`
 
 Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
@@ -13,6 +13,32 @@ normalization in `sub/cmake_install.cmake`.
 
 Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
 Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
+
+
+## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
+
+Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in
+Unix Makefiles link rules.  `CMAKE_EXE_LINKER_FLAGS` may legitimately begin
+with whitespace (the compiler-ABI probe produces this), and try-compile
+modules may prepend a definition with whitespace; Makefile expansion must
+preserve that leading whitespace instead of shell-word joining or trimming
+it.  At the same time, target `LINK_FLAGS` properties are appended as exact
+values rather than being concatenated with artificial trailing spaces, so
+ordinary `link.txt` files do not gain doubled internal separators.
+
+Fresh zlib configure evidence after this fix:
+`/tmp/zlib-umf5-configure-final-diff2.log` — configure stdout equal and
+76/76 configure-time generated files identical after only executable/source
+binary/install path plus upstream random try-compile/timing normalization.
+
+zlib Unix Makefiles build evidence: `/tmp/zlib-umf5-build-final-diff.log`.
+Both oracle and candidate trees were built with `make -j4`; candidate
+`ctest` passed 2/2; a second `make` performed no compile/link actions; and
+touching `gzguts.h` rebuilt exactly the same 31 relative outputs in both
+trees (the gz*/zutil objects for shared and static zlib, dependent archives,
+shared library, link depfiles, and example/minigzip executables).  The raw
+build/no-op/rebuild logs differ only in parallel target scheduling and
+progress ordering, not in actions or rebuilt file sets.
 
 ## Batch 7 (summary labels, depend inputs, generated outputs)
 
