@@ -1049,55 +1049,9 @@ fn copy_times(source: &str, dest: &str) -> io::Result<()> {
     }
 }
 
-/// `kwsys::SystemTools::CopyFileAlways`, step for step: the source's
-/// permissions are read first; the destination directory is created before
-/// the source is opened (so creating it can make the source appear), and a
-/// read error ends the block-wise copy without failing it.
+/// `kwsys::SystemTools::CopyFileAlways`.
 fn copy_file_always(source: &str, dest: &str) -> io::Result<()> {
-    let permissions = fs::metadata(source).ok().map(|meta| meta.permissions());
-    let real_dest = if Path::new(source).is_dir() {
-        mkdir(&unix_slashes(dest))?;
-        dest.to_owned()
-    } else {
-        let (dest_dir, real_dest) = if Path::new(dest).is_dir() {
-            (
-                dest.to_owned(),
-                format!(
-                    "{}/{}",
-                    unix_slashes(dest),
-                    crate::util::filename_name(source)
-                ),
-            )
-        } else {
-            (crate::util::filename_path(dest), dest.to_owned())
-        };
-        if same_file(source, &real_dest) {
-            return Ok(());
-        }
-        if !dest_dir.is_empty() {
-            mkdir(&dest_dir)?;
-        }
-        // CloneFileContent, then CopyFileContentBlockwise.
-        let mut input = File::open(source)?;
-        let _ = fs::remove_file(&real_dest);
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&real_dest)?;
-        let mut buffer = [0u8; 4096];
-        loop {
-            match input.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => io::Write::write_all(&mut output, &buffer[..n])?,
-            }
-        }
-        real_dest
-    };
-    if let Some(permissions) = permissions {
-        fs::set_permissions(&real_dest, permissions)?;
-    }
-    Ok(())
+    crate::kwsys_copy::copy_file_always(source, dest)
 }
 
 /// `HandleReadMachoCommand` as built off Apple (no CMake_USE_MACH_PARSER):

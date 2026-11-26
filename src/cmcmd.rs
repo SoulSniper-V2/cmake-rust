@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read};
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -564,57 +564,55 @@ fn cat(args: &[String]) -> i32 {
     result
 }
 
+/// `!cmSystemTools::FilesDiffer` / `!cmSystemTools::TextFilesDiffer`.
 fn same_contents(a: impl AsRef<Path>, b: impl AsRef<Path>, ignore_eol: bool) -> bool {
-    let a = a.as_ref();
-    let b = b.as_ref();
-    if !a.is_file() || !b.is_file() {
-        return false;
+    let a = crate::bytes::decode_os(a.as_ref().as_os_str());
+    let b = crate::bytes::decode_os(b.as_ref().as_os_str());
+    if ignore_eol {
+        !text_files_differ(&a, &b)
+    } else {
+        !crate::kwsys_copy::files_differ(&a, &b)
     }
-    if !ignore_eol {
-        let (Ok(mut a), Ok(mut b)) = (File::open(a), File::open(b)) else {
-            return false;
-        };
-        let (Ok(left), Ok(right)) = (a.metadata(), b.metadata()) else {
-            return false;
-        };
-        if left.len() != right.len() {
-            return false;
-        }
-        let mut remaining = left.len();
-        let mut left = [0; 4096];
-        let mut right = [0; 4096];
-        while remaining > 0 {
-            let size = remaining.min(left.len() as u64) as usize;
-            let left = &mut left[..size];
-            let right = &mut right[..size];
-            if a.read_exact(left).is_err() || b.read_exact(right).is_err() || left != right {
-                return false;
-            }
-            remaining -= size as u64;
-        }
-        return true;
-    }
-    let (Ok(a), Ok(b)) = (File::open(a), File::open(b)) else {
-        return false;
-    };
-    let mut a = BufReader::new(a).split(b'\n');
-    let mut b = BufReader::new(b).split(b'\n');
+}
+
+/// `kwsys::SystemTools::GetLineFromStream` over a whole file: a read error
+/// (a directory: EISDIR) fails std::getline without EOF, which still counts
+/// as one (empty) line; the stream is then bad.
+fn stream_lines(path: &str) -> Option<Vec<Vec<u8>>> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut lines = Vec::new();
     loop {
-        match (a.next(), b.next()) {
-            (None, None) => return true,
-            (Some(Ok(mut a)), Some(Ok(mut b))) => {
-                if a.last() == Some(&b'\r') {
-                    a.pop();
+        let mut line = Vec::new();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let had_newline = line.last() == Some(&b'\n');
+                if had_newline {
+                    line.pop();
                 }
-                if b.last() == Some(&b'\r') {
-                    b.pop();
+                if line.last() == Some(&b'\r') {
+                    line.pop();
                 }
-                if a != b {
-                    return false;
+                lines.push(line);
+                if !had_newline {
+                    break;
                 }
             }
-            _ => return false,
+            Err(_) => {
+                lines.push(Vec::new());
+                break;
+            }
         }
+    }
+    Some(lines)
+}
+
+/// `cmSystemTools::TextFilesDiffer`: line by line, ignoring a trailing CR.
+fn text_files_differ(a: &str, b: &str) -> bool {
+    match (stream_lines(a), stream_lines(b)) {
+        (Some(a), Some(b)) => a != b,
+        _ => true,
     }
 }
 
@@ -653,11 +651,12 @@ fn copy(command: &str, args: &[String]) -> i32 {
     }
     let mut result = 0;
     for source in &files {
-        let path = Path::new(source);
         let copied = if directory {
-            copy_directory(path, dest, different)
+            crate::kwsys_copy::copy_a_directory(source, &target, !different)
+        } else if different {
+            crate::kwsys_copy::copy_file_if_different(source, &target)
         } else {
-            copy_path(path, dest, different)
+            crate::kwsys_copy::copy_file_always(source, &target)
         };
         if copied.is_err() {
             if directory {
@@ -671,84 +670,6 @@ fn copy(command: &str, args: &[String]) -> i32 {
         }
     }
     result
-}
-
-fn copy_directory(source: &Path, dest: &Path, different: bool) -> io::Result<()> {
-    let mut ancestors = Vec::new();
-    copy_directory_inner(source, dest, different, &mut ancestors)
-}
-
-fn copy_directory_inner(
-    source: &Path,
-    dest: &Path,
-    different: bool,
-    ancestors: &mut Vec<(u64, u64)>,
-) -> io::Result<()> {
-    let metadata = fs::metadata(source)?;
-    if !metadata.is_dir() {
-        return Err(io::ErrorKind::NotADirectory.into());
-    }
-    let identity = (metadata.dev(), metadata.ino());
-    if ancestors.contains(&identity)
-        || crate::util::is_subdirectory(
-            &util::collapse_full_path(&dest.to_string_lossy(), ""),
-            &fs::canonicalize(source)?.to_string_lossy(),
-        )
-    {
-        return Err(io::Error::other("recursive copy"));
-    }
-    if fs::metadata(dest).is_ok_and(|dest| (dest.dev(), dest.ino()) == identity) {
-        return Ok(());
-    }
-    fs::create_dir_all(dest)?;
-    ancestors.push(identity);
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dest.join(entry.file_name());
-        if from.is_dir() {
-            copy_directory_inner(&from, &to, different, ancestors)?;
-        } else {
-            copy_file(&from, &to, different)?;
-        }
-    }
-    ancestors.pop();
-    Ok(())
-}
-
-fn copy_path(source: &Path, dest: &Path, different: bool) -> io::Result<()> {
-    let metadata = fs::metadata(source)?;
-    if metadata.is_dir() && !different {
-        fs::create_dir_all(dest)?;
-        return fs::set_permissions(dest, fs::Permissions::from_mode(metadata.mode()));
-    }
-    let destination;
-    let dest = if dest.is_dir() {
-        destination = dest.join(source.file_name().unwrap_or_default());
-        &destination
-    } else {
-        dest
-    };
-    if metadata.is_dir() {
-        fs::create_dir_all(dest)?;
-        fs::set_permissions(dest, fs::Permissions::from_mode(metadata.mode()))
-    } else {
-        copy_file(source, dest, different)
-    }
-}
-
-fn copy_file(source: &Path, dest: &Path, different: bool) -> io::Result<()> {
-    let meta = fs::metadata(source)?;
-    if (different && same_contents(source, dest, false))
-        || fs::metadata(dest).is_ok_and(|old| (meta.dev(), meta.ino()) == (old.dev(), old.ino()))
-    {
-        return Ok(());
-    }
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(source, dest)?;
-    Ok(())
 }
 
 fn make_directories(args: &[String]) -> i32 {

@@ -25,6 +25,7 @@ mod install_model;
 mod install_script;
 mod instrumentation;
 mod interp;
+mod kwsys_copy;
 mod languages;
 mod lexer;
 mod messages;
