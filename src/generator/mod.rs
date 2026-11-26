@@ -33,6 +33,7 @@ pub mod genex_host;
 pub mod graphviz;
 pub mod install;
 mod install_name;
+pub(crate) mod ispc;
 pub mod link;
 pub mod makefile;
 mod module_support;

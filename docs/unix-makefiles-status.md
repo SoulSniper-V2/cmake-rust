@@ -1,6 +1,6 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-5`
+Branch: `t3/unix-makefiles-6`
 
 Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
@@ -14,6 +14,18 @@ normalization in `sub/cmake_install.cmake`.
 Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
 Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
 
+
+
+## Part 6 setup merge
+
+Started from `t3/unix-makefiles-5` at `97e221f` and merged current `main`
+`7a1028b` (ISPC generation, `UsageItem.raw`, and the compound-relative
+`find_program` fix).  The merge was automatic with no conflicts.  Post-merge
+gates before the merge amendment: `cargo fmt --check` clean, clippy clean,
+940/940 Rust tests, difftest 1283/1283, clitest 538/538, and Ninja projdiff
+167/167.  Logs: `/tmp/umf6-merge-gates-rust.log`,
+`/tmp/umf6-merge-difftest.log`, `/tmp/umf6-merge-clitest.log`, and
+`/tmp/umf6-merge-projdiff-ninja.log`.
 
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 

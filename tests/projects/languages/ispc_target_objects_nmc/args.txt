@@ -1,0 +1,1 @@
+-DCMAKE_ISPC_COMPILER=/tmp/cmake-rust-validation.hSLgEZHR/toolchains/ispc/bin/ispc

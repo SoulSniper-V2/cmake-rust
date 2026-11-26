@@ -70,11 +70,11 @@ The harnesses in `scripts/`:
 | Harness | Compares | Size |
 |---|---|---|
 | `difftest.py` | script mode (`cmake -P`): output, errors, exit codes | 1,282 cases |
-| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 527 cases |
+| `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 532 cases |
 | `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 163 projects (14 CUDA) |
 | `statediff.py` | end-of-configure interpreter state: every variable, cache entry and property | LLVM: 94,998 lines, 0 differences |
 | `treediff.py` | every file of a freshly configured build tree, for any generator | ~70 real-world projects, 0 differences |
-| `fuzzdiff.py`, `fuzz_regex.py`, `fuzz_file.py`, `fuzz_project.py` | random scripts, generator expressions, regexes, `file()` sequences and whole projects (target graphs, usage requirements, PCH, unity, install/export), deterministic per `--seed`; output, errors, traces, generated build trees, builds | 80,000+ cases across Ninja, Ninja Multi-Config and every extra generator: 0 differences outside one crash case |
+| `fuzzdiff.py`, `fuzz_regex.py`, `fuzz_file.py`, `fuzz_find.py`, `fuzz_cli.py`, `fuzz_project.py` | random scripts, generator expressions, regexes, `file()` sequences, `find_*`/`find_package` searches, `cmake -E` sequences and whole projects (target graphs, usage requirements, PCH, unity, custom commands, install/export), deterministic per `--seed`; output, errors, traces, generated build trees, builds and `cmake --install` results | 100,000+ cases across Ninja, Ninja Multi-Config and every extra generator: 0 differences outside one crash case and compressed-archive bytes (which depend on the linked liblzma) |
 | `conformance/` | Kitware's own RunCMake test suite | see [`docs/conformance.md`](docs/conformance.md) |
 | `ninjadiff.py`, `dapdiff.py`, `autogendiff.py` | `build.ninja` structure, the debugger protocol, Qt AUTOGEN | |
 
@@ -109,7 +109,7 @@ Each of these fails with an explicit error, never silently:
 
 - The Unix Makefiles, Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
 - XCFramework linking, which needs macOS `plutil`.
-- ISPC and Swift sources in the Ninja generator.
+- Swift sources in the Ninja generator (ISPC is supported: headers, per-instruction-set objects, and their `$<TARGET_OBJECTS>` and install entries).
 
 Two upstream outputs are ordered by pointer or hash value and can't be reproduced exactly: the file-API `dependencies` order, and the order of some reserved-name build-database errors.
 

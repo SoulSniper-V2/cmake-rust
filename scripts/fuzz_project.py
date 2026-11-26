@@ -17,6 +17,7 @@ import argparse
 import concurrent.futures
 import importlib.util
 import json
+import os
 import random
 import re
 import shutil
@@ -244,8 +245,33 @@ def run_side(cmake, src, build, do_build, generator="Ninja"):
                                *(["-f", "build-Debug.ninja"] if generator == "Ninja Multi-Config" else [])],
                               capture_output=True)
         built = proc.returncode
+    installed = None
+    if do_build and rc == 0 and built == 0:
+        # `cmake --install` runs this side's own install-script interpreter.
+        prefix = build.parent / "inst"
+        shutil.rmtree(prefix, ignore_errors=True)
+        cfg = ["--config", "Debug"] if generator == "Ninja Multi-Config" else []
+        proc = subprocess.run([str(cmake), "--install", str(build), "--prefix", str(prefix), *cfg],
+                              capture_output=True)
+        listing = []
+        for path in sorted(prefix.rglob("*")) if prefix.exists() else []:
+            rel = path.relative_to(prefix).as_posix()
+            st = path.lstat()
+            if path.is_symlink():
+                listing.append(f"{rel} -> {os.readlink(path)}")
+            elif path.is_dir():
+                listing.append(f"{rel}/ {oct(st.st_mode & 0o777)}")
+            else:
+                data = path.read_bytes()
+                # Binaries embed build paths; text files are compared exactly.
+                text = b"\0" not in data[:4096]
+                digest = norm(data).replace(str(prefix).encode(), b"<PREFIX>") if text else b"<binary>"
+                listing.append(f"{rel} {oct(st.st_mode & 0o777)} {digest!r}")
+        out_install = norm(proc.stdout + proc.stderr).replace(str(prefix).encode(), b"<PREFIX>")
+        installed = (proc.returncode, out_install, "\n".join(listing))
+        shutil.rmtree(prefix, ignore_errors=True)
     out = re.sub(rb"done \(\d+\.\d+s\)", b"done (<T>s)", norm(out).replace(str(src).encode(), b"<SRC>"))
-    return rc, out, built, tree
+    return rc, out, built, tree, installed
 
 
 def check(args, index):
@@ -274,6 +300,8 @@ def check(args, index):
             diffs.append("configure output")
         if oracle[2] != candidate[2]:
             diffs.append(f"build {oracle[2]} != {candidate[2]}")
+        if oracle[4] != candidate[4]:
+            diffs.append("install")
         for rel in sorted(set(oracle[3]) | set(candidate[3])):
             if oracle[3].get(rel) != candidate[3].get(rel):
                 diffs.append(rel)

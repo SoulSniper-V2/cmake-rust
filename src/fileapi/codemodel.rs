@@ -1388,7 +1388,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         let mut out = jarr();
         if target.kind == TargetKind::ObjectLibrary {
             let obj_dir = gt::object_directory(self.ctx, target, &self.config);
-            for name in crate::generator::install::object_names(self.ctx, target) {
+            for name in crate::generator::install::object_source_names(self.ctx, target) {
                 let mut artifact = jobj();
                 artifact.set(
                     "path",
