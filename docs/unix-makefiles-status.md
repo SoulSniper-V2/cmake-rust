@@ -37,6 +37,16 @@ imported-target lookup).  The merge was automatic; overlapping
 candidate (`/tmp/umf8-merge-gates.log`, `/tmp/umf8-merge-gates2.log`, and
 `/tmp/umf8-merge-projdiff2.log`).
 
+Unix Makefiles regeneration rules now include the upstream pre-checks and
+build-hook startup.  `file(GLOB CONFIGURE_DEPENDS)` verification scripts and
+stamps are Makefile.cmake inputs, and the verify script runs before both
+`cmake_check_build_system` and `depend`; instrumentation-enabled builds define
+`CTEST_COMMAND` in generated makefiles and start instrumentation after the
+build-system check, with subdirectory rules using the same root `cd` prefix.
+Focused evidence `/tmp/umf8-checkcmds-out/report.json`: **150/150** cases pass
+across `RunCMake.file` and `RunCMake.Instrumentation`, including the glob
+rerun cases and the make-program instrumentation verification.
+
 
 
 ## Part 7 setup, full sweep, and linker/autogen parity fixes

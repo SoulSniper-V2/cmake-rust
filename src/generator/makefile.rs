@@ -176,6 +176,42 @@ fn check_build_system_command(ctx: &GenCtx<'_>, cmakefile: &str, rerun: usize) -
     )
 }
 
+fn ctest_command(ctx: &GenCtx<'_>) -> String {
+    let ctest = format!(
+        "{}/ctest",
+        ctx.interp
+            .cmake_command
+            .rsplit_once('/')
+            .map_or("", |(dir, _)| dir)
+    );
+    shell_path(ctx, &ctest)
+}
+
+fn apply_instrumentation_variable(ctx: &GenCtx<'_>, out: &mut String) {
+    if !ctx.interp.instrument_build_hooks {
+        return;
+    }
+    let ctest = ctest_command(ctx);
+    let needle = "\n\n# The command to remove a file.\nRM = ";
+    let replacement = format!(
+        "\n# The CTest executable.\nCTEST_COMMAND = {ctest}\n\n# The command to remove a file.\nRM = "
+    );
+    *out = out.replacen(needle, &replacement, 1);
+}
+
+fn check_build_system_commands(ctx: &GenCtx<'_>, cmakefile: &str, rerun: usize) -> Vec<String> {
+    let mut commands = Vec::new();
+    if let Some((script, _)) = &ctx.interp.ext.glob_verify {
+        commands.push(format!("$(CMAKE_COMMAND) -P {}", shell_path(ctx, script)));
+    }
+    commands.push(check_build_system_command(ctx, cmakefile, rerun));
+    if ctx.interp.instrument_build_hooks {
+        commands
+            .push("exec $(CTEST_COMMAND) --start-instrumentation $(CMAKE_BINARY_DIR) ;".to_owned());
+    }
+    commands
+}
+
 fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> String {
     ctx.var(
         target.makefile,
@@ -616,6 +652,7 @@ impl<'a> MakefileGenerator<'a> {
                 "@CMAKE_BINARY_DIR@",
                 &shell_path(self.ctx, &self.ctx.interp.home_binary),
             );
+        apply_instrumentation_variable(self.ctx, &mut build);
         // Dependency includes.
         // `cmMakefileTargetGenerator::WriteTargetBuildRules`: the
         // compiler_depend.make include and placeholder files depend on the
@@ -2927,6 +2964,7 @@ impl<'a> MakefileGenerator<'a> {
                 "@CMAKE_BINARY_DIR@",
                 &shell_path(self.ctx, &self.ctx.interp.home_binary),
             );
+        apply_instrumentation_variable(self.ctx, &mut build);
         let _ = writeln!(build, "# Utility rule file for {}.\n", target.name);
         let _ = writeln!(
             build,
@@ -3384,6 +3422,10 @@ impl<'a> MakefileGenerator<'a> {
             lfiles.extend(crate::util::expand_list(extra, false));
         }
         lfiles.extend(self.ctx.cmake_depend_files.borrow().iter().cloned());
+        if let Some((script, stamp)) = &self.ctx.interp.ext.glob_verify {
+            lfiles.push(script.clone());
+            lfiles.push(stamp.clone());
+        }
         lfiles.sort();
         lfiles.dedup();
         for file in lfiles {
@@ -3473,6 +3515,7 @@ impl<'a> MakefileGenerator<'a> {
             .replace("@CMAKE_COMMAND@", &shell_path(self.ctx, &self.ctx.interp.cmake_command))
             .replace("@CMAKE_SOURCE_DIR@", &shell_path(self.ctx, &self.ctx.interp.home_source))
             .replace("@CMAKE_BINARY_DIR@", &shell_path(self.ctx, &self.ctx.interp.home_binary));
+        apply_instrumentation_variable(self.ctx, &mut out);
         let mut targets = Vec::new();
         for mf in self.ctx.interp.makefiles.iter() {
             for key in &mf.targets {
@@ -3689,9 +3732,12 @@ impl<'a> MakefileGenerator<'a> {
                 true,
             );
         }
-        let check_command = check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 0);
+        let check_commands = check_build_system_commands(self.ctx, "CMakeFiles/Makefile.cmake", 0)
+            .iter()
+            .map(|command| format!("\t{command}\n"))
+            .collect::<String>();
         out.push_str(&format!(
-            "#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{check_command}\n.PHONY : cmake_check_build_system\n\n"
+            "#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"
         ));
         let path = format!("{}/CMakeFiles/Makefile2", self.ctx.interp.home_binary);
         let _ = crate::fsutil::write_generated(Path::new(&path), &out);
@@ -3722,6 +3768,7 @@ impl<'a> MakefileGenerator<'a> {
             .replace("@CMAKE_COMMAND@", &shell_path(self.ctx, &self.ctx.interp.cmake_command))
             .replace("@CMAKE_SOURCE_DIR@", &shell_path(self.ctx, &self.ctx.interp.home_source))
             .replace("@CMAKE_BINARY_DIR@", &shell_path(self.ctx, &self.ctx.interp.home_binary));
+        apply_instrumentation_variable(self.ctx, &mut out);
         out.push_str("#=============================================================================\n# Targets provided globally by CMake.\n\n");
         let cmake = shell_path(self.ctx, &self.ctx.interp.cmake_command);
         let ctest = format!(
@@ -4035,15 +4082,16 @@ impl<'a> MakefileGenerator<'a> {
             )],
             true,
         );
+        let depend_commands = check_build_system_commands(self.ctx, "CMakeFiles/Makefile.cmake", 1)
+            .into_iter()
+            .map(|command| format!("{cdroot}{command}"))
+            .collect::<Vec<_>>();
         write_make_rule(
             &mut out,
             Some("clear depends"),
             "depend",
             &[],
-            &[format!(
-                "{cdroot}{}",
-                check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 1)
-            )],
+            &depend_commands,
             true,
         );
         let mut objects: BTreeMap<String, (bool, Vec<(String, String)>)> = BTreeMap::new();
@@ -4341,8 +4389,11 @@ impl<'a> MakefileGenerator<'a> {
         for o in help_objects {
             let _ = writeln!(out, "\t@echo \"... {o}\"");
         }
-        let check_command = check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 0);
-        out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{cdroot}{check_command}\n.PHONY : cmake_check_build_system\n\n"));
+        let check_commands = check_build_system_commands(self.ctx, "CMakeFiles/Makefile.cmake", 0)
+            .iter()
+            .map(|command| format!("\t{cdroot}{command}\n"))
+            .collect::<String>();
+        out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"));
         let path = format!("{}/Makefile", self.ctx.interp.makefiles[dir].binary_dir);
         if dir == 0 {
             let _ = crate::fsutil::write_generated(Path::new(&path), &out);
