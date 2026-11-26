@@ -61,6 +61,18 @@ manifest sources are dependencies of link rules through
 `/tmp/umf6-runcmake-bdprobe/report.json` passes 57/57
 (driver log `/tmp/umf6-runcmake-bdprobe-driver.log`).
 
+
+Linked-target custom command events now follow the executable/library target
+generator ordering: PRE_BUILD and PRE_LINK commands are inserted after the
+link echo and before the archive/link command, while POST_BUILD commands run
+after any executable/library symlink step.  This activates GoogleTest
+POST_BUILD discovery in the Unix Makefiles generator and creates the
+byproducts of target build-event commands.  Focused RunCMake evidence:
+`/tmp/umf6-runcmake-gtestprobe/report.json` passes 95/95 (driver log
+`/tmp/umf6-runcmake-gtestprobe-driver.log`), and
+`/tmp/umf6-runcmake-byprodprobe/report.json` passes 48/48 (driver log
+`/tmp/umf6-runcmake-byprodprobe-driver.log`).
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in

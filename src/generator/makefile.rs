@@ -1759,6 +1759,22 @@ impl<'a> MakefileGenerator<'a> {
                 Some(progress),
             ),
         )];
+        for stage in [CustomCommandKind::PreBuild, CustomCommandKind::PreLink] {
+            for command in target
+                .custom_commands
+                .iter()
+                .filter(|command| command.kind == stage)
+            {
+                let spec = custom::spec_from_command(self.ctx, command);
+                let evaluated =
+                    custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+                commands.extend(self.custom_command_lines(
+                    &evaluated,
+                    target,
+                    &self.ctx.interp.makefiles[dir].binary_dir,
+                ));
+            }
+        }
         if target.kind == TargetKind::StaticLibrary {
             commands.push(format!(
                 "$(CMAKE_COMMAND) -P {support_rel_cur}/cmake_clean_target.cmake"
@@ -1792,6 +1808,20 @@ impl<'a> MakefileGenerator<'a> {
                     "$(CMAKE_COMMAND) -E {symlink_rule} {real} {so} {output}"
                 ));
             }
+        }
+        for command in target
+            .custom_commands
+            .iter()
+            .filter(|command| command.kind == CustomCommandKind::PostBuild)
+        {
+            let spec = custom::spec_from_command(self.ctx, command);
+            let evaluated =
+                custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+            commands.extend(self.custom_command_lines(
+                &evaluated,
+                target,
+                &self.ctx.interp.makefiles[dir].binary_dir,
+            ));
         }
         if dir != 0 {
             let cur = shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir);
