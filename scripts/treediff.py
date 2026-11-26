@@ -45,11 +45,14 @@ def normalizer(build: Path, cmake: Path):
         rules.append((re.compile(esc_bytes(text)), b(replacement)))
     # Extra-generator project files sometimes refer to the build directory by
     # an unresolved source-relative path containing ../ components.  The tail
-    # <work>/<oracle|candidate> is the only part visible in either slash
-    # direction there.
+    # <o|c>/build is the only part visible in either slash direction there.
     for sep in ("/", "\\"):
         tail = build.parent.name + sep + build.name
-        rules.append((re.compile(esc_bytes(tail) + rb"(?![\w.-])"), b"<BUILD-REL>"))
+        rules.append((re.compile(rb"(?<![\w.-])" + esc_bytes(tail) + rb"(?![\w.-])"), b"<BUILD-REL>"))
+        # CodeBlocks virtual folders also list the bare side directory.
+        side = build.parent.parent.name + sep + build.parent.name
+        rules.append((re.compile(rb"(?<![\w.-])" + esc_bytes(side) + rb"(?![\w.-])"),
+                      b(build.parent.parent.name + sep + "<SIDE>")))
     for prefix in prefixes:
         rules.append((re.compile(esc_bytes(prefix) + rb"(/share/cmake-4\.1)?(?![\w.-])"), b"<PREFIX>"))
     for prefix_root in (root, f"{VALIDATION}/kitware"):
@@ -217,8 +220,14 @@ def main() -> int:
     work = args.work or Path(tempfile.mkdtemp(prefix="treediff-"))
     work.mkdir(parents=True, exist_ok=True)
     source = args.source.resolve()
-    oracle_build = work / "oracle"
-    candidate_build = work / "candidate"
+    # Same basename and same path length on both sides: extra generators
+    # name projects after the build directory (Kate, Eclipse), and debug
+    # info and LTO objects embed the path, so equal spellings keep those
+    # comparable after normalization.
+    oracle_build = work / "o" / "build"
+    candidate_build = work / "c" / "build"
+    oracle_build.parent.mkdir(parents=True, exist_ok=True)
+    candidate_build.parent.mkdir(parents=True, exist_ok=True)
     oracle_rc = configure(args.oracle, source, oracle_build, args.cmake_args, work / "oracle-configure.log", args.generator)
     candidate_rc = configure(args.candidate, source, candidate_build, args.cmake_args, work / "candidate-configure.log", args.generator)
 
