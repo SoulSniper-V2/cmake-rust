@@ -52,6 +52,16 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+Unix Makefiles link/archive commands now honor `RULE_LAUNCH_LINK` with
+target/directory/global lookup, generator-expression evaluation, and one
+trailing space, matching upstream and the existing Ninja behavior.  The
+launcher is prefixed independently to every archive create/append/finish and
+normal link command written to `link.txt`.  Focused lane
+`/tmp/umf5-runcmake-linkprobe2`: `RunCMake.target_link_libraries-LINKER-prefix`
+is now 25/25, eliminating the three remaining `LINKER_expansion` failures;
+those were real-linker execution caused by the missing test launcher, not bad
+`LINKER:` expansion.
+
 Makefile custom-command launchers now expand `<OUTPUT>`, `<TARGET_NAME>`,
 `<CMAKE_CURRENT_BINARY_DIR>`, and `<ROLE>` before use, eliminating the literal
 `<ROLE>` shell redirection failure in Instrumentation.  Focused lane:

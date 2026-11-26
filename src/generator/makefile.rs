@@ -56,6 +56,19 @@ fn maybe_relative_cur(ctx: &GenCtx<'_>, dir: usize, path: &str) -> String {
     custom::maybe_relative_to(ctx, dir, &cur, path)
 }
 
+fn rule_launcher(ctx: &GenCtx<'_>, target: &Target, property: &str) -> String {
+    let value = target
+        .props
+        .get(property)
+        .or_else(|| ctx.interp.makefiles[target.makefile].props.get(property))
+        .or_else(|| ctx.interp.global_props.get(property))
+        .filter(|value| !value.is_empty());
+    match value {
+        Some(value) => format!("{} ", ctx.genex(value, Some(target), None)),
+        None => String::new(),
+    }
+}
+
 fn package_configs(ctx: &GenCtx<'_>) -> (bool, bool) {
     let root = &ctx.interp.home_binary;
     (
@@ -1854,6 +1867,7 @@ impl<'a> MakefileGenerator<'a> {
                 .is_none_or(|value| value.is_empty())
             && !archive_create.is_empty()
             && !archive_append.is_empty();
+        let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
         if use_archive_rules {
             let limit = (super::ninja::command_line_length_limit() / 2).max(1) as usize;
             let chunks = makefile_object_strings(&entries, limit);
@@ -1869,7 +1883,7 @@ impl<'a> MakefileGenerator<'a> {
                     target,
                     language,
                     flags::RuleStep::Link,
-                    part,
+                    &format!("{launcher}{part}"),
                     &part_vars,
                 );
                 if !expanded.is_empty() && !expanded.starts_with(':') {
@@ -1898,7 +1912,7 @@ impl<'a> MakefileGenerator<'a> {
                     target,
                     language,
                     flags::RuleStep::Link,
-                    part,
+                    &format!("{launcher}{part}"),
                     &vars,
                 );
                 if !expanded.is_empty() && !expanded.starts_with(':') {
