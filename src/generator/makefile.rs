@@ -525,7 +525,19 @@ impl<'a> MakefileGenerator<'a> {
             self.ctx.interp.home_source, self.ctx.interp.home_binary
         );
         out.push_str("\n# Force unix paths in dependencies.\nset(CMAKE_FORCE_UNIX_PATHS 1)\n\n");
-        out.push_str("\n# The C and CXX include file regular expressions for this directory.\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"^.*$\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"^$\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${CMAKE_C_INCLUDE_REGEX_SCAN})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${CMAKE_C_INCLUDE_REGEX_COMPLAIN})\n");
+        let scan = self.ctx.interp.makefiles[dir]
+            .props
+            .get("INCLUDE_REGULAR_EXPRESSION")
+            .unwrap_or("^.*$");
+        let complain = self.ctx.interp.makefiles[dir]
+            .props
+            .get("COMPLAIN_REGULAR_EXPRESSION")
+            .unwrap_or("^$");
+        out.push_str(&format!(
+            "\n# The C and CXX include file regular expressions for this directory.\nset(CMAKE_C_INCLUDE_REGEX_SCAN \"{}\")\nset(CMAKE_C_INCLUDE_REGEX_COMPLAIN \"{}\")\nset(CMAKE_CXX_INCLUDE_REGEX_SCAN ${{CMAKE_C_INCLUDE_REGEX_SCAN}})\nset(CMAKE_CXX_INCLUDE_REGEX_COMPLAIN ${{CMAKE_C_INCLUDE_REGEX_COMPLAIN}})\n",
+            escape_cmake(scan),
+            escape_cmake(complain)
+        ));
         let path = dir_support(self.ctx, dir);
         let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
     }

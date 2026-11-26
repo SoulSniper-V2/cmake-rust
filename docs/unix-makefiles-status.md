@@ -1,6 +1,6 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-7`
+Branch: `t3/unix-makefiles-8`
 
 Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
@@ -14,6 +14,19 @@ normalization in `sub/cmake_install.cmake`.
 Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
 Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
 
+## Part 8 include-regex checkpoint
+
+Part 8 started from part 7 head `4fbbfbd` and validated the previously
+uncommitted include-regex patch.  Unix Makefiles now writes each directory's
+real `INCLUDE_REGULAR_EXPRESSION` and complain regex into
+`CMakeDirectoryInformation.cmake`, including inheritance into subdirectories.
+Focused evidence `/tmp/umf8-incregex-out/report.json`:
+`RunCMake.Make` passes 27/28, including `IncludeRegexSubdir`; the only
+remaining failure is the pre-existing `CMP0113-NEW-build` case.  Gates:
+`cargo fmt --check` clean, clippy clean, 940/940 Rust tests, difftest
+1283/1283, clitest 538/538, and Ninja projdiff 168/168 on the full rerun
+(`/tmp/umf8-incregex-projdiff-rerun.log`; one try-compile stderr flake passed
+in isolation and on rerun).  Combined gate index `/tmp/umf8-incregex-gates.log`.
 
 
 
