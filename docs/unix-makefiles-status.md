@@ -90,6 +90,23 @@ and the shared compile-rule classifier.  Focused RunCMake evidence:
 `/tmp/umf6-runcmake-instrprobe-driver.log`); the only non-pass is the
 pre-existing `cmake-command-make-program-verify` not-reached cascade.
 
+
+Generator-capability and generated-file parity improved in several upstream-aligned
+paths.  Build-database merge utility targets are no longer created by Unix
+Makefiles (matching `SupportsBuildDatabase`), CMP0155 implicit module scanning
+now requires generator module support, and `TargetDirectories.txt` uses the
+configure-target/global-target/generator-added-target ordering shared with
+Ninja.  The selected Unix Makefiles projdiff probe
+`/tmp/umf6-auto-mod-projdiff.log` now passes `cxxmodules/bdb_single`;
+`autogen/imported` and `autogen/warn` are reduced to a single residual
+Makefile2 dependency-edge difference.  Makefile compile `-MT` values now
+compose makefile-target escaping inside shell escaping exactly as upstream
+(manual evidence `/tmp/umf6-mtcheck/build/With Space/CMakeFiles/main2.dir/build.make`
+contains `"With\\ Space/..."`), and Makefile2 directory comments use kwsys
+space-only output-path escaping.  Build-event custom-command comments are
+emitted in blue before their commands, and static-library pre-link events
+follow the upstream clean-then-event ordering.
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in

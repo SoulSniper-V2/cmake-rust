@@ -320,6 +320,24 @@ fn makefile_path(path: &str) -> String {
     result
 }
 
+/// kwsys `SystemTools::ConvertToUnixOutputPath` for Makefile comments and
+/// include paths: only unescaped spaces are escaped on Unix.
+fn unix_output_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len());
+    let mut escaped = false;
+    for ch in path.chars() {
+        if ch == ' ' && !escaped {
+            result.push('\\');
+        }
+        result.push(ch);
+        escaped = ch == '\\' && !escaped;
+        if ch != '\\' {
+            escaped = false;
+        }
+    }
+    result
+}
+
 fn write_make_rule(
     out: &mut String,
     comment: Option<&str>,
@@ -953,9 +971,13 @@ impl<'a> MakefileGenerator<'a> {
             ));
         }
         let dep_flags_expanded = depinfo.as_ref().map(|(dep_path, dep_flags)| {
+            let dep_target = crate::outconv::escape_for_shell(
+                &makefile_path(obj_rel_top),
+                crate::outconv::FLAG_MAKE | crate::outconv::FLAG_IS_UNIX,
+            );
             let dep_vars = vec![
                 ("DEP_FILE", shell_path(self.ctx, dep_path)),
-                ("DEP_TARGET", shell_path(self.ctx, obj_rel_top)),
+                ("DEP_TARGET", dep_target),
             ];
             flags::expand_rule_for_step(
                 self.ctx,
@@ -1760,6 +1782,11 @@ impl<'a> MakefileGenerator<'a> {
                 Some(progress),
             ),
         )];
+        if target.kind == TargetKind::StaticLibrary {
+            commands.push(format!(
+                "$(CMAKE_COMMAND) -P {support_rel_cur}/cmake_clean_target.cmake"
+            ));
+        }
         for stage in [CustomCommandKind::PreBuild, CustomCommandKind::PreLink] {
             for command in target
                 .custom_commands
@@ -1769,17 +1796,17 @@ impl<'a> MakefileGenerator<'a> {
                 let spec = custom::spec_from_command(self.ctx, command);
                 let evaluated =
                     custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+                if let Some(comment) = &evaluated.comment
+                    && !comment.is_empty()
+                {
+                    commands.push(format!("@{}", self.echo(comment, "--blue --bold", None)));
+                }
                 commands.extend(self.custom_command_lines(
                     &evaluated,
                     target,
                     &self.ctx.interp.makefiles[dir].binary_dir,
                 ));
             }
-        }
-        if target.kind == TargetKind::StaticLibrary {
-            commands.push(format!(
-                "$(CMAKE_COMMAND) -P {support_rel_cur}/cmake_clean_target.cmake"
-            ));
         }
         commands.push(format!(
             "$(CMAKE_COMMAND) -E cmake_link_script {link_script} --verbose=$(VERBOSE)"
@@ -1818,6 +1845,11 @@ impl<'a> MakefileGenerator<'a> {
             let spec = custom::spec_from_command(self.ctx, command);
             let evaluated =
                 custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+            if let Some(comment) = &evaluated.comment
+                && !comment.is_empty()
+            {
+                commands.push(format!("@{}", self.echo(comment, "--blue --bold", None)));
+            }
             commands.extend(self.custom_command_lines(
                 &evaluated,
                 target,
@@ -3220,9 +3252,10 @@ impl<'a> MakefileGenerator<'a> {
                 .ctx
                 .var(0, "CMAKE_SKIP_INSTALL_RULES")
                 .is_some_and(|v| crate::util::is_on(&v));
+        let (before_globals, after_globals) = self.ctx.targets_around_globals();
         for (mf_index, mf) in self.ctx.interp.makefiles.iter().enumerate() {
-            for key in &mf.targets {
-                if let Some(target) = self.ctx.interp.ext.targets.get(key) {
+            for targets in [&before_globals, &after_globals] {
+                for target in targets.iter().filter(|target| target.makefile == mf_index) {
                     if is_in_build_system(target)
                         && matches!(
                             target.kind,
@@ -3240,31 +3273,33 @@ impl<'a> MakefileGenerator<'a> {
                         let _ = writeln!(out, "{directory}");
                     }
                 }
-            }
-            let mut names = vec![];
-            let (package, package_source) = package_configs(self.ctx);
-            if package {
-                names.push("package");
-            }
-            if package_source {
-                names.push("package_source");
-            }
-            if testing {
-                names.push("test");
-            }
-            names.extend(["edit_cache", "rebuild_cache"]);
-            if install_enabled {
-                names.extend([
-                    "list_install_components",
-                    "install",
-                    "install/local",
-                    "install/strip",
-                ]);
-            }
-            for name in names {
-                let directory = format!("{}/CMakeFiles/{name}.dir", mf.binary_dir);
-                self.write_labels_files(name, None, mf_index, Vec::new(), &directory);
-                let _ = writeln!(out, "{directory}");
+                if std::ptr::eq(targets, &before_globals) {
+                    let mut names = vec![];
+                    let (package, package_source) = package_configs(self.ctx);
+                    if package {
+                        names.push("package");
+                    }
+                    if package_source {
+                        names.push("package_source");
+                    }
+                    if testing {
+                        names.push("test");
+                    }
+                    names.extend(["edit_cache", "rebuild_cache"]);
+                    if install_enabled {
+                        names.extend([
+                            "list_install_components",
+                            "install",
+                            "install/local",
+                            "install/strip",
+                        ]);
+                    }
+                    for name in names {
+                        let directory = format!("{}/CMakeFiles/{name}.dir", mf.binary_dir);
+                        self.write_labels_files(name, None, mf_index, Vec::new(), &directory);
+                        let _ = writeln!(out, "{directory}");
+                    }
+                }
             }
         }
         let path = format!(
@@ -3417,7 +3452,8 @@ impl<'a> MakefileGenerator<'a> {
                     .to_owned();
                 let _ = writeln!(
                     out,
-                    "#=============================================================================\n# Directory level rules for directory {rel_dir}\n"
+                    "#=============================================================================\n# Directory level rules for directory {}\n",
+                    unix_output_path(&rel_dir)
                 );
             }
             let dir_targets: Vec<&Target> = targets

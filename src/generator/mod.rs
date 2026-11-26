@@ -552,6 +552,16 @@ fn check_build_database_targets(interp: &mut Interp) -> bool {
         return false;
     }
 
+    // cmGlobalGenerator::SupportsBuildDatabase: only the Ninja generators
+    // implement build-database merging.  Other generators still validate
+    // reserved names but do not create the merge utility targets.
+    if !matches!(
+        interp.get_def("CMAKE_GENERATOR"),
+        Some("Ninja" | "Ninja Multi-Config")
+    ) {
+        return true;
+    }
+
     let home_binary = interp.home_binary.clone();
 
     // cmGlobalGenerator::AddMergeTarget.
