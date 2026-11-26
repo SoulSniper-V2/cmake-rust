@@ -2,7 +2,7 @@
 
 Branch: `t3/unix-makefiles-10`
 
-Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
+Most recent completed full Unix Makefiles projdiff lane after the Batch 9 echo-escaping correction: **151/174** (`/tmp/umf10-projdiff-umf-postecho.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-full/report.json`).  Ninja lane must remain green.
 
 Known remaining projdiff failure groups: autogen, CUDA, C++ modules,
 install/platform variants, ASM dependency scanning, object-library corners,
@@ -11,8 +11,8 @@ ordering, and try_compile nested logs.  `link/items` still has target-specific
 link model differences.  `install/subdir_dest` is down to object-file `./`
 normalization in `sub/cmake_install.cmake`.
 
-Evidence still pending: full Unix Makefiles projdiff lane, zlib byte parity/build,
-Kitware CMake self-configure/build, full RunCMake lane, and CLI regression additions.
+Evidence still pending: zlib byte parity/build and Kitware CMake
+self-configure/build with Unix Makefiles.
 
 ## Part 10 inherited Batch 9 validation
 
@@ -48,6 +48,25 @@ clippy clean, **941/941** Rust tests (`/tmp/umf10-rust-gates.log`), difftest
 (`/tmp/umf10-projdiff-ninja.log`) with only the known
 `pch_unity/options` `build.outputs` load flake; that case passes **1/1** in
 isolation (`/tmp/umf10-projdiff-ninja-pch-rerun.log`).
+
+The full Unix Makefiles RunCMake lane passes **5566/5566** cases
+(`/tmp/umf10-runcmake-full/report.json`; development lane, audit disabled, one
+repetition, oracle cache reused).  The first full Unix Makefiles projdiff lane
+then exposed an echo-escaping regression in install-component lookup commands:
+the batch's new shell escaping must wrap the component in literal quotes before
+escaping, matching `cmGlobalGenerator.cxx`'s `cmWrap` plus `EscapeForShell`
+ordering.  A focused probe passes 6/6 representative export, install, link,
+and basic cases (`/tmp/umf10-projdiff-echo-focus.log`).  Post-correction gate
+evidence is `cargo fmt --check` clean, clippy clean, Rust tests green,
+difftest green, clitest green, and Ninja projdiff **174/174** including a
+non-flaked `pch_unity/options` (`/tmp/umf10-echo-gates.log`).  The corrected
+full Unix Makefiles projdiff lane is **151/174**
+(`/tmp/umf10-projdiff-umf-postecho.log`).  The 23 remaining cases are the
+platform/response-file clusters (Darwin, MSVC/clang-cl, CUDA, ISPC), ASM
+linker-language details, autogen clean lists, Makefile2-only dependency-edge
+differences (`export/shared_deps`, `link/items`, `ninja/response_file`),
+LTO probe link scripts in `targets/kitchen_sink`, and the missing
+`link/static_errors` diagnostics.
 
 ## Part 8 include-regex checkpoint
 

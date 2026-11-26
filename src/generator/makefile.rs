@@ -4111,7 +4111,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
             let quoted = components
                 .iter()
-                .map(|component| format!("\\\"{component}\\\""))
+                .map(|component| format!("\"{component}\""))
                 .collect::<Vec<_>>()
                 .join(" ");
             write_make_rule(
