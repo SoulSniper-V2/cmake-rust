@@ -2193,11 +2193,7 @@ impl Initializer {
             info.insert("VERBOSITY".into(), json!(self.verbosity));
             info.insert(
                 "GENERATOR".into(),
-                json!(if self.multi {
-                    "Ninja Multi-Config"
-                } else {
-                    "Ninja"
-                }),
+                json!(ctx.interp.get_def("CMAKE_GENERATOR").unwrap_or("Ninja")),
             );
             info.insert("LOCK_FILE".into(), json!(qrc.lock_file));
             set_config(&mut info, "SETTINGS_FILE", &qrc.settings_file);

@@ -52,6 +52,27 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+Makefile target and prerequisite names now use the upstream Unix Makefile
+escaping conversion (`=`, `$`, backslash, spaces, and `#`), include paths in
+target build files are escaped the same way, recursive make invocations shell-
+quote paths containing spaces, and progress-marks arguments preserve the
+upstream `//CMakeFiles` spelling.  A subdirectory whose name contains a space
+now builds successfully (`/tmp/umf5-spaceprobe2`).  Scannable C++ module
+targets are rejected with the upstream unsupported-generator fatal error;
+`tests/projects/export/modules` now passes the Unix Makefiles projdiff lane.
+AutoRcc metadata records the real generator name instead of hardcoding Ninja.
+A focused RunCMake probe after the escaping work
+(`/tmp/umf5-runcmake-bdprobe`) now passes 72/82 combined BuildDepends and
+InterfaceLibrary cases.  BuildDepends is down to four failures (manifest and
+depfile freshness plus one custom-command depends result); the six remaining
+InterfaceLibrary failures are all missing interface-target convenience/build
+rules (`No rule to make target 'iface'` or `CMakeFiles/iface.dir/all`).
+
+Focused evidence `/tmp/umf5-pd-auto-mod.log`: `export/modules` passes;
+`autogen/imported` and `autogen/warn` now differ only in `Makefile2` and
+`TargetDirectories.txt` ordering/content, and `cxxmodules/bdb_single` still
+has cascading generated-file differences after the matching configure error.
+
 Unix Makefiles compile rules now implement the upstream launcher stack:
 `RULE_LAUNCH_COMPILE` outermost with `<TARGET_NAME>`, `<TARGET_TYPE>`,
 `<OBJECT>`, `<SOURCE>`, `<LANGUAGE>`, and `<CMAKE_CURRENT_BINARY_DIR>`
