@@ -162,6 +162,44 @@ class Gen:
             root.append("add_custom_target(ct ALL COMMAND ${CMAKE_COMMAND} -E echo hi BYPRODUCTS ct.txt)")
             if self.targets:
                 root.append(f"add_dependencies(ct {rng.choice(self.targets)[0]})")
+        built = [t for t in self.targets if t[1] in ("STATIC", "SHARED", "MODULE", "EXE")]
+        if built and rng.random() < 0.4:
+            t = rng.choice(built)
+            genex = rng.choice(["$<TARGET_FILE:{n}>", "$<TARGET_FILE_DIR:{n}>", "$<TARGET_FILE_NAME:{n}>",
+                                "$<TARGET_PROPERTY:{n},NAME>", "$<TARGET_LINKER_FILE:{n}>", "$<TARGET_FILE_BASE_NAME:{n}>",
+                                "$<CONFIG>", "$<IF:$<CONFIG:Debug>,dbg,rel>"]).replace("{n}", t[0])
+            if t[1] in ("MODULE", "EXE") and "LINKER_FILE" in genex:
+                genex = f"$<TARGET_FILE:{t[0]}>"
+            self.dirs[t[2]].append(f"add_custom_command(TARGET {t[0]} POST_BUILD COMMAND ${{CMAKE_COMMAND}} -E echo \"{genex}\" VERBATIM)")
+        if built and rng.random() < 0.3:
+            t = rng.choice(built)
+            out = f"gen_{t[0]}.txt"
+            self.dirs[t[2]].append(f"file(GENERATE OUTPUT ${{CMAKE_CURRENT_BINARY_DIR}}/{out} CONTENT \"$<TARGET_FILE:{t[0]}>;$<TARGET_PROPERTY:{t[0]},COMPILE_DEFINITIONS>\")")
+        if self.targets and rng.random() < 0.3:
+            t = rng.choice(self.targets)
+            self.dirs[t[2]].append(f"add_library(alias::{t[0]} ALIAS {t[0]})")
+        if rng.random() < 0.2:
+            self.files.setdefault("imp.txt", "")
+            self.dirs[""].append("add_library(imp SHARED IMPORTED)\nset_target_properties(imp PROPERTIES IMPORTED_LOCATION /opt/lib/libimp.so IMPORTED_SONAME libimp.so.1 INTERFACE_COMPILE_DEFINITIONS IMP=1)")
+            users = [t for t in self.targets if t[1] in ("SHARED", "EXE") and t[2] == ""]
+            if users:
+                self.dirs[""].append(f"target_link_libraries({rng.choice(users)[0]} PRIVATE imp)")
+        statics = [t for t in self.targets if t[1] == "STATIC"]
+        linkers = [t for t in self.targets if t[1] in ("SHARED", "EXE")]
+        if statics and linkers and rng.random() < 0.25:
+            lib, user = rng.choice(statics), rng.choice(linkers)
+            feature = rng.choice(["$<LINK_LIBRARY:WHOLE_ARCHIVE,{l}>", "$<LINK_GROUP:RESCAN,{l}>"]).replace("{l}", lib[0])
+            self.dirs[user[2]].append(f"target_link_libraries({user[0]} PRIVATE \"{feature}\")")
+        srcs = [(t, f) for t in self.targets for f in self.files if f.endswith((".c", ".cpp")) and f.startswith(f"{t[2]}/" if t[2] else "") and f.split("/")[-1].startswith(t[0] + ".")]
+        if srcs and rng.random() < 0.3:
+            (t, f) = rng.choice(srcs)
+            prop = rng.choice(["COMPILE_DEFINITIONS SRCDEF=1", "COMPILE_OPTIONS -Wshadow", "OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/inc/x.h",
+                               "SKIP_PRECOMPILE_HEADERS ON", "SKIP_UNITY_BUILD_INCLUSION ON", "INCLUDE_DIRECTORIES /opt/srcinc"])
+            self.dirs[t[2]].append(f"set_source_files_properties({f.split('/')[-1]} PROPERTIES {prop})")
+        if self.targets and rng.random() < 0.2:
+            t = rng.choice([x for x in self.targets if x[1] != "INTERFACE"] or self.targets)
+            scope = "INTERFACE" if t[1] == "INTERFACE" else "PUBLIC"
+            self.dirs[t[2]].append(f"target_sources({t[0]} {scope} FILE_SET HEADERS BASE_DIRS ${{CMAKE_CURRENT_SOURCE_DIR}}/inc FILES ${{CMAKE_CURRENT_SOURCE_DIR}}/inc/x.h)")
         installable = [t for t in self.targets if t[1] in ("STATIC", "SHARED", "INTERFACE", "EXE") and t[2] == ""]
         if installable and rng.random() < 0.4:
             names = " ".join(t[0] for t in installable)

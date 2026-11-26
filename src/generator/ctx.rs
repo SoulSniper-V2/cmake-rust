@@ -849,7 +849,6 @@ impl<'a> GenCtx<'a> {
         if !super::autogen::write_info_files(self, autogen) {
             return self.errors.take();
         }
-        let failed_before_targets = self.has_error();
         // The local generators' target generation (in directory order)
         // reports targets without a linker language before the build
         // export sets are written.
@@ -883,10 +882,11 @@ impl<'a> GenCtx<'a> {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
         }
-        if !failed_before_targets {
-            // cmGlobalNinjaGenerator::Generate: bail before writing build
-            // files when earlier generation raised a fatal error (target
-            // generation itself precedes the install, test and export files).
+        {
+            // cmGlobalGenerator::Generate runs every local generator and
+            // writes TargetDirectories.txt even after an earlier error (for
+            // example from an evaluation file); the Ninja generator then
+            // leaves its build files unwritten.
             let mut ninja = super::ninja::NinjaGenerator::new(self);
             if let Err(error) = ninja.generate() {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));

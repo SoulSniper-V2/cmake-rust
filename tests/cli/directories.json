@@ -182,5 +182,24 @@
       "b/build-Debug.ninja",
       "b/CMakeFiles/common.ninja"
     ]
+  },
+  {
+    "name": "evaluation-file-error-still-writes-target-directories",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x C)\nfile(WRITE ${CMAKE_BINARY_DIR}/a.c \"int a(void){return 0;}\")\nadd_library(t STATIC ${CMAKE_BINARY_DIR}/a.c)\nfile(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/g.txt CONTENT \"$<COMPILE_LANGUAGE>\")\nfile(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/g.txt CONTENT \"other\")\n"
+    },
+    "inspect": [
+      "b/CMakeFiles/TargetDirectories.txt",
+      "b/build.ninja",
+      "b/cmake_install.cmake"
+    ]
   }
 ]
