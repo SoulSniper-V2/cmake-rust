@@ -55,6 +55,17 @@ retain the legacy repeated rules.  Focused evidence
 `/tmp/umf8-cmpmake-out/report.json`: **28/28** `RunCMake.Make` cases pass,
 including the previously failing `CMP0113-NEW-build` failure-mode test.
 
+Unix Makefiles directory rules and progress counts now use the upstream
+`ComputeDirectoryTargets`/`DirectoryTargetsMap` model.  Explicit target
+`EXCLUDE_FROM_ALL` values are evaluated per target, explicit false hoists the
+target into ancestor directory rules, child-directory pruning uses the direct
+final directory property, and progress seeding/counting is root-relative with
+recursive dependency counting.  Focused evidence
+`/tmp/umf8-addsub-out/report.json`: **29/29** `RunCMake.add_subdirectory`
+cases pass.  The manual ExcludeFromAll probe matches the oracle dependency
+lines exactly and produces progress counts root=8, ExcludeFromAll=8,
+SubSub=4 (`/tmp/umf8-excl-cand` versus `/tmp/umf8-excl-oracle/build`).
+
 
 
 ## Part 7 setup, full sweep, and linker/autogen parity fixes

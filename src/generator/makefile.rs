@@ -3201,47 +3201,53 @@ impl<'a> MakefileGenerator<'a> {
             );
         }
 
-        // `cmGlobalUnixMakefileGenerator3::CountProgressMarksInAll` for each
-        // directory: targets in the directory subtree plus their direct
-        // dependencies, counted recursively with a shared emitted set.
-        for dir in 0..self.ctx.interp.makefiles.len() {
-            let mut targetset: Vec<String> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            for (name, _) in &self.progress {
-                let Some(target) = self.ctx.target(name) else {
+        // `cmGlobalUnixMakefileGenerator3::InitializeProgressMarks`: first
+        // seed each directory and its parents with targets belonging to the
+        // seeding directory, together with those targets' direct
+        // dependencies.  Exclusion for this phase is relative to the
+        // target's own directory.
+        let count = self.ctx.interp.makefiles.len();
+        let mut directory_targets_map: Vec<Vec<String>> = vec![Vec::new(); count];
+        let mut directory_target_sets: Vec<HashSet<String>> = vec![HashSet::new(); count];
+        for index in 0..count {
+            for key in self.ctx.interp.makefiles[index].targets.clone() {
+                let Some(target) = self.ctx.interp.ext.targets.get(&key) else {
                     continue;
                 };
-                if !is_in_build_system(target)
-                    || util::is_on_opt(target.props.get("EXCLUDE_FROM_ALL"))
-                    || self.ctx.interp.makefiles[target.makefile].exclude_from_all
+                if target.kind == TargetKind::GlobalTarget || self.target_is_excluded(index, target)
                 {
                     continue;
                 }
-                let mut at = Some(target.makefile);
-                let mut in_tree = false;
-                while let Some(cur) = at {
-                    if cur == dir {
-                        in_tree = true;
-                        break;
+                let depends = super::link::target_depends(self.ctx, target)
+                    .iter()
+                    .map(|depend| depend.key.clone())
+                    .collect::<Vec<_>>();
+                let mut at = Some(index);
+                while let Some(dir) = at {
+                    if directory_target_sets[dir].insert(key.clone()) {
+                        directory_targets_map[dir].push(key.clone());
                     }
-                    at = self.ctx.interp.makefiles[cur].parent;
-                }
-                if !in_tree {
-                    continue;
-                }
-                if seen.insert(name.clone()) {
-                    targetset.push(name.clone());
-                }
-                for depend in super::link::target_depends(self.ctx, target).iter() {
-                    if seen.insert(depend.key.clone()) {
-                        targetset.push(depend.key.clone());
+                    for depend in &depends {
+                        if directory_target_sets[dir].insert(depend.clone()) {
+                            directory_targets_map[dir].push(depend.clone());
+                        }
                     }
+                    at = self.ctx.interp.makefiles[dir].parent;
                 }
             }
+        }
+
+        // `cmGlobalUnixMakefileGenerator3::CountProgressMarksInAll`: count
+        // seeds that are not excluded relative to the requested directory,
+        // then count their dependencies recursively without further
+        // exclusion filtering.
+        for (dir, targetset) in directory_targets_map.iter().enumerate() {
             let mut emitted = std::collections::HashSet::new();
             let mut count = 0usize;
-            for key in &targetset {
-                if let Some(target) = self.ctx.interp.ext.targets.get(key) {
+            for key in targetset {
+                if let Some(target) = self.ctx.interp.ext.targets.get(key)
+                    && !self.target_is_excluded(dir, target)
+                {
                     count += self.count_progress_marks_in_target(target, &mut emitted);
                 }
             }
@@ -3254,6 +3260,40 @@ impl<'a> MakefileGenerator<'a> {
             };
             let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{count}\n"));
         }
+    }
+
+    /// `cmGlobalGenerator::IsExcludedFromAllInConfig` for the
+    /// single-configuration Makefile generator.  An explicit target
+    /// property overrides exclusion inherited from its directory.
+    fn target_is_excluded(&self, root: usize, target: &Target) -> bool {
+        if !is_in_build_system(target) {
+            return true;
+        }
+        if let Some(value) = target.props.get("EXCLUDE_FROM_ALL") {
+            let value = self.ctx.genex(value, Some(target), None);
+            return is_on(&value);
+        }
+        self.directory_is_excluded(root, target.makefile)
+    }
+
+    /// `cmGlobalGenerator::IsDirectoryExcludedFromAll`: exclusion is
+    /// relative to the root directory, so the root never excludes itself.
+    fn directory_is_excluded(&self, root: usize, dir: usize) -> bool {
+        let mut at = Some(dir);
+        while let Some(cur) = at {
+            if cur == root {
+                return false;
+            }
+            if self.ctx.interp.makefiles[cur]
+                .props
+                .get("EXCLUDE_FROM_ALL")
+                .is_some_and(is_on)
+            {
+                return true;
+            }
+            at = self.ctx.interp.makefiles[cur].parent;
+        }
+        false
     }
 
     fn progress_numbers(&self, name: &str) -> Vec<usize> {
@@ -3614,6 +3654,34 @@ impl<'a> MakefileGenerator<'a> {
                 maybe_relative_cur(self.ctx, t.makefile, &gt::support_directory(self.ctx, t))
             )
         };
+        // `cmGlobalCommonGenerator::ComputeDirectoryTargets`: per directory,
+        // non-global in-build-system targets with their explicit exclusion.
+        // An explicitly unexcluded target is also appended to every ancestor
+        // directory rule.
+        let count = self.ctx.interp.makefiles.len();
+        let mut directory_targets: Vec<Vec<(&Target, bool)>> = vec![Vec::new(); count];
+        for index in 0..count {
+            for key in &self.ctx.interp.makefiles[index].targets {
+                let Some(target) = self.ctx.interp.ext.targets.get(key) else {
+                    continue;
+                };
+                if target.kind == TargetKind::GlobalTarget || !is_in_build_system(target) {
+                    continue;
+                }
+                let mut excluded = false;
+                if let Some(value) = target.props.get("EXCLUDE_FROM_ALL") {
+                    excluded = is_on(&self.ctx.genex(value, Some(target), None));
+                    if !excluded {
+                        let mut parent = self.ctx.interp.makefiles[index].parent;
+                        while let Some(dir) = parent {
+                            directory_targets[dir].push((target, false));
+                            parent = self.ctx.interp.makefiles[dir].parent;
+                        }
+                    }
+                }
+                directory_targets[index].push((target, excluded));
+            }
+        }
         let mut dirs: Vec<usize> = (0..self.ctx.interp.makefiles.len()).collect();
         dirs.sort_by_key(|dir| {
             let rel = home_relative_output_path(self.ctx, *dir);
@@ -3632,11 +3700,7 @@ impl<'a> MakefileGenerator<'a> {
                     unix_output_path(&rel_dir)
                 );
             }
-            let dir_targets: Vec<&Target> = targets
-                .iter()
-                .copied()
-                .filter(|t| t.makefile == dir)
-                .collect();
+            let dir_targets = &directory_targets[dir];
             let children = self.ctx.interp.makefiles[dir].children.clone();
             for (rule, suffix) in [
                 ("all", "all"),
@@ -3651,17 +3715,20 @@ impl<'a> MakefileGenerator<'a> {
                 };
                 let mut deps = Vec::new();
                 if rule != "preinstall" {
-                    deps.extend(
-                        dir_targets
-                            .iter()
-                            .filter(|t| {
-                                rule == "clean" || t.props.get("EXCLUDE_FROM_ALL") != Some("TRUE")
-                            })
-                            .map(|t| format!("{}/{suffix}", rel(t))),
-                    );
+                    for (target, excluded) in dir_targets.iter() {
+                        if rule != "clean" && *excluded {
+                            continue;
+                        }
+                        deps.push(format!("{}/{suffix}", rel(target)));
+                    }
                 }
                 for child in &children {
-                    if rule != "clean" && self.ctx.interp.makefiles[*child].exclude_from_all {
+                    if rule != "clean"
+                        && self.ctx.interp.makefiles[*child]
+                            .props
+                            .get("EXCLUDE_FROM_ALL")
+                            .is_some_and(is_on)
+                    {
                         continue;
                     }
                     let child_rel = home_relative_output_path(self.ctx, *child)
