@@ -10,8 +10,7 @@ details, ISPC, Makefile2/progress/DependInfo ordering, response-file/PCH
 corners, and try-compile LTO probe link scripts.  `link/items` and
 `export/shared_deps` are down to Makefile2 direct-dependency ordering.
 
-Kitware self-configure and self-build evidence is below; the self-built CTest
-run is in progress at this checkpoint.
+Kitware self-configure, self-build, and self-built CTest evidence is below.
 
 ## Part 10 inherited Batch 9 validation
 
@@ -84,16 +83,19 @@ Makefiles projdiff lane is **153/174** (`/tmp/umf10-projdiff-umf-final.log`).
 Kitware CMake 4.1.0 self-configure with Unix Makefiles succeeds in both oracle
 and candidate (`configure oracle=0 candidate=0`) with 1210/1207 tree files and
 21 normalized differences (`/tmp/umf10-kitware-umf-treediff.log`, machine
-summary `/tmp/umf10-kitware-umf-treediff.json`, work `/tmp/umf10-kitware-umf`).
+summary `/tmp/umf10-kitware-umf-treediff.json`; the large scratch tree was
+removed after capturing the logs).
 The remaining self-configure differences are CMakeConfigureLog/CMakeOutput log
 text, missing CMakeRuleHashes and nested-check dependency cache artifacts,
 Makefile.cmake module dependency ordering, nested CheckCurses dependency
 details, and `Source/../bin` versus `bin` makefile target spelling.  The
 candidate-generated tree then completes `make -j6` self-build successfully
-(`/tmp/umf10-kitware-umf-selfbuild.log`, rc=0).
+(`/tmp/umf10-kitware-umf-selfbuild.log`, rc=0), and the self-built `bin/ctest`
+passes **684/684** tests in 368.40 seconds (`/tmp/umf10-kitware-umf-ctest.log`,
+rc=0).
 
 Pinned zlib v1.3.1 Unix Makefiles validation passes end to end
-(`/tmp/umf10-zlib-umf.log`, evidence tree `/tmp/umf10-zlib-umf`): oracle and
+(`/tmp/umf10-zlib-umf.log`): oracle and
 candidate configure and build, both CTest runs pass example/example64, 34
 normalized compile commands match, install file/symlink entries/text/symbol
 sets match, all four minigzip encode/decode pairings match, zconf.h is byte
