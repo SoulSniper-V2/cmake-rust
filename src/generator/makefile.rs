@@ -3494,27 +3494,36 @@ impl<'a> MakefileGenerator<'a> {
                 self.ctx,
                 &format!("{}/CMakeFiles", self.ctx.interp.home_binary),
             );
+            let mut commands = vec![
+                format!(
+                    "$(MAKE) $(MAKESILENT) -f {} {}",
+                    shell_path(self.ctx, &format!("{r}/build.make")),
+                    shell_path(self.ctx, &format!("{r}/depend"))
+                ),
+                format!(
+                    "$(MAKE) $(MAKESILENT) -f {} {}",
+                    shell_path(self.ctx, &format!("{r}/build.make")),
+                    shell_path(self.ctx, &format!("{r}/build"))
+                ),
+            ];
+            let target_messages = self
+                .ctx
+                .interp
+                .global_props
+                .get("TARGET_MESSAGES")
+                .is_none_or(is_on);
+            if target_messages {
+                commands.push(format!(
+                    "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --progress-dir={progress_dir} --progress-num={numtext} \"Built target {}\"",
+                    t.name
+                ));
+            }
             write_make_rule(
                 &mut out,
                 Some("All Build rule for target."),
                 &format!("{r}/all"),
                 &deps,
-                &[
-                    format!(
-                        "$(MAKE) $(MAKESILENT) -f {} {}",
-                        shell_path(self.ctx, &format!("{r}/build.make")),
-                        shell_path(self.ctx, &format!("{r}/depend"))
-                    ),
-                    format!(
-                        "$(MAKE) $(MAKESILENT) -f {} {}",
-                        shell_path(self.ctx, &format!("{r}/build.make")),
-                        shell_path(self.ctx, &format!("{r}/build"))
-                    ),
-                    format!(
-                        "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --progress-dir={progress_dir} --progress-num={numtext} \"Built target {}\"",
-                        t.name
-                    ),
-                ],
+                &commands,
                 true,
             );
             write_make_rule(

@@ -73,6 +73,14 @@ byproducts of target build-event commands.  Focused RunCMake evidence:
 `/tmp/umf6-runcmake-byprodprobe/report.json` passes 48/48 (driver log
 `/tmp/umf6-runcmake-byprodprobe-driver.log`).
 
+
+Makefile2 target completion echo now honors the global `TARGET_MESSAGES`
+property initialized from `CMAKE_TARGET_MESSAGES`, matching upstream
+`cmGlobalUnixMakefileGenerator3::WriteConvenienceRules`.  Focused RunCMake
+evidence: `/tmp/umf6-runcmake-makeprobe/report.json` passes 26/28 (driver
+log `/tmp/umf6-runcmake-makeprobe-driver.log`); the remaining Make failures
+are the pre-existing CMP0113 and include-regex cases, not target messages.
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in
