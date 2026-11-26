@@ -28,9 +28,7 @@ use crate::commands::target::{
 use crate::genex::GenexHost;
 use crate::interp::Interp;
 use crate::policy::{PolicyMap, PolicyStatus, index_of, policy_warning};
-use crate::state::{
-    CustomCommand, CustomCommandKind, GeneratorAction, SourceGroup, Target, TargetKind,
-};
+use crate::state::{CustomCommand, CustomCommandKind, GeneratorAction, Target, TargetKind};
 use crate::util::{
     collapse_full_path, expand_list, filename_last_extension, filename_name, filename_path,
     filename_without_last_extension, is_off, is_on, is_on_opt, is_subdirectory,
@@ -1673,18 +1671,12 @@ impl Initializer {
             &group,
             delimiters.as_deref().unwrap_or("/\\"),
         );
-        interp
-            .ext
-            .source_groups
-            .entry(self.dir)
-            .or_default()
-            .entry(name)
-            .or_insert_with(|| SourceGroup {
-                files: BTreeSet::new(),
-                regex: None,
-            })
-            .files
-            .insert(path.to_owned());
+        crate::state::source_group_entry(
+            interp.ext.source_groups.entry(self.dir).or_default(),
+            name,
+        )
+        .files
+        .insert(path.to_owned());
     }
 
     /// `AddCMakeProcessToCommandLines`.

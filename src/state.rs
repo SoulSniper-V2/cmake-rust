@@ -368,6 +368,23 @@ pub struct SourceFileLocation {
 pub struct SourceGroup {
     pub regex: Option<String>,
     pub files: BTreeSet<String>,
+    /// Creation order within the directory (`cmMakefile::SourceGroups` is a
+    /// vector appended to as groups are created).
+    pub seq: usize,
+}
+
+/// `cmMakefile::GetOrCreateSourceGroup` on a directory's group map: an
+/// existing group, or a new one recorded after every earlier group.
+pub fn source_group_entry(
+    groups: &mut BTreeMap<String, SourceGroup>,
+    name: String,
+) -> &mut SourceGroup {
+    let seq = groups.len();
+    groups.entry(name).or_insert_with(|| SourceGroup {
+        files: BTreeSet::new(),
+        regex: None,
+        seq,
+    })
 }
 
 #[derive(Debug)]

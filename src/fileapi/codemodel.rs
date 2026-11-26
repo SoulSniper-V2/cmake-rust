@@ -1214,8 +1214,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
     /// (`MatchChildrenFiles`): a `source_group()`-assigned group for `path`.
     fn explicit_source_group(&self, target: &Target, path: &str) -> Option<String> {
         let groups = self.ctx.interp.ext.source_groups.get(&target.makefile);
-        let named: Vec<(&String, &crate::state::SourceGroup)> =
+        let mut named: Vec<(&String, &crate::state::SourceGroup)> =
             groups.map(|g| g.iter().collect()).unwrap_or_default();
+        named.sort_by_key(|(_, group)| group.seq);
         for (name, group) in named.iter().rev() {
             if group.files.contains(path)
                 || group.files.iter().any(|f| path.ends_with(&format!("/{f}")))
@@ -1231,6 +1232,7 @@ impl<'a, 'i> Codemodel<'a, 'i> {
         let groups = self.ctx.interp.ext.source_groups.get(&target.makefile);
         let mut named: Vec<(&String, &crate::state::SourceGroup)> =
             groups.map(|g| g.iter().collect()).unwrap_or_default();
+        named.sort_by_key(|(_, group)| group.seq);
         // Check explicit file lists first (reverse order), then regexes.
         if let Some(name) = self.explicit_source_group(target, path) {
             return Some(name);

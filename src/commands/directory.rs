@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 
 use crate::cache::convert_to_unix_slashes;
 use crate::interp::{Builtin, CmdResult, Interp, Mode, err};
-use crate::state::{PendingSubdirectory, SourceGroup};
+use crate::state::PendingSubdirectory;
 use crate::util::{collapse_full_path, expand_list, is_off, is_on, is_subdirectory};
 
 use super::target::{
@@ -574,18 +574,12 @@ fn source_group(interp: &mut Interp, args: &[String]) -> CmdResult {
             let relative = file.get(root.len() + 1..).unwrap_or_default();
             let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
             let group = normalized_group(&format!("{prefix}/{parent}"), "/\\");
-            interp
-                .ext
-                .source_groups
-                .entry(dir)
-                .or_default()
-                .entry(group)
-                .or_insert_with(|| SourceGroup {
-                    files: BTreeSet::new(),
-                    regex: None,
-                })
-                .files
-                .insert(file);
+            crate::state::source_group_entry(
+                interp.ext.source_groups.entry(dir).or_default(),
+                group,
+            )
+            .files
+            .insert(file);
         }
     } else {
         if OPTIONS.contains(&first.as_str()) && !(args.len() == 2 && args[1] != "FILES") {
@@ -595,16 +589,10 @@ fn source_group(interp: &mut Interp, args: &[String]) -> CmdResult {
             first,
             interp.get_def("SOURCE_GROUP_DELIMITER").unwrap_or("/\\"),
         );
-        let group = interp
-            .ext
-            .source_groups
-            .entry(dir)
-            .or_default()
-            .entry(name)
-            .or_insert_with(|| SourceGroup {
-                files: BTreeSet::new(),
-                regex: None,
-            });
+        let group = crate::state::source_group_entry(
+            interp.ext.source_groups.entry(dir).or_default(),
+            name,
+        );
         if let Some(regex) = parsed.get("REGULAR_EXPRESSION") {
             group.regex = Some(regex[0].to_owned());
         }
