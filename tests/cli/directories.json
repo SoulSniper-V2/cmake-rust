@@ -163,5 +163,24 @@
     "inspect": [
       "b/exTargets.cmake"
     ]
+  },
+  {
+    "name": "nmc-default-build-file-written-on-error",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja Multi-Config"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\nadd_library(lib INTERFACE)\ntarget_include_directories(lib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/inc)\ninstall(TARGETS lib EXPORT ex)\ninstall(EXPORT ex DESTINATION lib/cmake)\n"
+    },
+    "inspect": [
+      "b/build.ninja",
+      "b/build-Debug.ninja",
+      "b/CMakeFiles/common.ninja"
+    ]
   }
 ]

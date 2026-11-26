@@ -125,6 +125,11 @@ def audit(trace, argv, oracle, subject, cwd):
     }, sorted(subject_execs)
 
 
+# The generator the oracle build tree was configured with: RunCMake runs
+# every case with it unless a case selects another one (set in main()).
+PRIMARY = "Ninja"
+
+
 def foreign_generators(argv, supported):
     choices = set()
     for i, arg in enumerate(argv):
@@ -132,7 +137,7 @@ def foreign_generators(argv, supported):
             choices.add(argv[i + 1])
         elif arg.startswith("-G") and arg[2:] in supported:
             choices.add(arg[2:])
-    return choices - {"Ninja"}
+    return choices - {PRIMARY}
 
 
 def read_cases(logs, driver, execs, generators, ctest):
@@ -201,7 +206,7 @@ def read_cases(logs, driver, execs, generators, ctest):
             }
             for _, command in execs[bisect_right(timestamps, start):bisect_right(timestamps, event["time"])]:
                 explicit.update(foreign_generators(command, generators))
-            if top_generator in generators - {"Ninja"}:
+            if top_generator in generators - {PRIMARY}:
                 explicit.add(top_generator)
             if explicit and workdir:
                 work_generators[workdir] = explicit.copy()
@@ -257,7 +262,8 @@ def standalone(name):
 def registered_paths(test, build):
     cwd = next(prop["value"] for prop in test["properties"] if prop["name"] == "WORKING_DIRECTORY")
     suite = next(arg.split("=", 1)[1] for arg in test["command"] if arg.startswith("-DRunCMake_BINARY_DIR="))
-    return Path(cwd).relative_to(build), Path(suite).relative_to(build)
+    # A build configured through a symlinked path registers unresolved paths.
+    return Path(cwd).resolve().relative_to(build), Path(suite).resolve().relative_to(build)
 
 
 def invocation(test, context, binary, suite_build, logs):
@@ -521,10 +527,19 @@ def prepare(args):
     if candidate.samefile(oracle) or (oracle_digest == candidate_digest) != args.self_test:
         raise SystemExit("Use a separately staged identical oracle binary only with --self-test")
     cache_text = (build / "CMakeCache.txt").read_text()
-    for line in ("CMAKE_GENERATOR:INTERNAL=Ninja", "BUILD_TESTING:BOOL=ON",
-                 f"CMAKE_HOME_DIRECTORY:INTERNAL={source}"):
-        if line not in cache_text.splitlines():
-            raise SystemExit(f"Oracle build cache is missing {line}")
+    global PRIMARY
+    configured = [line.split("=", 1)[1] for line in cache_text.splitlines()
+                  if line.startswith("CMAKE_GENERATOR:INTERNAL=")]
+    if not configured or configured[0] not in ("Ninja", "Unix Makefiles"):
+        raise SystemExit("Oracle build cache must have CMAKE_GENERATOR:INTERNAL=Ninja or Unix Makefiles")
+    PRIMARY = configured[0]
+    if "BUILD_TESTING:BOOL=ON" not in cache_text.splitlines():
+        raise SystemExit("Oracle build cache is missing BUILD_TESTING:BOOL=ON")
+    homes = [line.split("=", 1)[1] for line in cache_text.splitlines()
+             if line.startswith("CMAKE_HOME_DIRECTORY:INTERNAL=")]
+    # The build may have been configured through a symlink to the checkout.
+    if not homes or Path(homes[0]).resolve() != source.resolve():
+        raise SystemExit(f"Oracle build cache is missing CMAKE_HOME_DIRECTORY:INTERNAL={source}")
     oracle_version = version(oracle)
     if oracle_version != f"cmake version {BASELINE['oracle']['version']}":
         raise SystemExit(f"Unexpected oracle version: {oracle_version}")
@@ -562,7 +577,7 @@ def prepare(args):
         for option in test["command"][1:-2]:
             _, _, value = option.partition("=")
             path = Path(value)
-            if path.is_relative_to(build):
+            if path.resolve().is_relative_to(build):
                 helpers[value] = sha256(path) if path.is_file() else "directory" if path.is_dir() else "missing"
     oracle_info = {"path": str(oracle), "sha256": oracle_digest, "version": oracle_version,
                    "commit": revision, "source": str(source), "build": str(build),
@@ -582,7 +597,8 @@ def prepare(args):
     report = {
         **cache_context,
         "kind": "harness self-test" if args.self_test else "official" if args.official else "development",
-        "generator": "Ninja", "scored_generators": ["Ninja", *sorted(set(args.score_generator or ()))],
+        "generator": PRIMARY,
+        "scored_generators": [PRIMARY, *sorted(set(args.score_generator or ()) - {PRIMARY})],
         "repetitions": args.repeat, "jobs": args.jobs, "audit": not args.no_audit,
         "workspace_head": checked(["git", "-C", ROOT, "rev-parse", "HEAD"]),
         "candidate": {"path": str(candidate), "sha256": candidate_digest, "version": version(candidate)},

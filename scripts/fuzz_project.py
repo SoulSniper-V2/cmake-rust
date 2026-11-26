@@ -30,14 +30,17 @@ treediff = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(treediff)
 
 GENEX_DEFS = ["D{n}", "$<$<CONFIG:Debug>:DBG{n}>", "$<$<COMPILE_LANGUAGE:C>:CLANG{n}>",
+              "$<$<COMPILE_LANGUAGE:CXX>:CXXLANG{n}>", "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:GXX{n}>",
               "$<$<BOOL:ON>:ON{n}>", "V{n}=\"x y\"", "$<TARGET_PROPERTY:NAME>_{n}"]
-OPTIONS = ["-Wall", "$<$<CONFIG:Release>:-O2>", "-fno-common", "$<$<C_COMPILER_ID:GNU>:-Wextra>"]
+OPTIONS = ["-Wall", "$<$<CONFIG:Release>:-O2>", "-fno-common", "$<$<C_COMPILER_ID:GNU>:-Wextra>",
+           "$<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>", "$<$<CXX_COMPILER_ID:GNU>:-Wpedantic>"]
 KINDS = ["STATIC", "SHARED", "OBJECT", "INTERFACE", "MODULE", "EXE", "EXE", "STATIC"]
 
 
 class Gen:
-    def __init__(self, rng):
+    def __init__(self, rng, cxx=False):
         self.rng = rng
+        self.cxx = cxx
         self.targets = []  # (name, kind, dir)
         self.files = {}
         self.dirs = {"": []}
@@ -55,7 +58,8 @@ class Gen:
         lines = self.dirs.setdefault(d, [])
         srcs = []
         if kind != "INTERFACE":
-            srcs.append(self.src(d, f"{name}.c",
+            ext = "cpp" if self.cxx and rng.random() < 0.6 else "c"
+            srcs.append(self.src(d, f"{name}.{ext}",
                                  f"int {name}_f(void) {{ return {i}; }}\n" if kind != "EXE"
                                  else "int main(void) { return 0; }\n"))
             if rng.random() < 0.3:
@@ -92,7 +96,10 @@ class Gen:
             sys_kw = rng.choice(["", "SYSTEM ", "BEFORE "])
             lines.append(f"target_include_directories({name} {sys_kw}{sc()} {inc})")
         if rng.random() < 0.3:
-            lines.append(f"target_compile_features({name} {sc()} {rng.choice(['c_std_99', 'c_std_11', 'c_std_90'])})")
+            feats = ['c_std_99', 'c_std_11', 'c_std_90']
+            if self.cxx:
+                feats += ['cxx_std_11', 'cxx_std_14', 'cxx_std_17', 'cxx_std_20', 'cxx_constexpr']
+            lines.append(f"target_compile_features({name} {sc()} {rng.choice(feats)})")
         if rng.random() < 0.2:
             lines.append(f"target_link_options({name} {sc()} {rng.choice(['-Wl,--as-needed', '$<$<CONFIG:Debug>:-g>', 'LINKER:-z,defs'])})")
         if rng.random() < 0.15:
@@ -103,7 +110,9 @@ class Gen:
                 "POSITION_INDEPENDENT_CODE ON", "C_VISIBILITY_PRESET hidden", "RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin",
                 "LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib", "ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/ar",
                 "BUILD_RPATH /opt/rp", "INSTALL_RPATH $ORIGIN/../lib", "SKIP_BUILD_RPATH ON", "UNITY_BUILD ON",
-                "C_STANDARD 11", "C_EXTENSIONS OFF", "DEBUG_POSTFIX _d", "OUTPUT_NAME_DEBUG dbg_{name}"], rng.randint(1, 3))
+                "C_STANDARD 11", "C_EXTENSIONS OFF", "DEBUG_POSTFIX _d", "OUTPUT_NAME_DEBUG dbg_{name}"]
+                + (["CXX_STANDARD 17", "CXX_STANDARD_REQUIRED ON", "CXX_EXTENSIONS OFF", "CXX_VISIBILITY_PRESET hidden",
+                    "VISIBILITY_INLINES_HIDDEN ON", "LINKER_LANGUAGE CXX"] if self.cxx else []), rng.randint(1, 3))
             props = [p.replace("{name}", name) for p in props]
             if kind not in ("SHARED", "MODULE"):
                 props = [p for p in props if not p.startswith(("VERSION", "SOVERSION", "SUFFIX"))]
@@ -162,16 +171,16 @@ class Gen:
                 root.append("export(EXPORT ex NAMESPACE ns:: FILE exTargets.cmake)")
 
 
-def make_case(seed, index):
+def make_case(seed, index, cxx=False):
     rng = random.Random(f"{seed}:{index}")
-    gen = Gen(rng)
+    gen = Gen(rng, cxx)
     for i in range(rng.randint(2, 9)):
         name, kind, d = gen.target(i)
         gen.usage(name, kind, d)
     gen.links()
     gen.extras()
     files = dict(gen.files)
-    head = "cmake_minimum_required(VERSION 3.20)\nproject(fz C)\n"
+    head = f"cmake_minimum_required(VERSION 3.20)\nproject(fz C{' CXX' if cxx else ''})\n"
     subdirs = [d for d in ("sub1", "sub2") if d in gen.dirs]
     body = "\n".join(gen.dirs[""])
     # Subdirectories come first so the root can link their targets.
@@ -183,9 +192,9 @@ def make_case(seed, index):
     return files
 
 
-def run_side(cmake, src, build, do_build):
+def run_side(cmake, src, build, do_build, generator="Ninja"):
     log = build.parent / f"{build.name}.log"
-    rc = treediff.configure(Path(cmake), src, build, [], log, "Ninja")
+    rc = treediff.configure(Path(cmake), src, build, [], log, generator)
     out = log.read_bytes()
     norm = treediff.normalizer(build, Path(cmake))
     # Compare the configured tree before building: built binaries embed
@@ -193,14 +202,16 @@ def run_side(cmake, src, build, do_build):
     tree = treediff.gather(build, norm)
     built = None
     if do_build and rc == 0:
-        proc = subprocess.run(["ninja", "-C", str(build), "-k", "0"], capture_output=True)
+        proc = subprocess.run(["ninja", "-C", str(build), "-k", "0",
+                               *(["-f", "build-Debug.ninja"] if generator == "Ninja Multi-Config" else [])],
+                              capture_output=True)
         built = proc.returncode
     out = re.sub(rb"done \(\d+\.\d+s\)", b"done (<T>s)", norm(out).replace(str(src).encode(), b"<SRC>"))
     return rc, out, built, tree
 
 
 def check(args, index):
-    files = make_case(args.seed, index)
+    files = make_case(args.seed, index, args.cxx)
     root = Path(tempfile.mkdtemp(prefix="fp-", dir=args.work))
     try:
         src = root / "src"
@@ -208,8 +219,14 @@ def check(args, index):
             path = src / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        oracle = run_side(args.oracle, src, root / "oracle", args.build)
-        candidate = run_side(args.candidate, src, root / "candidate", args.build)
+        # Both sides use the same build directory path (one after the
+        # other): extra generators name projects after its basename.
+        results = []
+        for cmake, side in ((args.oracle, "oracle"), (args.candidate, "candidate")):
+            results.append(run_side(cmake, src, root / "b", args.build, args.generator))
+            (root / "b").rename(root / side)
+            (root / "b.log").rename(root / f"{side}.log")
+        oracle, candidate = results
         if oracle == candidate:
             return None
         diffs = []
@@ -240,6 +257,8 @@ def main():
     parser.add_argument("-n", type=int, default=100)
     parser.add_argument("-j", type=int, default=6)
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--generator", default="Ninja")
+    parser.add_argument("--cxx", action="store_true", help="mix C++ sources and features in")
     parser.add_argument("--out", default="fuzz-project-out")
     args = parser.parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
