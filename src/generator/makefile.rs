@@ -3227,7 +3227,7 @@ impl<'a> MakefileGenerator<'a> {
         }
         out.push_str("#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0\n.PHONY : cmake_check_build_system\n\n");
         let path = format!("{}/CMakeFiles/Makefile2", self.ctx.interp.home_binary);
-        let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
+        let _ = crate::fsutil::write_generated(Path::new(&path), &out);
     }
 
     fn object_keeps_source_extension(&self, target: &Target, source: &gt::SourceInfo) -> bool {
@@ -3811,7 +3811,11 @@ impl<'a> MakefileGenerator<'a> {
         }
         out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{cdroot}$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0\n.PHONY : cmake_check_build_system\n\n"));
         let path = format!("{}/Makefile", self.ctx.interp.makefiles[dir].binary_dir);
-        let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
+        if dir == 0 {
+            let _ = crate::fsutil::write_generated(Path::new(&path), &out);
+        } else {
+            let _ = crate::fsutil::write_if_different(Path::new(&path), &out);
+        }
     }
 
     fn write_top_makefile(&self) {

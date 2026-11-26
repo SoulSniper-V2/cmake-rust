@@ -40,6 +40,34 @@ shared library, link depfiles, and example/minigzip executables).  The raw
 build/no-op/rebuild logs differ only in parallel target scheduling and
 progress ordering, not in actions or rebuilt file sets.
 
+
+## Round 5 lanes B and E baseline
+
+Full RunCMake development inventory against the Unix-Makefiles oracle build:
+**5291/5582 cases passed** (232/274 selected suites fully passing),
+evidence `/tmp/umf5-runcmake-full`, driver log
+`/tmp/umf5-runcmake-full-driver.log`, bucket summary
+`/tmp/umf5-runcmake-buckets.txt`.  Largest failure buckets are linker
+LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
+warnings in BuildDepends, Byproducts cascade/not-reached cases,
+instrumentation/launcher/lint integration, and C++ module cases.
+
+`--check-build-system` now follows the upstream two-value argument error,
+missing-check-file reconfigure path, process-cwd-relative dependency/output
+timestamps, and ClearDependencies behavior.  Root `Makefile`,
+`CMakeFiles/Makefile2`, and `CMakeFiles/Makefile.cmake` are rewritten
+unconditionally where upstream deliberately avoids copy-if-different so a
+reconfiguration cannot loop forever.  New focused CLI coverage is
+`tests/cli/check-build-system.json`; focused result 4/4 in
+`/tmp/umf5-clitest-checkbuild2.log`.
+
+Kitware self-configure with Unix Makefiles currently has identical normalized
+configure stdout (711 lines) but 52/1160 configure-tree file differences;
+evidence `/tmp/umf5-self-configure-diff.log`.  Largest visible differences are
+missing CPack `package`/`package_source` rules in directory Makefiles,
+self-build `../bin/cmake` install command substitution, and a small set of
+link/rule hash differences still being triaged.
+
 ## Batch 7 (summary labels, depend inputs, generated outputs)
 
 Started from the fresh post-merge full lane: **108/161**
