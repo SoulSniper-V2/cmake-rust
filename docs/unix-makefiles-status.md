@@ -2,7 +2,7 @@
 
 Branch: `t3/unix-makefiles-10`
 
-Most recent completed full Unix Makefiles projdiff lane after the link-information correction: **153/174** (`/tmp/umf10-projdiff-umf-final.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-full/report.json`).  Ninja lane must remain green.
+Most recent completed full Unix Makefiles projdiff lane after the link-information correction: **153/174** (`/tmp/umf10-projdiff-umf-final.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
 Known remaining projdiff failure groups: autogen clean lists, CUDA,
 install/platform variants (Darwin, MSVC, and clang-cl), ASM linker-language
@@ -48,8 +48,8 @@ clippy clean, **941/941** Rust tests (`/tmp/umf10-rust-gates.log`), difftest
 isolation (`/tmp/umf10-projdiff-ninja-pch-rerun.log`).
 
 The full Unix Makefiles RunCMake lane passes **5566/5566** cases
-(`/tmp/umf10-runcmake-full/report.json`; development lane, audit disabled, one
-repetition, oracle cache reused).  The first full Unix Makefiles projdiff lane
+(`/tmp/umf10-runcmake-final/report.json`; development lane, audit disabled, one
+repetition, oracle cache reused, final-tree rerun `/tmp/umf10-runcmake-final-driver.log`).  The first full Unix Makefiles projdiff lane
 then exposed an echo-escaping regression in install-component lookup commands:
 the batch's new shell escaping must wrap the component in literal quotes before
 escaping, matching `cmGlobalGenerator.cxx`'s `cmWrap` plus `EscapeForShell`
