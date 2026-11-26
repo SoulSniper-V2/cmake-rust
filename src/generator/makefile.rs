@@ -1037,9 +1037,10 @@ impl<'a> MakefileGenerator<'a> {
                 target
                     .props
                     .get("LABELS")
-                    .map_or_else(String::new, |v| util::expand_list(v, false).join(" ")),
+                    .map_or_else(String::new, |v| v.replace(';', ",")),
             ),
             ("LANGUAGE", lang.to_owned()),
+            ("CONFIG", self.ctx.config.clone()),
             (
                 "CMAKE_CURRENT_BINARY_DIR",
                 shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
@@ -2031,7 +2032,7 @@ impl<'a> MakefileGenerator<'a> {
                 target
                     .props
                     .get("LABELS")
-                    .map_or_else(String::new, |v| util::expand_list(v, false).join(" ")),
+                    .map_or_else(String::new, |v| v.replace(';', ",")),
             ),
             (
                 "CMAKE_CURRENT_BINARY_DIR",

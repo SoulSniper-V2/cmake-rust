@@ -1579,6 +1579,7 @@ pub(crate) fn classified_flags_for_source(
             ("TARGET_TYPE", target.kind.type_name().to_owned()),
             ("TARGET_LABELS", target_labels(target)),
             ("LANGUAGE", lang.to_owned()),
+            ("CONFIG", ctx.config.clone()),
             ("DEFINES", PLACEHOLDER_DEFINES.to_owned()),
             ("INCLUDES", PLACEHOLDER_INCLUDES.to_owned()),
             ("FLAGS", PLACEHOLDER_FLAGS.to_owned()),
@@ -1612,7 +1613,7 @@ fn target_labels(target: &Target) -> String {
     target
         .props
         .get("LABELS")
-        .map_or_else(String::new, |v| expand_list(v, false).join(" "))
+        .map_or_else(String::new, |v| v.replace(';', ","))
 }
 
 /// Whether the source's full path is a member of a file set of `kind`.

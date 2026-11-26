@@ -81,6 +81,15 @@ evidence: `/tmp/umf6-runcmake-makeprobe/report.json` passes 26/28 (driver
 log `/tmp/umf6-runcmake-makeprobe-driver.log`); the remaining Make failures
 are the pre-existing CMP0113 and include-regex cases, not target messages.
 
+
+Instrumentation launcher metadata now matches upstream compile/link rule
+variables: compile rules supply `<CONFIG>`, and target labels use upstream's
+comma-separated `GetTargetLabelsString` encoding in both Makefile emission
+and the shared compile-rule classifier.  Focused RunCMake evidence:
+`/tmp/umf6-runcmake-instrprobe/report.json` passes 49/50 (driver log
+`/tmp/umf6-runcmake-instrprobe-driver.log`); the only non-pass is the
+pre-existing `cmake-command-make-program-verify` not-reached cascade.
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in
