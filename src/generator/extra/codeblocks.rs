@@ -4,30 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::xml::XmlWriter;
 use super::{
-    Shared, file_exists, filename_name, filename_path, filename_without_extension, relative_path,
+    HEADER_EXTENSIONS, Shared, file_exists, filename_name, filename_path,
+    filename_without_extension, is_c_like_source_extension, relative_path, source_extension,
     write_file,
 };
 use crate::generator::ctx::GenCtx;
 use crate::generator::ninja::GlobalTarget;
 use crate::state::{Target, TargetKind};
 use crate::util;
-
-/// `cm::IsACLikeSourceExtension` (cmake.cxx's CLikeSourceFileExtensions).
-fn is_c_like_source_extension(ctx: &GenCtx, ext: &str) -> bool {
-    // The default set from cmake.cxx; language-specific additions do not
-    // change the C-like list.
-    let _ = ctx;
-    matches!(
-        ext,
-        "c" | "C" | "c++" | "cc" | "cpp" | "cppm" | "cxx" | "m" | "M" | "mm" | "ixx"
-    )
-}
-
-/// `cmake::GetHeaderExtensions` (CMAKE_HEADER_FILE_EXTENSIONS).
-fn header_extensions(ctx: &GenCtx, dir: usize) -> Vec<String> {
-    ctx.var(dir, "CMAKE_HEADER_FILE_EXTENSIONS")
-        .map_or_else(|| vec!["h".into()], |v| util::expand_list(&v, false))
-}
 
 /// `cmExtraCodeBlocksGenerator::GetCBCompilerId`.
 fn compiler_id(s: &Shared, dir: usize) -> String {
@@ -362,7 +346,9 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
                 if list_file.starts_with(&ctx.interp.cmake_root) {
                     continue;
                 }
-                let relative = relative_path(s.source_dir(group[0]), list_file);
+                // `it.second[0]->GetSourceDirectory()`: the top-level source
+                // directory, also for a sub-project.
+                let relative = relative_path(s.home_source(), list_file);
                 // cmSystemTools::SplitPath: a leading empty root component.
                 let mut split: Vec<String> = vec![String::new()];
                 split.extend(relative.split('/').map(str::to_owned));
@@ -466,7 +452,6 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
         // Collect all used source files in the project.
         let mut all_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut c_files: Vec<String> = Vec::new();
-        let header_exts = header_extensions(ctx, dir);
         for lg in &lgs {
             let dir = *lg;
             for target in s.targets(dir) {
@@ -486,11 +471,10 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
                     }
                     let mut is_c_file = false;
                     if matches!(src.language.as_str(), "C" | "CXX" | "CUDA" | "HIP") {
-                        let ext = src.path.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-                        is_c_file = is_c_like_source_extension(ctx, ext);
+                        is_c_file = is_c_like_source_extension(source_extension(&src.path));
                     }
                     let full_path = src.path.clone();
-                    let relative = relative_path(s.source_dir(dir), &full_path);
+                    let relative = relative_path(s.home_source(), &full_path);
                     if s.var(dir, "CMAKE_CODEBLOCKS_EXCLUDE_EXTERNAL_FILES")
                         .is_some_and(|v| util::is_on(&v))
                         && relative.contains("..")
@@ -513,7 +497,7 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
                 filename_path(file_name),
                 filename_without_extension(file_name)
             );
-            for ext in &header_exts {
+            for ext in HEADER_EXTENSIONS {
                 let hname = format!("{header_base}.{ext}");
                 if all_files.contains_key(&hname) {
                     break;

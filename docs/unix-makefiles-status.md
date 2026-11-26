@@ -28,6 +28,15 @@ remaining failure is the pre-existing `CMP0113-NEW-build` case.  Gates:
 (`/tmp/umf8-incregex-projdiff-rerun.log`; one try-compile stderr flake passed
 in isolation and on rerun).  Combined gate index `/tmp/umf8-incregex-gates.log`.
 
+The part-8 branch then merged the worktree creation commit `523c513`
+(source-group ordering, extra-generator fixes, `find_program`, and
+imported-target lookup).  The merge was automatic; overlapping
+`autogen.rs`/`flags.rs` hunks retained both behaviors.  Post-merge gates:
+`cargo fmt --check` clean, clippy clean, 940/940 Rust tests, difftest
+1283/1283, clitest 538/538, and Ninja projdiff 173/173 after rebuilding the
+candidate (`/tmp/umf8-merge-gates.log`, `/tmp/umf8-merge-gates2.log`, and
+`/tmp/umf8-merge-projdiff2.log`).
+
 
 
 ## Part 7 setup, full sweep, and linker/autogen parity fixes

@@ -123,6 +123,29 @@ impl Flags<'_, '_> {
     /// Direct entries plus linked targets' INTERFACE_* entries
     /// (cmGeneratorTarget::Get*Directories/Definitions/Options).
     fn usage_items(&self, property: &str) -> Vec<crate::genex::UsageItem> {
+        if self.target.kind == crate::state::TargetKind::GlobalTarget {
+            // A generator-created global target (only modelled transiently,
+            // e.g. for the Eclipse include paths) links nothing: its own
+            // property entries are the whole list.
+            return self
+                .target
+                .provenance
+                .get(property)
+                .into_iter()
+                .flatten()
+                .flat_map(|entry| {
+                    expand_list(&self.eval(&entry.0), false)
+                        .into_iter()
+                        .map(|value| crate::genex::UsageItem {
+                            value,
+                            link_item: None,
+                            backtrace: None,
+                            system: false,
+                            raw: false,
+                        })
+                })
+                .collect();
+        }
         let key = self.ctx.target_key(self.target);
         let memo = format!("{key}\u{0}{property}\u{0}{}\u{0}{}", self.config, self.lang);
         if let Some(items) = self.ctx.usage.borrow().get(&memo) {

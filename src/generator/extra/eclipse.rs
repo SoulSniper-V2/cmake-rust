@@ -918,11 +918,7 @@ impl<'a, 'b> Eclipse<'a, 'b> {
     /// `$<TARGET_OBJECTS:...>` files `cmMakefile::AddTargetObject` files in
     /// the reserved "Object Libraries" group.
     ///
-    /// NOTE: `ext.source_groups` is a `BTreeMap` keyed by the full
-    /// `'\\'`-separated group name, so user-defined group creation order is
-    /// not recoverable; groups are materialized in sorted order (upstream
-    /// appends in creation order).  This only affects which of several
-    /// *user* regex-matching groups claims a source file.
+    /// User groups follow in creation order (`SourceGroup::seq`).
     fn build_source_groups(&self, dir: usize) -> Vec<GroupNode> {
         // cmMakefile's default source groups, in constructor order.
         const DEFAULTS: &[(&str, &str)] = &[
@@ -947,6 +943,8 @@ impl<'a, 'b> Eclipse<'a, 'b> {
             .collect();
 
         if let Some(user) = self.s.ctx.interp.ext.source_groups.get(&dir) {
+            let mut user: Vec<_> = user.iter().collect();
+            user.sort_by_key(|(_, sg)| sg.seq);
             for (name, sg) in user {
                 insert_group(&mut groups, name, sg);
             }
@@ -1341,7 +1339,18 @@ impl<'a, 'b> Eclipse<'a, 'b> {
         // include dirs
         emitted.clear();
         for dir in 0..s.makefile_count() {
-            for target in s.targets(dir) {
+            // The directory's global targets (`install`, `edit_cache`, ...)
+            // follow its own targets: `cmGlobalGenerator::CreateGlobalTarget`
+            // makes them Normal targets at the end of configure, so they
+            // carry the directory's INCLUDE_DIRECTORIES and the
+            // CMAKE_INCLUDE_CURRENT_DIR entries too.
+            let globals: Vec<Target> = s
+                .global_target_names(dir)
+                .into_iter()
+                .map(|name| global_target(s, dir, name))
+                .collect();
+            let targets = s.targets(dir).into_iter().chain(globals.iter());
+            for target in targets {
                 if target.kind == TargetKind::InterfaceLibrary {
                     continue;
                 }
@@ -1595,4 +1604,23 @@ impl<'a, 'b> Eclipse<'a, 'b> {
 pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
     let s = Shared::new(ctx, globals);
     Eclipse::new(&s).generate();
+}
+
+/// The `GLOBAL_TARGET` `cmGlobalGenerator::CreateGlobalTarget` adds to
+/// `dir`: a Normal target whose INCLUDE_DIRECTORIES start from the
+/// directory property, as `cmTarget`'s constructor initializes it.
+fn global_target(s: &Shared, dir: usize, name: &str) -> Target {
+    let interp = s.ctx.interp;
+    let mut target = Target::new(name, TargetKind::GlobalTarget, dir);
+    if let Some(value) = interp.makefiles[dir].props.get("INCLUDE_DIRECTORIES") {
+        target.props.set("INCLUDE_DIRECTORIES", value.to_owned());
+        target.provenance.insert(
+            "INCLUDE_DIRECTORIES".to_owned(),
+            crate::commands::target::directory_entries(interp, dir, "INCLUDE_DIRECTORIES"),
+        );
+    }
+    if let Some(system) = interp.ext.directory_system_includes.get(&dir) {
+        target.system_include_directories.clone_from(system);
+    }
+    target
 }
