@@ -1711,6 +1711,12 @@ impl<'a> MakefileGenerator<'a> {
         if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
             depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
         }
+        depends.extend(
+            gt::sources(self.ctx, target, &config)
+                .iter()
+                .filter(|source| source.kind == SourceKind::Manifest)
+                .map(|source| maybe_relative_top(self.ctx, &source.path)),
+        );
         let libraries_text = makefile_link_libraries(&line);
         let use_response_libraries = target.kind != TargetKind::StaticLibrary
             && self

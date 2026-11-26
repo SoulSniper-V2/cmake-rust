@@ -51,6 +51,16 @@ nominal linked artifacts in their clean scripts.  Focused RunCMake evidence:
 (`driver log /tmp/umf6-runcmake-ifaceprobe-driver.log`); manual scratch
 evidence is under `/tmp/umf6-iface-*`.
 
+
+BuildDepends freshness is fixed in two upstream-aligned paths: custom-command
+DEPFILE ingestion now applies `cmReadGccDepfile`'s current-binary prefix and
+collapse rules to depfile targets as well as dependencies (so relative outputs
+such as `subexe.c` become the real top-level Makefile target), and user
+manifest sources are dependencies of link rules through
+`cmMakefileTargetGenerator::AppendLinkDepends`.  Focused RunCMake evidence:
+`/tmp/umf6-runcmake-bdprobe/report.json` passes 57/57
+(driver log `/tmp/umf6-runcmake-bdprobe-driver.log`).
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in
