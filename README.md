@@ -8,13 +8,13 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 
 | Project | What was compared | Result |
 |---|---|---|
-| **LLVM + Clang 20.1.8** | every configured and generated file | **614 / 614 identical** (after tool-path normalization) |
-| | `ninja check-clang` on the candidate's build | 3,808 / 3,808 steps; 42,430 tests pass, 0 fail, counts identical to the Kitware-configured build |
+| **LLVM + Clang 20.1.8** | every configured and generated file | **619 / 619 identical** (after tool-path normalization) |
+| | `ninja check-clang` on the candidate's build | 4,013 / 4,013 build steps; 42,430 tests pass, 0 fail, counts identical to the Kitware-configured build |
 | **Kitware CMake 4.1.0** (CMake building itself) | configured tree, build, then the upstream CTest suite | **312 / 312** files identical; 1,198 / 1,198 build steps; **683 / 683** tests pass |
 | **zlib 1.3.1** | configure, generate, build, install, tests | all match |
 | **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
 
-The configured trees, the CMake self-build and RunCMake were measured at commit `b24ded6`; `check-clang` was last run at `a609c6b`, whose LLVM build tree is byte-identical to `b24ded6`'s. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
+All of these were measured at commit `4ca7cce`: the LLVM tree with `scripts/treediff.py`, the Kitware tree by comparing `scripts/kitware-configure.sh oracle` and `rust` trees. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
 
 ### Real-world projects
 
