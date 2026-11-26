@@ -2,7 +2,7 @@
 
 Branch: `t3/unix-makefiles-4`
 
-Most recent completed full Unix Makefiles lane after merging `main` into Batch 6: **108/161** (`/tmp/pd-umf-batch7-baseline.log`).  The pre-Batch-5 baseline was 103/161 (`/tmp/pd-umf-baseline.log`).  Ninja lane must remain 161/161.
+Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
 Known remaining projdiff failure groups: autogen, CUDA, C++ modules,
 install/platform variants, ASM dependency scanning, object-library corners,
