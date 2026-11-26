@@ -160,6 +160,22 @@ fn apply_verbose_default(ctx: &GenCtx<'_>, out: &mut String) {
     }
 }
 
+fn check_build_system_command(ctx: &GenCtx<'_>, cmakefile: &str, rerun: usize) -> String {
+    let compile = if ctx.interp.ignore_compile_warning_as_error {
+        "--compile-no-warning-as-error "
+    } else {
+        ""
+    };
+    let link = if ctx.interp.ignore_link_warning_as_error {
+        "--link-no-warning-as-error "
+    } else {
+        ""
+    };
+    format!(
+        "$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) {compile}{link}--check-build-system {cmakefile} {rerun}"
+    )
+}
+
 fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> String {
     ctx.var(
         target.makefile,
@@ -2072,7 +2088,7 @@ impl<'a> MakefileGenerator<'a> {
             ),
             ("OBJECTS", object_list.clone()),
             ("TARGET", target_shell.clone()),
-            ("TARGET_FILE", target_shell),
+            ("TARGET_FILE", target_shell.clone()),
             ("OBJECT_DIR", object_dir),
             ("FLAGS", flags),
             (
@@ -2199,6 +2215,41 @@ impl<'a> MakefileGenerator<'a> {
                     language,
                     flags::RuleStep::Link,
                     &format!("{launcher}{part}"),
+                    &vars,
+                );
+                if !expanded.is_empty() && !expanded.starts_with(':') {
+                    text.push_str(&expanded);
+                    text.push('\n');
+                }
+            }
+            let use_lwyu = matches!(
+                target.kind,
+                TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+            ) && target.props.get("LINK_WHAT_YOU_USE").is_some_and(is_on)
+                && !self
+                    .ctx
+                    .var_safe(
+                        target.makefile,
+                        &format!("CMAKE_{language}_LINK_WHAT_YOU_USE_FLAG"),
+                    )
+                    .is_empty();
+            if use_lwyu
+                && let Some(checker) = self
+                    .ctx
+                    .var(target.makefile, "CMAKE_LINK_WHAT_YOU_USE_CHECK")
+                && !checker.is_empty()
+            {
+                let check = format!(
+                    "{} -E __run_co_compile --lwyu={} --source={target_shell}",
+                    shell_path(self.ctx, &self.ctx.interp.cmake_command),
+                    shell_path(self.ctx, &checker),
+                );
+                let expanded = flags::expand_rule_for_step(
+                    self.ctx,
+                    target,
+                    language,
+                    flags::RuleStep::Link,
+                    &format!("{launcher}{check}"),
                     &vars,
                 );
                 if !expanded.is_empty() && !expanded.starts_with(':') {
@@ -3626,7 +3677,10 @@ impl<'a> MakefileGenerator<'a> {
                 true,
             );
         }
-        out.push_str("#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0\n.PHONY : cmake_check_build_system\n\n");
+        let check_command = check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 0);
+        out.push_str(&format!(
+            "#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{check_command}\n.PHONY : cmake_check_build_system\n\n"
+        ));
         let path = format!("{}/CMakeFiles/Makefile2", self.ctx.interp.home_binary);
         let _ = crate::fsutil::write_generated(Path::new(&path), &out);
     }
@@ -3975,7 +4029,8 @@ impl<'a> MakefileGenerator<'a> {
             "depend",
             &[],
             &[format!(
-                "{cdroot}$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1"
+                "{cdroot}{}",
+                check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 1)
             )],
             true,
         );
@@ -4274,7 +4329,8 @@ impl<'a> MakefileGenerator<'a> {
         for o in help_objects {
             let _ = writeln!(out, "\t@echo \"... {o}\"");
         }
-        out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{cdroot}$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0\n.PHONY : cmake_check_build_system\n\n"));
+        let check_command = check_build_system_command(self.ctx, "CMakeFiles/Makefile.cmake", 0);
+        out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n\t{cdroot}{check_command}\n.PHONY : cmake_check_build_system\n\n"));
         let path = format!("{}/Makefile", self.ctx.interp.makefiles[dir].binary_dir);
         if dir == 0 {
             let _ = crate::fsutil::write_generated(Path::new(&path), &out);

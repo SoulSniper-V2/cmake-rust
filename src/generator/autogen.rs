@@ -1878,12 +1878,12 @@ impl Initializer {
             utilities.extend(origin.traced_utilities.iter().map(|(name, _)| name.clone()));
         }
         for name in utilities {
-            add_dependency(interp, dir, &order_target, &name, &backtrace);
+            add_utility_dependency(interp, dir, &order_target, &name, &backtrace);
         }
         let target = interp.ext.targets.get_mut(&self.key).unwrap();
-        target.add_dependency(&self.target_name, &backtrace);
+        target.add_utility_dependency(&self.target_name, &backtrace);
         if let Some(global) = global_autogen.get(&dir) {
-            add_dependency(interp, dir, global, &self.target_name, &backtrace);
+            add_utility_dependency(interp, dir, global, &self.target_name, &backtrace);
         }
     }
 
@@ -1926,12 +1926,18 @@ impl Initializer {
                     },
                 );
                 if !self.rcc.tool.target_name.is_empty() {
-                    add_dependency(interp, dir, &name, &self.rcc.tool.target_name, &backtrace);
+                    add_utility_dependency(
+                        interp,
+                        dir,
+                        &name,
+                        &self.rcc.tool.target_name,
+                        &backtrace,
+                    );
                 }
                 let target = interp.ext.targets.get_mut(&self.key).unwrap();
-                target.add_dependency(&name, &backtrace);
+                target.add_utility_dependency(&name, &backtrace);
                 if let Some(global) = global_autorcc.get(&dir) {
-                    add_dependency(interp, dir, global, &name, &backtrace);
+                    add_utility_dependency(interp, dir, global, &name, &backtrace);
                 }
             } else {
                 if self.multi && self.better_graph {
@@ -2264,7 +2270,7 @@ fn set_config_array(
 }
 
 /// `target->AddUtility(name, false, makefile)` for a target named in `dir`.
-fn add_dependency(
+fn add_utility_dependency(
     interp: &mut Interp,
     dir: usize,
     target: &str,
@@ -2274,7 +2280,7 @@ fn add_dependency(
     if let Some(key) = crate::state::find_target_key_at(interp, dir, target)
         && let Some(target) = interp.ext.targets.get_mut(&key)
     {
-        target.add_dependency(name, backtrace);
+        target.add_utility_dependency(name, backtrace);
     }
 }
 

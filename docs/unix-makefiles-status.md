@@ -1,6 +1,6 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-6`
+Branch: `t3/unix-makefiles-7`
 
 Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
@@ -15,6 +15,52 @@ Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
 Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
 
 
+
+
+## Part 7 setup, full sweep, and linker/autogen parity fixes
+
+Started from `t3/unix-makefiles-6` at `1d8a7ad` and merged current `main`
+`9a1d821`; merge commit `359e6b6` was automatic apart from the expected
+overlaps in `src/generator/custom.rs` and `src/generator/target.rs`.
+
+Fresh full Unix Makefiles RunCMake lane after the part-7 autogen and
+regeneration-command fixes: **5532/5566 cases passed** (28 failed, 6 not
+reached; 254/273 selected suites fully passing; development lane, audit
+disabled, one repetition).  Evidence `/tmp/umf7-runcmake-full/report.json`,
+driver log `/tmp/umf7-runcmake-full-driver.log`, suite/failure triage
+`/tmp/umf7-runcmake-buckets.txt`.  The remaining failures in that lane were
+LinkWhatYouUse (4), LINK_LANGUAGE/LINK_LANG_AND_ID dependency edges (8),
+add_subdirectory exclusion/progress (3), file-glob rerun (2), CMP0113 and
+include-regex (2), plus isolated RuntimePath, CMP0156, CMP0181,
+dollar-option, custom-command comment, project/language, include-directory,
+BuiltinTargets, ExcludeFromAll and Instrumentation cases.
+
+Unix Makefiles autogen utility edges now follow the upstream split between
+`AddUtility` and codegen dependencies.  Qt-created `_autogen` and `_arcc`
+helper targets remain utility dependencies rather than unconditional codegen
+dependencies, while `_autogen_timestamp_deps` is still reachable through
+custom-command dependency tracing.  Focused projdiff evidence:
+`/tmp/umf7-autogen-projdiff.log` passes `autogen/imported` and
+`autogen/warn` (2/2).
+
+Makefile regeneration commands now carry the configure-time
+`--compile-no-warning-as-error` and `--link-no-warning-as-error` options in
+the upstream positions for top-level and directory-local
+`cmake_check_build_system`/`depend` rules.
+
+Unix Makefiles link generation now appends the upstream LWYU checker command
+to executable/shared/module `link.txt` files when `LINK_WHAT_YOU_USE`, the
+language flag, and `CMAKE_LINK_WHAT_YOU_USE_CHECK` are enabled.  The checker
+is a separate `cmake -E __run_co_compile --lwyu=... --source=<target>` line
+after the real link rule and receives the link launcher prefix.  Target
+dependency discovery also evaluates `$<LINK_LANGUAGE>` and
+`$<LINK_LANG_AND_ID>` with the owning target's actual linker language even
+when the language-sensitive expression occurs only in a transitive interface
+entry.  Focused post-fix RunCMake evidence:
+`/tmp/umf7-focused-probes.log` passes **76/76** across LinkWhatYouUse,
+CompileWarningAsError, both GenEx LINK_LANGUAGE/LINK_LANG_AND_ID suites, and
+both target_link_libraries LINK_LANGUAGE/LINK_LANG_AND_ID suites
+(report `/tmp/umf7-probe-out/report.json`).
 
 ## Part 6 setup merge
 

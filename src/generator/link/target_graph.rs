@@ -141,29 +141,12 @@ pub(crate) fn compute<'i>(queries: &[Query<'_, 'i>]) -> DepGraph<'i> {
 
     let mut initial = Vec::new();
     for (index, target) in targets.iter().enumerate() {
-        let language_sensitive = matches!(
-            target.kind,
-            TargetKind::Executable
-                | TargetKind::StaticLibrary
-                | TargetKind::ObjectLibrary
-                | TargetKind::SharedLibrary
-                | TargetKind::ModuleLibrary
-        ) && ["LINK_LIBRARIES", "SOURCES"].into_iter().any(|property| {
-            target
-                .props
-                .get(property)
-                .is_some_and(|value| value.contains("$<"))
-        });
         // CollectTargetDepends: the union over all configurations.
         let mut edges = Vec::new();
         let mut emitted = HashSet::from([std::ptr::from_ref(*target) as usize]);
         let mut utility_followed = HashSet::new();
         for (config, query) in queries.iter().enumerate() {
-            let language = if language_sensitive {
-                query.generator.language(query.ctx, target, query.config)
-            } else {
-                query.language.to_owned()
-            };
+            let language = query.generator.language(query.ctx, target, query.config);
             let query = Query {
                 language: &language,
                 ..*query
