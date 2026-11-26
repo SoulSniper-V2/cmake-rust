@@ -758,6 +758,13 @@ mod tests {
             ],
         );
         external.imported = true;
+        // Directory-scoped in the top directory, inherited by directory 1.
+        for dir in [0, 1] {
+            interp
+                .ext
+                .scoped_targets
+                .insert((dir, external.name.clone()), external.name.clone());
+        }
         interp.ext.targets.insert(external.name.clone(), external);
 
         let ctx = GenCtx::new(&interp);
