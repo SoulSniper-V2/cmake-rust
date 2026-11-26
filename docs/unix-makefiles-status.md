@@ -52,6 +52,14 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+`cmake --build` now generates Unix Makefiles build commands upstream-style:
+`cmake -E env VERBOSE=1 <make> -f Makefile -j<N>` for verbose builds (rather
+than passing GNU Make's version-only `-v`), `-f Makefile` always, and bare
+`-j` for default parallelism.  Focused CLI result 2/2 in
+`/tmp/umf5-clitest-buildmake.log`.  This was the dominant RunCMake cascade:
+link-feature tests were never built because `gmake -v` exits after printing
+its version.
+
 `--check-build-system` now follows the upstream two-value argument error,
 missing-check-file reconfigure path, process-cwd-relative dependency/output
 timestamps, and ClearDependencies behavior.  Root `Makefile`,

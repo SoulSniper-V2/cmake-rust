@@ -2056,16 +2056,45 @@ fn run_build(options: BuildOptions, cache: &Cache, generator: &str) -> i32 {
         .value("CMAKE_MAKE_PROGRAM")
         .filter(|program| !util::is_off(program))
         .unwrap_or("");
-    let mut command = vec![make_program.to_owned()];
+    let mut command = Vec::new();
     if verbose {
         println!("Change Dir: '{}'", options.dir);
-        command.push("-v".to_owned());
     }
-    if let Some(jobs) = options.jobs.filter(|jobs| *jobs > 0) {
-        command.extend(["-j".to_owned(), jobs.to_string()]);
-    }
-    if generator == "Ninja Multi-Config" && !options.config.is_empty() {
-        command.extend(["-f".to_owned(), format!("build-{}.ninja", options.config)]);
+    if generator == "Unix Makefiles" {
+        if verbose {
+            let cmake = std::env::current_exe()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "cmake".to_owned());
+            command.extend([
+                cmake,
+                "-E".to_owned(),
+                "env".to_owned(),
+                "VERBOSE=1".to_owned(),
+            ]);
+        }
+        command.extend([
+            make_program.to_owned(),
+            "-f".to_owned(),
+            "Makefile".to_owned(),
+        ]);
+        if let Some(jobs) = options.jobs {
+            if jobs == 0 {
+                command.push("-j".to_owned());
+            } else {
+                command.push(format!("-j{jobs}"));
+            }
+        }
+    } else {
+        command.push(make_program.to_owned());
+        if verbose {
+            command.push("-v".to_owned());
+        }
+        if let Some(jobs) = options.jobs.filter(|jobs| *jobs > 0) {
+            command.extend(["-j".to_owned(), jobs.to_string()]);
+        }
+        if generator == "Ninja Multi-Config" && !options.config.is_empty() {
+            command.extend(["-f".to_owned(), format!("build-{}.ninja", options.config)]);
+        }
     }
     if options.clean_first {
         let mut clean = command.clone();

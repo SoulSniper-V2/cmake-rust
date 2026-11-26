@@ -1,0 +1,18 @@
+[
+  {
+    "name": "verbose-targets-native-and-jobs",
+    "argv": ["--build", "b", "--verbose", "-j2", "-t", "one", "two", "--", "native"],
+    "files": {
+      "b/CMakeCache.txt": "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\nCMAKE_PROJECT_NAME:STATIC=Test\nCMAKE_MAKE_PROGRAM:FILEPATH={work}/b/fake-make\n",
+      "b/fake-make": {"mode": "755", "text": "#!/bin/sh\nprintf 'verbose=%s\\n' \"${VERBOSE-unset}\"\nprintf '<%s>\\n' \"$@\"\n"}
+    }
+  },
+  {
+    "name": "default-parallel-no-verbose",
+    "argv": ["--build", "b", "--parallel"],
+    "files": {
+      "b/CMakeCache.txt": "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\nCMAKE_PROJECT_NAME:STATIC=Test\nCMAKE_MAKE_PROGRAM:FILEPATH={work}/b/fake-make\n",
+      "b/fake-make": {"mode": "755", "text": "#!/bin/sh\nprintf 'verbose=%s\\n' \"${VERBOSE-unset}\"\nprintf '<%s>\\n' \"$@\"\n"}
+    }
+  }
+]
