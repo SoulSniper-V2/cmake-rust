@@ -1327,24 +1327,16 @@ pub(crate) fn imported_full_path(
     result
 }
 
-/// Find a target as seen from a local generator's directory.
+/// `cmLocalGenerator::FindGeneratorTargetToUse`: a target as seen from a
+/// local generator's directory, including the directory-scoped imported
+/// targets that `cmMakefile::GetImportedTargets` lists there.
 pub(super) fn target_in_directory<'a>(
     ctx: &GenCtx<'a>,
     makefile: usize,
     name: &str,
 ) -> Option<&'a Target> {
-    let target = ctx.target(name)?;
-    if !target.imported || target.imported_global {
-        return Some(target);
-    }
-    let mut directory = Some(makefile);
-    while let Some(index) = directory {
-        if index == target.makefile {
-            return Some(target);
-        }
-        directory = ctx.interp.makefiles[index].parent;
-    }
-    None
+    crate::state::find_target_key_at(ctx.interp, makefile, name)
+        .and_then(|key| ctx.interp.ext.targets.get(&key))
 }
 
 #[cfg(test)]
@@ -2978,6 +2970,24 @@ mod corpus_tests {
             }
             let name = target["name"].as_str().unwrap().to_owned();
             let makefile = dirs[target["dir"].as_str().unwrap_or("")];
+            if target["imported"].as_bool().unwrap_or(false)
+                && !target["global"].as_bool().unwrap_or(false)
+            {
+                // Directory-scoped: visible from its directory and below.
+                for dir in 0..interp.makefiles.len() {
+                    let mut at = Some(dir);
+                    while let Some(index) = at {
+                        if index == makefile {
+                            interp
+                                .ext
+                                .scoped_targets
+                                .insert((dir, name.clone()), name.clone());
+                            break;
+                        }
+                        at = interp.makefiles[index].parent;
+                    }
+                }
+            }
             interp.makefiles[makefile].targets.push(name.clone());
             interp.ext.target_order.push(name.clone());
             interp.ext.targets.insert(

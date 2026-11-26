@@ -18,11 +18,12 @@ The configured trees, the CMake self-build and RunCMake were measured at commit 
 
 ### Real-world projects
 
-Beyond those four, about 70 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
+Beyond those four, about 95 unmodified open-source projects were configured with both tools. For each one, the end-of-configure interpreter state (`statediff.py`) and every file in the generated build tree (`treediff.py`) were compared, then the candidate's tree was built and its tests run. All of them match, except as noted below:
 
 | Group | Projects |
 |---|---|
 | Libraries | fmt, spdlog, nlohmann/json, abseil, protobuf, libpng, curl, SDL2, glfw, Catch2, google benchmark, yaml-cpp, tinyxml2, libjpeg-turbo, brotli, zstd, lz4, libuv, pugixml, cJSON, flatbuffers, OpenCV (core, imgproc), googletest, freetype2, xz |
+| More libraries, 2026-11 batch | oneTBB, zlib-ng, libtiff, opus, c-ares, libzmq, mimalloc, glm, Imath, OpenEXR, msgpack-c, SFML, Embree (with ISPC), openal-soft, glslang, simdjson, taskflow, EnTT, meshoptimizer, libogg, libsndfile, json-c, libyaml, PCRE2 |
 | More libraries | libgit2, libarchive, expat, libxml2, mbedtls, wolfssl, libssh2, jsoncpp, eigen, gflags, glog, leveldb, raylib, assimp, box2d, bullet3, llama.cpp, whisper.cpp, libwebp, openjpeg, harfbuzz, double-conversion, snappy, nghttp2, libevent, SQLiteCpp, cmocka, Unity, CUDA deviceQuery |
 | Fetch at configure time | CLI11, cpr, magic_enum, a CPM.cmake project, an ExternalProject superbuild |
 | Install, then `find_package` from a consumer | fmt, spdlog, yaml-cpp, glfw, nlohmann/json, libjpeg-turbo: the installed trees match too |
@@ -73,7 +74,7 @@ The harnesses in `scripts/`:
 | `clitest.py` | the command line: `-E` tools, `--build`, `--install`, presets | 532 cases |
 | `projdiff.py` | project mode: generated files, install-tree exports, file-API replies | 163 projects (14 CUDA) |
 | `statediff.py` | end-of-configure interpreter state: every variable, cache entry and property | LLVM: 94,998 lines, 0 differences |
-| `treediff.py` | every file of a freshly configured build tree, for any generator | ~70 real-world projects, 0 differences |
+| `treediff.py` | every file of a freshly configured build tree, for any generator | ~95 real-world projects, 0 differences |
 | `fuzzdiff.py`, `fuzz_regex.py`, `fuzz_file.py`, `fuzz_find.py`, `fuzz_cli.py`, `fuzz_project.py` | random scripts, generator expressions, regexes, `file()` sequences, `find_*`/`find_package` searches, `cmake -E` sequences and whole projects (target graphs, usage requirements, PCH, unity, custom commands, install/export), deterministic per `--seed`; output, errors, traces, generated build trees, builds and `cmake --install` results | 100,000+ cases across Ninja, Ninja Multi-Config and every extra generator: 0 differences outside one crash case and compressed-archive bytes (which depend on the linked liblzma) |
 | `conformance/` | Kitware's own RunCMake test suite | see [`docs/conformance.md`](docs/conformance.md) |
 | `ninjadiff.py`, `dapdiff.py`, `autogendiff.py` | `build.ninja` structure, the debugger protocol, Qt AUTOGEN | |
