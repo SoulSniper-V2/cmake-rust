@@ -1,6 +1,7 @@
 //! Port of `cmComputeLinkInformation` and `cmLinkLineComputer`: linker items,
 //! search paths and the files the link step depends on.
 
+use crate::util::relative_path;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
@@ -2071,23 +2072,4 @@ fn compiled(pattern: &str) -> Option<Regex> {
 
 fn under(path: &str, top: &str) -> bool {
     path == top || is_subdirectory(path, top)
-}
-
-fn relative_path(from: &str, to: &str) -> String {
-    let from = Path::new(from).components().collect::<Vec<_>>();
-    let to = Path::new(to).components().collect::<Vec<_>>();
-    let common = from
-        .iter()
-        .zip(&to)
-        .take_while(|(from, to)| from == to)
-        .count();
-    // KWSys RelativePath emits "../" for every ascent, including the last
-    // one when the destination is an ancestor of the output directory.
-    let up = "../".repeat(from.len() - common);
-    let down = to[common..]
-        .iter()
-        .map(|part| part.as_os_str().to_str().unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join("/");
-    up + &down
 }
