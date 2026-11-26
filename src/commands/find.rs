@@ -13,7 +13,7 @@ use crate::cache::{CacheType, convert_to_unix_slashes};
 use crate::interp::{CmdErr, CmdResult, CommandDef, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::{PolicyStatus, policy_warning};
-use crate::util::{collapse_full_path, expand_list, is_notfound, is_on};
+use crate::util::{expand_list, is_notfound, is_on};
 
 use self::common::*;
 
@@ -613,7 +613,9 @@ impl Find {
             return library.search(interp, self, dir, name);
         }
         let path = if self.kind == Kind::Program {
-            collapse_full_path(name, dir)
+            // `CollapseFullPath(name, path)`: the compound-name check passes
+            // an empty base, which keeps a relative name relative.
+            crate::commands::legacy_fs::collapse(name, dir)
         } else {
             format!("{dir}{name}")
         };
@@ -622,6 +624,15 @@ impl Find {
         } else {
             access(&path, libc::R_OK)
         };
+        if exists && self.kind == Kind::Program {
+            // `ToNormalizedPathOnDisk` before validation.
+            let found = crate::pathresolver::to_normalized_path_on_disk(&path);
+            if self.validate(interp, &found) {
+                return Some(found);
+            }
+            self.failed(path);
+            return None;
+        }
         let result = if self.kind == Kind::Path { dir } else { &path };
         if exists && self.validate(interp, result) {
             return Some(result.to_owned());
