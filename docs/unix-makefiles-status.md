@@ -44,6 +44,32 @@ Started from the fresh post-merge full lane: **108/161**
   `/tmp/pd-aix-focus.log`).  ninja/response_file still differs only in the
   upstream pointer-ordered Makefile2 dependency sequence.
 
+Makefile2 dependency-ordering oracle nondeterminism is now directly
+reproduced.  Five independent oracle configures of a ten-target probe gave
+`t3,t4,t1,t2,t5,t6,t10,t7,t8,t9` four times and
+`t5,t6,t1,t2,t3,t4,t7,t8,t9,t10` once; eight independent oracle configures of
+`ninja/response_file` produced `sh,o,s`, `o,s,sh`, `sh,o,s`, `o,sh,s`,
+`o,s,sh`, `s,sh,o`, `s,sh,o`, `sh,o,s`.  This follows upstream
+`cmTargetDependSet` ordering by `cmGeneratorTarget` pointer value, so
+ordering-only differences in cases such as `ninja/response_file`,
+`link/items`, `export/shared_deps`, and `install/namelink` are documented
+oracle-nondeterministic exceptions rather than implementable stable ordering.
+
+Follow-up fixes now implemented: Unix Makefiles expands `<CUDA_COMPILE_MODE>`,
+emits `.i`/`.s` fallback rules through `cmake_unimplemented_variable` when a
+language has no preprocess/assembly rule, writes `compile_commands.json`
+entries with Makefile-generator concrete flag substitution, places compiler
+dependency flags in `<FLAGS>`, reports a missing non-static link rule as the
+upstream bare `cmSystemTools::Error`, uses the outer generator for nested
+`try_compile` projects with the correct Makefile build command, disables
+build-color markup inside try_compile while retaining progress markup, and
+computes top-level object convenience names independently of CUDA custom
+output extensions.  `targets/defaults`, `cuda/plain`, `cuda/compile_modes`,
+`try_compile/nested_log`, `export/cps`, `install/dll`, and
+`ninja/response_file_limit` now pass focused projdiff runs.  Makefile compile
+rules also provide target PDB placeholders and the MSVC `cmake_cl_compile_depends`
+wrapper; link rules provide target PDB and install-name-directory placeholders.
+
 ## Batch 6 (custom source properties and Fortran object modules)
 
 Uncommitted/follow-up state at first: focused results are `pch_unity/options` PASS,

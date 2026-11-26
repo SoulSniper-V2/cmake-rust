@@ -39,6 +39,14 @@ fn shell_path(ctx: &GenCtx<'_>, path: &str) -> String {
     shell_escape(ctx, &crate::cache::convert_to_unix_slashes(path), false)
 }
 
+fn shell_path_keep_trailing_slash(ctx: &GenCtx<'_>, path: &str) -> String {
+    let mut converted = shell_path(ctx, path);
+    if path.ends_with('/') && !converted.ends_with('/') {
+        converted.push('/');
+    }
+    converted
+}
+
 fn maybe_relative_top(ctx: &GenCtx<'_>, path: &str) -> String {
     custom::maybe_relative_to(ctx, 0, &ctx.interp.home_binary, path)
 }
@@ -102,6 +110,51 @@ fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> 
     )
     .filter(|flag| !flag.is_empty())
     .unwrap_or_else(|| "@".to_owned())
+}
+
+fn makefile_cuda_compile_mode(ctx: &GenCtx<'_>, target: &Target) -> String {
+    let mut mode = String::new();
+    if target
+        .props
+        .get("CUDA_SEPARABLE_COMPILATION")
+        .is_some_and(is_on)
+    {
+        mode.push_str(&ctx.var_safe(target.makefile, "_CMAKE_CUDA_RDC_FLAG"));
+        mode.push(' ');
+    }
+    let mut normal = true;
+    for (property, variable) in [
+        ("CUDA_PTX_COMPILATION", "_CMAKE_CUDA_PTX_FLAG"),
+        ("CUDA_CUBIN_COMPILATION", "_CMAKE_CUDA_CUBIN_FLAG"),
+        ("CUDA_FATBIN_COMPILATION", "_CMAKE_CUDA_FATBIN_FLAG"),
+        ("CUDA_OPTIX_COMPILATION", "_CMAKE_CUDA_OPTIX_FLAG"),
+    ] {
+        if target.props.get(property).is_some_and(is_on) {
+            mode.push_str(&ctx.var_safe(target.makefile, variable));
+            normal = false;
+            break;
+        }
+    }
+    if normal {
+        mode.push_str(&ctx.var_safe(target.makefile, "_CMAKE_CUDA_WHOLE_FLAG"));
+    }
+    mode
+}
+
+fn escape_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn makefile_object_entries(
@@ -272,6 +325,7 @@ pub struct MakefileGenerator<'a> {
     ctx: &'a GenCtx<'a>,
     progress: Vec<(String, TargetProgress)>,
     implicit: HashMap<String, ImplicitDepends>,
+    compile_commands: Vec<String>,
 }
 
 impl<'a> MakefileGenerator<'a> {
@@ -280,16 +334,31 @@ impl<'a> MakefileGenerator<'a> {
             ctx,
             progress: Vec::new(),
             implicit: HashMap::new(),
+            compile_commands: Vec::new(),
         }
     }
 
     fn color(&self) -> bool {
-        true
+        if self.ctx.interp.in_try_compile {
+            return false;
+        }
+        match self.ctx.var(0, "CMAKE_COLOR_MAKEFILE") {
+            Some(value) => crate::util::is_on(&value),
+            None => self
+                .ctx
+                .var(0, "CMAKE_COLOR_DIAGNOSTICS")
+                .is_some_and(|value| crate::util::is_on(&value)),
+        }
     }
 
     pub fn generate(mut self) {
         for dir in 0..self.ctx.interp.makefiles.len() {
             self.generate_directory(dir);
+        }
+        if !self.compile_commands.is_empty() {
+            let content = format!("[\n{}\n]", self.compile_commands.join(",\n"));
+            let path = format!("{}/compile_commands.json", self.ctx.interp.home_binary);
+            let _ = crate::fsutil::write_generated(Path::new(&path), &content);
         }
         self.write_progress_marks();
         self.write_main_makefile2();
@@ -367,20 +436,26 @@ impl<'a> MakefileGenerator<'a> {
         p.total
     }
 
-    fn echo(&self, text: &str, color: &str, progress: Option<usize>, _target: &Target) -> String {
+    fn echo(&self, text: &str, color: &str, progress: Option<usize>) -> String {
+        let color = if self.color() { color } else { "" };
+        if color.is_empty() && progress.is_none() {
+            return format!("echo \"{text}\"");
+        }
         let mut command =
-            format!("$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" {color}");
-        if self.color() {
-            if let Some(number) = progress {
-                let _ = write!(
-                    command,
-                    " --progress-dir={} --progress-num=$(CMAKE_PROGRESS_{number})",
-                    shell_path(
-                        self.ctx,
-                        &format!("{}/CMakeFiles", self.ctx.interp.home_binary)
-                    )
-                );
-            }
+            String::from("$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\"");
+        if !color.is_empty() {
+            command.push(' ');
+            command.push_str(color);
+        }
+        if let Some(number) = progress {
+            let _ = write!(
+                command,
+                " --progress-dir={} --progress-num=$(CMAKE_PROGRESS_{number})",
+                shell_path(
+                    self.ctx,
+                    &format!("{}/CMakeFiles", self.ctx.interp.home_binary)
+                )
+            );
         }
         let _ = write!(command, " \"{text}\"");
         command
@@ -675,12 +750,26 @@ impl<'a> MakefileGenerator<'a> {
                 self.support_rel(target, dir)
             ));
         }
+        let dep_flags_expanded = depinfo.as_ref().map(|(dep_path, dep_flags)| {
+            let dep_vars = vec![
+                ("DEP_FILE", shell_path(self.ctx, dep_path)),
+                ("DEP_TARGET", shell_path(self.ctx, obj_rel_top)),
+            ];
+            flags::expand_rule_for_step(
+                self.ctx,
+                target,
+                &source.language,
+                flags::RuleStep::Compile,
+                dep_flags,
+                &dep_vars,
+            )
+        });
         let lang = &source.language;
         let mut commands = Vec::new();
         let echo_text = format!("Building {lang} object {obj_rel_top}");
         commands.push(format!(
             "@{}",
-            self.echo(&echo_text, "--green", Some(progress), target)
+            self.echo(&echo_text, "--green", Some(progress))
         ));
         let template = self
             .ctx
@@ -688,15 +777,57 @@ impl<'a> MakefileGenerator<'a> {
             .unwrap_or_default();
         let source_shell = shell_path(self.ctx, &source.path);
         let object_shell = shell_path(self.ctx, obj_rel_cur);
+        let compile_pdb = gt::target_compile_pdb(self.ctx, target, &self.ctx.config);
+        let target_pdb = if matches!(
+            target.kind,
+            TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+        ) {
+            let names = gt::names(self.ctx, target, &self.ctx.config);
+            format!(
+                "{}/{}",
+                gt::pdb_directory(self.ctx, target, &self.ctx.config),
+                names.pdb
+            )
+        } else {
+            String::new()
+        };
+        for pdb in [&compile_pdb, &target_pdb] {
+            if !pdb.is_empty()
+                && let Some(parent) = Path::new(pdb).parent()
+            {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let compile_pdb_shell =
+            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &compile_pdb));
+        let target_pdb_shell =
+            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
         let defines_var = self.object_defines_var(target, source, &properties);
         let includes_var = self.object_includes_var(target, source, &properties);
-        let flags_var = self.object_flags_var(target, source, &properties);
+        let mut flags_var = self.object_flags_var(target, source, &properties);
+        if let Some(expanded) = &dep_flags_expanded {
+            flags_var.push(' ');
+            flags_var.push_str(expanded);
+        }
         let vars = vec![
             ("DEFINES", defines_var),
             ("INCLUDES", includes_var),
             ("FLAGS", flags_var),
             ("OBJECT", object_shell.clone()),
             ("SOURCE", source_shell),
+            ("TARGET_COMPILE_PDB", compile_pdb_shell),
+            ("TARGET_PDB", target_pdb_shell),
+            (
+                "CUDA_COMPILE_MODE",
+                if lang == "CUDA" {
+                    makefile_cuda_compile_mode(self.ctx, target)
+                } else {
+                    String::new()
+                },
+            ),
         ];
         let mut command = flags::expand_rule_for_step(
             self.ctx,
@@ -706,27 +837,65 @@ impl<'a> MakefileGenerator<'a> {
             &template,
             &vars,
         );
-        if let Some((dep_path, dep_flags)) = depinfo {
-            let dep_vars = vec![
-                ("DEP_FILE", shell_path(self.ctx, &dep_path)),
-                ("DEP_TARGET", shell_path(self.ctx, obj_rel_top)),
-            ];
-            let expanded = flags::expand_rule_for_step(
-                self.ctx,
-                target,
-                lang,
-                flags::RuleStep::Compile,
-                &dep_flags,
-                &dep_vars,
+        if depinfo.is_some()
+            && self
+                .ctx
+                .var_safe(target.makefile, &format!("CMAKE_{lang}_DEPFILE_FORMAT"))
+                == "msvc"
+            && let Some((dep_path, _)) = &depinfo
+        {
+            let prefix = self.ctx.var_safe(
+                target.makefile,
+                &format!("CMAKE_{lang}_CL_SHOWINCLUDES_PREFIX"),
             );
-            // Insert dependency flags immediately before the -o flag, as
-            // cmMakefileTargetGenerator inserts them in vars.Flags.
-            if let Some(pos) = command.find(" -o ") {
-                command.insert_str(pos + 1, &format!("{expanded} "));
-            } else {
-                command.push(' ');
-                command.push_str(&expanded);
+            command = format!(
+                "$(CMAKE_COMMAND) -E cmake_cl_compile_depends --dep-file={} --working-dir={} --filter-prefix={} -- {command}",
+                shell_path(self.ctx, dep_path),
+                shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
+                shell_path(self.ctx, &prefix),
+            );
+        }
+        let lang_can_export = matches!(
+            lang.as_str(),
+            "C" | "CXX" | "OBJC" | "OBJCXX" | "Fortran" | "CUDA" | "ISPC" | "HIP" | "ASM"
+        );
+        if lang_can_export
+            && target
+                .props
+                .get("EXPORT_COMPILE_COMMANDS")
+                .is_some_and(is_on)
+        {
+            let target_vars = flags::compile_target_vars(self.ctx, target, &self.ctx.config, lang);
+            let mut exported = command.clone();
+            let replacements = [
+                (format!("$({lang}_FLAGS)"), target_vars.flags_untrimmed),
+                (format!("$({lang}_DEFINES)"), target_vars.defines),
+                (format!("$({lang}_INCLUDES)"), target_vars.includes),
+            ];
+            for (from, to) in replacements {
+                exported = exported.replace(&from, &to);
             }
+            for variable in ["CMAKE_START_TEMP_FILE", "CMAKE_END_TEMP_FILE"] {
+                if let Some(value) = self.ctx.var(target.makefile, variable)
+                    && !value.is_empty()
+                {
+                    exported = exported.replace(&value, "");
+                }
+            }
+            if let Some(expanded) = &dep_flags_expanded {
+                exported = exported.replacen(&format!(" {expanded}"), "", 1);
+            }
+            let working_directory = &self.ctx.interp.makefiles[dir].binary_dir;
+            self.compile_commands.push(format!(
+                "{{\n  \"directory\": \"{}\",\n  \"command\": \"{}\",\n  \"file\": \"{}\",\n  \"output\": \"{}\"\n}}",
+                escape_json(working_directory),
+                escape_json(&exported),
+                escape_json(&util::collapse_full_path(
+                    &source.path,
+                    &self.ctx.interp.home_binary
+                )),
+                escape_json(obj_rel_top),
+            ));
         }
         if dir != 0 {
             let cur = shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir);
@@ -793,9 +962,6 @@ impl<'a> MakefileGenerator<'a> {
                     }
                 ),
             );
-            if template.is_empty() {
-                continue;
-            }
             let echo_output = format!(
                 "{}.{}",
                 strip_last_extension(obj_rel_cur),
@@ -858,14 +1024,26 @@ impl<'a> MakefileGenerator<'a> {
                     ),
                 ),
             ];
-            let mut command = flags::expand_rule_for_step(
-                self.ctx,
-                target,
-                lang,
-                flags::RuleStep::Compile,
-                &template,
-                &vars,
+            let rule_var = format!(
+                "CMAKE_{lang}_CREATE_{}_SOURCE",
+                if action == "PREPROCESS" {
+                    "PREPROCESSED"
+                } else {
+                    "ASSEMBLY"
+                }
             );
+            let mut command = if template.is_empty() {
+                format!("$(CMAKE_COMMAND) -E cmake_unimplemented_variable {rule_var}")
+            } else {
+                flags::expand_rule_for_step(
+                    self.ctx,
+                    target,
+                    lang,
+                    flags::RuleStep::Compile,
+                    &template,
+                    &vars,
+                )
+            };
             if dir != 0 {
                 command = format!(
                     "cd {} && {command}",
@@ -878,7 +1056,7 @@ impl<'a> MakefileGenerator<'a> {
                 &target_name,
                 &["cmake_force".into()],
                 &[
-                    format!("@{}", self.echo(&echo_text, "--green", None, target)),
+                    format!("@{}", self.echo(&echo_text, "--green", None)),
                     command,
                 ],
                 false,
@@ -1026,7 +1204,7 @@ impl<'a> MakefileGenerator<'a> {
                 );
                 commands.push(format!(
                     "@{}",
-                    self.echo(&comment, "--blue --bold", Some(progress), target)
+                    self.echo(&comment, "--blue --bold", Some(progress))
                 ));
             }
             commands.extend(self.custom_command_lines(
@@ -1276,7 +1454,7 @@ impl<'a> MakefileGenerator<'a> {
                     &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_LIBRARIES"),
                 )
                 .is_some_and(|value| !value.is_empty() && is_on(&value))
-            && libraries_text.trim_start().is_empty() == false;
+            && !libraries_text.trim_start().is_empty();
         if use_response_libraries {
             depends.push(format!("{support_rel_top}/linkLibs.rsp"));
         }
@@ -1307,7 +1485,6 @@ impl<'a> MakefileGenerator<'a> {
                 ),
                 "--green --bold",
                 Some(progress),
-                target,
             ),
         )];
         if target.kind == TargetKind::StaticLibrary {
@@ -1467,6 +1644,12 @@ impl<'a> MakefileGenerator<'a> {
             .ctx
             .var(target.makefile, &create_var)
             .unwrap_or_default();
+        if template.is_empty() && target.kind != TargetKind::StaticLibrary && !create_var.is_empty()
+        {
+            self.ctx.system_error(format!(
+                "Error required internal CMake variable not set, cmake may not be built correctly.\nMissing variable is:\n{create_var}"
+            ));
+        }
         if template.is_empty() && target.kind == TargetKind::StaticLibrary {
             let create = self
                 .ctx
@@ -1530,6 +1713,23 @@ impl<'a> MakefileGenerator<'a> {
                 ),
             )
         };
+        let target_pdb = if matches!(
+            target.kind,
+            TargetKind::Executable
+                | TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+        ) {
+            format!(
+                "{}/{}",
+                gt::pdb_directory(self.ctx, target, &config),
+                names.pdb
+            )
+        } else {
+            String::new()
+        };
+        let target_pdb_shell =
+            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
         let (version_major, version_minor) = makefile_target_version(target);
         let mut vars = vec![
             ("LANGUAGE", language.to_owned()),
@@ -1547,7 +1747,7 @@ impl<'a> MakefileGenerator<'a> {
             ("LINK_LIBRARIES", libraries),
             ("LINK_PATH", line.framework_path.clone() + &line.link_path),
             ("CONFIG", config.clone()),
-            ("TARGET_PDB", String::new()),
+            ("TARGET_PDB", target_pdb_shell),
             ("TARGET_IMPLIB", target_implib),
             ("TARGET_VERSION_MAJOR", version_major),
             ("TARGET_VERSION_MINOR", version_minor),
@@ -1586,6 +1786,18 @@ impl<'a> MakefileGenerator<'a> {
             };
             vars.push(("TARGET_SONAME", soname.clone()));
             vars.push(("SONAME", soname));
+        }
+        if target.kind == TargetKind::SharedLibrary {
+            let install_name_dir =
+                super::install_name::install_name_dir_for_build_tree(self.ctx, target, &config);
+            vars.push((
+                "TARGET_INSTALLNAME_DIR",
+                if install_name_dir.is_empty() {
+                    String::new()
+                } else {
+                    shell_path_keep_trailing_slash(self.ctx, &install_name_dir)
+                },
+            ));
         }
         let mut text = String::new();
         let archive_create = self
@@ -2351,10 +2563,8 @@ impl<'a> MakefileGenerator<'a> {
                 if let Some(comment) = &evaluated.comment
                     && !comment.is_empty()
                 {
-                    utility_commands.push(format!(
-                        "@{}",
-                        self.echo(comment, "--blue --bold", None, target)
-                    ));
+                    utility_commands
+                        .push(format!("@{}", self.echo(comment, "--blue --bold", None)));
                 }
                 utility_commands.extend(self.custom_command_lines(
                     &evaluated,
@@ -3036,18 +3246,7 @@ impl<'a> MakefileGenerator<'a> {
         if properties.get("KEEP_EXTENSION").is_some_and(is_on) {
             return true;
         }
-        let cuda_custom = [
-            "CUDA_PTX_COMPILATION",
-            "CUDA_CUBIN_COMPILATION",
-            "CUDA_FATBIN_COMPILATION",
-            "CUDA_OPTIX_COMPILATION",
-        ]
-        .iter()
-        .any(|property| target.props.get(property).is_some_and(is_on));
-        if properties.get("PCH_EXTENSION").is_some()
-            || source.object_name.contains("cmake_pch")
-            || cuda_custom
-        {
+        if properties.get("PCH_EXTENSION").is_some() || source.object_name.contains("cmake_pch") {
             return false;
         }
         !self
@@ -3079,17 +3278,15 @@ impl<'a> MakefileGenerator<'a> {
         let special =
             |out: &mut String, name: &str, echo: &str, commands: &[String], deps: &[String]| {
                 write_make_rule(
-                out,
-                Some(&format!("Special rule for the target {name}")),
-                name,
-                deps,
-                &std::iter::once(format!(
-                    "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --cyan \"{echo}\""
-                ))
-                .chain(commands.iter().cloned())
-                .collect::<Vec<_>>(),
-                true,
-            );
+                    out,
+                    Some(&format!("Special rule for the target {name}")),
+                    name,
+                    deps,
+                    &std::iter::once(format!("@{}", self.echo(echo, "--cyan", None)))
+                        .chain(commands.iter().cloned())
+                        .collect::<Vec<_>>(),
+                    true,
+                );
                 let fastdeps = vec![name.to_owned()];
                 write_make_rule(
                     out,
@@ -3161,7 +3358,12 @@ impl<'a> MakefileGenerator<'a> {
                 "list_install_components",
                 &[],
                 &[format!(
-                    "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --cyan \"Available install components are: {quoted}\""
+                    "@{}",
+                    self.echo(
+                        &format!("Available install components are: {quoted}"),
+                        "--cyan",
+                        None
+                    )
                 )],
                 true,
             );
@@ -3209,9 +3411,7 @@ impl<'a> MakefileGenerator<'a> {
                             "preinstall".into()
                         }],
                         &[
-                            format!(
-                                "@$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\" --cyan \"{echo}\""
-                            ),
+                            format!("@{}", self.echo(echo, "--cyan", None)),
                             format!("{cmake} {args}-P cmake_install.cmake"),
                         ],
                         true,
@@ -3420,7 +3620,7 @@ impl<'a> MakefileGenerator<'a> {
                         .iter()
                         .filter(|s| s.kind == SourceKind::ObjectSource)
                     {
-                        let object_name = if util::is_full_path(&src.object_name) {
+                        let mut object_name = if util::is_full_path(&src.object_name) {
                             Path::new(&src.object_name)
                                 .file_name()
                                 .and_then(|name| name.to_str())
@@ -3429,6 +3629,51 @@ impl<'a> MakefileGenerator<'a> {
                         } else {
                             src.object_name.clone()
                         };
+                        // cmLocalUnixMakefileGenerator3::GetLocalObjectFiles asks
+                        // for object names without the target's custom CUDA output
+                        // extension.  Actual compilation modes use .ptx/.fatbin/etc.,
+                        // but top-level convenience rules use the normal object name.
+                        for (property, custom_extension) in [
+                            ("CUDA_PTX_COMPILATION", ".ptx"),
+                            ("CUDA_CUBIN_COMPILATION", ".cubin"),
+                            ("CUDA_FATBIN_COMPILATION", ".fatbin"),
+                            ("CUDA_OPTIX_COMPILATION", ".optixir"),
+                        ] {
+                            if t.props.get(property).is_some_and(is_on)
+                                && object_name.ends_with(custom_extension)
+                            {
+                                object_name.truncate(object_name.len() - custom_extension.len());
+                                let normal_extension = self
+                                    .ctx
+                                    .interp
+                                    .langs
+                                    .output_extension
+                                    .get(&src.language)
+                                    .map(String::as_str)
+                                    .unwrap_or(".o");
+                                let replace = self
+                                    .ctx
+                                    .var(
+                                        t.makefile,
+                                        &format!("CMAKE_{}_OUTPUT_EXTENSION_REPLACE", src.language),
+                                    )
+                                    .is_some_and(|value| is_on(&value));
+                                if !replace {
+                                    if let Some(source_extension) = Path::new(&src.path)
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .and_then(|name| {
+                                            name.rsplit_once('.').map(|(_, extension)| extension)
+                                        })
+                                    {
+                                        object_name.push('.');
+                                        object_name.push_str(source_extension);
+                                    }
+                                }
+                                object_name.push_str(normal_extension);
+                                break;
+                            }
+                        }
                         let has_source_extension = self.object_keeps_source_extension(t, src);
                         let entry = objects
                             .entry(object_name)

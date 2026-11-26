@@ -1311,14 +1311,7 @@ pub fn try_compile_project(
         binary_dir: bindir.to_owned(),
         in_try_compile: true,
         debug_trycompile: outer.debug_trycompile,
-        generator: Some(
-            if outer.ext.multi_config {
-                "Ninja Multi-Config"
-            } else {
-                "Ninja"
-            }
-            .to_owned(),
-        ),
+        generator: outer.get_def("CMAKE_GENERATOR").map(str::to_owned),
         definitions: cmake_args.map(parse_cache_args).unwrap_or_default(),
         ..ConfigureOptions::default()
     };
@@ -1368,11 +1361,7 @@ pub fn try_compile_project(
     inner.langs = outer.langs.clone();
     inner.langs.configured_files_path = Some(configured);
     inner.langs.in_progress.clear();
-    if matches!(
-        outer.get_def("CMAKE_GENERATOR"),
-        Some("Ninja") | Some("Ninja Multi-Config")
-    ) && let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned)
-    {
+    if let Some(make) = outer.cache.value("CMAKE_MAKE_PROGRAM").map(str::to_owned) {
         inner.cache.add(
             "CMAKE_MAKE_PROGRAM",
             Some(&make),
@@ -1432,16 +1421,34 @@ pub fn try_compile_project(
     // cmGlobalGenerator::Build
     let mut output = format!("Change Dir: '{bindir}'\n");
     let make = inner.get_safe("CMAKE_MAKE_PROGRAM");
-    let mut command = vec![make, "-v".to_owned()];
-    // cmGlobalNinjaMultiGenerator::AppendNinjaFileArgument
-    let config = outer.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
-    if outer.ext.multi_config && !config.is_empty() {
-        command.push("-f".to_owned());
-        command.push(format!("build-{config}.ninja"));
-    }
-    if !target_name.is_empty() {
-        command.push(target_name.to_owned());
-    }
+    let generator = inner.get_safe("CMAKE_GENERATOR");
+    let command = if generator == "Unix Makefiles" {
+        let mut command = vec![
+            inner.cmake_command.clone(),
+            "-E".to_owned(),
+            "env".to_owned(),
+            "VERBOSE=1".to_owned(),
+            make,
+            "-f".to_owned(),
+            "Makefile".to_owned(),
+        ];
+        if !target_name.is_empty() {
+            command.push(format!("{target_name}/fast"));
+        }
+        command
+    } else {
+        let mut command = vec![make, "-v".to_owned()];
+        // cmGlobalNinjaMultiGenerator::AppendNinjaFileArgument
+        let config = outer.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
+        if outer.ext.multi_config && !config.is_empty() {
+            command.push("-f".to_owned());
+            command.push(format!("build-{config}.ninja"));
+        }
+        if !target_name.is_empty() {
+            command.push(target_name.to_owned());
+        }
+        command
+    };
     let printable: Vec<String> = command
         .iter()
         .map(|arg| crate::outconv::escape_for_shell(arg, crate::outconv::FLAG_IS_UNIX))

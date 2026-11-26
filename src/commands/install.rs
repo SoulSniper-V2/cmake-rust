@@ -341,7 +341,14 @@ fn add(interp: &mut Interp, options: InstallOptions, action: InstallAction) {
         .misc
         .insert("install-target-enabled".into(), "1".into());
     // cmGlobalGenerator::AddInstallComponent: a sorted set of names.
-    if !options.component.is_empty() {
+    // install(EXPORT) and install(PACKAGE_INFO) do not register their
+    // components with the global generator.
+    if !options.component.is_empty()
+        && !matches!(
+            action,
+            InstallAction::Export(_) | InstallAction::PackageInfo { .. }
+        )
+    {
         let components = interp
             .ext
             .misc
