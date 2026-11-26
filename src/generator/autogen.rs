@@ -8,6 +8,7 @@
 //! start of `cmGlobalGenerator::Generate`.  The build-time half is
 //! `cmcmd::autogen`.
 
+use crate::util::relative_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -354,20 +355,6 @@ fn flush(interp: &mut Interp, diagnostics: Vec<Diagnostic>) -> bool {
         }
     }
     ok
-}
-
-/// `cmSystemTools::RelativePath`.
-fn relative_path(local: &str, remote: &str) -> String {
-    let local: Vec<&str> = local.split('/').filter(|part| !part.is_empty()).collect();
-    let remote: Vec<&str> = remote.split('/').filter(|part| !part.is_empty()).collect();
-    let common = local
-        .iter()
-        .zip(&remote)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut parts = vec![".."; local.len() - common];
-    parts.extend(&remote[common..]);
-    parts.join("/")
 }
 
 /// `FileProjectRelativePath`.

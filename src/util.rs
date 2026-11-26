@@ -302,6 +302,57 @@ pub fn collapse_full_path(path: &str, base: &str) -> String {
     }
 }
 
+/// `cmSystemTools::RelativePath` (kwsys `SystemTools::RelativePath`): both
+/// paths must be full (else ""), are collapsed against the working
+/// directory, and each ascent is spelled `../` (so a pure ascent keeps its
+/// trailing slash). With nothing in common the remote path is returned.
+pub fn relative_path(local: &str, remote: &str) -> String {
+    let full = |path: &str| path.starts_with('/');
+    if !full(local) || !full(remote) {
+        return String::new();
+    }
+    // kwsys SplitString(path, '/', true): a leading "/" becomes its own
+    // component.
+    let split = |path: &str| -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut rest = path;
+        if let Some(stripped) = rest.strip_prefix('/') {
+            parts.push("/".to_owned());
+            rest = stripped;
+        }
+        parts.extend(rest.split('/').map(str::to_owned));
+        parts
+    };
+    let mut local_split = split(&collapse_full_path(local, ""));
+    let mut remote_split = split(&collapse_full_path(remote, ""));
+    let mut same = 0;
+    while same < local_split.len()
+        && same < remote_split.len()
+        && local_split[same] == remote_split[same]
+    {
+        local_split[same].clear();
+        remote_split[same].clear();
+        same += 1;
+    }
+    if same == 0 {
+        return remote.to_owned();
+    }
+    let mut parts: Vec<String> = local_split
+        .iter()
+        .filter(|part| !part.is_empty())
+        .map(|_| "../".to_owned())
+        .collect();
+    parts.extend(remote_split.into_iter().filter(|part| !part.is_empty()));
+    let mut out = String::new();
+    for part in parts {
+        if !out.is_empty() && !out.ends_with('/') {
+            out.push('/');
+        }
+        out.push_str(&part);
+    }
+    out
+}
+
 /// `cmSystemTools::IsSubDirectory(cSubdir, cDir)`.
 pub fn is_subdirectory(sub: &str, dir: &str) -> bool {
     // kwsys IsSubDirectory: both paths go through ConvertToUnixSlashes,
@@ -407,5 +458,21 @@ mod tests {
         assert_eq!(strtod_full("1e3"), Some(1000.0));
         assert_eq!(strtod_full("1a"), None);
         assert_eq!(scan_double(" 5abc"), Some(5.0));
+    }
+}
+
+#[cfg(test)]
+mod relative_path_tests {
+    use super::relative_path;
+
+    #[test]
+    fn kwsys_relative_path() {
+        assert_eq!(relative_path("/a/b", "/a/b"), "");
+        assert_eq!(relative_path("/a/b", "/a/b/./c"), "c");
+        assert_eq!(relative_path("/a/b/c", "/a"), "../../");
+        assert_eq!(relative_path("/a/b", "/a/x/y"), "../x/y");
+        assert_eq!(relative_path("/a", "/x"), "../x");
+        assert_eq!(relative_path("rel", "/x"), "");
+        assert_eq!(relative_path("/a/b/../c", "/a/c/d"), "d");
     }
 }

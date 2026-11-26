@@ -3,6 +3,7 @@
 //! INSTALL_PARALLEL every directory's script run as a separate
 //! `cmake -P` process, `-j` at a time.
 
+use crate::util::relative_path;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
@@ -28,20 +29,6 @@ fn file_time_compare(a: &str, b: &str) -> Option<i32> {
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,
     })
-}
-
-/// `cmSystemTools::RelativePath(from_dir, to)`.
-fn relative_path(from_dir: &str, to: &str) -> String {
-    let from: Vec<&str> = from_dir.split('/').filter(|p| !p.is_empty()).collect();
-    let to_parts: Vec<&str> = to.split('/').filter(|p| !p.is_empty()).collect();
-    let common = from
-        .iter()
-        .zip(&to_parts)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut parts: Vec<&str> = std::iter::repeat_n("..", from.len() - common).collect();
-    parts.extend(&to_parts[common..]);
-    parts.join("/")
 }
 
 impl InstallScriptHandler {

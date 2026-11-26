@@ -8,6 +8,7 @@ mod kate;
 mod sublime;
 pub mod xml;
 
+use crate::util::relative_path;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -98,25 +99,6 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
         "Sublime Text 2" => sublime::generate(ctx, globals),
         _ => {}
     }
-}
-
-/// `cmSystemTools::RelativePath` (full paths in, `..` segments out).
-fn relative_path(local: &str, remote: &str) -> String {
-    if local == remote {
-        return String::new();
-    }
-    let local_parts: Vec<&str> = local.split('/').filter(|p| !p.is_empty()).collect();
-    let remote_parts: Vec<&str> = remote.split('/').filter(|p| !p.is_empty()).collect();
-    let mut common = 0;
-    while common < local_parts.len()
-        && common < remote_parts.len()
-        && local_parts[common] == remote_parts[common]
-    {
-        common += 1;
-    }
-    let mut out: Vec<&str> = std::iter::repeat_n("..", local_parts.len() - common).collect();
-    out.extend(&remote_parts[common..]);
-    out.join("/")
 }
 
 /// `cmSystemTools::GetFilenamePath`.
