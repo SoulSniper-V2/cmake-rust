@@ -7,7 +7,7 @@
 //! target names are home-relative while commands are prefixed with `cd` to
 //! the owning directory.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -75,6 +75,29 @@ fn package_configs(ctx: &GenCtx<'_>) -> (bool, bool) {
         Path::new(&format!("{root}/CPackConfig.cmake")).exists(),
         Path::new(&format!("{root}/CPackSourceConfig.cmake")).exists(),
     )
+}
+
+fn safe_object_file_name(text: &str) -> String {
+    text.trim_start_matches('/')
+        .replace(':', "_")
+        .replace("../", "__/")
+        .replace(' ', "_")
+}
+
+fn remove_unknown_tidy_fixes(dir: &Path, known: &BTreeSet<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            remove_unknown_tidy_fixes(&path, known);
+        } else if path.extension().is_some_and(|ext| ext == "yaml")
+            && path.to_str().is_some_and(|name| !known.contains(name))
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 fn home_relative_output_path(ctx: &GenCtx<'_>, dir: usize) -> String {
@@ -359,6 +382,8 @@ pub struct MakefileGenerator<'a> {
     progress: Vec<(String, TargetProgress)>,
     implicit: HashMap<String, ImplicitDepends>,
     compile_commands: Vec<String>,
+    tidy_fixes_dirs: BTreeSet<String>,
+    tidy_fixes_files: BTreeSet<String>,
 }
 
 impl<'a> MakefileGenerator<'a> {
@@ -368,6 +393,8 @@ impl<'a> MakefileGenerator<'a> {
             progress: Vec::new(),
             implicit: HashMap::new(),
             compile_commands: Vec::new(),
+            tidy_fixes_dirs: BTreeSet::new(),
+            tidy_fixes_files: BTreeSet::new(),
         }
     }
 
@@ -392,6 +419,9 @@ impl<'a> MakefileGenerator<'a> {
             let content = format!("[\n{}\n]", self.compile_commands.join(",\n"));
             let path = format!("{}/compile_commands.json", self.ctx.interp.home_binary);
             let _ = crate::fsutil::write_generated(Path::new(&path), &content);
+        }
+        for dir in &self.tidy_fixes_dirs {
+            remove_unknown_tidy_fixes(Path::new(dir), &self.tidy_fixes_files);
         }
         self.write_progress_marks();
         self.write_main_makefile2();
@@ -706,6 +736,99 @@ impl<'a> MakefileGenerator<'a> {
         Some((dep_path, dep_flags))
     }
 
+    /// `cmCommonTargetGenerator::GenerateCodeCheckRules` for Unix Makefiles.
+    fn code_check(&mut self, target: &Target, source: &gt::SourceInfo) -> String {
+        let lang = source.language.as_str();
+        let mut options = Vec::new();
+        let mut needs_source = false;
+        for (property, option) in [
+            ("INCLUDE_WHAT_YOU_USE", "iwyu"),
+            ("CLANG_TIDY", "tidy"),
+            ("CPPLINT", "cpplint"),
+            ("CPPCHECK", "cppcheck"),
+            ("ICSTAT", "icstat"),
+        ] {
+            if property != "CLANG_TIDY" && !matches!(lang, "C" | "CXX") {
+                continue;
+            }
+            let Some(raw) = target.props.get(&format!("{lang}_{property}")) else {
+                continue;
+            };
+            let mut command = self.ctx.genex(raw, Some(target), Some(lang));
+            if command.is_empty() {
+                continue;
+            }
+            let driver_mode = |tool: &str| {
+                self.ctx
+                    .var(target.makefile, &format!("CMAKE_{lang}_{tool}_DRIVER_MODE"))
+                    .filter(|mode| !mode.is_empty())
+                    .unwrap_or_else(|| if lang == "C" { "gcc" } else { "g++" }.into())
+            };
+            match option {
+                "iwyu" if !command.contains("--driver-mode=") => {
+                    let _ = write!(command, ";--driver-mode={}", driver_mode(property));
+                }
+                "tidy" => {
+                    let mut export_fixes = String::new();
+                    if let Some(dir_value) = target
+                        .props
+                        .get(&format!("{lang}_CLANG_TIDY_EXPORT_FIXES_DIR"))
+                        .filter(|dir| !dir.is_empty())
+                    {
+                        let binary = &self.ctx.interp.makefiles[target.makefile].binary_dir;
+                        let dir = if Path::new(dir_value).is_absolute() {
+                            util::collapse_full_path(dir_value, "")
+                        } else {
+                            util::collapse_full_path(&format!("{binary}/{dir_value}"), "")
+                        };
+                        let support = gt::support_directory(self.ctx, target);
+                        let support_rel = maybe_relative_top(self.ctx, &support);
+                        let safe = safe_object_file_name(&support_rel);
+                        let fixes = util::collapse_full_path(
+                            &format!("{dir}/{safe}/{}.yaml", source.object_name),
+                            "",
+                        );
+                        let _ = std::fs::create_dir_all(util::filename_path(&fixes));
+                        self.tidy_fixes_dirs.insert(dir);
+                        self.tidy_fixes_files.insert(fixes.clone());
+                        let fixes_rel = maybe_relative_cur(self.ctx, target.makefile, &fixes);
+                        let _ = write!(export_fixes, ";--export-fixes={fixes_rel}");
+                    }
+                    let _ = write!(
+                        command,
+                        ";--extra-arg-before=--driver-mode={}{export_fixes}",
+                        driver_mode(property)
+                    );
+                }
+                "icstat" => {
+                    if !command.contains("--checks=") {
+                        command.push_str(";--checks=cstat_sel_checks.txt");
+                    }
+                    if !command.contains("--db=") {
+                        command.push_str(";--db=cstat.db");
+                    }
+                }
+                _ => {}
+            }
+            needs_source |= matches!(option, "tidy" | "cpplint" | "cppcheck");
+            options.push(format!(" --{option}={}", shell_path(self.ctx, &command)));
+        }
+        if options.is_empty() {
+            return String::new();
+        }
+        let mut command = String::from("$(CMAKE_COMMAND) -E __run_co_compile");
+        let launcher = flags::compiler_launcher_list(self.ctx, target, lang);
+        if !launcher.is_empty() {
+            let _ = write!(command, " --launcher={}", shell_path(self.ctx, &launcher));
+        }
+        command.push_str(&options.join(""));
+        if needs_source {
+            let _ = write!(command, " --source={}", shell_path(self.ctx, &source.path));
+        }
+        command.push_str(" -- ");
+        command
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn write_object_rule(
         &mut self,
@@ -862,6 +985,20 @@ impl<'a> MakefileGenerator<'a> {
                     String::new()
                 },
             ),
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            (
+                "TARGET_LABELS",
+                target
+                    .props
+                    .get("LABELS")
+                    .map_or_else(String::new, |v| util::expand_list(v, false).join(" ")),
+            ),
+            ("LANGUAGE", lang.to_owned()),
+            (
+                "CMAKE_CURRENT_BINARY_DIR",
+                shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
+            ),
         ];
         let mut command = flags::expand_rule_for_step(
             self.ctx,
@@ -889,9 +1026,31 @@ impl<'a> MakefileGenerator<'a> {
                 shell_path(self.ctx, &prefix),
             );
         }
-        let launcher = flags::compiler_launcher(self.ctx, target, lang);
-        if !launcher.is_empty() {
-            command = format!("{launcher}{command}");
+        let skip_linting = properties.get("SKIP_LINTING").is_some_and(is_on);
+        let code_check = if skip_linting {
+            String::new()
+        } else {
+            self.code_check(target, source)
+        };
+        if !code_check.is_empty() {
+            command = format!("{code_check}{command}");
+        } else {
+            let compiler_launcher = flags::compiler_launcher(self.ctx, target, lang);
+            if !compiler_launcher.is_empty() {
+                command = format!("{compiler_launcher}{command}");
+            }
+        }
+        let rule_launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_COMPILE");
+        if !rule_launcher.is_empty() {
+            let expanded_launcher = flags::expand_rule_for_step(
+                self.ctx,
+                target,
+                lang,
+                flags::RuleStep::Compile,
+                rule_launcher.trim_end(),
+                &vars,
+            );
+            command = format!("{expanded_launcher} {command}");
         }
         let lang_can_export = matches!(
             lang.as_str(),
@@ -1784,6 +1943,19 @@ impl<'a> MakefileGenerator<'a> {
         let (version_major, version_minor) = makefile_target_version(target);
         let mut vars = vec![
             ("LANGUAGE", language.to_owned()),
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            (
+                "TARGET_LABELS",
+                target
+                    .props
+                    .get("LABELS")
+                    .map_or_else(String::new, |v| util::expand_list(v, false).join(" ")),
+            ),
+            (
+                "CMAKE_CURRENT_BINARY_DIR",
+                shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
+            ),
             ("OBJECTS", object_list.clone()),
             ("TARGET", target_shell.clone()),
             ("TARGET_FILE", target_shell),

@@ -52,6 +52,18 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+Unix Makefiles compile rules now implement the upstream launcher stack:
+`RULE_LAUNCH_COMPILE` outermost with `<TARGET_NAME>`, `<TARGET_TYPE>`,
+`<OBJECT>`, `<SOURCE>`, `<LANGUAGE>`, and `<CMAKE_CURRENT_BINARY_DIR>`
+placeholder expansion; `cmake -E __run_co_compile` for clang-tidy, cpplint,
+cppcheck, include-what-you-use, and icstat; compiler launchers either direct
+or passed through `--launcher=`; `SKIP_LINTING`; clang-tidy export-fixes paths;
+and removal of unknown stale export-fixes YAML files.  Link launcher
+placeholders now also receive target name/type/labels and the current binary
+directory.  Focused lane `/tmp/umf5-runcmake-lintprobe2`: all 102/102 cases
+pass across CompilerLauncher, ClangTidy, Cpplint, Cppcheck,
+IncludeWhatYouUse, and MultiLint.
+
 Unix Makefiles link/archive commands now honor `RULE_LAUNCH_LINK` with
 target/directory/global lookup, generator-expression evaluation, and one
 trailing space, matching upstream and the existing Ninja behavior.  The
