@@ -52,6 +52,26 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+Unix Makefiles now emit CPack `package`/`package_source` local rules and
+per-directory `TargetDirectories.txt` entries when the generated CPack config
+files exist.  Package commands omit the `cd <root> &&` prefix in the root
+Makefile but retain it in subdirectory Makefiles, matching upstream.  When
+building CMake itself (`CMake_BINARY_DIR` set and not cross-compiling),
+install commands use the build-tree `bin/cmake` path relative to each
+subdirectory rather than the configure-time cmake executable.  Focused
+kitchen-sink evidence: all CPack rule differences disappeared in
+`/tmp/umf5-pd-kitchen-cpack2.log` (remaining differences are unrelated LTO
+try-compile/launcher/PCH issues).
+
+RunCMake full lane after the `cmake --build` fix: 5362/5582 pass, 168 fail,
+52 not reached, 8 out-of-scope standalone-tool, 1 oracle failure, 5
+out-of-scope generator.  Evidence `/tmp/umf5-runcmake-full2/report.json` and
+`/tmp/umf5-runcmake-full2-driver.log`; improvement from the first full lane
+(5291 pass) is +71 cases.  Largest remaining buckets are Byproducts clean
+convergence, Instrumentation (`ROLE:` shell corruption), GoogleTest discovery,
+compiler/lint launcher echo mismatches, BuildDepends duplicate Makefile2
+recipes, interface-library convenience rules, and `LINKER:` expansion.
+
 `cmake --build` now generates Unix Makefiles build commands upstream-style:
 `cmake -E env VERBOSE=1 <make> -f Makefile -j<N>` for verbose builds (rather
 than passing GNU Make's version-only `-v`), `-f Makefile` always, and bare

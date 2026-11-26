@@ -56,6 +56,14 @@ fn maybe_relative_cur(ctx: &GenCtx<'_>, dir: usize, path: &str) -> String {
     custom::maybe_relative_to(ctx, dir, &cur, path)
 }
 
+fn package_configs(ctx: &GenCtx<'_>) -> (bool, bool) {
+    let root = &ctx.interp.home_binary;
+    (
+        Path::new(&format!("{root}/CPackConfig.cmake")).exists(),
+        Path::new(&format!("{root}/CPackSourceConfig.cmake")).exists(),
+    )
+}
+
 fn home_relative_output_path(ctx: &GenCtx<'_>, dir: usize) -> String {
     let binary = &ctx.interp.makefiles[dir].binary_dir;
     if binary == &ctx.interp.home_binary {
@@ -2915,6 +2923,13 @@ impl<'a> MakefileGenerator<'a> {
                 }
             }
             let mut names = vec![];
+            let (package, package_source) = package_configs(self.ctx);
+            if package {
+                names.push("package");
+            }
+            if package_source {
+                names.push("package_source");
+            }
             if testing {
                 names.push("test");
             }
@@ -3264,6 +3279,14 @@ impl<'a> MakefileGenerator<'a> {
                 .rsplit_once('/')
                 .map_or("", |(d, _)| d)
         );
+        let cpack = format!(
+            "{}/cpack",
+            self.ctx
+                .interp
+                .cmake_command
+                .rsplit_once('/')
+                .map_or("", |(d, _)| d)
+        );
         let special =
             |out: &mut String, name: &str, echo: &str, commands: &[String], deps: &[String]| {
                 write_make_rule(
@@ -3286,6 +3309,38 @@ impl<'a> MakefileGenerator<'a> {
                     true,
                 );
             };
+        let root_binary = shell_path(self.ctx, &self.ctx.interp.home_binary);
+        let package_cd = if self.ctx.interp.makefiles[dir].binary_dir == self.ctx.interp.home_binary
+        {
+            String::new()
+        } else {
+            format!("cd {root_binary} && ")
+        };
+        let (package, package_source) = package_configs(self.ctx);
+        if package {
+            special(
+                &mut out,
+                "package",
+                "Run CPack packaging tool...",
+                &[format!(
+                    "{package_cd}{} --config ./CPackConfig.cmake",
+                    shell_path(self.ctx, &cpack)
+                )],
+                &["preinstall".into()],
+            );
+        }
+        if package_source {
+            special(
+                &mut out,
+                "package_source",
+                "Run CPack packaging tool for source...",
+                &[format!(
+                    "{package_cd}{} --config ./CPackSourceConfig.cmake {root_binary}/CPackSourceConfig.cmake",
+                    shell_path(self.ctx, &cpack)
+                )],
+                &[],
+            );
+        }
         let testing = self
             .ctx
             .var(0, "CMAKE_TESTING_ENABLED")
@@ -3368,6 +3423,17 @@ impl<'a> MakefileGenerator<'a> {
                 .ctx
                 .var(0, "CMAKE_STRIP")
                 .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v));
+            let install_cmake = if self.ctx.var(0, "CMake_BINARY_DIR").is_some()
+                && !self
+                    .ctx
+                    .var(0, "CMAKE_CROSSCOMPILING")
+                    .is_some_and(|v| crate::util::is_on(&v))
+            {
+                let built = format!("{}/bin/cmake", self.ctx.interp.home_binary);
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &built))
+            } else {
+                cmake.clone()
+            };
             let mut install_rules = vec![
                 ("install", "Install the project...", ""),
                 (
@@ -3401,7 +3467,7 @@ impl<'a> MakefileGenerator<'a> {
                         }],
                         &[
                             format!("@{}", self.echo(echo, "--cyan", None)),
-                            format!("{cmake} {args}-P cmake_install.cmake"),
+                            format!("{install_cmake} {args}-P cmake_install.cmake"),
                         ],
                         true,
                     );
@@ -3760,6 +3826,12 @@ impl<'a> MakefileGenerator<'a> {
         out.push_str("\t@echo \"... edit_cache\"\n");
         if install_enabled {
             out.push_str("\t@echo \"... install\"\n\t@echo \"... install/local\"\n\t@echo \"... install/strip\"\n\t@echo \"... list_install_components\"\n");
+        }
+        if package {
+            out.push_str("\t@echo \"... package\"\n");
+        }
+        if package_source {
+            out.push_str("\t@echo \"... package_source\"\n");
         }
         out.push_str("\t@echo \"... rebuild_cache\"\n");
         if testing {
