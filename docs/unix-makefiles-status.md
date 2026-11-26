@@ -1,6 +1,6 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-8`
+Branch: `t3/unix-makefiles-10`
 
 Most recent completed full Unix Makefiles lane after the Batch 7 fixes and the second `main` merge: **136/163** (`/tmp/pd-umf-fresh.log`; the lane grew by two extra-generator cases on `main`).  The prior post-merge baseline was 108/161 (`/tmp/pd-umf-batch7-baseline.log`).  Ninja lane must remain green.
 
@@ -11,8 +11,43 @@ ordering, and try_compile nested logs.  `link/items` still has target-specific
 link model differences.  `install/subdir_dest` is down to object-file `./`
 normalization in `sub/cmake_install.cmake`.
 
-Evidence still pending: 161/161 Unix Makefiles lane, zlib byte parity/build,
-Kitware CMake self-configure/build, RunCMake lane, and CLI regression additions.
+Evidence still pending: full Unix Makefiles projdiff lane, zlib byte parity/build,
+Kitware CMake self-configure/build, full RunCMake lane, and CLI regression additions.
+
+## Part 10 inherited Batch 9 validation
+
+Part 10 began at part 9 head `8ed4a6040b944e7a0482bff4ebc0f07e8f315bb4`
+(the merge of current `main` `4ca7cce`, faithful kwsys RelativePath, into the
+part-8 line) and validated the previously uncommitted Batch 9 fixes.  The batch
+makes link.txt use a distinct link-script shell escaping mode (no Makefile
+dollar doubling; CMP0181 OLD/NEW and `$ORIGIN` handling follow Makefile vs
+Ninja encoding), shell-escapes custom-command echo text, emits CMP0156 warnings
+in Makefile target order, makes `test` depend on `all` when
+`CMAKE_SKIP_TEST_ALL_DEPENDENCY` is false, shares NOTFOUND target-property
+validation between Ninja and Unix Makefiles, reports object-rule languages not
+enabled by the project, and uses a first `NeedRelinkBeforeInstall` port for
+Makefile2 preinstall directory rules.  The language diagnostic uses the
+directory file-scope frame, matching upstream's `CMake Error in CMakeLists.txt:`
+generation diagnostic.
+
+Focused Unix Makefiles evidence: **168/168** cases pass in the eight touched
+suites (`RunCMake.project`, `RunCMake.RuntimePath`,
+`RunCMake.target_link_options`, `RunCMake.target_link_libraries-LINKER-prefix`,
+`RunCMake.CMP0156`, `RunCMake.include_directories`,
+`RunCMake.add_custom_command`, and `RunCMake.BuiltinTargets`; report
+`/tmp/umf10-focused-runcmake/report.json`, driver log
+`/tmp/umf10-focused-runcmake.log`).  The same eight suites also pass **168/168**
+with the default Ninja oracle, showing no regression in the shared link and
+NOTFOUND code (`/tmp/umf10-focused-ninja-runcmake/report.json`, driver log
+`/tmp/umf10-focused-ninja-runcmake.log`).
+
+Gate evidence for the initial Batch 9 commit: `cargo fmt --check` clean,
+clippy clean, **941/941** Rust tests (`/tmp/umf10-rust-gates.log`), difftest
+**1283/1283** (`/tmp/umf10-difftest.log`), clitest **538/538**
+(`/tmp/umf10-clitest.log`), and Ninja projdiff **173/174** on the full run
+(`/tmp/umf10-projdiff-ninja.log`) with only the known
+`pch_unity/options` `build.outputs` load flake; that case passes **1/1** in
+isolation (`/tmp/umf10-projdiff-ninja-pch-rerun.log`).
 
 ## Part 8 include-regex checkpoint
 

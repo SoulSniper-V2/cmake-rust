@@ -49,6 +49,17 @@ fn shell_path_keep_trailing_slash(ctx: &GenCtx<'_>, path: &str) -> String {
     converted
 }
 
+/// Shell escaping inside a `link.txt` script (`LinkScriptShell` enabled):
+/// no Makefile `$` doubling, while make-variable syntax remains protected
+/// as cmOutputConverter::ConvertToOutputFormat(SHELL) requests.
+fn link_script_shell_path(ctx: &GenCtx<'_>, path: &str) -> String {
+    let _ = ctx;
+    crate::outconv::escape_for_shell(
+        &crate::cache::convert_to_unix_slashes(path),
+        crate::outconv::FLAG_IS_UNIX | crate::outconv::FLAG_ALLOW_MAKE_VARIABLES,
+    )
+}
+
 fn maybe_relative_top(ctx: &GenCtx<'_>, path: &str) -> String {
     custom::maybe_relative_to(ctx, 0, &ctx.interp.home_binary, path)
 }
@@ -282,11 +293,11 @@ fn makefile_object_entries(
                 .as_ref()
                 .is_none_or(|extension| !object.ends_with(extension.as_str()))
         })
-        .map(|object| shell_path(ctx, object))
+        .map(|object| link_script_shell_path(ctx, object))
         .chain(
             externals
                 .iter()
-                .map(|object| shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+                .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
         )
         .collect()
 }
@@ -503,6 +514,7 @@ impl<'a> MakefileGenerator<'a> {
     }
 
     pub fn generate(mut self) {
+        super::check_target_properties(self.ctx);
         for dir in 0..self.ctx.interp.makefiles.len() {
             self.generate_directory(dir);
         }
@@ -659,8 +671,12 @@ impl<'a> MakefileGenerator<'a> {
 
     fn echo(&self, text: &str, color: &str, progress: Option<usize>) -> String {
         let color = if self.color() { color } else { "" };
+        let escaped = crate::outconv::escape_for_shell(
+            text,
+            crate::outconv::FLAG_MAKE | crate::outconv::FLAG_IS_UNIX,
+        );
         if color.is_empty() && progress.is_none() {
-            return format!("echo \"{text}\"");
+            return format!("echo {escaped}");
         }
         let mut command =
             String::from("$(CMAKE_COMMAND) -E cmake_echo_color \"--switch=$(COLOR)\"");
@@ -678,7 +694,7 @@ impl<'a> MakefileGenerator<'a> {
                 )
             );
         }
-        let _ = write!(command, " \"{text}\"");
+        let _ = write!(command, " {escaped}");
         command
     }
 
@@ -718,6 +734,29 @@ impl<'a> MakefileGenerator<'a> {
             .var(target.makefile, "CMAKE_DEPENDS_USE_COMPILER")
             .is_none_or(|v| is_on(&v));
         let language = gt::linker_language(self.ctx, target, &self.ctx.config);
+        // cmComputeLinkDepends::EntriesProcessing: the first link-information
+        // computation for a target whose policy is WARN emits the CMP0156
+        // developer warning, in target generation order.
+        if target
+            .policies
+            .get(crate::policy::index_of("CMP0156").unwrap())
+            == Some(crate::policy::PolicyStatus::Warn)
+            && !self.ctx.interp.in_try_compile
+            && self.ctx.interp.policy_optional_warning(
+                self.ctx
+                    .var(target.makefile, "CMAKE_POLICY_WARNING_CMP0156")
+                    .as_deref(),
+            )
+        {
+            self.ctx.warning(
+                target.backtrace.clone(),
+                format!(
+                    "{}
+Since the policy is not set, legacy libraries de-duplication strategy will be applied.",
+                    crate::policy::policy_warning(crate::policy::index_of("CMP0156").unwrap())
+                ),
+            );
+        }
         let mut compiler_depends =
             depend_toggle || flags::link_dependency_file(self.ctx, target, &language).is_some();
         let _ = &mut compiler_depends;
@@ -751,6 +790,31 @@ impl<'a> MakefileGenerator<'a> {
             makefile_path(&format!("{support_rel_top}/progress.make")),
             makefile_path(&format!("{support_rel_top}/flags.make"))
         );
+
+        // cmCommonTargetGenerator::HaveRequiredLanguages: object rules are
+        // written only for languages enabled in the top-level project.
+        for language in sources
+            .iter()
+            .filter(|source| source.kind == SourceKind::ObjectSource)
+            .map(|source| source.language.clone())
+            .collect::<BTreeSet<_>>()
+        {
+            if !self
+                .ctx
+                .interp
+                .langs
+                .enabled
+                .iter()
+                .any(|enabled| enabled == &language)
+            {
+                self.ctx.error(
+                    gt::directory_backtrace(self.ctx, target.makefile),
+                    format!(
+                        "The language {language} was requested for compilation but was not enabled.  To enable a language it needs to be specified in a 'project' or 'enable_language' command in the root CMakeLists.txt"
+                    ),
+                );
+            }
+        }
 
         // Custom commands and objects.
         let mut object_paths = Vec::new();
@@ -1851,7 +1915,7 @@ impl<'a> MakefileGenerator<'a> {
         let line = if target.kind == TargetKind::StaticLibrary {
             super::link::LinkLine::default()
         } else {
-            super::link::base_link_line(self.ctx, target, &config, &language)
+            super::link::makefile_link_line(self.ctx, target, &config, &language)
         };
         let use_archive_rules = makefile_use_archive_rules(self.ctx, target, &language);
         let (mut use_response_objects, object_strings) =
@@ -2031,7 +2095,11 @@ impl<'a> MakefileGenerator<'a> {
         );
         let driver = format!(
             "{support_rel_top}/{}",
-            if false { "preinstall" } else { "build" }
+            if need_relink_before_install(self.ctx, target, &language) {
+                "preinstall"
+            } else {
+                "build"
+            }
         );
         let output_driver = format!(
             "{}{}",
@@ -3714,13 +3782,17 @@ impl<'a> MakefileGenerator<'a> {
                     Vec::new()
                 };
                 let mut deps = Vec::new();
-                if rule != "preinstall" {
-                    for (target, excluded) in dir_targets.iter() {
-                        if rule != "clean" && *excluded {
+                for (target, excluded) in dir_targets.iter() {
+                    if rule != "clean" && *excluded {
+                        continue;
+                    }
+                    if rule == "preinstall" {
+                        let language = gt::linker_language(self.ctx, target, &self.ctx.config);
+                        if !need_relink_before_install(self.ctx, target, &language) {
                             continue;
                         }
-                        deps.push(format!("{}/{suffix}", rel(target)));
                     }
+                    deps.push(format!("{}/{suffix}", rel(target)));
                 }
                 for child in &children {
                     if rule != "clean"
@@ -3983,12 +4055,21 @@ impl<'a> MakefileGenerator<'a> {
             .var(0, "CMAKE_TESTING_ENABLED")
             .is_some_and(|v| crate::util::is_on(&v));
         if testing {
+            let test_depends = if self
+                .ctx
+                .var(0, "CMAKE_SKIP_TEST_ALL_DEPENDENCY")
+                .is_some_and(|value| crate::util::is_off(&value))
+            {
+                vec!["all".into()]
+            } else {
+                Vec::new()
+            };
             special(
                 &mut out,
                 "test",
                 "Running tests...",
                 &[format!("{} $(ARGS)", shell_path(self.ctx, &ctest))],
-                &[],
+                &test_depends,
             );
         }
         special(
@@ -4544,6 +4625,54 @@ impl<'a> MakefileGenerator<'a> {
         // written by write_local_makefile(0); replace it with the full root
         // version once directory-level traversal is implemented.
     }
+}
+
+/// `cmGeneratorTarget::NeedRelinkBeforeInstall` for Unix Makefiles.
+fn need_relink_before_install(ctx: &GenCtx<'_>, target: &Target, language: &str) -> bool {
+    if !matches!(
+        target.kind,
+        TargetKind::Executable | TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+    ) || !target.have_install_rule
+        || ctx
+            .var(target.makefile, "CMAKE_SKIP_RPATH")
+            .is_some_and(|value| is_on(&value))
+        || target
+            .props
+            .get("BUILD_WITH_INSTALL_RPATH")
+            .is_some_and(|value| is_on(&ctx.genex(value, Some(target), None)))
+    {
+        return false;
+    }
+    if language.is_empty()
+        || ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_SHARED_LIBRARY_RUNTIME_{language}_FLAG"),
+            )
+            .is_none_or(|value| value.is_empty())
+    {
+        return false;
+    }
+    let query = super::link::Query::new(ctx, &ctx.config, language);
+    if super::link::information::is_chrpath_used(&query, target) {
+        return false;
+    }
+
+    let install_rpath = target.props.get("INSTALL_RPATH").is_some_and(|value| {
+        !ctx.var(target.makefile, "CMAKE_SKIP_INSTALL_RPATH")
+            .is_some_and(|skip| is_on(&skip))
+            && !ctx.genex(value, Some(target), None).is_empty()
+    });
+    let build_rpath = !target
+        .props
+        .get("SKIP_BUILD_RPATH")
+        .is_some_and(|value| is_on(&ctx.genex(value, Some(target), None)))
+        && (target.props.contains("BUILD_RPATH")
+            || target
+                .props
+                .get("LINK_LIBRARIES")
+                .is_some_and(|value| !ctx.genex(value, Some(target), None).is_empty()));
+    build_rpath || install_rpath
 }
 
 fn makefile_link_libraries(line: &super::link::LinkLine) -> String {

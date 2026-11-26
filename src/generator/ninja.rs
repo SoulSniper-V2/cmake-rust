@@ -767,71 +767,7 @@ impl<'a> NinjaGenerator<'a> {
     /// in link libraries or include directories that resolve to
     /// `<var>-NOTFOUND`.
     fn check_target_properties(&mut self) {
-        let interp = self.ctx.interp;
-        let mut not_found: BTreeMap<String, String> = BTreeMap::new();
-        for target in self.ctx.targets_in_order() {
-            if target.kind == TargetKind::InterfaceLibrary {
-                continue;
-            }
-            let dir = &interp.makefiles[target.makefile].source_dir;
-            let mark = |uses: &mut Vec<(String, String)>, item: &str, usage: &str| {
-                if item.len() > 9 && item.ends_with("-NOTFOUND") {
-                    let mut var = item[..item.len() - 9].to_owned();
-                    if interp
-                        .cache
-                        .entries
-                        .get(&var)
-                        .and_then(|entry| entry.properties.get("ADVANCED"))
-                        .is_some_and(|value| util::is_on(value))
-                    {
-                        var.push_str(" (ADVANCED)");
-                    }
-                    uses.push((var, usage.to_owned()));
-                }
-            };
-            let mut uses: Vec<(String, String)> = Vec::new();
-            if let Some(libs) = target.props.get("LINK_LIBRARIES") {
-                for lib in util::expand_list(libs, false) {
-                    let name = target.name.clone();
-                    mark(
-                        &mut uses,
-                        &lib,
-                        &format!("    linked by target \"{name}\" in directory {dir}"),
-                    );
-                }
-            }
-            if let Some(directories) = target.props.get("INCLUDE_DIRECTORIES") {
-                let stripped = crate::genex::preprocess(
-                    directories,
-                    crate::genex::PreprocessContext::Strip,
-                    "",
-                );
-                for dir_item in util::expand_list(&stripped, false) {
-                    mark(
-                        &mut uses,
-                        &dir_item,
-                        &format!("   used as include directory in directory {dir}"),
-                    );
-                }
-            }
-            for (var, usage) in uses {
-                not_found
-                    .entry(var)
-                    .or_default()
-                    .push_str(&format!("\n{usage}"));
-            }
-        }
-        if !not_found.is_empty() {
-            let mut body = String::new();
-            for (var, uses) in &not_found {
-                body.push_str(var);
-                body.push_str(uses);
-                body.push('\n');
-            }
-            self.ctx.system_error(format!(
-                "The following variables are used in this project, but they are set to NOTFOUND.\nPlease set them or make sure they are set and tested correctly in the CMake files:\n{body}"
-            ));
-        }
+        super::check_target_properties(&self.ctx);
     }
 
     pub fn generate(&mut self) -> std::io::Result<()> {

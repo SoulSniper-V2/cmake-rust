@@ -51,7 +51,11 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
             }
         }
         let options = target_options(inputs.usage("STATIC_LIBRARY_OPTIONS"));
-        append_options(&mut flags, resolve_wrapper(&inputs, options, "ARCHIVER"));
+        append_options_gen(
+            &inputs,
+            &mut flags,
+            resolve_wrapper(&inputs, options, "ARCHIVER"),
+        );
     } else {
         append_link_variable(&inputs, &mut flags, &creation_flags(&inputs));
         append_link_variable(&inputs, &mut flags, &inputs.config_flags(&config_var));
@@ -101,7 +105,7 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
             raw.push_str(value);
             raw.push(' ');
         }
-        append(&mut flags, &encode_literal(&raw));
+        append(&mut flags, &encode_literal_gen(&inputs, &raw));
 
         let options = inputs
             .usage("LINK_OPTIONS")
@@ -116,7 +120,11 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
             })
             .flatten()
             .collect();
-        append_options(&mut flags, resolve_wrapper(&inputs, options, "LINKER"));
+        append_options_gen(
+            &inputs,
+            &mut flags,
+            resolve_wrapper(&inputs, options, "LINKER"),
+        );
 
         let mut extra = String::new();
         if inputs
@@ -140,22 +148,26 @@ pub fn link_flag_vars(ctx: &GenCtx, target: &Target, config: &str, language: &st
                     .as_deref(),
             ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
             {
-                append_options(&mut extra, expand_list(&options, false));
+                append_options_gen(&inputs, &mut extra, expand_list(&options, false));
             }
         }
         warning_as_error(&inputs, &mut extra);
         if inputs.ipo_enabled()
             && let Some(options) = inputs.lang_var("LINK_OPTIONS_IPO")
         {
-            append_options(&mut extra, expand_list(&options, false));
+            append_options_gen(&inputs, &mut extra, expand_list(&options, false));
         }
         append_module_definition_flag(&inputs, &mut extra);
-        append(&mut flags, &encode_literal(&extra));
+        append(&mut flags, &encode_literal_gen(&inputs, &extra));
         append_depfile_flag(&inputs, &mut flags);
         if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
             && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
         {
-            append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
+            append_options_gen(
+                &inputs,
+                &mut flags,
+                resolve_wrapper(&inputs, vec![option], "LINKER"),
+            );
         }
     }
 
@@ -223,12 +235,12 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
     // cmMakefileTargetGenerator::GetTargetLinkFlags.
     let mut target_flags = String::new();
     if let Some(value) = inputs.prop("LINK_FLAGS") {
-        append(&mut target_flags, &encode_literal(value));
+        append(&mut target_flags, &encode_literal_gen(&inputs, value));
     }
     if !config.is_empty()
         && let Some(value) = inputs.prop(&format!("LINK_FLAGS_{upper_config}"))
     {
-        append(&mut target_flags, &encode_literal(value));
+        append(&mut target_flags, &encode_literal_gen(&inputs, value));
     }
     let options = inputs
         .usage("LINK_OPTIONS")
@@ -243,7 +255,8 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
         })
         .flatten()
         .collect();
-    append_options(
+    append_options_gen(
+        &inputs,
         &mut target_flags,
         resolve_wrapper(&inputs, options, "LINKER"),
     );
@@ -269,11 +282,11 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
                 .as_deref(),
         ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
         {
-            append_options(&mut extra, expand_list(&options, false));
+            append_options_gen(&inputs, &mut extra, expand_list(&options, false));
         }
     }
     warning_as_error(&inputs, &mut extra);
-    append(&mut target_flags, &encode_literal(&extra));
+    append(&mut target_flags, &encode_literal_gen(&inputs, &extra));
     append_depfile_flag(&inputs, &mut target_flags);
 
     let mut flags = String::new();
@@ -311,7 +324,11 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
         if is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
             && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
         {
-            append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
+            append_options_gen(
+                &inputs,
+                &mut flags,
+                resolve_wrapper(&inputs, vec![option], "LINKER"),
+            );
         }
         append(&mut flags, &target_flags);
     } else {
@@ -329,12 +346,16 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
         && is_on_opt(inputs.prop("LINK_WHAT_YOU_USE"))
         && let Some(option) = inputs.lang_var("LINK_WHAT_YOU_USE_FLAG")
     {
-        append_options(&mut flags, resolve_wrapper(&inputs, vec![option], "LINKER"));
+        append_options_gen(
+            &inputs,
+            &mut flags,
+            resolve_wrapper(&inputs, vec![option], "LINKER"),
+        );
     }
     if inputs.ipo_enabled()
         && let Some(options) = inputs.lang_var("LINK_OPTIONS_IPO")
     {
-        append_options(&mut flags, expand_list(&options, false));
+        append_options_gen(&inputs, &mut flags, expand_list(&options, false));
     }
     flags.trim_end_matches(cmake_space).to_owned()
 }
@@ -380,7 +401,7 @@ pub fn device_link_flag_vars(
             ));
         }
     }
-    let mut encoded = encode_literal(&link_flags);
+    let mut encoded = encode_literal_gen(&inputs, &link_flags);
     for option in device_link_options(&inputs) {
         append(&mut encoded, &option);
     }
@@ -453,14 +474,49 @@ fn creation_flags(inputs: &Flags<'_, '_>) -> String {
     .unwrap_or_default()
 }
 
+fn unix_makefiles_link_script(ctx: &GenCtx) -> bool {
+    ctx.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles")
+}
+
+/// `cmGlobalGenerator::GetEncodedLiteral`: Ninja encodes `$` and newlines;
+/// Unix Makefiles has no additional build-file encoding inside link.txt.
+fn encode_literal_gen(inputs: &Flags<'_, '_>, value: &str) -> String {
+    if unix_makefiles_link_script(inputs.ctx) {
+        value.to_owned()
+    } else {
+        encode_literal(value)
+    }
+}
+
+/// `cmLocalGenerator::AppendFlagEscape` for link options.  Makefile link
+/// scripts are shell scripts (`LinkScriptShell`), unlike Makefile rules or
+/// Ninja statements, so `$` is shell-escaped but not Makefile-doubled.
+fn append_options_gen(
+    inputs: &Flags<'_, '_>,
+    flags: &mut String,
+    options: impl IntoIterator<Item = String>,
+) {
+    if unix_makefiles_link_script(inputs.ctx) {
+        for option in options {
+            append(
+                flags,
+                &crate::outconv::escape_for_shell(&option, crate::outconv::FLAG_IS_UNIX),
+            );
+        }
+    } else {
+        append_options(flags, options);
+    }
+}
+
 fn append_link_variable(inputs: &Flags<'_, '_>, flags: &mut String, value: &str) {
     if inputs.policy(181) == PolicyStatus::New {
-        append_options(
+        append_options_gen(
+            inputs,
             flags,
             resolve_wrapper(inputs, unix_command_line(value), "LINKER"),
         );
     } else {
-        append(flags, &encode_literal(value));
+        append(flags, &encode_literal_gen(inputs, value));
     }
 }
 
@@ -514,7 +570,8 @@ fn warning_as_error(inputs: &Flags<'_, '_>, flags: &mut String) {
                 let options = inputs
                     .lang_var("LINK_OPTIONS_WARNING_AS_ERROR")
                     .unwrap_or_default();
-                append_options(
+                append_options_gen(
+                    inputs,
                     flags,
                     resolve_wrapper(inputs, expand_list(&options, false), "LINKER"),
                 );
@@ -823,7 +880,7 @@ pub(crate) fn codemodel_link_flags(
                 shared.push(' ');
             }
             if !shared.is_empty() {
-                out.push((encode_literal(&shared), Vec::new()));
+                out.push((encode_literal_gen(&inputs, &shared), Vec::new()));
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
                 for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
@@ -894,7 +951,7 @@ pub(crate) fn codemodel_link_flags(
                 raw.push(' ');
             }
             if !raw.is_empty() {
-                out.push((encode_literal(&raw), Vec::new()));
+                out.push((encode_literal_gen(&inputs, &raw), Vec::new()));
             }
             for item in inputs.usage_items("LINK_OPTIONS") {
                 for option in resolve_wrapper(&inputs, vec![item.value.clone()], "LINKER") {
@@ -928,7 +985,7 @@ pub(crate) fn codemodel_link_flags(
                     .as_deref(),
             ) && let Some(options) = inputs.lang_var(&format!("LINK_OPTIONS_{mode}"))
             {
-                append_options(&mut extra, expand_list(&options, false));
+                append_options_gen(&inputs, &mut extra, expand_list(&options, false));
             }
         }
         warning_as_error(&inputs, &mut extra);
@@ -936,11 +993,11 @@ pub(crate) fn codemodel_link_flags(
     if inputs.ipo_enabled()
         && let Some(options) = inputs.lang_var("LINK_OPTIONS_IPO")
     {
-        append_options(&mut extra, expand_list(&options, false));
+        append_options_gen(&inputs, &mut extra, expand_list(&options, false));
     }
     append_module_definition_flag(&inputs, &mut extra);
     if !extra.trim_matches(cmake_space).is_empty() {
-        out.push((encode_literal(&extra), Vec::new()));
+        out.push((encode_literal_gen(&inputs, &extra), Vec::new()));
     }
     (language_flags, out)
 }
