@@ -47,6 +47,14 @@ Focused evidence `/tmp/umf8-checkcmds-out/report.json`: **150/150** cases pass
 across `RunCMake.file` and `RunCMake.Instrumentation`, including the glob
 rerun cases and the make-program instrumentation verification.
 
+CMP0113 custom-command deduplication now follows the upstream dependency-first
+target generation order.  Each directory keeps a persistent visited-command
+set seeded from its direct dependency targets, so NEW policy targets do not
+repeat custom commands already emitted by a dependency while OLD/WARN targets
+retain the legacy repeated rules.  Focused evidence
+`/tmp/umf8-cmpmake-out/report.json`: **28/28** `RunCMake.Make` cases pass,
+including the previously failing `CMP0113-NEW-build` failure-mode test.
+
 
 
 ## Part 7 setup, full sweep, and linker/autogen parity fixes

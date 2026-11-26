@@ -16,6 +16,7 @@ use super::custom;
 use super::flags;
 use super::module_support::ModuleSupport;
 use super::target::{self as gt, ArtifactType, SourceKind};
+use crate::policy::PolicyStatus;
 use crate::state::CustomCommandKind;
 use crate::state::{Target, TargetKind};
 use crate::util::{self, is_on};
@@ -470,6 +471,7 @@ pub struct MakefileGenerator<'a> {
     progress: Vec<(String, TargetProgress)>,
     implicit: HashMap<String, ImplicitDepends>,
     compile_commands: Vec<String>,
+    commands_visited: HashMap<(usize, String), HashSet<(usize, usize)>>,
     tidy_fixes_dirs: BTreeSet<String>,
     tidy_fixes_files: BTreeSet<String>,
 }
@@ -481,6 +483,7 @@ impl<'a> MakefileGenerator<'a> {
             progress: Vec::new(),
             implicit: HashMap::new(),
             compile_commands: Vec::new(),
+            commands_visited: HashMap::new(),
             tidy_fixes_dirs: BTreeSet::new(),
             tidy_fixes_files: BTreeSet::new(),
         }
@@ -518,10 +521,62 @@ impl<'a> MakefileGenerator<'a> {
         self.write_top_makefile();
     }
 
+    fn visit_target_order(
+        &self,
+        key: &str,
+        wanted: &HashSet<String>,
+        visiting: &mut HashSet<String>,
+        emitted: &mut HashSet<String>,
+        ordered: &mut Vec<String>,
+    ) {
+        if emitted.contains(key) || !visiting.insert(key.to_owned()) {
+            return;
+        }
+        if let Some(target) = self.ctx.interp.ext.targets.get(key) {
+            for depend in super::link::target_depends(self.ctx, target).iter() {
+                self.visit_target_order(&depend.key, wanted, visiting, emitted, ordered);
+            }
+        }
+        visiting.remove(key);
+        emitted.insert(key.to_owned());
+        if wanted.contains(key) {
+            ordered.push(key.to_owned());
+        }
+    }
+
+    /// `cmGlobalGenerator::GetLocalGeneratorTargetsInOrder`: target creation
+    /// order, rearranged so direct dependencies are generated first.
+    fn dependency_ordered_keys(&self, keys: &[String]) -> Vec<String> {
+        let wanted: HashSet<String> = keys.iter().cloned().collect();
+        let mut visiting = HashSet::new();
+        let mut emitted = HashSet::new();
+        let mut ordered = Vec::new();
+        for key in keys {
+            self.visit_target_order(key, &wanted, &mut visiting, &mut emitted, &mut ordered);
+        }
+        ordered
+    }
+
+    fn seed_commands_visited(&mut self, dir: usize, key: &str, target: &Target) {
+        let mut seed = HashSet::new();
+        for depend in super::link::target_depends(self.ctx, target).iter() {
+            if let Some(dep) = self.ctx.interp.ext.targets.get(&depend.key)
+                && dep.makefile == dir
+                && let Some(visited) = self.commands_visited.get(&(dir, depend.key.clone()))
+            {
+                seed.extend(visited.iter().copied());
+            }
+        }
+        self.commands_visited
+            .entry((dir, key.to_owned()))
+            .or_default()
+            .extend(seed);
+    }
+
     fn generate_directory(&mut self, dir: usize) {
         self.write_directory_information(dir);
         let keys = self.ctx.interp.makefiles[dir].targets.clone();
-        for key in keys {
+        for key in self.dependency_ordered_keys(&keys) {
             let Some(target) = self.ctx.interp.ext.targets.get(&key) else {
                 continue;
             };
@@ -529,14 +584,15 @@ impl<'a> MakefileGenerator<'a> {
                 continue;
             }
             self.target_mut_progress(target);
+            self.seed_commands_visited(dir, &key, target);
             match target.kind {
                 TargetKind::Executable
                 | TargetKind::StaticLibrary
                 | TargetKind::SharedLibrary
                 | TargetKind::ModuleLibrary
-                | TargetKind::ObjectLibrary => self.write_target(target),
+                | TargetKind::ObjectLibrary => self.write_target(target, &key),
                 TargetKind::InterfaceLibrary | TargetKind::Utility => {
-                    self.write_utility_target(target)
+                    self.write_utility_target(target, &key)
                 }
                 _ => {}
             }
@@ -626,7 +682,7 @@ impl<'a> MakefileGenerator<'a> {
         command
     }
 
-    fn write_target(&mut self, target: &Target) {
+    fn write_target(&mut self, target: &Target, target_key: &str) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let _cur_bin = self.ctx.interp.makefiles[dir].binary_dir.clone();
@@ -706,6 +762,7 @@ impl<'a> MakefileGenerator<'a> {
         let mut custom_outputs = Vec::new();
         let codegen_outputs = self.write_custom_commands(
             target,
+            target_key,
             dir,
             &support_rel_cur,
             &support_rel_top,
@@ -1480,6 +1537,7 @@ impl<'a> MakefileGenerator<'a> {
     fn write_custom_commands(
         &mut self,
         target: &Target,
+        target_key: &str,
         dir: usize,
         support_rel_cur: &str,
         support_rel_top: &str,
@@ -1490,7 +1548,10 @@ impl<'a> MakefileGenerator<'a> {
         let _ = support_rel_cur;
         let mut codegen_outputs = Vec::new();
         let sources = gt::sources(self.ctx, target, &self.ctx.config);
-        let mut visited = std::collections::HashSet::new();
+        let cmp0113_new = crate::policy::index_of("CMP0113").is_some_and(|index| {
+            target.policies.get(index).unwrap_or(PolicyStatus::Warn) == PolicyStatus::New
+        });
+        let mut local_visited = HashSet::new();
         for source in sources
             .iter()
             .filter(|source| source.kind == SourceKind::CustomCommandOutput)
@@ -1499,7 +1560,15 @@ impl<'a> MakefileGenerator<'a> {
             else {
                 continue;
             };
-            if !visited.insert((cc_dir, cc_index)) {
+            if cmp0113_new {
+                let visited = self
+                    .commands_visited
+                    .entry((dir, target_key.to_owned()))
+                    .or_default();
+                if !visited.insert((cc_dir, cc_index)) {
+                    continue;
+                }
+            } else if !local_visited.insert((cc_dir, cc_index)) {
                 continue;
             }
             let (spec, command_implicit_depends) = {
@@ -2940,7 +3009,7 @@ impl<'a> MakefileGenerator<'a> {
         }
     }
 
-    fn write_utility_target(&mut self, target: &Target) {
+    fn write_utility_target(&mut self, target: &Target, target_key: &str) {
         let dir = target.makefile;
         let support = gt::support_directory(self.ctx, target);
         let support_rel_cur = maybe_relative_cur(self.ctx, dir, &support);
@@ -2976,6 +3045,7 @@ impl<'a> MakefileGenerator<'a> {
         let mut implicit = ImplicitDepends::default();
         let codegen_outputs = self.write_custom_commands(
             target,
+            target_key,
             dir,
             &support_rel_cur,
             &support_rel_top,
