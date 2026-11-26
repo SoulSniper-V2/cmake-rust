@@ -1085,15 +1085,24 @@ fn include_directories_impl(
             }
         };
     if is_on_opt(inputs.var("CMAKE_INCLUDE_CURRENT_DIR").as_deref()) {
+        // MoveSystemIncludesToEnd asks IsSystemIncludeDirectory about these
+        // entries too.
+        let is_system = |dir: &str| {
+            inputs
+                .system_include_cache()
+                .binary_search(&dir.to_owned())
+                .is_ok()
+                || target
+                    .system_include_directories
+                    .contains(dir.trim_end_matches('/'))
+        };
         let directory = &ctx.interp.makefiles[target.makefile];
-        emit(
-            (directory.binary_dir.clone(), false, Vec::new(), false),
-            &mut result,
-        );
-        emit(
-            (directory.source_dir.clone(), false, Vec::new(), false),
-            &mut result,
-        );
+        for dir in [&directory.binary_dir, &directory.source_dir] {
+            emit(
+                (dir.clone(), is_system(dir), Vec::new(), false),
+                &mut result,
+            );
+        }
     }
     if is_on_opt(
         inputs

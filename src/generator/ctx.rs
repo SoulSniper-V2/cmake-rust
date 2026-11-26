@@ -870,27 +870,30 @@ impl<'a> GenCtx<'a> {
                 }
             }
         }
-        // cmGlobalGenerator::Generate order: per-directory install rules and
-        // test files, then build export sets, and (back in
-        // cmGlobalNinjaGenerator::Generate) the ninja files last.
-        for result in [
-            super::install::write_install_scripts(self),
-            super::tests::write_test_files(self),
-            super::export::write_build_exports(self),
-        ] {
-            if let Err(error) = result {
-                self.error(Vec::new(), format!("Unable to write build files: {error}"));
-            }
-        }
+        // cmGlobalGenerator::Generate order: each local generator's targets
+        // (link computations and their diagnostics, written into the Ninja
+        // streams), then its install rules and test files; after the loop the
+        // build export sets; then the extra generator.
+        super::install::warn_skipped_install_rules(self);
         {
             // cmGlobalGenerator::Generate runs every local generator and
             // writes TargetDirectories.txt even after an earlier error (for
             // example from an evaluation file); the Ninja generator then
             // leaves its build files unwritten.
+            let report = |result: std::io::Result<()>| {
+                if let Err(error) = result {
+                    self.error(Vec::new(), format!("Unable to write build files: {error}"));
+                }
+            };
             let mut ninja = super::ninja::NinjaGenerator::new(self);
-            if let Err(error) = ninja.generate() {
-                self.error(Vec::new(), format!("Unable to write build files: {error}"));
-            }
+            let result = ninja.generate_with(
+                &mut |dir| {
+                    report(super::install::write_install_script(self, dir));
+                    report(super::tests::write_test_file(self, dir));
+                },
+                &mut || report(super::export::write_build_exports(self)),
+            );
+            report(result);
             // cmGlobalGenerator::Generate finishes by invoking the extra
             // (IDE project file) generator, if one was selected.
             super::extra::generate(self, ninja.global_targets());

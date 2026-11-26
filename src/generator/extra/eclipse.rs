@@ -1049,6 +1049,16 @@ impl<'a, 'b> Eclipse<'a, 'b> {
             if groups_opt.is_none() {
                 let mut groups = self.build_source_groups(dir);
                 self.seed_object_libraries(dir, &mut groups);
+                // `AddFileSetEntries` seeds the makefile's real groups when a
+                // target's sources are first computed, which for every
+                // build-system target happens during Compute (automatic
+                // sources, target depends), before any target's copy of
+                // `makefile->GetSourceGroups()` is taken here.
+                for other in s.targets(dir) {
+                    if crate::generator::link::in_build_system(other) {
+                        self.seed_header_file_sets(other, &mut groups);
+                    }
+                }
                 *groups_opt = Some(groups);
             }
             for target in s.targets(dir) {
@@ -1071,14 +1081,9 @@ impl<'a, 'b> Eclipse<'a, 'b> {
                 if !self.generate_linked_resources {
                     continue; // skip generating the linked resources to the source files
                 }
-                let groups_template =
-                    groups_opt.get_or_insert_with(|| self.build_source_groups(dir));
-                // Upstream copies `makefile->GetSourceGroups()` *before*
-                // `GetSourceFiles` seeds this target's file-set headers into
-                // the makefile's real groups: that seeding only affects
-                // *later* targets' copies.
-                let mut groups = groups_template.clone();
-                self.seed_header_file_sets(target, groups_template);
+                let mut groups = groups_opt
+                    .get_or_insert_with(|| self.build_source_groups(dir))
+                    .clone();
 
                 // get the files from the source lists then add them to the groups
                 let build_type = s.build_type(dir);

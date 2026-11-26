@@ -10,16 +10,23 @@ use crate::policy::PolicyStatus;
 use crate::state::{TargetKind, Test};
 use crate::util::{escape_for_cmake, expand_list, is_on_opt};
 
+#[cfg(test)]
 pub fn write_test_files(ctx: &GenCtx) -> std::io::Result<()> {
-    for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
-        if is_on_opt(ctx.var(index, "CMAKE_TESTING_ENABLED").as_deref()) {
-            let script = test_script(ctx, index);
-            // cmGeneratedFileStream without SetCopyIfDifferent.
-            crate::fsutil::write_generated(
-                &Path::new(&mf.binary_dir).join("CTestTestfile.cmake"),
-                &script,
-            )?;
-        }
+    for index in 0..ctx.interp.makefiles.len() {
+        write_test_file(ctx, index)?;
+    }
+    Ok(())
+}
+
+/// `cmLocalGenerator::GenerateTestFiles` for one directory.
+pub fn write_test_file(ctx: &GenCtx, index: usize) -> std::io::Result<()> {
+    if is_on_opt(ctx.var(index, "CMAKE_TESTING_ENABLED").as_deref()) {
+        let script = test_script(ctx, index);
+        // cmGeneratedFileStream without SetCopyIfDifferent.
+        crate::fsutil::write_generated(
+            &Path::new(&ctx.interp.makefiles[index].binary_dir).join("CTestTestfile.cmake"),
+            &script,
+        )?;
     }
     Ok(())
 }

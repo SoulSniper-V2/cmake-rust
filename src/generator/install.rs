@@ -12,7 +12,18 @@ use crate::util::{
     CompareOp, escape_for_cmake, expand_list, is_full_path, is_on_opt, version_compare,
 };
 
+#[cfg(test)]
 pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
+    warn_skipped_install_rules(ctx);
+    for index in 0..ctx.interp.makefiles.len() {
+        write_install_script(ctx, index)?;
+    }
+    Ok(())
+}
+
+/// `cmGlobalGenerator::AddGlobalTarget_Install`'s warning: install rules
+/// exist but CMAKE_SKIP_INSTALL_RULES is on.
+pub fn warn_skipped_install_rules(ctx: &GenCtx) {
     if ctx.interp.ext.install.enabled
         && is_on_opt(ctx.var(0, "CMAKE_SKIP_INSTALL_RULES").as_deref())
     {
@@ -22,17 +33,21 @@ pub fn write_install_scripts(ctx: &GenCtx) -> std::io::Result<()> {
             "CMAKE_SKIP_INSTALL_RULES was enabled even though installation rules have been specified",
         );
     }
-    for (index, mf) in ctx.interp.makefiles.iter().enumerate() {
-        if is_on_opt(ctx.var(index, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {
-            continue;
-        }
-        let file = format!("{}/cmake_install.cmake", mf.binary_dir);
-        let script = install_script(ctx, index)?;
-        // cmGeneratedFileStream without SetCopyIfDifferent: always rewritten,
-        // so the RERUN_CMAKE outputs are newer than CMakeCache.txt.
-        crate::fsutil::write_generated(Path::new(&file), &script)?;
+}
+
+/// `cmLocalGenerator::GenerateInstallRules` for one directory.
+pub fn write_install_script(ctx: &GenCtx, index: usize) -> std::io::Result<()> {
+    if is_on_opt(ctx.var(index, "CMAKE_SKIP_INSTALL_RULES").as_deref()) {
+        return Ok(());
     }
-    Ok(())
+    let file = format!(
+        "{}/cmake_install.cmake",
+        ctx.interp.makefiles[index].binary_dir
+    );
+    let script = install_script(ctx, index)?;
+    // cmGeneratedFileStream without SetCopyIfDifferent: always rewritten,
+    // so the RERUN_CMAKE outputs are newer than CMakeCache.txt.
+    crate::fsutil::write_generated(Path::new(&file), &script)
 }
 
 /// Writes `CMakeFiles/InstallScripts.json` after a successful generation.

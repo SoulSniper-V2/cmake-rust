@@ -834,7 +834,15 @@ impl<'a> NinjaGenerator<'a> {
         }
     }
 
-    pub fn generate(&mut self) -> std::io::Result<()> {
+    /// `cmGlobalNinjaGenerator::Generate` around `cmGlobalGenerator::Generate`:
+    /// `after_local` runs after each local generator (its install rules and
+    /// test files), `after_locals` once the loop is done (the build export
+    /// sets), before the Ninja generator's own trailing statements.
+    pub fn generate_with(
+        &mut self,
+        after_local: &mut dyn FnMut(usize),
+        after_locals: &mut dyn FnMut(),
+    ) -> std::io::Result<()> {
         let interp = self.ctx.interp;
         self.check_target_properties();
         // Default global targets per directory.
@@ -842,7 +850,9 @@ impl<'a> NinjaGenerator<'a> {
         // Local generators (directories) in creation order.
         for index in 0..interp.makefiles.len() {
             self.generate_local(index);
+            after_local(index);
         }
+        after_locals();
         self.write_assumed_source_dependencies();
         self.stream = Stream::Common;
         self.write_target_aliases();
