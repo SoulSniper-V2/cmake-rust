@@ -2831,6 +2831,8 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
     /// non-imported linked targets with Fortran sources that build before
     /// this target, as (support-directory, forward) entries in link order.
     fn fortran_linked_target_dirs(&self, target: &Target) -> Vec<(String, bool)> {
+        let language = gt::linker_language(self.ctx, target, &self.ctx.config);
+        let _ = super::link::link_information(self.ctx, target, &self.ctx.config, &language);
         if !self
             .ctx
             .interp

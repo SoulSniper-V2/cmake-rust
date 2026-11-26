@@ -2,17 +2,16 @@
 
 Branch: `t3/unix-makefiles-10`
 
-Most recent completed full Unix Makefiles projdiff lane after the Batch 9 echo-escaping correction: **151/174** (`/tmp/umf10-projdiff-umf-postecho.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-full/report.json`).  Ninja lane must remain green.
+Most recent completed full Unix Makefiles projdiff lane after the link-information correction: **153/174** (`/tmp/umf10-projdiff-umf-final.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-full/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: autogen, CUDA, C++ modules,
-install/platform variants, ASM dependency scanning, object-library corners,
-PCH/unity, Fortran modules, response files, Makefile2/progress/DependInfo
-ordering, and try_compile nested logs.  `link/items` still has target-specific
-link model differences.  `install/subdir_dest` is down to object-file `./`
-normalization in `sub/cmake_install.cmake`.
+Known remaining projdiff failure groups: autogen clean lists, CUDA,
+install/platform variants (Darwin, MSVC, and clang-cl), ASM linker-language
+details, ISPC, Makefile2/progress/DependInfo ordering, response-file/PCH
+corners, and try-compile LTO probe link scripts.  `link/items` and
+`export/shared_deps` are down to Makefile2 direct-dependency ordering.
 
-Evidence still pending: zlib byte parity/build and Kitware CMake
-self-configure/build with Unix Makefiles.
+Kitware self-configure and self-build evidence is below; the self-built CTest
+run is in progress at this checkpoint.
 
 ## Part 10 inherited Batch 9 validation
 
@@ -67,6 +66,38 @@ linker-language details, autogen clean lists, Makefile2-only dependency-edge
 differences (`export/shared_deps`, `link/items`, `ninja/response_file`),
 LTO probe link scripts in `targets/kitchen_sink`, and the missing
 `link/static_errors` diagnostics.
+
+Makefile DependInfo generation now computes the target's memoized link
+information unconditionally, matching the upstream side effect of
+`cmCommonTargetGenerator::GetLinkedTargetDirectories` even when no Fortran or
+C++20 module consumer uses the result.  This surfaces static-library
+LINK_LIBRARY/LINK_GROUP validation exactly in `link/static_errors`.  The
+Makefile link-line caller now uses that same memoized link information instead
+of recomputing it, so generation diagnostics are not duplicated.  Focused
+evidence: `link/static_errors` passes and `link/items` is reduced to the
+pre-existing Makefile2 ordering difference (`/tmp/umf10-memo-focus.log`).
+Gate evidence for this correction: `cargo fmt --check` clean, clippy clean,
+**941/941** Rust tests, difftest **1283/1283**, clitest **538/538**, and Ninja
+projdiff **174/174** (`/tmp/umf10-memo-gates.log`).  The final full Unix
+Makefiles projdiff lane is **153/174** (`/tmp/umf10-projdiff-umf-final.log`).
+
+Kitware CMake 4.1.0 self-configure with Unix Makefiles succeeds in both oracle
+and candidate (`configure oracle=0 candidate=0`) with 1210/1207 tree files and
+21 normalized differences (`/tmp/umf10-kitware-umf-treediff.log`, machine
+summary `/tmp/umf10-kitware-umf-treediff.json`, work `/tmp/umf10-kitware-umf`).
+The remaining self-configure differences are CMakeConfigureLog/CMakeOutput log
+text, missing CMakeRuleHashes and nested-check dependency cache artifacts,
+Makefile.cmake module dependency ordering, nested CheckCurses dependency
+details, and `Source/../bin` versus `bin` makefile target spelling.  The
+candidate-generated tree then completes `make -j6` self-build successfully
+(`/tmp/umf10-kitware-umf-selfbuild.log`, rc=0).
+
+Pinned zlib v1.3.1 Unix Makefiles validation passes end to end
+(`/tmp/umf10-zlib-umf.log`, evidence tree `/tmp/umf10-zlib-umf`): oracle and
+candidate configure and build, both CTest runs pass example/example64, 34
+normalized compile commands match, install file/symlink entries/text/symbol
+sets match, all four minigzip encode/decode pairings match, zconf.h is byte
+identical, and second make runs perform no compile/link actions.
 
 ## Part 8 include-regex checkpoint
 

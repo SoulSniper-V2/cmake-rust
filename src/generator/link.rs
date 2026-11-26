@@ -93,7 +93,7 @@ pub(crate) fn makefile_link_line(
         link_script_shell: true,
         ..Query::new(ctx, config, language)
     };
-    information::compute(&query, target)
+    link_information(ctx, target, config, language)
         .map(|info| information::line(&query, target, &info))
         .unwrap_or_default()
 }
