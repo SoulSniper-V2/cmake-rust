@@ -52,6 +52,16 @@ LINK_LIBRARY/LINK_GROUP/LINKER-prefix expansion, Makefile target collision
 warnings in BuildDepends, Byproducts cascade/not-reached cases,
 instrumentation/launcher/lint integration, and C++ module cases.
 
+Makefile custom-command launchers now expand `<OUTPUT>`, `<TARGET_NAME>`,
+`<CMAKE_CURRENT_BINARY_DIR>`, and `<ROLE>` before use, eliminating the literal
+`<ROLE>` shell redirection failure in Instrumentation.  Focused lane:
+`/tmp/umf5-runcmake-instrprobe` improved Instrumentation from 26 failures to
+5 verification-only failures (44/50 pass).  Compile commands now prepend the
+compiler launcher, and generated Makefile/build.make/Makefile2 headers emit
+`VERBOSE = 1` when `CMAKE_VERBOSE_MAKEFILE` is enabled.  Focused lane
+`/tmp/umf5-runcmake-compilerprobe`: CompilerLauncher 0 failures and
+LinkerLauncher 0 failures; ClangTidy still has 8 lint-integration failures.
+
 Unix Makefiles now emit CPack `package`/`package_source` local rules and
 per-directory `TargetDirectories.txt` entries when the generated CPack config
 files exist.  Package commands omit the `cd <root> &&` prefix in the root

@@ -111,6 +111,18 @@ fn makefile_target_version(target: &Target) -> (String, String) {
     (major.to_string(), minor.to_string())
 }
 
+fn apply_verbose_default(ctx: &GenCtx<'_>, out: &mut String) {
+    if ctx
+        .var(0, "CMAKE_VERBOSE_MAKEFILE")
+        .is_some_and(|v| is_on(&v))
+    {
+        *out = out.replace(
+            ".SUFFIXES: .hpux_make_needs_suffix_list\n\n",
+            ".SUFFIXES: .hpux_make_needs_suffix_list\n\n# Produce verbose output by default.\nVERBOSE = 1\n\n",
+        );
+    }
+}
+
 fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> String {
     ctx.var(
         target.makefile,
@@ -480,6 +492,7 @@ impl<'a> MakefileGenerator<'a> {
         let mut impl_depends = ImplicitDepends::default();
         let sources = gt::sources(self.ctx, target, &config);
         let mut build = build_file_header("");
+        apply_verbose_default(self.ctx, &mut build);
         build = build
             .replace(
                 "@CMAKE_COMMAND@",
@@ -862,6 +875,10 @@ impl<'a> MakefileGenerator<'a> {
                 shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
                 shell_path(self.ctx, &prefix),
             );
+        }
+        let launcher = flags::compiler_launcher(self.ctx, target, lang);
+        if !launcher.is_empty() {
+            command = format!("{launcher}{command}");
         }
         let lang_can_export = matches!(
             lang.as_str(),
@@ -1289,7 +1306,31 @@ impl<'a> MakefileGenerator<'a> {
                 .or_else(|| self.ctx.interp.global_props.get("RULE_LAUNCH_CUSTOM"))
                 .filter(|value| !value.is_empty());
             match value {
-                Some(value) => format!("{} ", value.replace("<TARGET_NAME>", &target.name)),
+                Some(value) => {
+                    let binary_dir = &self.ctx.interp.makefiles[makefile].binary_dir;
+                    let output = evaluated
+                        .outputs
+                        .iter()
+                        .map(|output| {
+                            let path = if evaluated.working_directory.is_empty() {
+                                maybe_relative_cur(self.ctx, makefile, output)
+                            } else {
+                                output.clone()
+                            };
+                            shell_path(self.ctx, &path)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let expanded = value
+                        .replace("<OUTPUT>", &output)
+                        .replace("<TARGET_NAME>", &target.name)
+                        .replace(
+                            "<CMAKE_CURRENT_BINARY_DIR>",
+                            &shell_path(self.ctx, binary_dir),
+                        )
+                        .replace("<ROLE>", "custom");
+                    format!("{} ", expanded)
+                }
                 None => String::new(),
             }
         };
@@ -2503,6 +2544,7 @@ impl<'a> MakefileGenerator<'a> {
             support_rel_cur
         );
         let mut build = build_file_header("");
+        apply_verbose_default(self.ctx, &mut build);
         build = build
             .replace(
                 "@CMAKE_COMMAND@",
@@ -3049,6 +3091,7 @@ impl<'a> MakefileGenerator<'a> {
 
     fn write_main_makefile2(&self) {
         let mut out = build_file_header("");
+        apply_verbose_default(self.ctx, &mut out);
         out = out
             .replace("# Delete rule output on recipe failure.\n.DELETE_ON_ERROR:\n\n", "# Default target executed when no arguments are given to make.\ndefault_target: all\n.PHONY : default_target\n\n")
             .replace("@CMAKE_COMMAND@", &shell_path(self.ctx, &self.ctx.interp.cmake_command))
@@ -3264,6 +3307,7 @@ impl<'a> MakefileGenerator<'a> {
 
     fn write_local_makefile(&self, dir: usize) {
         let mut out = build_file_header("");
+        apply_verbose_default(self.ctx, &mut out);
         out = out
             .replace("# Delete rule output on recipe failure.\n.DELETE_ON_ERROR:\n\n", "# Default target executed when no arguments are given to make.\ndefault_target: all\n.PHONY : default_target\n\n# Allow only one \"make -f Makefile2\" at a time, but pass parallelism.\n.NOTPARALLEL:\n\n")
             .replace("@CMAKE_COMMAND@", &shell_path(self.ctx, &self.ctx.interp.cmake_command))
