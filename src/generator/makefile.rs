@@ -465,7 +465,9 @@ impl<'a> MakefileGenerator<'a> {
                 | TargetKind::SharedLibrary
                 | TargetKind::ModuleLibrary
                 | TargetKind::ObjectLibrary => self.write_target(target),
-                TargetKind::Utility => self.write_utility_target(target),
+                TargetKind::InterfaceLibrary | TargetKind::Utility => {
+                    self.write_utility_target(target)
+                }
                 _ => {}
             }
         }
@@ -2597,7 +2599,10 @@ impl<'a> MakefileGenerator<'a> {
         let dir = target.makefile;
         let mf = &self.ctx.interp.makefiles[dir];
         let names = gt::names(self.ctx, target, &config);
-        let directory = if matches!(target.kind, TargetKind::Utility | TargetKind::ObjectLibrary) {
+        let directory = if matches!(
+            target.kind,
+            TargetKind::Utility | TargetKind::ObjectLibrary | TargetKind::InterfaceLibrary
+        ) {
             String::new()
         } else {
             gt::directory(self.ctx, target, &config, ArtifactType::Runtime)
@@ -2701,7 +2706,10 @@ impl<'a> MakefileGenerator<'a> {
             {
                 artifacts.push(format!("{}/CMakeFiles/{}", mf.binary_dir, target.name));
             }
-        } else if target.kind != TargetKind::ObjectLibrary {
+        } else if !matches!(
+            target.kind,
+            TargetKind::ObjectLibrary | TargetKind::InterfaceLibrary
+        ) {
             artifacts.push(format!("{directory}/{}", names.pdb));
             for name in [
                 &names.output,
@@ -3186,6 +3194,7 @@ impl<'a> MakefileGenerator<'a> {
                                 | TargetKind::SharedLibrary
                                 | TargetKind::ModuleLibrary
                                 | TargetKind::ObjectLibrary
+                                | TargetKind::InterfaceLibrary
                                 | TargetKind::Utility
                         )
                     {
@@ -3272,6 +3281,7 @@ impl<'a> MakefileGenerator<'a> {
                             | TargetKind::SharedLibrary
                             | TargetKind::ModuleLibrary
                             | TargetKind::ObjectLibrary
+                            | TargetKind::InterfaceLibrary
                             | TargetKind::Utility
                     )
                 {
@@ -3340,6 +3350,7 @@ impl<'a> MakefileGenerator<'a> {
                                 | TargetKind::SharedLibrary
                                 | TargetKind::ModuleLibrary
                                 | TargetKind::ObjectLibrary
+                                | TargetKind::InterfaceLibrary
                                 | TargetKind::Utility
                         )
                     {
@@ -3909,6 +3920,7 @@ impl<'a> MakefileGenerator<'a> {
                             | TargetKind::SharedLibrary
                             | TargetKind::ModuleLibrary
                             | TargetKind::ObjectLibrary
+                            | TargetKind::InterfaceLibrary
                             | TargetKind::Utility
                     ) && (dir == 0 || t.makefile == dir)
                     {

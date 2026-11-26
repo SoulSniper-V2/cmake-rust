@@ -27,6 +27,30 @@ gates before the merge amendment: `cargo fmt --check` clean, clippy clean,
 `/tmp/umf6-merge-difftest.log`, `/tmp/umf6-merge-clitest.log`, and
 `/tmp/umf6-merge-projdiff-ninja.log`.
 
+
+## Part 6 RunCMake baseline and interface-library rules
+
+Fresh merged-branch Unix Makefiles RunCMake lane: **5463/5582 cases passed**
+(67 failed, 52 not reached; development lane, audit disabled, one repetition),
+evidence `/tmp/umf6-runcmake-baseline/report.json`, driver log
+`/tmp/umf6-runcmake-baseline-driver.log`, suite/failure triage
+`/tmp/umf6-runcmake-buckets.txt`.  Largest failure groups are GoogleTest
+discovery (20), InterfaceLibrary convenience rules (6), Instrumentation
+snippet verification (5), BuildDepends freshness (4), linker-aware lint/
+link-language cases, Make target messages, and add_subdirectory exclusion/
+progress behavior.  Byproducts remains the dominant not-reached cascade (46).
+
+Unix Makefiles now treats an interface library with sources/file sets as a
+build-system utility-style target, matching `cmMakefileTargetGenerator::New`:
+it emits `CMakeFiles/<iface>.dir/build.make`, `DependInfo.cmake`, clean and
+progress files, Makefile2 all/rule/codegen/clean convenience rules, local
+Makefile convenience/fast rules, `TargetDirectories.txt` entries, and
+`Makefile.cmake` dependency-info entries.  Interface libraries do not gain
+nominal linked artifacts in their clean scripts.  Focused RunCMake evidence:
+`/tmp/umf6-runcmake-ifaceprobe/report.json` passes 25/25
+(`driver log /tmp/umf6-runcmake-ifaceprobe-driver.log`); manual scratch
+evidence is under `/tmp/umf6-iface-*`.
+
 ## Round 5 lane A: exact Makefile link whitespace and zlib end-to-end
 
 Root-caused and fixed exact `<FLAGS> <LINK_FLAGS>` whitespace handling in
