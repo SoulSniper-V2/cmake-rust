@@ -141,6 +141,11 @@ impl Flags<'_, '_> {
                     Vec::new()
                 }
             };
+        let items = if property == "INCLUDE_DIRECTORIES" {
+            self.add_ispc_include_directories(items)
+        } else {
+            items
+        };
         if property == "INCLUDE_DIRECTORIES"
             && expand_list(
                 &self
@@ -172,6 +177,85 @@ impl Flags<'_, '_> {
         items
     }
 
+    /// The ISPC parts of `cmGeneratorTarget::GetIncludeDirectories` (for
+    /// languages other than Swift and Fortran): a target compiling ISPC
+    /// sources sees its own header directory first (not deduplicated), and
+    /// each directly linked ISPC target's header directories come after the
+    /// target's own entries, deduplicated with everything else.
+    fn add_ispc_include_directories(
+        &self,
+        items: Vec<crate::genex::UsageItem>,
+    ) -> Vec<crate::genex::UsageItem> {
+        if !super::target::can_compile_sources(self.target)
+            || matches!(self.lang, "Swift" | "Fortran")
+            || !self
+                .ctx
+                .interp
+                .langs
+                .enabled
+                .iter()
+                .any(|lang| lang == "ISPC")
+        {
+            return items;
+        }
+        let compiles_ispc = {
+            let configs = if self.ctx.multi_config {
+                self.ctx.configs.clone()
+            } else {
+                vec![self.ctx.config.clone()]
+            };
+            configs.iter().any(|config| {
+                super::target::sources(&self.ctx.for_config(config), self.target, config)
+                    .iter()
+                    .any(|source| source.language == "ISPC")
+            })
+        };
+        let deps = super::link::ispc_dependency_include_dirs(self.ctx, self.target, self.config);
+        if !compiles_ispc && deps.is_empty() {
+            return items;
+        }
+        let item = |value: String, link_item: Option<String>| crate::genex::UsageItem {
+            value,
+            link_item,
+            backtrace: None,
+            system: false,
+            raw: false,
+        };
+        let mut result = Vec::new();
+        if compiles_ispc {
+            let dir = match self.target.props.get("ISPC_HEADER_DIRECTORY") {
+                Some(dir) => dir.to_owned(),
+                None => super::target::object_directory(self.ctx, self.target, self.config),
+            };
+            let mut own = item(dir, None);
+            own.raw = true;
+            result.push(own);
+        }
+        let own_end = items
+            .iter()
+            .position(|entry| entry.link_item.is_some())
+            .unwrap_or(items.len());
+        let mut seen: std::collections::HashSet<String> =
+            items[..own_end].iter().map(|e| e.value.clone()).collect();
+        let mut rest = Vec::new();
+        for (link, dirs) in deps {
+            for dir in dirs {
+                if seen.insert(dir.clone()) {
+                    rest.push(item(dir, Some(link.clone())));
+                }
+            }
+        }
+        let mut items = items;
+        let tail = items.split_off(own_end);
+        result.extend(items);
+        result.extend(rest);
+        result.extend(
+            tail.into_iter()
+                .filter(|entry| seen.insert(entry.value.clone())),
+        );
+        result
+    }
+
     /// `cmGeneratorTarget::IsSystemIncludeDirectory`'s sorted cache
     /// (`AddSystemIncludeCacheKey`) for this target, configuration and
     /// language.
@@ -195,6 +279,7 @@ impl Flags<'_, '_> {
                 link_item: None,
                 backtrace: None,
                 system: true,
+                raw: false,
             })
             .collect();
         self.ctx
@@ -278,6 +363,8 @@ impl Flags<'_, '_> {
             self.add_cuda_toolkit_flags(flags);
         } else if self.lang == "HIP" {
             self.add_hip_architecture_flags(flags, linking);
+        } else if self.lang == "ISPC" {
+            self.add_ispc_target_flags(flags);
         }
 
         // CMAKE_CLANG_VFS_OVERLAY for Clang compilers.
@@ -580,6 +667,21 @@ impl Flags<'_, '_> {
             if !root.is_empty() {
                 flags.push_str(" --cuda-path=");
                 flags.push_str(&shell_with_make_vars(&root));
+            }
+        }
+    }
+
+    /// `cmGeneratorTarget::AddISPCTargetFlags`.
+    fn add_ispc_target_flags(&self, flags: &mut String) {
+        let arch = self.prop("ISPC_INSTRUCTION_SETS").unwrap_or_default();
+        // If ISPC_INSTRUCTION_SETS is false no architectures are added.
+        if crate::util::is_off(arch) {
+            return;
+        }
+        if self.var("CMAKE_ISPC_COMPILER_ID").as_deref() == Some("Intel") {
+            let targets = expand_list(arch, false);
+            if !targets.is_empty() {
+                flags.push_str(&format!(" --target={}", targets.join(",")));
             }
         }
     }

@@ -902,12 +902,21 @@ pub(crate) fn object_subdir(tgt: &Target, config: &str) -> String {
     }
 }
 
-pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
+/// The object names of `cmGeneratorTarget::GetObjectSources`.
+pub(crate) fn object_source_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
     target::sources(ctx, tgt, &ctx.config)
         .iter()
         .filter(|source| matches!(source.kind, target::SourceKind::ObjectSource))
         .map(|source| source.object_name.clone())
         .collect()
+}
+
+/// `cmGeneratorTarget::GetTargetObjectNames`: the object sources' names
+/// followed by the extra ISPC objects.
+pub(crate) fn object_names(ctx: &GenCtx, tgt: &Target) -> Vec<String> {
+    let mut names = object_source_names(ctx, tgt);
+    names.extend(super::ispc::target_object_names(ctx, tgt, &ctx.config));
+    names
 }
 
 /// `cmInstallTargetGenerator::GetFiles`: the `file(INSTALL)` type, extra

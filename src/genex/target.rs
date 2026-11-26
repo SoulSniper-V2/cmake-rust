@@ -21,6 +21,9 @@ pub struct UsageItem {
     /// cmGeneratorTarget::IsSystemIncludeDirectory. Only set for
     /// INCLUDE_DIRECTORIES.
     pub system: bool,
+    /// Kept verbatim by the include-directory processing (an entry
+    /// cmGeneratorTarget::GetIncludeDirectories adds itself).
+    pub raw: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -821,6 +824,7 @@ impl Evaluator<'_, '_> {
                     link_item: None,
                     backtrace: None,
                     system: false,
+                    raw: false,
                 });
             }
             self.ispc_implicit_includes(target, &mut entries)?;
@@ -948,6 +952,7 @@ impl Evaluator<'_, '_> {
                         link_item: entry.link_item.clone(),
                         backtrace: entry.backtrace,
                         system: false,
+                        raw: false,
                     });
                 }
             }
@@ -995,6 +1000,7 @@ impl Evaluator<'_, '_> {
                         link_item: entry.link_item.clone(),
                         backtrace: entry.backtrace,
                         system: false,
+                        raw: false,
                     });
                 }
             }
@@ -1238,6 +1244,7 @@ fn process_options(entries: &[Entry], result: &mut Vec<UsageItem>, shell: bool, 
             link_item: entry.link_item.clone(),
             backtrace: entry.backtrace,
             system: false,
+            raw: false,
         };
         for option in &entry.values {
             if device && (option == DL_BEGIN || option == DL_END) {

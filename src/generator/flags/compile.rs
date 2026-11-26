@@ -595,7 +595,15 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     };
 
     let mut directories = Vec::new();
-    for dir in inputs.usage("INCLUDE_DIRECTORIES") {
+    for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
+        // The target's own ISPC header directory is used verbatim.
+        if item.raw {
+            if !is_excluded(&item.value) {
+                directories.push(item.value);
+            }
+            continue;
+        }
+        let dir = item.value;
         if !Path::new(&dir).is_absolute() && !crate::util::is_off(&dir) {
             inputs.local_error(format!(
                 "Found relative path while evaluating include directories of \"{}\":\n  \"{dir}\"\n",
@@ -1044,10 +1052,14 @@ fn include_directories_impl(
     // (path, is_system, backtrace, is_user_entry)
     let mut users: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
     for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
-        if !Path::new(&item.value).is_absolute() && !crate::util::is_off(&item.value) {
+        if !item.raw && !Path::new(&item.value).is_absolute() && !crate::util::is_off(&item.value) {
             break;
         }
-        let dir = unix_slashes(&item.value);
+        let dir = if item.raw {
+            item.value.clone()
+        } else {
+            unix_slashes(&item.value)
+        };
         let system = item.system
             || inputs.system_include_cache().binary_search(&dir).is_ok()
             || target

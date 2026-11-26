@@ -216,6 +216,61 @@ pub(super) fn compile_implementation_closure<'i>(
     closure
 }
 
+/// `AddLangSpecificImplicitIncludeDirectories(target, "ISPC", config,
+/// "ISPC_HEADER_DIRECTORY", OBJECT, ...)`: for each directly linked
+/// (UseTo::Compile) in-build-system target that compiles ISPC, its header
+/// directory, then those of its link interface's ISPC targets. Returns
+/// (link item text, directories) per library.
+pub(crate) fn ispc_dependency_include_dirs(
+    ctx: &GenCtx,
+    head: &Target,
+    config: &str,
+) -> Vec<(String, Vec<String>)> {
+    let query = Query {
+        compile_usage: true,
+        ..Query::new(ctx, config, "")
+    };
+    let compiles_ispc = |target: &Target| {
+        let configs = if ctx.multi_config {
+            ctx.configs.clone()
+        } else {
+            vec![ctx.config.clone()]
+        };
+        configs.iter().any(|config| {
+            target::sources(&ctx.for_config(config), target, config)
+                .iter()
+                .any(|source| source.language == "ISPC")
+        })
+    };
+    let mut result = Vec::new();
+    for item in implementation(&query, head) {
+        let Some(dependency) = item.target else {
+            continue;
+        };
+        if !target_graph::in_build_system(dependency) || !compiles_ispc(dependency) {
+            continue;
+        }
+        let mut dirs = vec![match dependency.props.get("ISPC_HEADER_DIRECTORY") {
+            Some(dir) => dir.to_owned(),
+            None => target::object_directory(ctx, dependency, config),
+        }];
+        for lib in interface(&query, dependency, head).libraries {
+            if let Some(inner) = lib.target
+                && compiles_ispc(inner)
+            {
+                let value = inner.props.get("ISPC_HEADER_DIRECTORY").unwrap_or_default();
+                dirs.push(if value.is_empty() {
+                    target::support_directory(ctx, inner)
+                } else {
+                    value.to_owned()
+                });
+            }
+        }
+        result.push((item.text, dirs));
+    }
+    result
+}
+
 /// The targets of `GetLinkImplementationLibraries(config, UseTo::Link)`.
 pub(super) fn implementation_library_targets<'i>(
     ctx: &GenCtx<'i>,

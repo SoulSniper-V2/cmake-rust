@@ -109,7 +109,7 @@ Each of these fails with an explicit error, never silently:
 
 - The Unix Makefiles, Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
 - XCFramework linking, which needs macOS `plutil`.
-- ISPC and Swift sources in the Ninja generator.
+- Swift sources in the Ninja generator (ISPC is supported: headers, per-instruction-set objects, and their `$<TARGET_OBJECTS>` and install entries).
 
 Two upstream outputs are ordered by pointer or hash value and can't be reproduced exactly: the file-API `dependencies` order, and the order of some reserved-name build-database errors.
 

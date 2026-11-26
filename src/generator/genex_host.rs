@@ -309,6 +309,11 @@ impl GenexHost for CtxHost<'_, '_> {
                 .iter()
                 .filter(|source| source.kind == SourceKind::ObjectSource)
                 .map(|source| format!("{dir}{}", source.object_name))
+                .chain(
+                    super::ispc::target_object_names(self.ctx, target, config)
+                        .into_iter()
+                        .map(|name| format!("{dir}{name}")),
+                )
                 .collect()
         };
         // cmMakefile::AddTargetObject in the referencing directory.

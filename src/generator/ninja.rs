@@ -694,6 +694,16 @@ impl<'a> NinjaGenerator<'a> {
                 self.config.clone()
             };
             self.append_target_outputs_cfg(dep, &mut outs, &config, depend);
+            // The ISPC headers and extra objects the dependency generates.
+            if gt::can_compile_sources(dep) {
+                let ctx = self.ctx.for_config(&config);
+                for path in super::ispc::generated_headers(&ctx, dep, &config)
+                    .into_iter()
+                    .chain(super::ispc::generated_objects(&ctx, dep, &config))
+                {
+                    outs.push(self.ninja_path(&path));
+                }
+            }
         }
         // cmGlobalNinjaGenerator::AppendTargetDepends sorts but keeps
         // duplicates.
@@ -2650,10 +2660,10 @@ impl<'a> NinjaGenerator<'a> {
         if self.has_rule(&name) {
             return;
         }
-        // These languages need generator paths (ISPC headers and object
-        // variants, Swift module/library builds) that are not ported; say so
-        // instead of writing a rule with unexpanded placeholders.
-        if matches!(language, "ISPC" | "Swift") {
+        // Swift needs generator paths (module and library builds) that are
+        // not ported; say so instead of writing a rule with unexpanded
+        // placeholders.
+        if language == "Swift" {
             self.ctx.error(
                 target.backtrace.clone(),
                 format!(
@@ -2766,6 +2776,7 @@ impl<'a> NinjaGenerator<'a> {
             ("FLAGS", flags_text),
             ("DEP_FILE", rule.depfile.clone()),
             ("DEP_TARGET", "$out".into()),
+            ("ISPC_HEADER", "$ISPC_HEADER_FILE".into()),
             (
                 "CUDA_COMPILE_MODE",
                 if language == "CUDA" {
@@ -3342,6 +3353,45 @@ impl<'a> NinjaGenerator<'a> {
                 }
             }
             build.rsp_file = format!("{object}.rsp");
+            if source.language == "ISPC" {
+                // The header (and, with several instruction sets, the extra
+                // objects) come out of the same compilation.
+                let suffix = target.props.get("ISPC_HEADER_SUFFIX").unwrap_or_default();
+                let mut header_dir = gt::object_directory(&self.ctx, target, &config);
+                if let Some(dir) = target.props.get("ISPC_HEADER_DIRECTORY") {
+                    header_dir = format!("{}/{dir}", self.ctx.interp.makefiles[0].binary_dir);
+                }
+                let header = self.ninja_path(&format!(
+                    "{header_dir}/{}{suffix}",
+                    super::ispc::source_stem(&source.object_name)
+                ));
+                build.implicit_outs.push(header.clone());
+                self.additional_clean_files
+                    .entry(config.clone())
+                    .or_default()
+                    .insert(header.clone());
+                let suffixes = super::ispc::object_suffixes(target);
+                if suffixes.len() > 1 {
+                    let root = gt::object_directory(&self.ctx, target, &config);
+                    for extra in super::ispc::extra_objects(&source.object_name, &root, &suffixes) {
+                        let extra = self.ninja_path(&extra);
+                        build.implicit_outs.push(extra.clone());
+                        self.additional_clean_files
+                            .entry(config.clone())
+                            .or_default()
+                            .insert(extra);
+                    }
+                }
+                build
+                    .variables
+                    .insert("ISPC_HEADER_FILE".into(), self.shell(&header));
+            } else {
+                let headers = super::ispc::generated_headers(&self.ctx, target, &config);
+                for header in headers {
+                    let header = self.ninja_path(&header);
+                    build.order_only_deps.push(header);
+                }
+            }
             let limit = self.compile_command_limit(target, &source.language);
             write_build(&mut out, &build, limit);
             if let Some(outputs) = source_props.get("OBJECT_OUTPUTS") {
@@ -4496,6 +4546,11 @@ impl<'a> NinjaGenerator<'a> {
         // without cross-config builds).
         let mut clean_outputs = Vec::new();
         build.explicit_deps = objects.to_vec();
+        // The extra per-instruction-set ISPC objects follow the objects.
+        for extra in super::ispc::generated_objects(&self.ctx, target, &config) {
+            let extra = self.ninja_path(&extra);
+            build.explicit_deps.push(extra);
+        }
         if let Some(device_link_object) = device_link_object {
             if first_for_config {
                 clean_outputs.push(device_link_object.clone());

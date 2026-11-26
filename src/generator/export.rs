@@ -1446,7 +1446,7 @@ impl<'a, 'b> Exporter<'a, 'b> {
             if tgt.kind == TargetKind::ObjectLibrary {
                 let prop = format!("IMPORTED_OBJECTS{suffix}");
                 let base = target::object_directory(self.ctx, tgt, config);
-                let files: Vec<String> = object_names(self.ctx, tgt)
+                let files: Vec<String> = super::install::object_source_names(self.ctx, tgt)
                     .iter()
                     .map(|name| format!("{base}{name}"))
                     .collect();
