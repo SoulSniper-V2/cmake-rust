@@ -201,6 +201,33 @@ class Gen:
             t = rng.choice([x for x in self.targets if x[1] != "INTERFACE"] or self.targets)
             scope = "INTERFACE" if t[1] == "INTERFACE" else "PUBLIC"
             self.dirs[t[2]].append(f"target_sources({t[0]} {scope} FILE_SET HEADERS BASE_DIRS ${{CMAKE_CURRENT_SOURCE_DIR}}/inc FILES ${{CMAKE_CURRENT_SOURCE_DIR}}/inc/x.h)")
+        # Features the extra generators read: source groups (creation order,
+        # regex precedence, nesting), unlisted headers next to sources,
+        # current-dir and directory include paths, and output paths with
+        # "." components.
+        if self.targets and rng.random() < 0.35:
+            d = rng.choice(sorted(self.dirs))
+            names = ["Zeta", "Alpha", "Mid\\\\Inner", "Beta"]
+            rng.shuffle(names)
+            local = [f.split("/")[-1] for f in self.files if (f.rsplit("/", 1)[0] if "/" in f else "") == d and f.endswith((".c", ".cpp"))]
+            for n in names[: rng.randint(1, 4)]:
+                if local and rng.random() < 0.6:
+                    self.dirs[d].append(f"source_group(\"{n}\" FILES {rng.choice(local)})")
+                else:
+                    self.dirs[d].append(f"source_group(\"{n}\" REGULAR_EXPRESSION \"{rng.choice(['[.]c$', '_b[.]c$', 'x[.]h$', '^.*$'])}\")")
+        for (name, kind, d) in self.targets:
+            if kind != "INTERFACE" and rng.random() < 0.15:
+                ext = rng.choice(["h", "hpp", "hh", "hxx", "txx"])
+                self.files[f"{d}/{name}.{ext}" if d else f"{name}.{ext}"] = "\n"
+        if rng.random() < 0.3:
+            d = rng.choice(sorted(self.dirs))
+            self.dirs[d].insert(0, "set(CMAKE_INCLUDE_CURRENT_DIR ON)")
+            if rng.random() < 0.5:
+                self.dirs[d].insert(1, "include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)")
+        if rng.random() < 0.2:
+            root.insert(0, rng.choice(["set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/./bin)",
+                                       "set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib/../libs)",
+                                       "set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR})"]))
         installable = [t for t in self.targets if t[1] in ("STATIC", "SHARED", "INTERFACE", "EXE") and t[2] == ""]
         if installable and rng.random() < 0.4:
             names = " ".join(t[0] for t in installable)
@@ -225,7 +252,10 @@ def make_case(seed, index, cxx=False):
     # Subdirectories come first so the root can link their targets.
     files["CMakeLists.txt"] = head + "".join(f"add_subdirectory({d})\n" for d in subdirs) + body + "\n"
     for d in subdirs:
-        files[f"{d}/CMakeLists.txt"] = "\n".join(gen.dirs[d]) + "\n"
+        # Sometimes a sub-project (its own project(): extra generators then
+        # write a project file for it too).
+        sub_project = f"project({d}p C)\n" if rng.random() < 0.3 else ""
+        files[f"{d}/CMakeLists.txt"] = sub_project + "\n".join(gen.dirs[d]) + "\n"
     for d in ("", "sub1", "sub2"):
         files[f"{d}/inc/x.h" if d else "inc/x.h"] = "#define X 1\n"
     return files
