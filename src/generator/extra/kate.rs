@@ -120,6 +120,17 @@ fn generate_files_string(s: &Shared, dir: usize) -> String {
             };
             files.insert(full);
         }
+        // Generation also made cmSourceFiles of this directory from every
+        // evaluated source entry (generator expressions, INTERFACE_SOURCES,
+        // file sets) through cmMakefile::GetOrCreateSource.
+        let build_type = s.build_type(d);
+        for target in s.targets(d) {
+            for sf in s.target_sources(target, &build_type).iter() {
+                if !sf.generated {
+                    files.insert(sf.path.clone());
+                }
+            }
+        }
     }
     let mut tmp = String::from("\"list\": [");
     let mut sep = "";
