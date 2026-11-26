@@ -849,7 +849,6 @@ impl<'a> GenCtx<'a> {
         if !super::autogen::write_info_files(self, autogen) {
             return self.errors.take();
         }
-        let failed_before_targets = self.has_error();
         // The local generators' target generation (in directory order)
         // reports targets without a linker language before the build
         // export sets are written.
@@ -883,21 +882,22 @@ impl<'a> GenCtx<'a> {
                 self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
         }
-        if !failed_before_targets {
-            if self.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
-                super::makefile::generate(self);
-            } else {
-                // cmGlobalNinjaGenerator::Generate: bail before writing build
-                // files when earlier generation raised a fatal error (target
-                // generation itself precedes the install, test and export files).
-                let mut ninja = super::ninja::NinjaGenerator::new(self);
-                if let Err(error) = ninja.generate() {
-                    self.error(Vec::new(), format!("Unable to write build files: {error}"));
-                }
-                // cmGlobalGenerator::Generate finishes by invoking the extra
-                // (IDE project file) generator, if one was selected.
-                super::extra::generate(self, ninja.global_targets());
+        if self.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+            // cmGlobalGenerator::Generate runs every local generator even
+            // after an earlier error (for example from an evaluation file).
+            super::makefile::generate(self);
+        } else {
+            // cmGlobalGenerator::Generate runs every local generator and
+            // writes TargetDirectories.txt even after an earlier error (for
+            // example from an evaluation file); the Ninja generator then
+            // leaves its build files unwritten.
+            let mut ninja = super::ninja::NinjaGenerator::new(self);
+            if let Err(error) = ninja.generate() {
+                self.error(Vec::new(), format!("Unable to write build files: {error}"));
             }
+            // cmGlobalGenerator::Generate finishes by invoking the extra
+            // (IDE project file) generator, if one was selected.
+            super::extra::generate(self, ninja.global_targets());
         }
         // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
         // validation of the link structures memoized during generation.
