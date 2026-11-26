@@ -137,6 +137,36 @@ fn filename_without_extension(path: &str) -> &str {
         .map_or(name, |(stem, _)| stem)
 }
 
+/// `cmake::CLikeSourceFileExtensions` (cmake.cxx).
+const C_LIKE_SOURCE_EXTENSIONS: &[&str] = &[
+    "c", "C", "c++", "cc", "cpp", "cxx", "cu", "mpp", "m", "M", "mm", "ixx", "cppm", "ccm", "cxxm",
+    "c++m",
+];
+
+/// `cmake::GetHeaderExtensions` (cmake.cxx's fixed list).
+const HEADER_EXTENSIONS: &[&str] = &["h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx"];
+
+/// `cmake::IsACLikeSourceExtension`.
+fn is_c_like_source_extension(ext: &str) -> bool {
+    C_LIKE_SOURCE_EXTENSIONS.contains(&ext)
+}
+
+/// `cmake::IsAKnownSourceExtension`: the C-like, CUDA, Fortran, HIP and
+/// ISPC extension sets.
+fn is_known_source_extension(ext: &str) -> bool {
+    is_c_like_source_extension(ext)
+        || matches!(
+            ext,
+            "cu" | "f" | "F" | "for" | "f77" | "f90" | "f95" | "f03" | "hip" | "ispc"
+        )
+}
+
+/// `cmSourceFile::GetExtension`: the last extension of the file name.
+fn source_extension(path: &str) -> &str {
+    let name = filename_name(path);
+    name.rfind('.').map_or("", |dot| &name[dot + 1..])
+}
+
 fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }

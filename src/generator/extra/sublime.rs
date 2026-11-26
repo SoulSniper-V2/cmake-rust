@@ -119,12 +119,14 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
 
         let mut out = String::new();
         out.push_str("{\n\t\"folders\":\n\t[\n\t");
-        let source_root_relative = relative_path(s.binary_dir(dir), s.source_dir(dir));
+        // `lgs[0]->GetBinaryDirectory()` / `GetSourceDirectory()` are the
+        // top-level directories, also for a sub-project's file.
+        let source_root_relative = relative_path(s.home_binary(), s.home_source());
         if !source_root_relative.is_empty() {
             out.push_str("\t{\n\t\t\t\"path\": \"");
             out.push_str(&source_root_relative);
             out.push('"');
-            let output_relative = relative_path(s.source_dir(dir), s.binary_dir(dir));
+            let output_relative = relative_path(s.home_source(), s.home_binary());
             if !output_relative.is_empty()
                 && (output_relative.len() < 3 || !output_relative.starts_with("../"))
                 && exclude_build_folder

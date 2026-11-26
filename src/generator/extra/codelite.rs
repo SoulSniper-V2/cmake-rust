@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::xml::XmlWriter;
 use super::{
-    Shared, file_exists, filename_path, filename_without_extension, relative_path, write_file,
+    HEADER_EXTENSIONS, Shared, file_exists, filename_path, filename_without_extension,
+    is_known_source_extension, relative_path, source_extension, write_file,
 };
 use crate::generator::ctx::GenCtx;
 use crate::generator::ninja::GlobalTarget;
@@ -57,9 +58,9 @@ fn collect_source_files(
         | TargetKind::ModuleLibrary => {
             let config = s.build_type(target.makefile);
             for src in s.target_sources(target, &config).iter() {
-                // cmake::IsAKnownSourceExtension: the language was resolved
-                // from a known source extension during generation.
-                if !src.language.is_empty() {
+                // cmake::IsAKnownSourceExtension on the lower-cased
+                // extension.
+                if is_known_source_extension(&source_extension(&src.path).to_lowercase()) {
                     c_files.insert(src.path.clone(), ());
                 } else {
                     other_files.insert(src.path.clone());
@@ -72,22 +73,14 @@ fn collect_source_files(
 }
 
 /// `cmExtraCodeLiteGenerator::FindMatchingHeaderfiles`.
-fn find_matching_headerfiles(
-    ctx: &GenCtx,
-    dir: usize,
-    c_files: &BTreeMap<String, ()>,
-    other_files: &mut BTreeSet<String>,
-) {
-    let header_exts = ctx
-        .var(dir, "CMAKE_HEADER_FILE_EXTENSIONS")
-        .map_or_else(|| vec!["h".to_owned()], |v| util::expand_list(&v, false));
+fn find_matching_headerfiles(c_files: &BTreeMap<String, ()>, other_files: &mut BTreeSet<String>) {
     for file in c_files.keys() {
         let basename = format!(
             "{}/{}",
             filename_path(file),
             filename_without_extension(file)
         );
-        for ext in &header_exts {
+        for ext in HEADER_EXTENSIONS {
             let hname = format!("{basename}.{ext}");
             if other_files.contains(&hname) {
                 break;
@@ -198,7 +191,7 @@ fn create_project_source_entries(
     project_type: &str,
     target_name: &str,
 ) {
-    find_matching_headerfiles(s.ctx, dir, &c_files, &mut other_files);
+    find_matching_headerfiles(&c_files, &mut other_files);
     xml.start_element("VirtualDirectory");
     xml.attribute("Name", "src");
     create_folders_and_files(c_files.into_keys(), xml, project_path);
