@@ -69,11 +69,7 @@ impl Log {
     }
 
     fn error(&mut self, text: &str) {
-        if text.starts_with("Error: Missing `")
-            || text.starts_with("Error: Unrecognized environment manipulation argument:")
-        {
-            self.system_error = true;
-        }
+        self.system_error = true;
         self.write(text, true);
     }
 
