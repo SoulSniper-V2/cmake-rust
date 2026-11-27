@@ -1470,8 +1470,12 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     let old_dir = std::env::current_dir().unwrap_or_default();
     let (code, no_tests) = execute_detailed(binary, options, &mut log);
     let _ = std::env::set_current_dir(old_dir);
+    // Dashboard handlers use legacy no-tests semantics unless the explicit
+    // error action is selected: an empty test set is not itself a handler
+    // failure, even though normal ctest exits with TEST_ERRORS.
+    let result_code = if no_tests && code == 8 { 0 } else { code };
     if let Some(variable) = return_value {
-        interp.set_def(variable, if code == 0 { "0" } else { "-1" });
+        interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
     if no_tests {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
