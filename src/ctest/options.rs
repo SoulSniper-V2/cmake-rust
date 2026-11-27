@@ -43,6 +43,7 @@ pub(super) struct Options {
     pub name_file: Option<PathBuf>,
     pub exclude_name_file: Option<PathBuf>,
     pub parallel: Option<usize>,
+    pub test_load: Option<u64>,
     pub timeout: f64,
     pub repeat: Option<(Repeat, usize)>,
     pub random: bool,
@@ -154,6 +155,13 @@ impl Options {
                     };
                     parallel_set = true;
                 }
+                "--test-load" => {
+                    let raw = value()?;
+                    match raw.parse() {
+                        Ok(load) => options.test_load = Some(load),
+                        Err(_) => eprintln!("Invalid value for 'Test Load' : {raw}"),
+                    }
+                }
                 "--timeout" => options.timeout = number(value()?),
                 "--repeat" | "--repeat-until-fail" => {
                     if options.repeat.is_some() {
@@ -238,7 +246,19 @@ impl Options {
         match self.parallel {
             Some(0) => usize::MAX,
             Some(jobs) => jobs,
-            None => std::thread::available_parallelism().map_or(2, |n| n.get().max(2)),
+            None => {
+                let cpus = match std::env::var("__CTEST_FAKE_PROCESSOR_COUNT_FOR_TESTING") {
+                    Ok(fake) => match fake.parse::<usize>() {
+                        Ok(fake) => fake,
+                        Err(_) => {
+                            eprintln!("Failed to parse fake processor count: {fake}");
+                            std::thread::available_parallelism().map_or(1, |n| n.get())
+                        }
+                    },
+                    Err(_) => std::thread::available_parallelism().map_or(1, |n| n.get()),
+                };
+                cpus.max(2)
+            }
         }
     }
 }

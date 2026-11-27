@@ -3,11 +3,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::Log;
 use super::options::{Options, Repeat, number};
-use super::process::{Event, Invocation, ResultData, Status, command_info, property_errors};
+use super::process::{
+    Event, Invocation, ResultData, Status, command_info, processors_available, property_errors,
+};
 use super::report::{self, Columns};
 use super::resources::{Allocation, Resources, parse_groups, validate_generated};
 use super::testfile::Test;
@@ -196,6 +198,7 @@ fn schedule_order(
 
 struct Running {
     allocation: Allocation,
+    affinity: Vec<usize>,
     attempt: usize,
 }
 
@@ -205,7 +208,10 @@ struct Session<'a> {
     last_log: &'a mut String,
     all_count: usize,
     test_timeout: f64,
+    test_load: u64,
+    fake_load: Option<u64>,
     resources: Resources,
+    affinity_free: BTreeSet<usize>,
     columns: Columns,
     completed: usize,
     stop_time_passed: bool,
@@ -218,6 +224,7 @@ impl Session<'_> {
         &mut self,
         test: &Test,
         allocation: &Allocation,
+        affinity: &[usize],
         unavailable: Option<String>,
         previous: Option<&ResultData>,
     ) {
@@ -229,7 +236,7 @@ impl Session<'_> {
             self.log,
             self.completed + usize::from(previous.is_some()),
         );
-        if let Err(result) = self.prepare(test, allocation, unavailable, previous) {
+        if let Err(result) = self.prepare(test, allocation, affinity, unavailable, previous) {
             let _ = self.sender.send(Event::Done(test.index, result));
         }
     }
@@ -238,6 +245,7 @@ impl Session<'_> {
         &mut self,
         test: &Test,
         allocation: &Allocation,
+        affinity: &[usize],
         unavailable: Option<String>,
         previous: Option<&ResultData>,
     ) -> Result<(), Box<ResultData>> {
@@ -323,6 +331,7 @@ impl Session<'_> {
             self.options,
             self.test_timeout,
             &allocation.environment(),
+            affinity.to_vec(),
             self.log,
         ) else {
             let mut result =
@@ -466,6 +475,12 @@ pub(super) fn run(
         .collect();
     let mut running: Vec<Option<Running>> = (0..tests.len()).map(|_| None).collect();
     let mut results: Results = (0..tests.len()).map(|_| None).collect();
+    let affinity_total = if tests.iter().any(|test| test.enabled("PROCESSOR_AFFINITY")) {
+        processors_available()
+    } else {
+        BTreeSet::new()
+    };
+    let affinity_count = affinity_total.len();
     let (sender, receiver) = mpsc::channel();
     let mut session = Session {
         options,
@@ -475,7 +490,19 @@ pub(super) fn run(
         test_timeout: config
             .get("TimeOut")
             .map_or(0.0, |value| number(value).trunc()),
+        test_load: options
+            .test_load
+            .or_else(|| {
+                config
+                    .get("TestLoad")
+                    .and_then(|value| value.parse::<u64>().ok())
+            })
+            .unwrap_or(0),
+        fake_load: std::env::var("__CTEST_FAKE_LOAD_AVERAGE_FOR_TESTING")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok()),
         resources,
+        affinity_free: affinity_total,
         columns: Columns::new(tests, options),
         completed: 0,
         stop_time_passed: false,
@@ -487,12 +514,40 @@ pub(super) fn run(
         .enumerate()
         .map(|(pos, test)| (test.index, pos))
         .collect();
-    let processors = |test: &Test| test.processors().min(jobs);
+    let processors = |test: &Test| {
+        let mut processors = test.processors().min(jobs);
+        if test.enabled("PROCESSOR_AFFINITY") && affinity_count > 0 {
+            processors = processors.min(affinity_count);
+        }
+        processors
+    };
     loop {
         if !session.stop_time_passed && (!options.stop_on_failure || session.failed.is_empty()) {
             let mut occupied = 0usize;
             let mut serial = false;
             let mut locks = BTreeSet::new();
+            let mut system_load = 0u64;
+            let mut load_slots = u64::MAX;
+            if session.test_load > 0 {
+                system_load = if let Some(fake) = session.fake_load.take() {
+                    fake
+                } else if std::env::var("__CTEST_FAKE_LOAD_AVERAGE_FOR_TESTING").is_ok() {
+                    1
+                } else {
+                    let mut load = [0.0];
+                    // SAFETY: getloadavg writes one element into load.
+                    unsafe {
+                        if libc::getloadavg(load.as_mut_ptr(), 1) == 1 {
+                            load[0].ceil() as u64
+                        } else {
+                            0
+                        }
+                    }
+                };
+                load_slots = session.test_load.saturating_sub(system_load);
+            }
+            let mut load_blocked: Vec<(usize, String)> = Vec::new();
+            let mut load_started = false;
             for (test, active) in tests.iter().zip(&running) {
                 if active.is_some() {
                     occupied = occupied.saturating_add(processors(test));
@@ -515,6 +570,20 @@ pub(super) fn run(
                 {
                     return true;
                 }
+                if session.test_load > 0 {
+                    if load_slots == 0 {
+                        return true;
+                    }
+                    if processors(test) as u64 > load_slots {
+                        load_blocked.push((processors(test), test.name.clone()));
+                        return true;
+                    }
+                }
+                let affinity_needed = processors(test);
+                let wants_affinity = test.enabled("PROCESSOR_AFFINITY") && affinity_count > 0;
+                if wants_affinity && session.affinity_free.len() < affinity_needed {
+                    return true;
+                }
                 let unavailable = session.resources.unavailable(&test.name, &groups[position]);
                 let allocation = if unavailable.is_some() {
                     Allocation::default()
@@ -523,49 +592,95 @@ pub(super) fn run(
                 } else {
                     return true;
                 };
+                let affinity: Vec<_> = if wants_affinity {
+                    session
+                        .affinity_free
+                        .iter()
+                        .take(affinity_needed)
+                        .copied()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                for cpu in &affinity {
+                    session.affinity_free.remove(cpu);
+                }
+                load_started = true;
+                load_slots = load_slots.saturating_sub(processors(test) as u64);
                 occupied += processors(test);
                 serial = test.enabled("RUN_SERIAL");
                 locks.extend(test.list("RESOURCE_LOCK").iter().cloned());
-                session.start(test, &allocation, unavailable, None);
+                session.start(test, &allocation, &affinity, unavailable, None);
                 running[position] = Some(Running {
                     allocation,
+                    affinity,
                     attempt: 1,
                 });
                 false
             });
-        }
-        if running.iter().all(Option::is_none) {
-            break;
-        }
-        match receiver.recv().expect("CTest result channel closed") {
-            Event::Output(index, line) => session.log.verbose(&format!("{index}: {line}\n")),
-            Event::Error(error) => session.log.error(&error),
-            Event::Done(index, mut result) => {
-                let position = positions[&index];
-                let active = running[position].as_mut().unwrap();
-                let test = &mut tests[position];
-                let repeat = session.finish(test, &mut result, active.attempt);
-                let cost = &mut costs[position];
-                if result.status == Status::Passed {
-                    cost.value = ((cost.previous as f64 * f64::from(cost.value) + result.seconds)
-                        / (cost.previous as f64 + 1.0)) as f32;
-                    cost.previous += 1;
-                }
-                if repeat {
-                    active.attempt += 1;
-                    session.start(test, &active.allocation, None, Some(&result));
-                } else {
+            if session.test_load > 0 && !load_started && !pending.is_empty() {
+                if serial {
                     session
-                        .resources
-                        .release(&running[position].take().unwrap().allocation);
-                    session.completed += 1;
-                    result.completion_order = session.completed;
-                    if result.status.failed() {
-                        session.failed.push(test.name.clone());
+                        .log
+                        .verbose("***** WAITING, Waiting for RUN_SERIAL test to finish.*****\n");
+                } else {
+                    let mut message = format!(
+                        "***** WAITING, System Load: {system_load}, Max Allowed Load: {}",
+                        session.test_load
+                    );
+                    if let Some((processors, name)) = load_blocked.iter().min() {
+                        message.push_str(&format!(", Smallest test {name} requires {processors}"));
                     }
-                    results[position] = Some(*result);
+                    message.push_str("*****\n");
+                    session.log.verbose(&message);
                 }
             }
+        }
+        if running.iter().all(Option::is_none) {
+            if pending.is_empty()
+                || session.stop_time_passed
+                || (options.stop_on_failure && !session.failed.is_empty())
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("CTest result channel closed"),
+            Ok(event) => match event {
+                Event::Output(index, line) => session.log.verbose(&format!("{index}: {line}\n")),
+                Event::Error(error) => session.log.error(&error),
+                Event::Done(index, mut result) => {
+                    let position = positions[&index];
+                    let active = running[position].as_mut().unwrap();
+                    let test = &mut tests[position];
+                    let repeat = session.finish(test, &mut result, active.attempt);
+                    let cost = &mut costs[position];
+                    if result.status == Status::Passed {
+                        cost.value =
+                            ((cost.previous as f64 * f64::from(cost.value) + result.seconds)
+                                / (cost.previous as f64 + 1.0)) as f32;
+                        cost.previous += 1;
+                    }
+                    if repeat {
+                        active.attempt += 1;
+                        let affinity = active.affinity.clone();
+                        session.start(test, &active.allocation, &affinity, None, Some(&result));
+                    } else {
+                        let finished = running[position].take().unwrap();
+                        session.affinity_free.extend(finished.affinity);
+                        session.resources.release(&finished.allocation);
+                        session.completed += 1;
+                        result.completion_order = session.completed;
+                        if result.status.failed() {
+                            session.failed.push(test.name.clone());
+                        }
+                        results[position] = Some(*result);
+                    }
+                }
+            },
         }
     }
     cost_file.write(&cost_path, tests, &costs, &session.failed);

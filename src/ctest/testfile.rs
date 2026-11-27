@@ -21,6 +21,7 @@ pub(super) struct Test {
     pub lists: BTreeMap<String, Vec<String>>,
     pub measurements: BTreeMap<String, String>,
     pub fixture_deps: BTreeSet<String>,
+    pub property_errors: Vec<String>,
 }
 
 impl Test {
@@ -130,6 +131,7 @@ fn add_test(interp: &mut Interp, args: &[String]) -> CmdResult {
         lists: BTreeMap::new(),
         measurements: BTreeMap::new(),
         fixture_deps: BTreeSet::new(),
+        property_errors: Vec::new(),
     });
     Ok(())
 }
@@ -179,6 +181,27 @@ fn set_tests_properties(interp: &mut Interp, args: &[String]) -> CmdResult {
                     test.measurements.insert(key.into(), value.into());
                 }
                 key if LIST_PROPERTIES.contains(&key) => add_list(test, key, value),
+                "TIMEOUT_SIGNAL_NAME" => {
+                    if super::process::timeout_signal(value).is_none() {
+                        test.property_errors.push(format!(
+                            "TIMEOUT_SIGNAL_NAME \"{value}\" not supported on this platform."
+                        ));
+                    }
+                    test.properties.insert(key.clone(), value.clone());
+                }
+                "TIMEOUT_SIGNAL_GRACE_PERIOD" => {
+                    let seconds = number(value);
+                    if seconds <= 0.0 {
+                        test.property_errors.push(format!(
+                            "TIMEOUT_SIGNAL_GRACE_PERIOD \"{value}\" is not greater than \"0\" seconds."
+                        ));
+                    } else if seconds > 60.0 {
+                        test.property_errors.push(format!(
+                            "TIMEOUT_SIGNAL_GRACE_PERIOD \"{value}\" is not less than the maximum of \"60\" seconds."
+                        ));
+                    }
+                    test.properties.insert(key.clone(), value.clone());
+                }
                 "RESOURCE_GROUPS" if super::resources::parse_groups(value).is_none() => {
                     return err("unknown error.");
                 }

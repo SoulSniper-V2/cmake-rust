@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -286,31 +286,28 @@ pub(super) fn timeout_signal(name: &str) -> Option<i32> {
 }
 
 pub(super) fn property_errors(test: &Test) -> String {
-    let mut errors = Vec::new();
-    if let Some(signal) = test.properties.get("TIMEOUT_SIGNAL_NAME")
-        && timeout_signal(signal).is_none()
-    {
-        errors.push(format!(
-            "TIMEOUT_SIGNAL_NAME \"{signal}\" not supported on this platform."
-        ));
-    }
-    if let Some(grace) = test.properties.get("TIMEOUT_SIGNAL_GRACE_PERIOD") {
-        let seconds = number(grace);
-        if seconds <= 0.0 {
-            errors.push(format!(
-                "TIMEOUT_SIGNAL_GRACE_PERIOD \"{grace}\" is not greater than \"0\" seconds."
-            ));
-        } else if seconds > 60.0 {
-            errors.push(format!("TIMEOUT_SIGNAL_GRACE_PERIOD \"{grace}\" is not less than the maximum of \"60\" seconds."));
+    test.property_errors.join("\n")
+}
+
+pub(super) fn processors_available() -> BTreeSet<usize> {
+    // SAFETY: the mask is initialized before use and sched_getaffinity writes
+    // at most size_of::<cpu_set_t>() bytes into it.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+            return BTreeSet::new();
         }
+        (0..libc::CPU_SETSIZE as usize)
+            .filter(|cpu| libc::CPU_ISSET(*cpu, &set))
+            .collect()
     }
-    errors.join("\n")
 }
 
 pub(super) struct Invocation {
     pub exe: String,
     args: Vec<String>,
     dir: PathBuf,
+    affinity: Vec<usize>,
     env: Environment,
     timeout: f64,
     stop_at_timeout: bool,
@@ -325,6 +322,7 @@ impl Invocation {
         options: &Options,
         test_timeout: f64,
         resource_env: &BTreeMap<String, String>,
+        affinity: Vec<usize>,
         log: &mut Log,
     ) -> Option<Self> {
         let fallback = if options.timeout > 0.0 {
@@ -380,6 +378,7 @@ impl Invocation {
             exe,
             args: test.command[1..].to_vec(),
             dir: test.dir.clone(),
+            affinity,
             env,
             timeout,
             stop_at_timeout,
@@ -406,10 +405,29 @@ impl Invocation {
             }
         }
         let mut command = Command::new(&self.exe);
+        if !self.affinity.is_empty() {
+            let affinity = self.affinity.clone();
+            // SAFETY: this runs in the single-threaded child after fork and
+            // only initializes a CPU mask before calling sched_setaffinity.
+            unsafe {
+                command.pre_exec(move || {
+                    let mut set: libc::cpu_set_t = std::mem::zeroed();
+                    for cpu in &affinity {
+                        libc::CPU_SET(*cpu, &mut set);
+                    }
+                    if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) == 0
+                    {
+                        Ok(())
+                    } else {
+                        Err(io::Error::last_os_error())
+                    }
+                });
+            }
+        }
         command
             .args(&self.args)
             .current_dir(&self.dir)
-            .stdin(Stdio::null())
+            .stdin(Stdio::inherit())
             .stdout(writer.try_clone()?)
             .stderr(writer)
             .process_group(0);
