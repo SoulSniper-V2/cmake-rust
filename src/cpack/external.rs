@@ -284,7 +284,9 @@ pub(super) fn package_files(
             return false;
         }
         if let Some(built) = option(interp, "CPACK_EXTERNAL_BUILT_PACKAGES") {
-            generator.package_file_names = util::expand_list(&built, false);
+            generator
+                .package_file_names
+                .extend(util::expand_list(&built, false));
         }
     }
     true

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-script.cmake" "execute_process(COMMAND \"\${CMAKE_COMMAND}\" -E echo cmake-command-ok RESULT_VARIABLE result)\nif(NOT result EQUAL 0)\n  message(FATAL_ERROR \"CMAKE_COMMAND is unusable\")\nendif()\nset(CPACK_EXTERNAL_BUILT_PACKAGES \"\${CPACK_TEMPORARY_DIRECTORY}/share/probe/hello.txt\")\n")
+set(CPACK_EXTERNAL_ENABLE_STAGING ON)
+set(CPACK_EXTERNAL_PACKAGE_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/package-script.cmake")
+include(CPack)

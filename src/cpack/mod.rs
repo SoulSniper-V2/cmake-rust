@@ -1694,10 +1694,21 @@ fn nuget_package_files(_gen: &mut Generator, interp: &mut Interp, log: &mut Logg
     true
 }
 
+fn use_sibling_cmake_command(interp: &mut Interp) {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(Path::parent)
+    {
+        interp.cmake_command = format!("{}/cmake", dir.display());
+    }
+}
+
 fn new_script_interp(cwd: &str, trace: bool, trace_expand: bool) -> Interp {
     let root = crate::configure::find_cmake_root().unwrap_or_default();
     let mut interp = Interp::new(Mode::Script, cwd, cwd, &root);
     interp.role = "CPACK";
+    use_sibling_cmake_command(&mut interp);
     crate::configure::add_default_definitions(&mut interp);
     crate::configure::add_cmake_paths(&mut interp);
     if trace {
@@ -1993,6 +2004,7 @@ pub fn main() -> i32 {
     };
     let mut interp = Interp::new(Mode::Script, &cwd, &cwd, &root);
     interp.role = "CPACK";
+    use_sibling_cmake_command(&mut interp);
     crate::configure::add_default_definitions(&mut interp);
     crate::configure::add_cmake_paths(&mut interp);
     if trace {
