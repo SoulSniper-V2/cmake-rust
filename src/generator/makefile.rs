@@ -1228,7 +1228,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         // then its OBJECT_DEPENDS; PCH and ISPC headers follow.
         depends.push(self.top_rule_path(&source.path));
         if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
-            depends.extend(util::expand_list(&object_deps, false));
+            depends.extend(
+                util::expand_list(&object_deps, false)
+                    .iter()
+                    .map(|dep| self.top_rule_path(dep)),
+            );
         }
         let ispc_header = if source.language == "ISPC" {
             ispc_header_for_source(self.ctx, target, &self.ctx.config, &source.object_name)
@@ -2678,17 +2682,24 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 }
                 let full = format!("{directory}/{artifact}");
                 let rel = maybe_relative_top(self.ctx, &full);
+                // Libraries write their names as extra outputs of one
+                // WriteMakeRule (touch_nocreate, MaybeRelativeToTopBinDir);
+                // cmMakefileExecutableTargetGenerator writes the symlink name
+                // as its own rule with no commands.
+                let touch = if target.kind == TargetKind::Executable {
+                    Vec::new()
+                } else {
+                    vec![format!(
+                        "@$(CMAKE_COMMAND) -E touch_nocreate {}",
+                        shell_path(self.ctx, &rel)
+                    )]
+                };
                 write_make_rule(
                     out,
                     None,
                     &rel,
                     std::slice::from_ref(&target_rel_top),
-                    // cmMakefileTargetGenerator::MakeEchoProgress ... WriteMakeRule
-                    // for extra outputs: MaybeRelativeToTopBinDir(output).
-                    &[format!(
-                        "@$(CMAKE_COMMAND) -E touch_nocreate {}",
-                        shell_path(self.ctx, &rel)
-                    )],
+                    &touch,
                     false,
                 );
             }
@@ -5139,7 +5150,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                             | TargetKind::ObjectLibrary
                             | TargetKind::InterfaceLibrary
                             | TargetKind::Utility
-                    ) && (dir == 0 || t.makefile == dir)
+                    ) && (dir == 0
+                        // cmLocalUnixMakefileGenerator3::WriteLocalMakefileTargets
+                        // skips INTERFACE libraries (the root Makefile's
+                        // WriteConvenienceRules keeps every in-build-system one).
+                        || (t.makefile == dir && t.kind != TargetKind::InterfaceLibrary))
                     {
                         if dir == 0 {
                             let _ = writeln!(
