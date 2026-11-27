@@ -626,17 +626,57 @@ fn measurement_content<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
 
 fn compressed_file(path: &Path) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
+    let metadata = std::fs::metadata(path).ok()?;
     let filename = path.file_name()?.to_string_lossy().into_owned();
     let mut header = tar::Header::new_gnu();
+    header.set_entry_type(tar::EntryType::Regular);
     header.set_size(data.len() as u64);
-    header.set_mode(0o644);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        header.set_mode(metadata.mode() & 0o777);
+        header.set_mtime(metadata.mtime() as u64);
+        header.set_uid(u64::from(metadata.uid()));
+        header.set_gid(u64::from(metadata.gid()));
+        unsafe {
+            let passwd = libc::getpwuid(metadata.uid());
+            if !passwd.is_null() {
+                let name = std::ffi::CStr::from_ptr((*passwd).pw_name).to_string_lossy();
+                header.set_username(&name).ok()?;
+            }
+            let group = libc::getgrgid(metadata.gid());
+            if !group.is_null() {
+                let name = std::ffi::CStr::from_ptr((*group).gr_name).to_string_lossy();
+                header.set_groupname(&name).ok()?;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        header.set_mode(0o644);
+        header.set_mtime(
+            metadata
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs(),
+        );
+    }
     header.set_cksum();
     let mut builder = tar::Builder::new(Vec::new());
     builder
         .append_data(&mut header, filename, data.as_slice())
         .ok()?;
     let tar = builder.into_inner().ok()?;
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as u32);
+    let operating_system = if cfg!(unix) { 3 } else { 0 };
+    let mut encoder = flate2::GzBuilder::new()
+        .mtime(now)
+        .operating_system(operating_system)
+        .write(Vec::new(), flate2::Compression::default());
     encoder.write_all(&tar).ok()?;
     encoder.finish().ok()
 }
@@ -675,8 +715,24 @@ fn custom_measurements(measurements: &[String]) -> String {
             continue;
         }
         let measurement_type = measurement_attribute(measurement, "type").unwrap_or("");
-        let path = Path::new(content);
-        if measurement_type == "file" {
+        let filename_text =
+            content.trim_matches(|ch| matches!(ch, ' ' | '\n' | '\t' | '\r' | '\x0b' | '\x0c'));
+        let path = Path::new(filename_text);
+        if !path.is_file() {
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement name=\"{}\" text=\"text/string\">\n\t\t\t\t\t<Value>File {} not found</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_escape(name),
+                xml_content(filename_text),
+            );
+        } else if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() == 0) {
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement name=\"{}\" type=\"text/string\" encoding=\"none\">\n\t\t\t\t\t<Value>Image {} is empty</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_escape(name),
+                xml_content(filename_text),
+            );
+        } else if measurement_type == "file" {
             let filename = path
                 .file_name()
                 .map(|name| name.to_string_lossy())
