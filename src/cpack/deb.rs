@@ -230,6 +230,12 @@ fn package_all_in_one(
             control.push((key.to_owned(), value));
         }
     }
+    if let Some(multiarch) = option_nonempty(interp, "GEN_CPACK_DEBIAN_PACKAGE_MULTIARCH")
+        && !matches!(multiarch.as_str(), "same" | "foreign" | "allowed")
+    {
+        log.error(&format!("Error: invalid value for Multi-Arch: {multiarch}. Valid values are: same, foreign, allowed"));
+        return false;
+    }
     control.sort();
     let _ = fs::create_dir_all(&workdir);
     let mut control_text = String::new();

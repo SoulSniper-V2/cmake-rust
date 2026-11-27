@@ -507,6 +507,12 @@ fn valid_checksum_algorithm(name: &str) -> bool {
     )
 }
 
+fn external_staging_enabled(generator: &Generator, interp: &Interp) -> bool {
+    let _ = generator;
+    option_nonempty(interp, "CPACK_EXTERNAL_ENABLE_STAGING")
+        .is_some_and(|value| !util::is_off_opt(Some(value.as_str())))
+}
+
 impl Generator {
     fn new(name: &str, kind: Kind, trace: bool, trace_expand: bool) -> Self {
         Self {
@@ -892,11 +898,8 @@ impl Generator {
             Ok(v) => v,
             Err(()) => return false,
         };
-        let staging_control = option_nonempty(interp, "CPACK_EXTERNAL_ENABLE_STAGING");
-        let staging = self.kind != Kind::External
-            || staging_control.is_none()
-            || !util::is_off_opt(staging_control.as_deref());
-        let ok = !staging
+        let staging = self.kind != Kind::External || external_staging_enabled(self, interp);
+        let staged_inputs = !staging
             || (self.install_via_commands(interp, log, &temp_install)
                 && self.install_via_scripts(interp, log, setdest, &temp_install)
                 && self.install_via_installed_directories(
@@ -904,8 +907,9 @@ impl Generator {
                     log,
                     &temp_install,
                     default_mode,
-                )
-                && self.install_via_cmake_projects(interp, log, setdest, &bare_temp, default_mode));
+                ));
+        let ok = staged_inputs
+            && self.install_via_cmake_projects(interp, log, setdest, &bare_temp, default_mode);
         if !ok {
             return false;
         }
@@ -942,19 +946,26 @@ impl Generator {
                 .env("CMAKE_INSTALL_PREFIX", temp_install)
                 .output();
             let Ok(output) = output else {
-                return self.install_command_failure(log, &command_line, "");
+                return self.install_command_failure(interp, log, &command_line, "");
             };
             if !output.status.success() {
                 let text = String::from_utf8_lossy(&output.stdout).into_owned()
                     + &String::from_utf8_lossy(&output.stderr);
-                return self.install_command_failure(log, &command_line, &text);
+                return self.install_command_failure(interp, log, &command_line, &text);
             }
         }
         true
     }
 
-    fn install_command_failure(&self, log: &mut Logger, command: &str, output: &str) -> bool {
-        let top = self.toplevel.clone();
+    fn install_command_failure(
+        &self,
+        interp: &Interp,
+        log: &mut Logger,
+        command: &str,
+        output: &str,
+    ) -> bool {
+        let top =
+            option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_else(|| self.toplevel.clone());
         let tmp = format!("{top}/InstallOutput.log");
         let _ = fs::write(
             &tmp,
@@ -1025,10 +1036,6 @@ impl Generator {
             let (top, subdir) = (&pair[0], &pair[1]);
             log.output(&format!("- Install directory: {top}"));
             let files = recurse_files(top);
-            if files.is_empty() {
-                log.error("Cannot find any files in the installed directory");
-                return false;
-            }
             self.files = files.clone();
             let mut symlinks = Vec::new();
             for source in files {
@@ -1265,6 +1272,9 @@ impl Generator {
         build_config: &str,
         absolute_files: &mut String,
     ) -> bool {
+        if self.kind == Kind::External && !external_staging_enabled(self, outer) {
+            return true;
+        }
         if component_install {
             log.output(&format!("-   Install component: {component}"));
         }
@@ -1473,10 +1483,6 @@ impl Generator {
         }
         let mut temp_directory = option(interp, "CPACK_TEMPORARY_DIRECTORY").unwrap_or_default();
         self.files = recurse_files(&temp_directory);
-        if self.files.is_empty() {
-            log.error("Cannot find any files in the packaging tree");
-            return false;
-        }
         if is_on(interp, "CPACK_INCLUDE_TOPLEVEL_DIRECTORY") {
             temp_directory = option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_default();
         }

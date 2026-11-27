@@ -152,6 +152,9 @@ def decompress(path):
     return data
 
 
+def tar_signature_gzip(path):
+    return parse_tar(gzip.decompress(path.read_bytes()))
+
 def tar_signature(path):
     return parse_tar(decompress(path))
 

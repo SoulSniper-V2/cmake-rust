@@ -56,7 +56,9 @@ impl Json {
                     out.push('"');
                     out.push_str(&json_escape(key));
                     out.push_str("\" : ");
-                    if matches!(value, Self::Array(v) if !v.is_empty()) {
+                    if matches!(value, Self::Array(v) if !v.is_empty())
+                        || matches!(value, Self::Object(v) if !v.is_empty())
+                    {
                         out.push('\n');
                         out.push_str(&" ".repeat(indent + 2));
                     }
