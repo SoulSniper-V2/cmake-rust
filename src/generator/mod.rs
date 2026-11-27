@@ -23,6 +23,7 @@
 mod autogen;
 pub mod automatic;
 mod compatible;
+mod cpack_properties;
 pub mod ctx;
 pub mod custom;
 pub mod evaluation_files;
