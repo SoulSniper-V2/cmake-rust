@@ -993,7 +993,22 @@ pub(super) fn test_xml(
     );
     let directory = binary.join("Testing").join(&options.dashboard_tag);
     std::fs::create_dir_all(&directory)?;
-    std::fs::write(directory.join("Test.xml"), xml)
+    if options.memcheck_type.is_empty() {
+        std::fs::write(directory.join("Test.xml"), xml)
+    } else {
+        let dynamic = xml
+            .replacen(
+                "\t<Testing>",
+                &format!(
+                    "\t<DynamicAnalysis Checker=\"{}\">",
+                    xml_escape(&options.memcheck_type)
+                ),
+                1,
+            )
+            .replacen("\t</Testing>", "\t</DynamicAnalysis>", 1);
+        std::fs::write(directory.join("DynamicAnalysis.xml"), dynamic)?;
+        std::fs::write(directory.join("DynamicAnalysis-Test.xml"), xml)
+    }
 }
 
 fn truncate_test_output(output: &str, length: usize, mode: &str) -> String {
