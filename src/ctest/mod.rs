@@ -554,7 +554,7 @@ pub(in crate::ctest) fn execute_detailed(
         dir = binary.clone();
     }
     let ignore = read_custom(&binary, log);
-    if !options.script_quiet {
+    if !options.script_quiet && options.memcheck_type.is_empty() {
         log.output(&format!("Test project {}\n", dir.display()));
     }
     if options.script

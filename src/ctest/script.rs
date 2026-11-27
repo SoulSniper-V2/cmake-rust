@@ -427,20 +427,18 @@ fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 fn sanitizer_defect(line: &str, checker: &str) -> Option<String> {
+    if line.contains("Direct leak of ") {
+        return Some("Direct leak".into());
+    }
+    if line.contains("Indirect leak of ") {
+        return Some("Indirect leak".into());
+    }
     match checker {
         "AddressSanitizer" => line
             .split("ERROR: AddressSanitizer: ")
             .nth(1)
             .map(|rest| rest.split(" on").next().unwrap_or(rest).to_owned()),
-        "LeakSanitizer" => {
-            if line.contains("Direct leak of ") {
-                Some("Direct leak".into())
-            } else if line.contains("Indirect leak of ") {
-                Some("Indirect leak".into())
-            } else {
-                None
-            }
-        }
+        "LeakSanitizer" => None,
         "ThreadSanitizer" => line
             .split("WARNING: ThreadSanitizer: ")
             .nth(1)
@@ -521,7 +519,7 @@ fn postprocess_sanitizer_logs(
                     .ext
                     .ctest_script
                     .as_ref()
-                    .is_some_and(|state| state.options.verbose);
+                    .is_some_and(|state| state.options.extra_verbose);
                 if verbose {
                     handler_output(
                         interp,
@@ -532,13 +530,26 @@ fn postprocess_sanitizer_logs(
             }
         }
     }
+    let present: std::collections::BTreeSet<usize> =
+        per_test.iter().map(|(test, _)| *test).collect();
+    if let Some(max_test) = present.iter().next_back().copied() {
+        for test in 1..=max_test {
+            if !present.contains(&test) {
+                eprintln!(
+                    "Cannot find memory tester output file: {}/MemoryChecker.{test}.log.*",
+                    temporary.display()
+                );
+            }
+        }
+    }
     handler_output(interp, "-- Processing memory checking output:\n", quiet);
+    let test_total = present.iter().next_back().copied().unwrap_or(0);
     for (test, defects) in per_test {
         if defects > 0 {
             handler_output(
                 interp,
                 &format!(
-                    "1/1 MemCheck: #{test}: TestSan ..........................   Defects: {defects}\n"
+                    "{test}/{test_total} MemCheck: #{test}: TestSan ..........................   Defects: {defects}\n"
                 ),
                 quiet,
             );

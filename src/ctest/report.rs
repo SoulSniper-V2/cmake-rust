@@ -105,6 +105,7 @@ pub(super) struct Columns {
     pub total: usize,
     pub width: usize,
     pub index_width: usize,
+    memcheck: bool,
 }
 
 impl Columns {
@@ -121,6 +122,7 @@ impl Columns {
             total,
             width,
             index_width,
+            memcheck: !options.memcheck_type.is_empty(),
         }
     }
 
@@ -152,8 +154,9 @@ impl Columns {
             " ".repeat(2 * width.max(2))
         };
         let index = format!(" #{}:", test.index);
+        let kind = if self.memcheck { "MemCheck" } else { "Test" };
         format!(
-            "{prefix}Test{:>width$} ",
+            "{prefix}{kind}{:>width$} ",
             index,
             width = self.index_width + 3
         )
