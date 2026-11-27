@@ -623,9 +623,15 @@ impl EvaluatedCommand {
         format!("Generating {}", paths.join(", "))
     }
 
-    /// AppendArguments. The result is ready for a Ninja variable value.
-    pub fn append_arguments(&self, ctx: &GenCtx, line: usize, command: &mut String) {
-        let flags = NINJA_UNIX
+    /// `cmCustomCommandGenerator::AppendArguments`.
+    pub fn append_arguments(
+        &self,
+        ctx: &GenCtx,
+        line: usize,
+        shell_flags: u32,
+        command: &mut String,
+    ) {
+        let flags = shell_flags
             | if self.escape_allow_make_vars {
                 FLAG_ALLOW_MAKE_VARIABLES
             } else {
@@ -674,7 +680,7 @@ impl EvaluatedCommand {
                 continue;
             }
             let mut line = escape_for_shell(&argv[0], flags);
-            self.append_arguments(ctx, index, &mut line);
+            self.append_arguments(ctx, index, NINJA_UNIX, &mut line);
             lines.push(line);
         }
         lines

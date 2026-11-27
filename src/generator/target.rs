@@ -2680,7 +2680,7 @@ fn select_linker_language(
     preferred.into_iter().next().unwrap_or_default()
 }
 
-fn fixed_linker_language(target: &Target) -> Option<&str> {
+pub(super) fn fixed_linker_language(target: &Target) -> Option<&str> {
     if target.props.contains("HAS_CXX") {
         Some("CXX")
     } else {

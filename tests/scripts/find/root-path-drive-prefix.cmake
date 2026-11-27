@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+set(CMAKE_FIND_ROOT_PATH "${CMAKE_CURRENT_BINARY_DIR}/sysroot")
+file(WRITE "${CMAKE_FIND_ROOT_PATH}/sdk/needle.h" "")
+find_file(header needle.h PATHS "X:/sdk" NO_DEFAULT_PATH ONLY_CMAKE_FIND_ROOT_PATH)
+message("${header}")

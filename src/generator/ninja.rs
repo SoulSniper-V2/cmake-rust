@@ -5434,7 +5434,7 @@ impl<'a> NinjaGenerator<'a> {
                     | flags::unescape_configuration(),
             );
             let mut line = format!("{launcher}{program}");
-            evaluated.append_arguments(&self.ctx, index, &mut line);
+            evaluated.append_arguments(&self.ctx, index, outconv::NINJA_UNIX, &mut line);
             lines.push(line);
         }
         lines

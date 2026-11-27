@@ -158,10 +158,13 @@ impl Options {
                     result.push(path.clone());
                 } else if path.is_empty() || path.starts_with('~') {
                     result.push(String::new());
-                } else if path.trim_matches('/').is_empty() {
-                    result.push(root.clone());
                 } else {
-                    result.push(format!("{root}/{}", path.trim_start_matches('/')));
+                    let (_, rest) = crate::commands::legacy_fs::split_root(path);
+                    result.push(if rest.is_empty() {
+                        root.clone()
+                    } else {
+                        format!("{root}/{rest}")
+                    });
                 }
             }
         }
@@ -310,9 +313,11 @@ pub(super) fn env_paths(name: &str) -> Vec<String> {
 }
 
 pub(super) fn split_env_paths(value: &str) -> Vec<String> {
-    env::split_paths(value)
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| normalized(&path.to_string_lossy()))
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    value
+        .split(separator)
+        .filter(|path| !path.is_empty())
+        .map(crate::pathresolver::to_normalized_path_on_disk)
         .collect()
 }
 

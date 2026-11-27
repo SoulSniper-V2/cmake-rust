@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
-use crate::util::{collapse_full_path, is_subdirectory};
+use crate::util::collapse_full_path;
+
+use super::legacy_fs::can_write;
 
 pub fn register(interp: &mut Interp) {
     interp.register("execute_process", execute_process);
@@ -332,20 +334,6 @@ fn filename(options: &Options<'_>, option: &str) -> String {
     }
 }
 
-fn can_write_output(interp: &Interp, path: &str) -> bool {
-    if !interp.is_on("CMAKE_DISABLE_SOURCE_CHANGES") {
-        return true;
-    }
-    let source = std::fs::canonicalize(&interp.home_source).ok();
-    let binary = std::fs::canonicalize(&interp.home_binary).ok();
-    if interp.home_source == interp.home_binary || source.is_some() && source == binary {
-        return !interp.is_on("CMAKE_DISABLE_IN_SOURCE_BUILD");
-    }
-    !is_subdirectory(path, &interp.home_source)
-        || is_subdirectory(path, &interp.home_binary)
-        || path == interp.home_binary
-}
-
 fn run_pipeline(
     options: &Options<'_>,
     captures: &mut [Capture; 2],
@@ -471,7 +459,7 @@ fn execute_process(interp: &mut Interp, args: &[String]) -> CmdResult {
         return Ok(());
     };
     let output = filename(&options, "OUTPUT_FILE");
-    if !can_write_output(interp, &output) {
+    if !can_write(interp, &output) {
         interp.set_fatal();
         return err(format!(
             "attempted to output into a file: {output} into a source directory."

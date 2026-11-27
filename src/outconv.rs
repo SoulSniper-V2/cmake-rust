@@ -14,9 +14,12 @@ pub const FLAG_UNESCAPE_NINJA_CONFIGURATION: u32 = 1 << 9;
 pub const FLAG_IS_RESPONSE: u32 = 1 << 10;
 pub const FLAG_NINJA: u32 = 1 << 11;
 
+/// Unix Makefiles flags for shell commands.
+pub const MAKE_UNIX: u32 = FLAG_MAKE | FLAG_IS_UNIX;
+
 /// Flags used by the Ninja generator's local generator on Unix
 /// (`cmOutputConverter::EscapeForShell` with default arguments).
-pub const NINJA_UNIX: u32 = FLAG_MAKE | FLAG_NINJA | FLAG_IS_UNIX;
+pub const NINJA_UNIX: u32 = MAKE_UNIX | FLAG_NINJA;
 
 fn is_shell_operator(text: &str) -> bool {
     matches!(

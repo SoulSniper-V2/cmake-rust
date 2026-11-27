@@ -1,10 +1,14 @@
 //! `list()` command: port of `cmListCommand.cxx` and `cmList.cxx`.
 
 use crate::cmregex::Regex;
+use crate::commands::string::regex_replace::{Segment, parse_replace_expression};
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
 use crate::util;
+
+mod sort;
+pub(crate) use sort::{CaseSensitivity, CompareMethod, OrderMode, SortConfig};
 
 pub fn register(interp: &mut Interp) {
     interp.register("list", list_command);
@@ -178,153 +182,17 @@ impl CmList {
             .retain(|item| regex.find(item).is_some() == include);
         Ok(())
     }
-
-    fn sort(&mut self, config: &SortConfig) {
-        let compare = |a: &str, b: &str| -> std::cmp::Ordering {
-            let filter = |s: &str| -> String {
-                let mut result = s.to_owned();
-                if config.compare == CompareMethod::FileBasename {
-                    result = util::filename_name(&result);
-                }
-                if config.case == CaseSensitivity::Insensitive {
-                    result = result.to_ascii_lowercase();
-                }
-                result
-            };
-            let af = filter(a);
-            let bf = filter(b);
-            let ord = if config.compare == CompareMethod::Natural {
-                strverscmp(&af, &bf)
-            } else {
-                af.cmp(&bf)
-            };
-            if config.order == OrderMode::Descending {
-                ord.reverse()
-            } else {
-                ord
-            }
-        };
-        if config.compare == CompareMethod::String
-            && config.case == CaseSensitivity::Sensitive
-            && config.order == OrderMode::Ascending
-        {
-            self.values.sort_unstable();
-        } else {
-            self.values.sort_unstable_by(|a, b| compare(a, b));
-        }
-    }
-}
-
-/// `cmSystemTools::strverscmp`.
-fn strverscmp(lhs: &str, rhs: &str) -> std::cmp::Ordering {
-    let l = lhs.as_bytes();
-    let r = rhs.as_bytes();
-    let at = |s: &[u8], i: usize| s.get(i).copied().unwrap_or(0);
-    let first_difference = |a: &[u8], b: &[u8]| {
-        let mut i = 0;
-        while at(a, i) == at(b, i) && at(a, i) != 0 {
-            i += 1;
-        }
-        i
-    };
-    let digits_begin = |s: &[u8], mut i: usize| {
-        while i > 0 && s[i - 1].is_ascii_digit() {
-            i -= 1;
-        }
-        i
-    };
-    let digits_end = |s: &[u8], mut i: usize| {
-        while i < s.len() && s[i].is_ascii_digit() {
-            i += 1;
-        }
-        i
-    };
-    let count_leading_zeros = |s: &[u8], b: usize| {
-        let mut i = b;
-        while at(s, i) == b'0' && at(s, i + 1).is_ascii_digit() {
-            i += 1;
-        }
-        i - b
-    };
-
-    let i = first_difference(l, r);
-    if at(l, i) != at(r, i) {
-        let b = digits_begin(l, i);
-        if b != i || (at(l, i).is_ascii_digit() && at(r, i).is_ascii_digit()) {
-            let lz = count_leading_zeros(l, b);
-            let rz = count_leading_zeros(r, b);
-            if lz != rz {
-                return if rz > lz {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                };
-            }
-            if lz == 0 {
-                let le = digits_end(l, i);
-                let re = digits_end(r, i);
-                if le != re {
-                    return if le > re {
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
-                    };
-                }
-            }
-        }
-    }
-    (at(l, i) as i8 as i32 - at(r, i) as i8 as i32).cmp(&0)
 }
 
 // ------------------------------------------------------------------
 // cmStringReplaceHelper
 // ------------------------------------------------------------------
 
-/// One piece of a parsed replace expression: literal text or group number.
-enum Replacement {
-    Text(String),
-    Group(usize),
-}
-
 struct ReplaceHelper {
     regex_string: String,
     regex: Regex,
     replace_expression: String,
-    replacements: Vec<Replacement>,
-    error: Option<String>,
-    num_groups: usize,
-}
-
-/// Count capture groups in the kwsys regex dialect: every unescaped `(`
-/// outside a bracket expression. Bracket expressions do not treat `\` as
-/// an escape; an immediate `]` or `-` is literal, matching kwsys `regnpar`.
-fn count_groups(pattern: &str) -> usize {
-    let bytes = pattern.as_bytes();
-    let mut count = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => {
-                i += 1;
-            }
-            b'[' => {
-                i += 1;
-                if i < bytes.len() && bytes[i] == b'^' {
-                    i += 1;
-                }
-                if i < bytes.len() && matches!(bytes[i], b']' | b'-') {
-                    i += 1;
-                }
-                while i < bytes.len() && bytes[i] != b']' {
-                    i += 1;
-                }
-            }
-            b'(' => count += 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    count
+    replacements: Vec<Segment>,
 }
 
 impl ReplaceHelper {
@@ -334,44 +202,15 @@ impl ReplaceHelper {
                 "sub-command TRANSFORM, action REPLACE: Failed to compile regex \"{regex}\"."
             )));
         };
-        let mut helper = ReplaceHelper {
+        let replacements = parse_replace_expression(replace).map_err(|error| {
+            OutOfRange(format!("sub-command TRANSFORM, action REPLACE: {error}."))
+        })?;
+        Ok(Self {
             regex_string: regex.to_owned(),
-            num_groups: count_groups(regex),
             regex: compiled,
             replace_expression: replace.to_owned(),
-            replacements: Vec::new(),
-            error: None,
-        };
-        helper.parse_replace_expression();
-        if let Some(error) = &helper.error {
-            return Err(OutOfRange(format!(
-                "sub-command TRANSFORM, action REPLACE: {error}."
-            )));
-        }
-        Ok(helper)
-    }
-
-    /// `cmStringReplaceHelper::ParseReplaceExpression`, over CMake's raw
-    /// bytes (a non-ASCII escape names the single byte after the backslash).
-    fn parse_replace_expression(&mut self) {
-        match crate::commands::string::regex_replace::parse_replace_expression(
-            &self.replace_expression,
-        ) {
-            Ok(segments) => {
-                self.replacements = segments
-                    .into_iter()
-                    .map(|segment| match segment {
-                        crate::commands::string::regex_replace::Segment::Literal(text) => {
-                            Replacement::Text(text)
-                        }
-                        crate::commands::string::regex_replace::Segment::Group(n) => {
-                            Replacement::Group(n)
-                        }
-                    })
-                    .collect();
-            }
-            Err(error) => self.error = Some(error),
-        }
+            replacements,
+        })
     }
 
     fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
@@ -396,9 +235,9 @@ impl ReplaceHelper {
             // Concatenate the replacement for the match.
             for replacement in &self.replacements {
                 match replacement {
-                    Replacement::Text(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
-                    Replacement::Group(n) => {
-                        if *n > self.num_groups {
+                    Segment::Literal(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
+                    Segment::Group(n) => {
+                        if *n > self.regex.num_groups() {
                             return Err(OutOfRange(format!(
                                 "replace expression \"{}\" contains an out-of-range escape for regex \"{}\"",
                                 self.replace_expression, self.regex_string
@@ -1072,31 +911,6 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
 
 // --- SORT ---
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CompareMethod {
-    String,
-    FileBasename,
-    Natural,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CaseSensitivity {
-    Sensitive,
-    Insensitive,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OrderMode {
-    Ascending,
-    Descending,
-}
-
-struct SortConfig {
-    compare: CompareMethod,
-    case: CaseSensitivity,
-    order: OrderMode,
-}
-
 fn handle_sort(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() > 8 {
         return err("sub-command SORT only takes up to six arguments.");
@@ -1189,7 +1003,7 @@ fn handle_sort(interp: &mut Interp, args: &[String]) -> CmdResult {
     let Some(mut list) = get_list(interp, &list_name) else {
         return Ok(());
     };
-    list.sort(&config);
+    config.sort(&mut list.values);
     interp.set_def(list_name, list.join());
     Ok(())
 }

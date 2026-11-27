@@ -359,23 +359,27 @@ pub fn relative_path(local: &str, remote: &str) -> String {
 
 /// `cmSystemTools::IsSubDirectory(cSubdir, cDir)`.
 pub fn is_subdirectory(sub: &str, dir: &str) -> bool {
-    // kwsys IsSubDirectory: both paths go through ConvertToUnixSlashes,
-    // which drops trailing slashes.
-    let trim = |path: &str| -> String {
-        let mut path = path.replace('\\', "/");
-        while path.len() > 1 && path.ends_with('/') {
-            path.pop();
-        }
-        path
-    };
-    let sub = trim(sub);
-    let dir = trim(dir);
+    let sub = crate::cache::convert_to_unix_slashes(sub);
+    let dir = crate::cache::convert_to_unix_slashes(dir);
+    let sub = crate::bytes::encode(&sub);
+    let dir = crate::bytes::encode(&dir);
     if dir.is_empty() || sub.len() <= dir.len() {
         return false;
     }
-    let root = dir.ends_with('/');
-    let slash = if root { dir.len() - 1 } else { dir.len() };
-    sub.as_bytes()[slash] == b'/' && sub[..dir.len()] == dir[..]
+    let slash = dir.len() - usize::from(dir.ends_with(b"/"));
+    if sub[slash] != b'/' {
+        return false;
+    }
+    let prefix = &sub[..dir.len()];
+    if cfg!(any(windows, target_os = "macos")) {
+        // kwsys ComparePath uses a case-insensitive C-string comparison.
+        fn c_str(bytes: &[u8]) -> &[u8] {
+            bytes.split(|&byte| byte == 0).next().unwrap_or_default()
+        }
+        c_str(prefix).eq_ignore_ascii_case(c_str(&dir))
+    } else {
+        prefix == dir.as_ref()
+    }
 }
 
 /// `cmSystemTools::RelativeIfUnder`.

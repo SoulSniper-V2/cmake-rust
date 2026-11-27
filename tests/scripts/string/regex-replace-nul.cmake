@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.1)
+string(JSON pattern GET [["a\u0000(b)"]])
+string(LENGTH "${pattern}" length)
+message("regex length: ${length}")
+string(REGEX REPLACE "${pattern}" [[\1]] items "a")
+message("[${items}]")
