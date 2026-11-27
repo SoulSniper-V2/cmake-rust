@@ -2685,6 +2685,8 @@ fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut interp = testfile::interpreter(&cwd);
+    interp.role = "CTEST";
+    interp.global_props.set("CMAKE_ROLE", "CTEST".to_owned());
     register(&mut interp);
     interp.ext.ctest_script = Some(State::new(options));
     let path = PathBuf::from(script);
