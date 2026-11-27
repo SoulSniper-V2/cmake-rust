@@ -6,9 +6,9 @@ use std::path::Path;
 use crate::cmregex::Regex;
 use crate::interp::{CmdResult, Interp, Mode, err};
 use crate::messages::{Frame, MessageType};
-use crate::util::{is_full_path, is_off, is_on};
+use crate::util::{is_full_path, is_off, is_on, relative_path};
 
-use super::{fatal, source_path, sys_relative, system_error};
+use super::{fatal, source_path, system_error};
 
 #[derive(Debug)]
 pub struct GlobDependency {
@@ -372,7 +372,7 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
                 }
                 if !relative.is_empty() {
                     for file in &mut files {
-                        *file = sys_relative(relative, file);
+                        *file = relative_path(relative, file);
                     }
                 }
                 files.sort_unstable();
