@@ -257,6 +257,8 @@ pub struct TraceConfig {
 
 pub struct Interp {
     pub mode: Mode,
+    /// The CMAKE_ROLE global property (`cmState::Role`).
+    pub role: &'static str,
     pub cache: Cache,
     scopes: Vec<Scope>,
     captured_scopes: CapturedScopes,
@@ -295,6 +297,9 @@ pub struct Interp {
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
+    /// CPack install-script progress capture: when present, lines that would
+    /// go to stdout are collected here instead of printed immediately.
+    pub stdout_capture: Option<std::rc::Rc<std::cell::RefCell<Vec<String>>>>,
     /// When set, diagnostics and `message()` stderr lines are appended here
     /// instead of written to the process stderr (used by in-process tests).
     pub stderr_capture: Option<String>,
@@ -346,6 +351,11 @@ pub struct Interp {
 
 impl Interp {
     pub fn new(mode: Mode, home_source: &str, home_binary: &str, cmake_root: &str) -> Interp {
+        let role = match mode {
+            Mode::Project => "PROJECT",
+            Mode::Script => "SCRIPT",
+            Mode::FindPackage => "FIND_PACKAGE",
+        };
         let cmake_command = std::env::current_exe()
             .ok()
             .and_then(|path| path.canonicalize().ok())
@@ -353,6 +363,7 @@ impl Interp {
             .unwrap_or_else(|| "cmake".to_owned());
         let mut interp = Interp {
             mode,
+            role,
             cache: Cache::default(),
             scopes: vec![Scope::default()],
             captured_scopes: CapturedScopes {
@@ -383,6 +394,7 @@ impl Interp {
             deprecated_as_errors: false,
             recursion_depth: 0,
             stdout_log: None,
+            stdout_capture: None,
             stderr_capture: None,
             sarif_log: crate::sarif::ResultsLog::default(),
             instrument_build_hooks: false,
@@ -1122,7 +1134,7 @@ impl Interp {
         // project uses cmState::ProjectKind::TryCompile, for which
         // SetTopSource receives nullopt, so its diagnostics keep absolute
         // paths even when they live under the outer project's source tree.
-        if self.in_try_compile {
+        if self.in_try_compile || self.role == "CPACK" {
             return None;
         }
         self.top_source_root.as_deref().or(Some(&self.home_source))
@@ -1359,7 +1371,11 @@ impl Interp {
 
     /// Writes a line to stdout (message STATUS etc.).
     pub fn stdout_line(&mut self, text: &str) {
-        crate::bytes::stdout_line(text);
+        if let Some(capture) = &self.stdout_capture {
+            capture.borrow_mut().push(text.to_owned());
+        } else {
+            crate::bytes::stdout_line(text);
+        }
     }
 
     pub fn set_fatal(&mut self) {

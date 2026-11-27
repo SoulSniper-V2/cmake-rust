@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+set(CPACK_PACKAGE_CONTACT "Acme Maintainer <acme@example.com>")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6 (>= 2.34), libfoo | libbar, probe-base (= 1.0)")
+set(CPACK_DEBIAN_PACKAGE_PREDEPENDS "debconf (>= 0.5)")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+include(CPack)

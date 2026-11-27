@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+set(CPACK_INSTALLED_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/missing;/")
+set(CPACK_INSTALL_CMAKE_PROJECTS "")
+include(CPack)

@@ -13,6 +13,7 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 | **Kitware CMake 4.1.0** (CMake building itself) | configured tree, build, then the upstream CTest suite | **312 / 312** files identical; 1,198 / 1,198 build steps; **683 / 683** tests pass |
 | **zlib 1.3.1** | configure, generate, build, install, tests | all match |
 | **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
+| **`cpack`** (Rust port) | Kitware's RunCMake CPack suites scored with the Rust `cpack`; packaging CMake itself and zlib | **421 / 421** cases pass; the extracted packages are identical (3,995 entries for CMake 4.1.0) |
 | **Unix Makefiles** generator | RunCMake with the Makefiles-configured reference; Kitware self-build; zlib | **5,567 / 5,571** RunCMake cases pass, including the `<IDE> - Unix Makefiles` extra generators (the other 4 pass too, but the audit cannot confirm independence because the reference `ctest --build-and-test` runs its own cmake from the generated clean rules); CMake builds itself with `make -j6` and passes **684 / 684** tests; zlib matches |
 
 All of these were measured at commit `4ca7cce`: the LLVM tree with `scripts/treediff.py`, the Kitware tree by comparing `scripts/kitware-configure.sh oracle` and `rust` trees. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
@@ -92,7 +93,7 @@ RUST_CMAKE=<root>/rust-prefix/bin/cmake scripts/verify-zlib.sh
 
 `verify-zlib.sh` needs Git, Python 3, Ninja, a C toolchain and a reference Kitware CMake with CTest. It uses two clean copies of zlib v1.3.1 (`51b7f2ab`) and isolates the Rust side's executable search path. It checks the generated header, the normalized per-target compiler arguments, the upstream tests, the installed paths and exported symbols, four gzip encode/decode pairings, and that a second `ninja` run is a no-op. Override tool paths with `RUST_CMAKE`, `UPSTREAM_CMAKE`, `CTEST` or `NINJA`, and set `ZLIB_PIN_DIR` to reuse a checkout.
 
-The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.1` holding the pinned 4.1.0 distribution modules, which are read as data. The Kitware `cmake` binary is never called by the candidate. The pinned Kitware `ctest` is used only as an independent test runner.
+The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.1` holding the pinned 4.1.0 distribution modules, which are read as data. The Kitware `cmake` binary is never called by the candidate. The repository also builds a Rust `cpack`; the pinned Kitware `ctest` is still used as an independent test runner while the Rust `ctest` port is finished.
 
 ## What's implemented
 

@@ -917,6 +917,7 @@ impl<'a> GenCtx<'a> {
             // (IDE project file) generator, if one was selected.
             super::extra::generate(self, ninja.global_targets());
         }
+        super::cpack_properties::generate(self);
         // cmGlobalGenerator::Generate ends with CheckTargetLinkLibraries:
         // validation of the link structures memoized during generation.
         super::link::check_link_libraries(self);

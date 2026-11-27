@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(srcprobe NONE)
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/generated-but-in-source.txt" "generated\n")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/ignored-dir")
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/ignored-dir/data.txt" "data\n")
+set(CPACK_SOURCE_IGNORE_FILES "/ignored-dir/")
+include(CPack)

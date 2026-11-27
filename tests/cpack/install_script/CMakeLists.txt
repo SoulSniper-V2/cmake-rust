@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/payload.txt" "payload\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/do-install.cmake" "file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/share/probe\" TYPE FILE FILES \"${CMAKE_CURRENT_BINARY_DIR}/payload.txt\")\n")
+set(CPACK_INSTALL_SCRIPTS "${CMAKE_CURRENT_BINARY_DIR}/do-install.cmake")
+set(CPACK_INSTALL_CMAKE_PROJECTS "")
+include(CPack)

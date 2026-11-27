@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.31)
+project(srcprobe NONE)
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/keep.txt" "keep\n")
+set(CPACK_SOURCE_TOPLEVEL_TAG "CustomSrcTag")
+include(CPack)

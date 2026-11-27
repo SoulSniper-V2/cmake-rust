@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+set(CPACK_EXTERNAL_ENABLE_STAGING OFF)
+set(CPACK_EXTERNAL_PACKAGE_NAME "external-off-result")
+include(CPack)
