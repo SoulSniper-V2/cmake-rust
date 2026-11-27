@@ -560,7 +560,8 @@ pub(in crate::ctest) fn execute_detailed(
     if options.dir.is_none() && binary.is_dir() && std::env::set_current_dir(&binary).is_ok() {
         dir = binary.clone();
     }
-    let ignore = read_custom(&binary, log, !options.memcheck_type.is_empty());
+    let mut ignore = read_custom(&binary, log, !options.memcheck_type.is_empty());
+    ignore.extend(options.memcheck_ignore.iter().cloned());
     if !options.script_quiet && options.memcheck_type.is_empty() {
         log.output(&format!("Test project {}\n", dir.display()));
     }

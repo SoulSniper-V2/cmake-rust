@@ -571,6 +571,78 @@ fn postprocess_sanitizer_logs(
     total
 }
 
+fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> usize {
+    let mut names = BTreeMap::new();
+    if let Ok(entries) = std::fs::read_dir(temporary) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("LastTest")
+                && name.ends_with(".log")
+                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            {
+                for line in contents.lines() {
+                    if let Some((prefix, test)) = line.split_once(" Test: ")
+                        && let Some((index, _)) = prefix.split_once('/')
+                        && let Ok(index) = index.parse::<usize>()
+                    {
+                        names.insert(index, test.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    let total = names.len();
+    let mut defects = 0;
+    for (index, name) in &names {
+        let path = temporary.join(format!("MemoryChecker.{index}.log"));
+        if !path.is_file() {
+            eprintln!("Cannot find memory tester output file: {}", path.display());
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let count = contents
+            .lines()
+            .filter(|line| {
+                line.starts_with("========")
+                    && (line.contains("Invalid ")
+                        || line.contains("definitely lost")
+                        || line.contains("possibly lost")
+                        || line.contains("Fatal UVM")
+                        || line.contains("hazard detected")
+                        || line.contains("Race reported")
+                        || line.contains("Barrier error")
+                        || line.contains("Uninitialized ")
+                        || line.contains("Unused memory")
+                        || line.contains("Host API memory access error")
+                        || line.contains("Leaked "))
+            })
+            .count();
+        defects += count;
+        if count > 0 {
+            handler_output(
+                interp,
+                &format!(
+                    "{index}/{total} MemCheck: #{index}: {name} ..........................   Defects: {count}\n"
+                ),
+                quiet,
+            );
+        }
+    }
+    handler_output(interp, "-- Processing memory checking output:\n", quiet);
+    handler_output(
+        interp,
+        "MemCheck log files can be found here: (<#> corresponds to test number)\n",
+        quiet,
+    );
+    handler_output(
+        interp,
+        &format!("{}/MemoryChecker.<#>.log\n", temporary.display()),
+        quiet,
+    );
+    handler_output(interp, "Memory checking results:\n", quiet);
+    defects
+}
+
 fn run_memcheck_commands(interp: &Interp, commands: &str, kind: &str) -> bool {
     for command in crate::util::expand_list(commands, false) {
         let args = crate::commands::try_compile::parse_arguments(&command);
@@ -771,6 +843,8 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     };
     options.memcheck_options = memcheck_options;
     options.memcheck_dynamic_options = dynamic_options;
+    options.memcheck_ignore =
+        crate::util::expand_list(&interp.get_safe("CTEST_CUSTOM_MEMCHECK_IGNORE"), false);
     if !run_memcheck_commands(interp, &interp.get_safe("CTEST_CUSTOM_PRE_MEMCHECK"), "pre") {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         if let Some(variable) = values.get("RETURN_VALUE") {
@@ -787,11 +861,15 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         .as_ref()
         .is_some_and(|state| state.options.verbose);
     let mut log = Log::new(&options);
-    log.suppress_output = !handler_verbose || quiet;
+    log.suppress_output = !handler_verbose;
     let old_dir = std::env::current_dir().unwrap_or_default();
     let (code, no_tests) = execute_detailed(binary.clone(), options, &mut log);
     let _ = std::env::set_current_dir(old_dir);
-    let defects = postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet);
+    let defects = if sanitizer {
+        postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet)
+    } else {
+        postprocess_checker_logs(interp, &temporary, quiet)
+    };
     let post_ok = run_memcheck_commands(
         interp,
         &interp.get_safe("CTEST_CUSTOM_POST_MEMCHECK"),

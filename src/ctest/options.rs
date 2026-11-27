@@ -68,6 +68,7 @@ pub(super) struct Options {
     pub memcheck_command: String,
     pub memcheck_options: Vec<String>,
     pub memcheck_dynamic_options: Vec<String>,
+    pub memcheck_ignore: Vec<String>,
     pub junit: Option<PathBuf>,
     pub include: String,
     pub exclude: String,
