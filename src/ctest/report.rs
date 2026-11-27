@@ -787,3 +787,115 @@ pub(super) fn test_xml(
     std::fs::create_dir_all(&directory)?;
     std::fs::write(directory.join("Test.xml"), xml)
 }
+
+fn site_xml_header(options: &Options) -> String {
+    let info = crate::commands::sysinfo::instrumentation_static_info();
+    let value = |key: &str| xml_attribute_number(info.get(key).unwrap_or(&serde_json::Value::Null));
+    format!(
+        "<Site BuildName=\"{}\"\n\tBuildStamp=\"{}-{}\"\n\tName=\"{}\"\n\tGenerator=\"ctest-{}\"\n\tCompilerName=\"\"\n\tCompilerVersion=\"\"\n\tOSName=\"{}\"\n\tHostname=\"{}\"\n\tOSRelease=\"{}\"\n\tOSVersion=\"{}\"\n\tOSPlatform=\"{}\"\n\tIs64Bits=\"{}\"\n\tVendorString=\"{}\"\n\tVendorID=\"{}\"\n\tFamilyID=\"{}\"\n\tModelID=\"{}\"\n\tModelName=\"{}\"\n\tProcessorCacheSize=\"{}\"\n\tNumberOfLogicalCPU=\"{}\"\n\tNumberOfPhysicalCPU=\"{}\"\n\tTotalVirtualMemory=\"{}\"\n\tTotalPhysicalMemory=\"{}\"\n\tLogicalProcessorsPerPhysical=\"1\"\n\tProcessorClockFrequency=\"{}\"\n\t>\n",
+        xml_escape(&options.dashboard_build_name),
+        xml_escape(&options.dashboard_tag),
+        xml_escape(&options.dashboard_model),
+        xml_escape(&options.dashboard_site),
+        crate::interp::VERSION_STRING,
+        value("OSName"),
+        value("hostname"),
+        value("OSRelease"),
+        value("OSVersion"),
+        value("OSPlatform"),
+        value("is64Bits"),
+        value("vendorString"),
+        value("vendorID"),
+        value("familyId"),
+        value("modelId"),
+        value("processorName"),
+        value("processorCacheSize"),
+        value("numberOfLogicalCPU"),
+        value("numberOfPhysicalCPU"),
+        value("totalVirtualMemory"),
+        value("totalPhysicalMemory"),
+        value("processorClockFrequency"),
+    )
+}
+
+fn write_step_xml(
+    binary: &Path,
+    options: &Options,
+    name: &str,
+    body: String,
+) -> std::io::Result<()> {
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str(&site_xml_header(options));
+    xml.push_str(&body);
+    xml.push_str("</Site>\n");
+    let directory = binary.join("Testing").join(&options.dashboard_tag);
+    std::fs::create_dir_all(&directory)?;
+    std::fs::write(directory.join(format!("{name}.xml")), xml)
+}
+
+pub(super) fn configure_xml(
+    binary: &Path,
+    options: &Options,
+    command: &str,
+    output: &str,
+    status: i32,
+    start_epoch: i64,
+    end_epoch: i64,
+) -> std::io::Result<()> {
+    let body = format!(
+        "\t<Configure>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartConfigureTime>{}</StartConfigureTime>\n\t\t<ConfigureCommand>{}</ConfigureCommand>\n\t\t<Log>{}</Log>\n\t\t<ConfigureStatus>{}</ConfigureStatus>\n\t\t<EndDateTime>{}</EndDateTime>\n\t\t<EndConfigureTime>{}</EndConfigureTime>\n\t\t<ElapsedMinutes>{}</ElapsedMinutes>\n\t</Configure>\n",
+        clock_at("%b %d %H:%M %Z", start_epoch),
+        start_epoch,
+        xml_content(command),
+        xml_content(output),
+        status,
+        clock_at("%b %d %H:%M %Z", end_epoch),
+        end_epoch,
+        (end_epoch - start_epoch) / 60,
+    );
+    write_step_xml(binary, options, "Configure", body)
+}
+
+#[derive(Debug)]
+pub(super) struct BuildDiagnostic {
+    pub error: bool,
+    pub line: usize,
+    pub text: String,
+    pub pre_context: String,
+    pub post_context: String,
+}
+
+pub(super) fn build_xml(
+    binary: &Path,
+    options: &Options,
+    command: &str,
+    diagnostics: &[BuildDiagnostic],
+    start_epoch: i64,
+    end_epoch: i64,
+) -> std::io::Result<()> {
+    let mut body = format!(
+        "\t<Build>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartBuildTime>{}</StartBuildTime>\n\t\t<BuildCommand>{}</BuildCommand>\n",
+        clock_at("%b %d %H:%M %Z", start_epoch),
+        start_epoch,
+        xml_content(command),
+    );
+    for diagnostic in diagnostics.iter().take(50) {
+        let tag = if diagnostic.error { "Error" } else { "Warning" };
+        let _ = writeln!(
+            body,
+            "\t\t<{tag}>\n\t\t\t<BuildLogLine>{}</BuildLogLine>\n\t\t\t<Text>{}</Text>\n\t\t\t<PreContext>{}</PreContext>\n\t\t\t<PostContext>{}</PostContext>\n\t\t\t<RepeatCount>0</RepeatCount>\n\t\t</{tag}>",
+            diagnostic.line,
+            xml_content(&diagnostic.text),
+            xml_content(&diagnostic.pre_context),
+            xml_content(&diagnostic.post_context),
+        );
+    }
+    let _ = writeln!(
+        body,
+        "\t\t<Log Encoding=\"base64\" Compression=\"bin/gzip\"/>\n\t\t<EndDateTime>{}</EndDateTime>\n\t\t<EndBuildTime>{}</EndBuildTime>\n\t\t<ElapsedMinutes>{}</ElapsedMinutes>\n\t</Build>",
+        clock_at("%b %d %H:%M %Z", end_epoch),
+        end_epoch,
+        (end_epoch - start_epoch) / 60,
+    );
+    write_step_xml(binary, options, "Build", body)
+}

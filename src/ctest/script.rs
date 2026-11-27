@@ -1,5 +1,6 @@
 //! CTest dashboard script execution (`ctest -S`).
 
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -488,6 +489,355 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
+fn epoch_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64)
+}
+
+fn split_options(value: &str) -> Vec<String> {
+    crate::util::expand_list(value, false)
+}
+
+fn shell_command(command: &str, directory: &Path) -> (String, i32) {
+    let result = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(format!("{command} 2>&1"))
+        .current_dir(directory)
+        .stdin(std::process::Stdio::null())
+        .output();
+    match result {
+        Ok(result) => (
+            crate::bytes::decode(&result.stdout),
+            result.status.code().unwrap_or(-1),
+        ),
+        Err(error) => (format!("{error}\n"), -1),
+    }
+}
+
+fn dashboard_options(interp: &Interp, binary: &Path) -> Options {
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let mut options = state.options.clone();
+    options.dashboard_tag = state.tag.clone();
+    options.dashboard_model = state.model.clone();
+    options.dashboard_site = state.site.clone();
+    options.dashboard_build_name = state.build_name.clone();
+    options.dir = Some(binary.into());
+    options
+}
+
+fn step_log_name(step: &str, tag: &str) -> String {
+    if tag.is_empty() {
+        format!("Last{step}.log")
+    } else {
+        format!("Last{step}_{tag}.log")
+    }
+}
+
+fn parse_handler_args(
+    args: &[String],
+    values: &[&str],
+    flags: &[&str],
+) -> Result<
+    (
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeSet<String>,
+    ),
+    String,
+> {
+    let mut map = std::collections::BTreeMap::new();
+    let mut present = std::collections::BTreeSet::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if values.contains(&arg.as_str()) {
+            if index + 1 >= args.len() {
+                return Err(format!("{arg} argument missing value"));
+            }
+            map.insert(arg.clone(), args[index + 1].clone());
+            index += 2;
+        } else if flags.contains(&arg.as_str()) {
+            present.insert(arg.clone());
+            index += 1;
+        } else if !map.contains_key("BUILD") && values.contains(&"BUILD") {
+            map.insert("BUILD".into(), arg.clone());
+            index += 1;
+        } else {
+            return Err(format!("called with unknown argument \"{arg}\"."));
+        }
+    }
+    Ok((map, present))
+}
+
+fn required_build_directory(
+    interp: &Interp,
+    parsed: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let build = parsed
+        .get("BUILD")
+        .cloned()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| interp.get_safe("CTEST_BINARY_DIRECTORY"));
+    if build.is_empty() {
+        Err("called with no build directory specified.  Either use the BUILD argument or set the CTEST_BINARY_DIRECTORY variable.".into())
+    } else {
+        Ok(build)
+    }
+}
+
+fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (parsed, present) = match parse_handler_args(
+        args,
+        &["BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "SUBMIT_INDEX"],
+        &["APPEND", "QUIET"],
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let build = match required_build_directory(interp, &parsed) {
+        Ok(build) => build,
+        Err(error) => return err(error),
+    };
+    let quiet = present.contains("QUIET");
+    let mut command = interp.get_safe("CTEST_CONFIGURE_COMMAND");
+    if command.is_empty() {
+        let generator = interp.get_safe("CTEST_CMAKE_GENERATOR");
+        if generator.is_empty() {
+            return err(
+                "called with no configure command specified.  If this is a  \"built with CMake\" project, set CTEST_CMAKE_GENERATOR. If not, set CTEST_CONFIGURE_COMMAND.",
+            );
+        }
+        let source = parsed
+            .get("SOURCE")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| interp.get_safe("CTEST_SOURCE_DIRECTORY"));
+        if source.is_empty() || !Path::new(&source).join("CMakeLists.txt").is_file() {
+            return err(
+                "called with invalid source directory.  CTEST_SOURCE_DIRECTORY must be set to a directory that contains CMakeLists.txt.",
+            );
+        }
+        let source = collapse_input(&source);
+        let build_collapsed = collapse_input(&build);
+        let cmake = interp.get_safe("CMAKE_EXECUTABLE_NAME");
+        command = format!("\"{cmake}\"");
+        if let Some(options) = parsed.get("OPTIONS") {
+            for option in split_options(options) {
+                let _ = write!(command, " \"{option}\"");
+            }
+        }
+        let multi = generator.contains("Multi-Config")
+            || generator.contains("Visual Studio")
+            || generator == "Xcode";
+        let options_text = parsed.get("OPTIONS").map_or("", String::as_str);
+        let build_type = interp.get_safe("CTEST_CONFIGURATION_TYPE");
+        if !multi
+            && !build_type.is_empty()
+            && !options_text.contains("CMAKE_BUILD_TYPE=")
+            && !options_text.contains("CMAKE_BUILD_TYPE:STRING=")
+        {
+            let _ = write!(command, " \"-DCMAKE_BUILD_TYPE:STRING={build_type}\"");
+        }
+        if interp.is_on("CTEST_USE_LAUNCHERS") {
+            command.push_str(" \"-DCTEST_USE_LAUNCHERS:BOOL=TRUE\"");
+        }
+        let _ = write!(command, " \"-G{generator}\"");
+        let platform = interp.get_safe("CTEST_CMAKE_GENERATOR_PLATFORM");
+        if !platform.is_empty() {
+            let _ = write!(command, " \"-A{platform}\"");
+        }
+        let toolset = interp.get_safe("CTEST_CMAKE_GENERATOR_TOOLSET");
+        if !toolset.is_empty() {
+            let _ = write!(command, " \"-T{toolset}\"");
+        }
+        let _ = write!(command, " \"-S{source}\" \"-B{build_collapsed}\"");
+    }
+    handler_output(interp, "Configure project\n", quiet);
+    let build_path = PathBuf::from(collapse_input(&build));
+    if let Err(error) = std::fs::create_dir_all(&build_path) {
+        return err(format!(
+            "cannot create directory {}: {error}",
+            build_path.display()
+        ));
+    }
+    if interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.extra_verbose)
+    {
+        handler_output(
+            interp,
+            &format!("Configure with command: {command}\n"),
+            quiet,
+        );
+    }
+    let start = epoch_now();
+    let (output, status) = shell_command(&command, &build_path);
+    let end = epoch_now();
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let temporary = build_path.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+    let _ = std::fs::write(
+        temporary.join(step_log_name("Configure", &state.tag)),
+        crate::bytes::encode(&output),
+    );
+    let kib = output.len() / 1024;
+    let dots = output.len().div_ceil(1024).max(1);
+    handler_output(
+        interp,
+        &format!(
+            "   Each . represents 1024 bytes of output\n    {} Size of output: {kib}K\n",
+            ".".repeat(dots)
+        ),
+        quiet,
+    );
+    if status != 0 {
+        handler_error(interp, "Error(s) when configuring the project\n");
+    }
+    if let Some(variable) = parsed.get("RETURN_VALUE") {
+        interp.set_def(variable, status.to_string());
+    }
+    let options = dashboard_options(interp, &build_path);
+    let _ = report::configure_xml(&build_path, &options, &command, &output, status, start, end);
+    if status != 0 {
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+    }
+    Ok(())
+}
+
+fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (parsed, present) = match parse_handler_args(
+        args,
+        &[
+            "BUILD",
+            "RETURN_VALUE",
+            "NUMBER_ERRORS",
+            "NUMBER_WARNINGS",
+            "TARGET",
+            "CONFIGURATION",
+            "FLAGS",
+            "PROJECT_NAME",
+            "PARALLEL_LEVEL",
+        ],
+        &["APPEND", "QUIET"],
+    ) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let build = match required_build_directory(interp, &parsed) {
+        Ok(build) => build,
+        Err(error) => return err(error),
+    };
+    let quiet = present.contains("QUIET");
+    let mut command = interp.get_safe("CTEST_BUILD_COMMAND");
+    if command.is_empty() {
+        let generator = interp.get_safe("CTEST_CMAKE_GENERATOR");
+        if generator.is_empty() {
+            return err(
+                "has no project to build. If this is a \"built with CMake\" project, verify that CTEST_CMAKE_GENERATOR is set. Otherwise, set CTEST_BUILD_COMMAND to build the project with a custom command line.",
+            );
+        }
+        let configuration = parsed
+            .get("CONFIGURATION")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let value = interp.get_safe("CTEST_BUILD_CONFIGURATION");
+                (!value.is_empty()).then_some(value)
+            })
+            .or_else(|| {
+                let value = interp.get_safe("CTEST_CONFIGURATION_TYPE");
+                (!value.is_empty()).then_some(value)
+            })
+            .unwrap_or_else(|| "Release".into());
+        let target = parsed
+            .get("TARGET")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| interp.get_safe("CTEST_BUILD_TARGET"));
+        let cmake = interp.get_safe("CMAKE_EXECUTABLE_NAME");
+        command = format!("{cmake} --build . --config \"{configuration}\"");
+        if !target.is_empty() {
+            let _ = write!(command, " --target \"{target}\"");
+        }
+        if let Some(parallel) = parsed
+            .get("PARALLEL_LEVEL")
+            .filter(|value| !value.is_empty())
+        {
+            let _ = write!(command, " --parallel {parallel}");
+        }
+        let flags = parsed
+            .get("FLAGS")
+            .cloned()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| interp.get_safe("CTEST_BUILD_FLAGS"));
+        if !flags.is_empty() {
+            let _ = write!(command, " -- {flags}");
+        }
+    }
+    handler_output(interp, "Build project\n", quiet);
+    handler_output(
+        interp,
+        "   Each symbol represents 1024 bytes of output.\n   '!' represents an error and '*' a warning.\n",
+        quiet,
+    );
+    let build_path = PathBuf::from(collapse_input(&build));
+    let start = epoch_now();
+    let (output, status) = shell_command(&command, &build_path);
+    let end = epoch_now();
+    let lines: Vec<&str> = output.lines().collect();
+    let mut diagnostics = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        let is_error = lower.contains("error") && !lower.contains("warning");
+        let is_warning = lower.contains("warning");
+        if is_error || is_warning {
+            diagnostics.push(report::BuildDiagnostic {
+                error: is_error,
+                line: index + 1,
+                text: (*line).to_owned(),
+                pre_context: lines[index.saturating_sub(2)..index].join("\n"),
+                post_context: lines[index + 1..(index + 3).min(lines.len())].join("\n"),
+            });
+        }
+    }
+    let errors = diagnostics.iter().filter(|item| item.error).count();
+    let warnings = diagnostics.iter().filter(|item| !item.error).count();
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let temporary = build_path.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+    let _ = std::fs::write(
+        temporary.join(step_log_name("Build", &state.tag)),
+        crate::bytes::encode(&output),
+    );
+    let kib = output.len() / 1024;
+    let dots = output.len().div_ceil(1024).max(1);
+    handler_output(
+        interp,
+        &format!("    {} Size of output: {kib}K\n", ".".repeat(dots)),
+        quiet,
+    );
+    let options = dashboard_options(interp, &build_path);
+    let _ = report::build_xml(&build_path, &options, &command, &diagnostics, start, end);
+    if status != 0 || errors != 0 {
+        handler_error(interp, "Error(s) when building project\n");
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+    }
+    handler_output(interp, &format!("   {errors} Compiler errors\n"), quiet);
+    handler_output(interp, &format!("   {warnings} Compiler warnings\n"), quiet);
+    if let Some(variable) = parsed.get("RETURN_VALUE") {
+        interp.set_def(variable, status.to_string());
+    }
+    if let Some(variable) = parsed.get("NUMBER_ERRORS") {
+        interp.set_def(variable, errors.to_string());
+    }
+    if let Some(variable) = parsed.get("NUMBER_WARNINGS") {
+        interp.set_def(variable, warnings.to_string());
+    }
+    Ok(())
+}
+
 fn unsupported(_: &mut Interp, _: &[String]) -> CmdResult {
     err("ctest command is not implemented")
 }
@@ -499,8 +849,8 @@ fn register(interp: &mut Interp) {
     interp.register("ctest_empty_binary_directory", ctest_empty_binary_directory);
     interp.register("ctest_read_custom_files", ctest_read_custom_files);
     interp.register("ctest_run_script", ctest_run_script);
-    interp.register("ctest_build", unsupported);
-    interp.register("ctest_configure", unsupported);
+    interp.register("ctest_build", ctest_build);
+    interp.register("ctest_configure", ctest_configure);
     interp.register("ctest_coverage", unsupported);
     interp.register("ctest_memcheck", unsupported);
     interp.register("ctest_submit", unsupported);

@@ -129,6 +129,7 @@ def cases():
         ("fail-v", ["-S", "fail.cmake", "-V"]),
         ("empty-v", ["-S", "empty.cmake", "-V"]),
         ("output-log", ["-S", "pass.cmake", "-V", "--output-log", "console.log"]),
+        ("configure-build", ["-S", "scriptbuild.cmake", "-V"]),
     ):
         yield "dashboard", name, [flags], {}
     for mode in ("", "error", "ignore"):
@@ -141,6 +142,9 @@ def cases():
 
 def normalize(data, work, path):
     data = data.replace(os.fsencode(work), b"<WORK>").replace(os.fsencode(FIXTURES), b"<FIXTURES>")
+    data = data.replace(os.fsencode(ORACLE), b"<CMAKE>")
+    data = data.replace(os.fsencode(ORACLE.resolve()), b"<CMAKE>")
+    data = data.replace(os.fsencode(ROOT / "target/release/cmake"), b"<CMAKE>")
     data = re.sub(rb"(?<= )\d+\.\d+(?= sec\b)", b"<SECONDS>", data)
     data = re.sub(rb"(?m)(?<=: )\w{3} \d{2} \d{2}:\d{2} UTC$", b"<DATETIME>", data)
     data = re.sub(rb"(?m)(?<=time elapsed: )\d\d:\d\d:\d\d$", b"<DURATION>", data)
@@ -154,8 +158,8 @@ def normalize(data, work, path):
     if path.suffix == ".xml":
         data = re.sub(rb'(?<=timestamp=")[^"]*', b"<DATETIME>", data)
         data = re.sub(rb'(?<=time=")[^"]*', b"<SECONDS>", data)
-    if path.name == "Test.xml":
-        data = re.sub(rb"(?<=TestTime>)\d+(?=</)", b"<EPOCH>", data)
+    if path.name in ("Test.xml", "Configure.xml", "Build.xml"):
+        data = re.sub(rb"(?<=Time>)\d+(?=</)", b"<EPOCH>", data)
         data = re.sub(rb"(?<=DateTime>)[^<]+", b"<DATETIME>", data)
         data = re.sub(rb'(?<=ProcessorClockFrequency=")[^"]*', b"<CLOCK>", data)
         data = re.sub(
@@ -191,6 +195,9 @@ def run_case(case, binaries, configure):
                     if path.is_file() and not (snapshot / path.relative_to(build)).exists():
                         relative = path.relative_to(build)
                         if fixture == "buildtest" and relative.parts[0] == "bt-build":
+                            continue
+                        if (fixture == "dashboard" and relative.parts[0] == "scriptbin"
+                                and (len(relative.parts) < 2 or relative.parts[1] != "Testing")):
                             continue
                         result[(number, str(relative))] = normalize(path.read_bytes(), root, path)
             results.append(result)
