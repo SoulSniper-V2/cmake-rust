@@ -176,14 +176,7 @@ pub fn get(interp: &Interp, object: Object<'_>, name: &str) -> Option<String> {
                     return Some(commands.join(";"));
                 }
                 "CMAKE_ROLE" => {
-                    return Some(
-                        match interp.mode {
-                            Mode::Script => "SCRIPT",
-                            Mode::FindPackage => "FIND_PACKAGE",
-                            Mode::Project => "PROJECT",
-                        }
-                        .into(),
-                    );
+                    return Some(interp.role.into());
                 }
                 "ENABLED_LANGUAGES" => {
                     return Some(crate::util::join_list(&interp.langs.enabled));

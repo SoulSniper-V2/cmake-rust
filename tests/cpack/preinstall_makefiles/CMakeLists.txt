@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe C)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/probe.c" "int main(void) { return 0; }\n")
+add_executable(probe "${CMAKE_CURRENT_BINARY_DIR}/probe.c")
+install(TARGETS probe RUNTIME DESTINATION bin)
+include(CPack)

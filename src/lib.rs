@@ -5,7 +5,7 @@ mod build_database;
 mod bytes;
 mod cache;
 mod carchive;
-mod cli;
+pub mod cli;
 mod cmcmd;
 mod cmelf;
 mod cmregex;
@@ -36,14 +36,15 @@ mod pkgconfig;
 mod policy;
 mod policy_table;
 mod presets;
-mod profiling;
+pub mod profiling;
 pub mod properties;
 mod props;
 mod sarif;
 mod state;
-mod stdio;
+pub mod stdio;
 mod util;
 
+pub mod cpack;
 mod ctest;
 
 pub fn cmake_main() -> i32 {

@@ -1,6 +1,6 @@
 //! `list()` command: port of `cmListCommand.cxx` and `cmList.cxx`.
 
-use crate::cmregex::{Match, Regex};
+use crate::cmregex::Regex;
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
@@ -351,66 +351,26 @@ impl ReplaceHelper {
         Ok(helper)
     }
 
+    /// `cmStringReplaceHelper::ParseReplaceExpression`, over CMake's raw
+    /// bytes (a non-ASCII escape names the single byte after the backslash).
     fn parse_replace_expression(&mut self) {
-        let expr = self.replace_expression.as_bytes();
-        let mut l = 0usize;
-        while l < expr.len() {
-            let r = expr[l..].iter().position(|&b| b == b'\\').map(|p| l + p);
-            match r {
-                None => {
-                    self.replacements
-                        .push(Replacement::Text(self.replace_expression[l..].to_owned()));
-                    break;
-                }
-                Some(r) => {
-                    if r > l {
-                        self.replacements
-                            .push(Replacement::Text(self.replace_expression[l..r].to_owned()));
-                    }
-                    if r == expr.len() - 1 {
-                        self.error = Some("replace-expression ends in a backslash".to_owned());
-                        return;
-                    }
-                    match expr[r + 1] {
-                        b'0'..=b'9' => self
-                            .replacements
-                            .push(Replacement::Group((expr[r + 1] - b'0') as usize)),
-                        b'n' => self.replacements.push(Replacement::Text("\n".to_owned())),
-                        b'\\' => self.replacements.push(Replacement::Text("\\".to_owned())),
-                        other => {
-                            self.error = Some(format!(
-                                "Unknown escape \"\\{}\" in replace-expression",
-                                other as char
-                            ));
-                            return;
+        match crate::commands::string::regex_replace::parse_replace_expression(
+            &self.replace_expression,
+        ) {
+            Ok(segments) => {
+                self.replacements = segments
+                    .into_iter()
+                    .map(|segment| match segment {
+                        crate::commands::string::regex_replace::Segment::Literal(text) => {
+                            Replacement::Text(text)
                         }
-                    }
-                    l = r + 2;
-                }
+                        crate::commands::string::regex_replace::Segment::Group(n) => {
+                            Replacement::Group(n)
+                        }
+                    })
+                    .collect();
             }
-        }
-    }
-
-    /// Repeated find with the CMP0186 anchor semantics.
-    fn find_at(
-        &self,
-        input: &[u8],
-        base: usize,
-        bol_at_offset: bool,
-        nonempty_at_offset: bool,
-    ) -> Option<Match> {
-        let mut start = base;
-        loop {
-            // `^` can match at `start` when bol_at_offset (regbol == offset)
-            // or when start is the beginning of the full text.
-            let not_bol = if bol_at_offset { false } else { start != 0 };
-            let found = self.regex.find_bytes(input, start, not_bol)?;
-            if nonempty_at_offset && found.groups[0] == Some((base, base)) {
-                // Match ending at the reject position: skip to next offset.
-                start = base + 1;
-                continue;
-            }
-            return Some(found);
+            Err(error) => self.error = Some(error),
         }
     }
 
@@ -422,7 +382,10 @@ impl ReplaceHelper {
 
         let mut base = 0usize;
         let mut nonempty = false;
-        while let Some(found) = self.find_at(&input_bytes, base, bol_at_offset, nonempty) {
+        while let Some(found) =
+            self.regex
+                .find_bytes_with(&input_bytes, base, bol_at_offset, nonempty)
+        {
             let (start, end) = found.groups[0].unwrap_or((0, 0));
             crate::state::clear_matches(interp);
             crate::state::store_matches(interp, input, &found);
@@ -1082,7 +1045,7 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
             TransformAction::Prepend => format!("{}{}", action_args[0], s),
             TransformAction::ToUpper => s.to_ascii_uppercase(),
             TransformAction::ToLower => s.to_ascii_lowercase(),
-            TransformAction::Strip => s.trim_matches(|c: char| c.is_whitespace()).to_owned(),
+            TransformAction::Strip => util::trim_whitespace(s).to_owned(),
             TransformAction::GenexStrip => strip_all_generator_expressions(s),
             TransformAction::Replace => {
                 let mut out = String::new();

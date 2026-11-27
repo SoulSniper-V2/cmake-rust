@@ -1,0 +1,1 @@
+-DCPACK_PACKAGE_VENDOR=Attached

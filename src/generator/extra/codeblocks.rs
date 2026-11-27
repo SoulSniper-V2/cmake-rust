@@ -97,18 +97,23 @@ fn cb_target_type(s: &Shared, target: &Target) -> i64 {
     }
 }
 
-/// `cmExtraCodeBlocksGenerator::BuildMakeCommand` (Ninja).
+/// `cmExtraCodeBlocksGenerator::BuildMakeCommand`.
 fn build_make_command(s: &Shared, make: &str, makefile: &str, target: &str, flags: &str) -> String {
     let mut command = make.to_owned();
     if !flags.is_empty() {
         command.push(' ');
         command.push_str(flags);
     }
-    // Ninja: "ninja -v <target>"
-    command.push_str(" -v ");
-    command.push_str(target);
-    let _ = makefile;
-    let _ = s;
+    if s.var_safe(0, "CMAKE_GENERATOR") == "Ninja" {
+        command.push_str(" -v ");
+        command.push_str(target);
+    } else {
+        let makefile_name = crate::commands::sysinfo::convert_to_unix_output_path(makefile);
+        command.push_str(" -f \"");
+        command.push_str(&makefile_name);
+        command.push_str("\"  VERBOSE=1 ");
+        command.push_str(target);
+    }
     command
 }
 

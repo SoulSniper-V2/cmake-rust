@@ -193,12 +193,7 @@ fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
         .as_ref()
         .is_some_and(|state| state.process_steps)
     {
-        let frame = crate::messages::Frame {
-            file: ".".into(),
-            line: 0,
-            name: None,
-            deferred: false,
-        };
+        let frame = crate::messages::Frame::new(".".into(), 0, None, false);
         eprintln!(
             "{}",
             crate::messages::render(
@@ -2488,12 +2483,7 @@ pub(super) fn run_scripts(options: &Options) -> i32 {
 
 fn step_error(command: &str, error: crate::interp::CmdErr) {
     if let crate::interp::CmdErr::Error(message) = error {
-        let frame = crate::messages::Frame {
-            file: ".".into(),
-            line: 0,
-            name: None,
-            deferred: false,
-        };
+        let frame = crate::messages::Frame::new(".".into(), 0, None, false);
         eprintln!(
             "{}",
             crate::messages::render(

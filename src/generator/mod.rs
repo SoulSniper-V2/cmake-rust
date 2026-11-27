@@ -23,6 +23,7 @@
 mod autogen;
 pub mod automatic;
 mod compatible;
+mod cpack_properties;
 pub mod ctx;
 pub mod custom;
 pub mod evaluation_files;
@@ -216,12 +217,21 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     run_build_database_actions(interp, &mut expand_output_genex);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
-    let (computed, mut diagnostics) = {
+    let (computed, mut diagnostics, cmake_depend_files) = {
         let ctx = ctx::GenCtx::new(interp);
         let (computed, generated) = ctx.check_and_generate(&autogen);
         module_diagnostics.extend(generated);
-        (computed, module_diagnostics)
+        let depend_files = ctx.cmake_depend_files.borrow().clone();
+        (computed, module_diagnostics, depend_files)
     };
+    // Generation-time ConfigureFile/file(GENERATE) input reads are
+    // cmMakefile::AddCMakeDependFile entries once generation finishes (the
+    // file API observes the makefiles after generation).  During generation
+    // the generators already consumed ctx.cmake_depend_files for their
+    // re-run rules.
+    for (dir, file) in cmake_depend_files {
+        interp.makefiles[dir].list_files.push(file);
+    }
     issue_diagnostics(interp, std::mem::take(&mut diagnostics));
     if !computed {
         return -1;
@@ -351,6 +361,7 @@ fn drop_transient_list_files(interp: &mut Interp) {
     let not_persistent =
         |path: &str| path.contains("CMakeTmp") || !std::path::Path::new(path).exists();
     for makefile in &mut interp.makefiles {
+        makefile.output_files.retain(|path| !not_persistent(path));
         makefile.list_files.retain(|path| !not_persistent(path));
     }
     if let Some(deps) = interp.ext.misc.get("cmake-depend-files") {

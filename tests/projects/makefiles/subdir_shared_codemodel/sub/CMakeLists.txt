@@ -1,0 +1,6 @@
+add_library(st STATIC s.c)
+add_library(sh SHARED h.c)
+set_target_properties(sh PROPERTIES VERSION 1.2.3 SOVERSION 1 LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+target_link_libraries(sh PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,st>")
+install(TARGETS sh EXPORT ex LIBRARY DESTINATION lib)
+install(EXPORT ex DESTINATION lib/cmake/ex)

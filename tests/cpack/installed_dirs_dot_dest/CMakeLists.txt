@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/payload/sub")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/payload/a.txt" "a\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/payload/sub/b.txt" "b\n")
+set(CPACK_INSTALLED_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/payload;.")
+include(CPack)

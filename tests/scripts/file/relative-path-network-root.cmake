@@ -1,0 +1,10 @@
+file(RELATIVE_PATH to_network /a "//a/./b")
+file(RELATIVE_PATH from_network //a "/a/./b")
+file(RELATIVE_PATH from_home "~" "$ENV{HOME}/subdir")
+message("to network: [${to_network}]")
+message("from network: [${from_network}]")
+message("from home: [${from_home}]")
+
+file(WRITE "dir/item.txt" x)
+file(GLOB entries RELATIVE "/$ENV{HOME}" "dir/*.txt")
+message("glob: [${entries}]")

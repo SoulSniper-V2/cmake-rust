@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "ctest"
 path = "src/ctest_main.rs"
 
+[[bin]]
+name = "cpack"
+path = "src/bin/cpack.rs"
+
 [dependencies]
 flate2 = "1"
 libc = "0.2"

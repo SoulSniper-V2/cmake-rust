@@ -78,6 +78,9 @@ def normalizer(build: Path, cmake: Path):
             (re.compile(rb"CMakeFiles/d/[0-9a-f]{64}\.d"), b"CMakeFiles/d/<SHA256>.d"),
             # Configure-check executables may record process timing in YAML-like output.
             (re.compile(rb"(?m)^(\s*)(time|timestamp|duration|elapsed): [^\n]*$"), rb"\1\2: <TIME>"),
+            # Nested configure logs include wall-clock times in human-readable
+            # progress lines.  They are scheduling noise, not generated state.
+            (re.compile(rb"(-- (?:Configuring|Generating) done) \([^\n()]*\)"), rb"\1 (<TIME>)"),
         ]
     )
 
@@ -186,7 +189,9 @@ def canonical_target_reply(data: bytes) -> bytes:
 
     def walk(value):
         if isinstance(value, dict):
-            return {k: (frames(v) if k == "backtrace" else walk(v)) for k, v in value.items()}
+            return {k: (frames(v) if k == "backtrace"
+                        else [frames(i) for i in v] if k == "backtraces" and isinstance(v, list)
+                        else walk(v)) for k, v in value.items()}
         if isinstance(value, list):
             return [walk(v) for v in value]
         return value
@@ -195,6 +200,29 @@ def canonical_target_reply(data: bytes) -> bytes:
     if isinstance(obj.get("dependencies"), list):
         obj["dependencies"].sort(key=lambda dep: json.dumps(dep, sort_keys=True))
     return json.dumps(obj, indent=1, sort_keys=True).encode()
+
+
+def sort_makefile2_target_depends(text):
+    """Sort each run of consecutive `<target>/all: <dependency>` lines that
+    share one target in a CMakeFiles/Makefile2.  cmGlobalUnixMakefileGenerator3
+    writes them by iterating a cmTargetDependSet, which is ordered by
+    cmGeneratorTarget pointer value, so their order changes between runs of
+    Kitware's own CMake; everything else in the file stays compared as is."""
+    lines = text.split("\n")
+    out, i = [], 0
+    pattern = re.compile(r"^(\S+/all): \S+$")
+    while i < len(lines):
+        m = pattern.match(lines[i])
+        if not m:
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and pattern.match(lines[j]) and pattern.match(lines[j]).group(1) == m.group(1):
+            j += 1
+        out.extend(sorted(lines[i:j]))
+        i = j
+    return "\n".join(out)
 
 
 def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
@@ -230,6 +258,14 @@ def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
             )
             if is_rebuild_manifest:
                 data = normalize_rebuild_manifest(data)
+            if rel == "CMakeFiles/Makefile2":
+                data = sort_makefile2_target_depends(data.decode(errors="surrogateescape")).encode(errors="surrogateescape")
+            if rel == "CMakeFiles/CMakeRuleHashes.txt":
+                # Rule hashes cover absolute build and tool paths before
+                # normalization.  Their target rows, order, and count remain
+                # compared; the digest bytes are inherently installation
+                # dependent when two separate prefixes are compared.
+                data = re.sub(rb"(?m)^[0-9a-f]{32}(?= )", b"<RULE-HASH>", data)
             files[norm_rel] = ("file", data)
     return files
 

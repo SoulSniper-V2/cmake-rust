@@ -1,5 +1,5 @@
 //! Deprecated "Extra Generators" (cmExternalMakefileProjectGenerator and
-//! the five IDE project file generators), wrapping the Ninja generator.
+//! the five IDE project file generators), wrapping Ninja or Unix Makefiles.
 
 mod codeblocks;
 mod codelite;
@@ -97,7 +97,7 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
         "Eclipse CDT4" => eclipse::generate(ctx, globals),
         "Kate" => kate::generate(ctx, globals),
         "Sublime Text 2" => sublime::generate(ctx, globals),
-        _ => {}
+        _ => ctx.system_error(format!("Unsupported extra generator: {name}")),
     }
 }
 
@@ -111,10 +111,11 @@ fn filename_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// `cmSystemTools::GetFilenameWithoutExtension` (last `.` removed).
+/// `cmSystemTools::GetFilenameWithoutExtension` (the longest extension,
+/// starting at the first `.`, is removed).
 fn filename_without_extension(path: &str) -> &str {
     let name = filename_name(path);
-    name.rsplit_once('.')
+    name.split_once('.')
         .filter(|(stem, _)| !stem.is_empty())
         .map_or(name, |(stem, _)| stem)
 }

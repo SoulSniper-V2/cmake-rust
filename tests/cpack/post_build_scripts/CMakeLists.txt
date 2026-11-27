@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/post.cmake" "message(STATUS \"post-files=[${CPACK_PACKAGE_FILES}]\")\n")
+set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_BINARY_DIR}/post.cmake")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+include(CPack)

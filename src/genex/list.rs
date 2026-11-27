@@ -324,11 +324,7 @@ fn transform(
             "PREPEND" => value.insert_str(0, &action_args[0]),
             "TOUPPER" => value.make_ascii_uppercase(),
             "TOLOWER" => value.make_ascii_lowercase(),
-            "STRIP" => {
-                *value = value
-                    .trim_matches(|c: char| c.is_ascii_whitespace() || c == '\u{b}')
-                    .to_owned()
-            }
+            "STRIP" => *value = crate::util::trim_whitespace(value).to_owned(),
             "REPLACE" => *value = replace.as_ref().unwrap().replace(value, host)?,
             _ => unreachable!(),
         }
@@ -483,9 +479,13 @@ impl<'a> Replacement<'a> {
                 'n' => ReplacePart::Literal("\n"),
                 '\\' => ReplacePart::Literal("\\"),
                 _ => {
-                    return Err(error(&format!(
-                        "Unknown escape \"\\{escape}\" in replace-expression"
-                    )));
+                    // cmStringReplaceHelper names the single byte after the
+                    // backslash, even when it starts a multi-byte character.
+                    let raw = crate::bytes::encode(&rest[at..]);
+                    let mut text = b"Unknown escape \"".to_vec();
+                    text.extend_from_slice(&raw[..2]);
+                    text.extend_from_slice(b"\" in replace-expression");
+                    return Err(error(&crate::bytes::decode(&text)));
                 }
             });
             rest = &rest[at + 1 + escape.len_utf8()..];

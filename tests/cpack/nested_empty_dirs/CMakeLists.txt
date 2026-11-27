@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tree/a/b/c" "${CMAKE_CURRENT_BINARY_DIR}/tree/empty1" "${CMAKE_CURRENT_BINARY_DIR}/tree/x/empty2")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/tree/top.txt" "top\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/tree/a/b/c/deep.txt" "deep\n")
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tree" DESTINATION share/tree)
+include(CPack)

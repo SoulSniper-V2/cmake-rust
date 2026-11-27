@@ -388,6 +388,10 @@ impl GroupNode {
 fn insert_group(groups: &mut Vec<GroupNode>, name: &str, sg: &SourceGroup) {
     let parts: Vec<&str> = name.split('\\').filter(|p| !p.is_empty()).collect();
     if parts.is_empty() {
+        groups[0].files.extend(sg.files.iter().cloned());
+        if sg.regex.is_some() {
+            groups[0].regex = sg.regex.clone();
+        }
         return;
     }
     // Find (or append) the top-level group.
@@ -1552,9 +1556,9 @@ impl<'a, 'b> Eclipse<'a, 'b> {
 
             // insert rules for compiling, preprocessing and assembling
             // individual files: `cmLocalGenerator::GetIndividualFileTargets`
-            // is only overridden by the Unix Makefiles local generator; the
-            // Ninja local generator inherits the empty base implementation,
-            // so this list is always empty here.
+            // is non-virtual in upstream CMake 4.1.0, so calls through
+            // `cmLocalGenerator` always hit the empty base implementation for
+            // both Ninja and Unix Makefiles.
             let object_file_targets: Vec<String> = Vec::new();
             for f in &object_file_targets {
                 let mut prefix = "[obj] ";

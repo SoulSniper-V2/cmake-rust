@@ -1,6 +1,7 @@
 //! Diagnostic formatting, mirroring `cmMessenger` and
 //! `cmDocumentationFormatter`.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::util::relative_if_under;
@@ -18,10 +19,30 @@ pub enum MessageType {
     DeprecationWarning,
 }
 
+thread_local! {
+    static NEXT_FRAME_ID: Cell<u64> = const { Cell::new(1) };
+}
+
+fn next_frame_id() -> u64 {
+    NEXT_FRAME_ID.with(|next| {
+        let id = next.get();
+        next.set(id + 1);
+        id
+    })
+}
+
 /// One backtrace entry (`cmListFileContext`). `line == 0` marks a file
 /// entry without a command.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `id` models the identity of the reference-counted stack entry upstream
+/// creates for every `cmListFileBacktrace::Push`.  Copies of a backtrace
+/// share it; a later execution of the same source line does not.  The file
+/// API's backtrace graph deduplicates by that identity.  Frame equality
+/// deliberately ignores it because interpreter and generator diagnostics
+/// compare contexts by their lexical content.
+#[derive(Clone, Debug)]
 pub struct Frame {
+    pub id: u64,
     pub file: Rc<str>,
     pub line: usize,
     pub name: Option<Rc<str>>,
@@ -29,7 +50,42 @@ pub struct Frame {
     pub deferred: bool,
 }
 
+impl PartialEq for Frame {
+    fn eq(&self, other: &Self) -> bool {
+        self.file == other.file
+            && self.line == other.line
+            && self.name == other.name
+            && self.deferred == other.deferred
+    }
+}
+
+impl Eq for Frame {}
+
 impl Frame {
+    pub fn new(file: Rc<str>, line: usize, name: Option<Rc<str>>, deferred: bool) -> Frame {
+        Frame {
+            id: next_frame_id(),
+            file,
+            line,
+            name,
+            deferred,
+        }
+    }
+
+    /// The permanent file-scope frame of one buildsystem directory.  Its
+    /// identity is stable for the directory because `cmMakefile::Configure`
+    /// never pops this bottom frame and generation reuses it through
+    /// `cmLocalGenerator::DirectoryBacktrace`.
+    pub fn directory(file: Rc<str>, dir: usize) -> Frame {
+        Frame {
+            id: u64::MAX - dir as u64,
+            file,
+            line: 0,
+            name: None,
+            deferred: false,
+        }
+    }
+
     fn render(&self, top: Option<&str>) -> String {
         let file = match top {
             Some(top) => relative_if_under(top, &self.file),

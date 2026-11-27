@@ -11,20 +11,21 @@ pub enum Segment {
     Group(usize),
 }
 
-/// `cmStringReplaceHelper::ParseReplaceExpression`. Returns the error text on
-/// failure.
+/// `cmStringReplaceHelper::ParseReplaceExpression`, over CMake's raw bytes:
+/// an unknown escape names the single byte after the backslash, even when it
+/// starts a multi-byte character. Returns the error text on failure.
 pub fn parse_replace_expression(expr: &str) -> Result<Vec<Segment>, String> {
-    let bytes = expr.as_bytes();
+    let raw = crate::bytes::encode(expr);
+    let bytes: &[u8] = &raw;
     let mut replacements = Vec::new();
     let mut l = 0usize;
     while l < bytes.len() {
-        let found = expr[l..].find('\\').map(|r| l + r);
-        let Some(mut r) = found else {
-            replacements.push(Segment::Literal(expr[l..].to_owned()));
+        let Some(r) = bytes[l..].iter().position(|&b| b == b'\\').map(|p| l + p) else {
+            replacements.push(Segment::Literal(crate::bytes::decode(&bytes[l..])));
             break;
         };
-        if r - l > 0 {
-            replacements.push(Segment::Literal(expr[l..r].to_owned()));
+        if r > l {
+            replacements.push(Segment::Literal(crate::bytes::decode(&bytes[l..r])));
         }
         if r == bytes.len() - 1 {
             return Err("replace-expression ends in a backslash".to_owned());
@@ -37,13 +38,12 @@ pub fn parse_replace_expression(expr: &str) -> Result<Vec<Segment>, String> {
         } else if next == b'\\' {
             replacements.push(Segment::Literal("\\".to_owned()));
         } else {
-            return Err(format!(
-                "Unknown escape \"{}\" in replace-expression",
-                &expr[r..r + 2]
-            ));
+            let mut text = b"Unknown escape \"".to_vec();
+            text.extend_from_slice(&bytes[r..r + 2]);
+            text.extend_from_slice(b"\" in replace-expression");
+            return Err(crate::bytes::decode(&text));
         }
-        r += 2;
-        l = r;
+        l = r + 2;
     }
     Ok(replacements)
 }

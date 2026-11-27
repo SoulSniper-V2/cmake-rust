@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+set(CPACK_CUSTOM_INSTALL_VARIABLES "PROBE_DEST=custom/place")
+install(CODE "file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/\${PROBE_DEST}\" TYPE FILE FILES \"${CMAKE_CURRENT_BINARY_DIR}/hello.txt\")")
+include(CPack)

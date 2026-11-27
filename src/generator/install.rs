@@ -1067,6 +1067,30 @@ pub(crate) fn target_files(
     (kind, arguments, mode, pairs)
 }
 
+/// cmGlobalGenerator::GetStripCommandStyle probes the strip tool on Apple hosts.
+fn uses_apple_strip(ctx: &GenCtx, strip: &str) -> bool {
+    if !cfg!(target_vendor = "apple") {
+        return false;
+    }
+
+    let key = format!("strip-command-style:{strip}");
+    if let Some(value) = ctx.memo.borrow().get(&key) {
+        return value == "Apple";
+    }
+    let apple = std::process::Command::new(crate::bytes::encode_os(strip))
+        .args(["-u", "-r"])
+        .output()
+        .is_ok_and(|output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            output.status.code().is_some_and(|code| code != 0)
+                && stderr.starts_with("fatal error: /")
+                && stderr.contains("/usr/bin/strip: no files specified")
+        });
+    let style = if apple { "Apple" } else { "Default" };
+    ctx.memo.borrow_mut().insert(key, style.to_owned());
+    apple
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_target(
     ctx: &GenCtx,
@@ -1414,8 +1438,7 @@ fn render_target(
         TargetKind::SharedLibrary | TargetKind::ModuleLibrary
     ) {
         "-x "
-    } else if tgt.kind == TargetKind::Executable && crate::util::filename_name(&strip) == "strip" {
-        // `cmGlobalGenerator::GetStripCommandStyle` probe approximation.
+    } else if tgt.kind == TargetKind::Executable && uses_apple_strip(ctx, &strip) {
         "-u -r "
     } else {
         ""

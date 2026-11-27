@@ -105,6 +105,11 @@ struct La {
     entry_xattr_clear: unsafe extern "C" fn(LaEntry),
     entry_set_fflags: unsafe extern "C" fn(LaEntry, u64, u64),
     entry_sparse_clear: unsafe extern "C" fn(LaEntry),
+    entry_set_uid: unsafe extern "C" fn(LaEntry, LaInt64),
+    entry_set_gid: unsafe extern "C" fn(LaEntry, LaInt64),
+    entry_set_uname: unsafe extern "C" fn(LaEntry, *const c_char),
+    entry_set_gname: unsafe extern "C" fn(LaEntry, *const c_char),
+    entry_set_perm: unsafe extern "C" fn(LaEntry, c_int),
     entry_symlink: unsafe extern "C" fn(LaEntry) -> *const c_char,
     entry_hardlink: unsafe extern "C" fn(LaEntry) -> *const c_char,
     entry_size: unsafe extern "C" fn(LaEntry) -> LaInt64,
@@ -214,6 +219,11 @@ fn load() -> Result<La, String> {
         entry_xattr_clear: sym!("archive_entry_xattr_clear"),
         entry_set_fflags: sym!("archive_entry_set_fflags"),
         entry_sparse_clear: sym!("archive_entry_sparse_clear"),
+        entry_set_uid: sym!("archive_entry_set_uid"),
+        entry_set_gid: sym!("archive_entry_set_gid"),
+        entry_set_uname: sym!("archive_entry_set_uname"),
+        entry_set_gname: sym!("archive_entry_set_gname"),
+        entry_set_perm: sym!("archive_entry_set_perm"),
         entry_symlink: sym!("archive_entry_symlink"),
         entry_hardlink: sym!("archive_entry_hardlink"),
         entry_size: sym!("archive_entry_size"),
@@ -264,6 +274,11 @@ pub struct ArchiveWrite {
     mtime: String,
     verbose: bool,
     format: String,
+    uid: Option<i64>,
+    gid: Option<i64>,
+    uname: String,
+    gname: String,
+    permissions: Option<i32>,
 }
 
 unsafe extern "C" fn write_cb(
@@ -323,6 +338,11 @@ impl ArchiveWrite {
                 mtime: String::new(),
                 verbose: false,
                 format: format.to_owned(),
+                uid: None,
+                gid: None,
+                uname: String::new(),
+                gname: String::new(),
+                permissions: None,
             };
             macro_rules! check {
                 ($result:expr, $name:literal) => {
@@ -477,10 +497,54 @@ impl ArchiveWrite {
         true
     }
 
+    /// `cmArchiveWrite::SetUIDAndGID` / `ClearUIDAndGID`.
+    pub fn set_uid_gid(&mut self, uid: i64, gid: i64) {
+        self.uid = Some(uid);
+        self.gid = Some(gid);
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_uid_gid(&mut self) {
+        self.uid = None;
+        self.gid = None;
+    }
+
+    /// `cmArchiveWrite::SetUNAMEAndGNAME` / `ClearUNAMEAndGNAME`.
+    pub fn set_uname_gname(&mut self, uname: &str, gname: &str) {
+        self.uname = uname.to_owned();
+        self.gname = gname.to_owned();
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_uname_gname(&mut self) {
+        self.uname.clear();
+        self.gname.clear();
+    }
+
+    /// `cmArchiveWrite::SetPermissions` / `ClearPermissions`.
+    pub fn set_permissions(&mut self, permissions: i32) {
+        self.permissions = Some(permissions);
+    }
+
+    pub fn clear_permissions(&mut self) {
+        self.permissions = None;
+    }
+
     /// `cmArchiveWrite::Add`.
     pub fn add(&mut self, path: &str) -> bool {
+        self.add_options(path, 0, None, true)
+    }
+
+    /// `cmArchiveWrite::Add(path, skip, prefix, recursive)`.
+    pub fn add_options(
+        &mut self,
+        path: &str,
+        skip: usize,
+        prefix: Option<&str>,
+        recursive: bool,
+    ) -> bool {
         let path = path.trim_end_matches('/');
-        self.add_path(path, 0, None, true);
+        self.add_path(path, skip, prefix, recursive);
         self.error.is_empty()
     }
 
@@ -558,6 +622,17 @@ impl ArchiveWrite {
                 (la.entry_set_atime)(entry, time, 0);
                 (la.entry_set_ctime)(entry, time, 0);
                 (la.entry_set_birthtime)(entry, time, 0);
+            }
+            if let (Some(uid), Some(gid)) = (self.uid, self.gid) {
+                (la.entry_set_uid)(entry, uid);
+                (la.entry_set_gid)(entry, gid);
+            }
+            if !self.uname.is_empty() && !self.gname.is_empty() {
+                (la.entry_set_uname)(entry, cstring(&self.uname).as_ptr());
+                (la.entry_set_gname)(entry, cstring(&self.gname).as_ptr());
+            }
+            if let Some(permissions) = self.permissions {
+                (la.entry_set_perm)(entry, permissions);
             }
             (la.entry_acl_clear)(entry);
             (la.entry_xattr_clear)(entry);
@@ -709,7 +784,10 @@ fn create_tar_inner(
         compress,
         if format.is_empty() { "paxr" } else { format },
         compression_level,
-        0,
+        // cmSystemTools::CreateTar uses cmArchiveWrite's default of one
+        // thread (zero would select every core and liblzma's multithreaded
+        // xz encoder, which writes block sizes into the headers).
+        1,
     );
     if !writer.open() {
         crate::cmcmd::error(writer.error().to_owned());

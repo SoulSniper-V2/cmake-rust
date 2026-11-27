@@ -1240,12 +1240,7 @@ fn configure_root(interp: &mut Interp, list_file: &str) {
         let text = format!(
             "No cmake_minimum_required command is present.  A line of code such as\n  cmake_minimum_required(VERSION {major}.{minor})\nshould be added at the top of the file.  The version specified may be lower if you wish to support older CMake versions for this project.  For more information run \"cmake --help-policy CMP0000\"."
         );
-        let frame = Frame {
-            file: std::rc::Rc::from(list_file),
-            line: 0,
-            name: None,
-            deferred: false,
-        };
+        let frame = Frame::directory(std::rc::Rc::from(list_file), 0);
         interp.issue_at(MessageType::FatalError, &text, &[frame]);
         interp.set_fatal();
     }
@@ -1296,7 +1291,6 @@ pub fn try_compile_project(
     fast: bool,
     cmake_args: Option<&[String]>,
 ) -> (i32, String) {
-    let _ = fast;
     let _profiling = crate::profiling::suspend();
     let _ = std::fs::create_dir_all(bindir);
     let previous_cwd = std::env::current_dir().ok();
@@ -1433,7 +1427,11 @@ pub fn try_compile_project(
             "Makefile".to_owned(),
         ];
         if !target_name.is_empty() {
-            command.push(format!("{target_name}/fast"));
+            if fast {
+                command.push(format!("{target_name}/fast"));
+            } else {
+                command.push(target_name.to_owned());
+            }
         }
         command
     } else {

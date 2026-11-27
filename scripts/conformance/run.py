@@ -78,8 +78,9 @@ def capture(argv, cwd, env, timeout, logs):
     return code, round(time.monotonic() - start, 3)
 
 
-def audit(trace, argv, oracle, subject, cwd, ctest=None):
+def audit(trace, argv, oracle, subject, cwd, ctest=None, extra_subjects=()):
     """Identify successful execs, including strace's split/resumed records."""
+    subjects = {subject, *extra_subjects}
     unfinished = {}
     other_cmake = set()
     unknown = []
@@ -113,7 +114,7 @@ def audit(trace, argv, oracle, subject, cwd, ctest=None):
         is_cmake = CMAKE_NAME.fullmatch(executable.name) or CMAKE_NAME.fullmatch(resolved.name)
         if resolved == oracle and command == argv:
             driver_count += 1
-        elif resolved == subject and executable.is_absolute():
+        elif resolved in subjects and executable.is_absolute():
             subject_execs.append((timestamp, command))
         elif resolved == oracle or is_cmake:
             other_cmake.add(str(executable))
@@ -282,7 +283,7 @@ def registered_paths(test, build):
     return Path(cwd).resolve().relative_to(build), Path(suite).resolve().relative_to(build)
 
 
-def invocation(test, context, binary, ctest, suite_build, logs):
+def invocation(test, context, binary, suite_build, logs, ctest, cpack):
     original = test["command"]
     injected = ("-DRunCMake_BINARY_DIR=", "-DCMAKE_COMMAND=", "-DCMAKE_CTEST_COMMAND=",
                 "-DCMAKE_CPACK_COMMAND=")
@@ -292,7 +293,7 @@ def invocation(test, context, binary, ctest, suite_build, logs):
     trace_sources = (context["run_cmake"], context["run_ctest"], driver, *context["verdict_helpers"])
     return [
         str(context["oracle"]), f"-DCMAKE_COMMAND={binary}", f"-DRunCMake_BINARY_DIR={suite_build}",
-        f"-DCMAKE_CTEST_COMMAND={ctest}", f"-DCMAKE_CPACK_COMMAND={context['cpack']}",
+        f"-DCMAKE_CTEST_COMMAND={ctest}", f"-DCMAKE_CPACK_COMMAND={cpack}",
         "--trace-expand", "--trace-format=json-v1", f"--trace-redirect={logs / 'driver-trace.jsonl'}",
         *(f"--trace-source={path}" for path in trace_sources), *options,
     ]
@@ -317,14 +318,17 @@ def run_once(test, context, side, repeat, directory):
             **LOG_ENV, "PATH": f"{binary.parent}:{HOST_PATH}",
             "HOME": str(work / "home"), "TMPDIR": str(work / "tmp"),
         }
-        argv = invocation(test, context, binary, ctest, suite_build, logs)
+        cpack = context["cpack"] if side == "candidate" else context["independent_cpack"]
+        argv = invocation(test, context, binary, suite_build, logs, ctest, cpack)
         trace = logs / "exec.log"
         traced_argv = [str(context["strace"]), "-f", "-ttt", "--kill-on-exit",
                        "-e", "trace=execve,execveat", "-s", "4096", "-o", str(trace), *argv]
         command = argv if args.no_audit else traced_argv
         code, duration = capture(command, cwd, env, args.timeout, logs)
+        audit_ctest = ctest if side == "candidate" and candidate_ctest and ctest_suite(test["name"]) else None
+        extra_subjects = (cpack,) if side == "candidate" and args.candidate_cpack else ()
         check, execs = (None, []) if args.no_audit else audit(
-            trace, argv, context["oracle"], binary, cwd, ctest if candidate_ctest and ctest_suite(test["name"]) else None)
+            trace, argv, context["oracle"], binary, cwd, audit_ctest, extra_subjects)
         cases, unmatched = read_cases(logs, Path(argv[-1]), execs, context["generators"], ctest)
         paths = [(work, "<work>"), (binary, "<cmake>"), (context["build"], "<oracle-build>"),
                  (context["source"], "<kitware>")]
@@ -566,7 +570,12 @@ def prepare(args):
     candidate_ctest = tool(args.candidate_ctest, None, "candidate CTest") if args.candidate_ctest else None
     if candidate_ctest and (candidate_ctest.samefile(ctest) or sha256(candidate_ctest) == sha256(ctest)):
         raise SystemExit("--candidate-ctest must be an independent CTest executable")
-    cpack = tool(args.cpack, build / "bin/cpack", "cpack")
+    independent_cpack = tool(args.cpack, build / "bin/cpack", "cpack")
+    cpack = independent_cpack
+    if args.candidate_cpack:
+        cpack = args.candidate_cpack.resolve(strict=True)
+        if not cpack.is_file() or not os.access(cpack, os.X_OK):
+            raise SystemExit(f"Candidate CPack is not executable: {cpack}")
     strace = None if args.no_audit else tool(None, Path("/usr/bin/strace"), "strace")
     ctest_argv = [str(ctest), "--test-dir", str(build), "--show-only=json-v1"]
     inventory_env = {**LOG_ENV, "PATH": HOST_PATH}
@@ -589,7 +598,7 @@ def prepare(args):
     host = {"platform": platform.platform(), "machine": platform.machine(), "node": platform.node(),
             "python": platform.python_version(), "uid": os.getuid()}
     tools = {}
-    for path in filter(None, (ctest, cpack, strace, Path("/usr/bin/ninja"), Path("/usr/bin/cc"),
+    for path in filter(None, (ctest, cpack, independent_cpack, strace, Path("/usr/bin/ninja"), Path("/usr/bin/cc"),
                               Path("/usr/bin/c++"), Path("/usr/bin/make"))):
         tools[path.name] = {"path": str(path), "sha256": sha256(path), "version": version(path)}
     # A configured tree may register helper binaries that have yet to be built.
@@ -624,6 +633,8 @@ def prepare(args):
         "repetitions": args.repeat, "jobs": args.jobs, "audit": not args.no_audit,
         "workspace_head": checked(["git", "-C", ROOT, "rev-parse", "HEAD"]),
         "candidate": {"path": str(candidate), "sha256": candidate_digest, "version": version(candidate)},
+        "candidate_cpack": {"path": str(cpack), "sha256": sha256(cpack), "version": version(cpack)}
+        if args.candidate_cpack else None,
         "inventory_argv": ctest_argv, "oracle_cache_key": key if args.oracle_cache else None,
         "suites": {},
     }
@@ -640,7 +651,7 @@ def prepare(args):
     context = {
         "args": args, "source": source, "build": build, "work": work,
         "oracle": oracle, "candidate": candidate, "ctest": ctest, "candidate_ctest": candidate_ctest,
-        "cpack": cpack, "strace": strace,
+        "cpack": cpack, "independent_cpack": independent_cpack, "strace": strace,
         "cache": args.oracle_cache.resolve() / key if args.oracle_cache else None,
         "generators": generator_names, "run_cmake": run_cmake_dir / "RunCMake.cmake",
         "run_ctest": run_cmake_dir / "RunCTest.cmake",
@@ -655,7 +666,9 @@ def run(args):
     selected = {}
     for name, test in sorted(tests.items()):
         reason = standalone(name)
-        if reason and not (args.candidate_ctest and ctest_suite(name)):
+        ctest_scored = args.candidate_ctest and ctest_suite(name)
+        cpack_scored = args.candidate_cpack and name.startswith("RunCMake.CPack")
+        if reason and not (ctest_scored or cpack_scored):
             suites[name] = {"status": "out_of_scope_standalone_tool", "reason": reason}
         elif args.suite and name not in args.suite:
             suites[name] = {"status": "unselected", "reason": "Outside the requested suite subset"}
@@ -695,6 +708,8 @@ def main():
     parser.add_argument("--candidate-ctest", type=Path, help="score standalone CTest using this candidate executable")
     parser.add_argument("--cpack", type=Path, help="independent Kitware CPack executable")
     parser.add_argument("--candidate", type=Path, help="staged executable at <prefix>/bin/cmake")
+    parser.add_argument("--candidate-cpack", type=Path,
+                        help="candidate cpack executable; also scores RunCMake.CPack* suites")
     parser.add_argument("--out", type=Path, help="new evidence directory")
     parser.add_argument("--suite", action="append", help="exact registered suite name (repeatable)")
     parser.add_argument("-j", "--jobs", type=int, default=6)

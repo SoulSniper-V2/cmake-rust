@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+set(CPACK_EXTERNAL_KNOWN_VERSIONS "1.0;1.1;2.0")
+set(CPACK_EXTERNAL_REQUESTED_VERSIONS "1.x")
+set(CPACK_EXTERNAL_ENABLE_STAGING ON)
+include(CPack)

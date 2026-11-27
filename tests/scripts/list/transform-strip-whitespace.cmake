@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 4.1)
+string(ASCII 194 160 nbsp)
+string(ASCII 11 12 ascii_space)
+set(items " ${nbsp}word${nbsp} " "${ascii_space}word${ascii_space}")
+list(TRANSFORM items STRIP)
+string(HEX "${items}" hex)
+message("${hex}")

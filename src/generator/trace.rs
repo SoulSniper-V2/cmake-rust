@@ -101,12 +101,10 @@ fn apply(interp: &mut Interp, key: &str, traced: Traced) {
             .first()
             .cloned()
             .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
-        let backtrace = [crate::messages::Frame {
-            file: std::rc::Rc::from(file.as_str()),
-            line: 0,
-            name: None,
-            deferred: false,
-        }];
+        let backtrace = [crate::messages::Frame::directory(
+            std::rc::Rc::from(file.as_str()),
+            target.makefile,
+        )];
         let joined = traced.sources.join(";");
         target.insert_entry("SOURCES", &joined, &backtrace, false);
     }

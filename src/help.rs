@@ -598,6 +598,11 @@ fn warn_form_from_filename(item: &mut HelpItem, result: &mut bool) {
 /// `cmDocumentation::CheckOptions(argc, argv, "--")`: the requested help
 /// items, or `None` when no help option was given. `args` excludes argv[0].
 pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
+    check_options_with_exit(args, "--")
+}
+
+/// `cmDocumentation::CheckOptions`, stopping the scan at `exit_opt`.
+pub fn check_options_with_exit(args: &[String], exit_opt: &str) -> Option<Vec<HelpItem>> {
     if args.is_empty() {
         return Some(vec![HelpItem {
             kind: HelpType::Usage,
@@ -611,7 +616,7 @@ pub fn check_options(args: &[String]) -> Option<Vec<HelpItem>> {
     let optional = |i: usize| args.get(i).filter(|arg| !is_option(arg)).cloned();
     while i < args.len() {
         let arg = args[i].as_str();
-        if arg == "--" {
+        if arg == exit_opt {
             return result.then_some(items);
         }
         let mut item = HelpItem {
