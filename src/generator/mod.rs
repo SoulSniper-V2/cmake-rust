@@ -351,6 +351,7 @@ fn drop_transient_list_files(interp: &mut Interp) {
     let not_persistent =
         |path: &str| path.contains("CMakeTmp") || !std::path::Path::new(path).exists();
     for makefile in &mut interp.makefiles {
+        makefile.output_files.retain(|path| !not_persistent(path));
         makefile.list_files.retain(|path| !not_persistent(path));
     }
     if let Some(deps) = interp.ext.misc.get("cmake-depend-files") {

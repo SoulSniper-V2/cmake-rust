@@ -78,6 +78,9 @@ def normalizer(build: Path, cmake: Path):
             (re.compile(rb"CMakeFiles/d/[0-9a-f]{64}\.d"), b"CMakeFiles/d/<SHA256>.d"),
             # Configure-check executables may record process timing in YAML-like output.
             (re.compile(rb"(?m)^(\s*)(time|timestamp|duration|elapsed): [^\n]*$"), rb"\1\2: <TIME>"),
+            # Nested configure logs include wall-clock times in human-readable
+            # progress lines.  They are scheduling noise, not generated state.
+            (re.compile(rb"(-- (?:Configuring|Generating) done) \([^\n()]*\)"), rb"\1 (<TIME>)"),
         ]
     )
 
@@ -230,6 +233,12 @@ def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
             )
             if is_rebuild_manifest:
                 data = normalize_rebuild_manifest(data)
+            if rel == "CMakeFiles/CMakeRuleHashes.txt":
+                # Rule hashes cover absolute build and tool paths before
+                # normalization.  Their target rows, order, and count remain
+                # compared; the digest bytes are inherently installation
+                # dependent when two separate prefixes are compared.
+                data = re.sub(rb"(?m)^[0-9a-f]{32}(?= )", b"<RULE-HASH>", data)
             files[norm_rel] = ("file", data)
     return files
 
