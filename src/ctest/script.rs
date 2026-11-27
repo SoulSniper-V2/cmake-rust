@@ -858,17 +858,61 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
     let nightly = interp.get_safe("CTEST_NIGHTLY_START_TIME");
     let site = interp.get_safe("CTEST_SITE");
     let build_name = interp.get_safe("CTEST_BUILD_NAME");
+    let mut model_name = model.clone().unwrap_or_default();
+    let mut group_name = group.clone().unwrap_or_else(|| model_name.clone());
+    let mut existing_tag_message = String::new();
+    let mut append_failed = false;
     let tag = if append {
         let tag_file = PathBuf::from(&binary_dir).join("Testing/TAG");
-        std::fs::read_to_string(tag_file)
-            .ok()
-            .and_then(|text| text.lines().next().map(str::to_owned))
-            .unwrap_or_else(|| report::clock("%Y%m%d-%H%M"))
+        let contents = std::fs::read_to_string(tag_file).unwrap_or_default();
+        let mut lines = contents.lines();
+        let existing_tag = lines.next().unwrap_or_default().to_owned();
+        let existing_group = lines.next().unwrap_or_default().to_owned();
+        let existing_model = lines.next().unwrap_or_default().to_owned();
+        if existing_tag.is_empty() {
+            handler_error(
+                interp,
+                &format!(
+                    "Cannot read existing TAG file in {binary_dir}/Testing
+"
+                ),
+            );
+            ctest_command_error(interp, "ctest_start", "unknown error.");
+            append_failed = true;
+        }
+        if !append_failed && model_name.is_empty() {
+            if existing_model.is_empty() {
+                handler_error(
+                    interp,
+                    "TAG file does not contain model and no model specified in start command
+",
+                );
+                ctest_command_error(interp, "ctest_start", "unknown error.");
+                append_failed = true;
+            } else {
+                model_name = existing_model.clone();
+            }
+        } else if !existing_model.is_empty() && existing_model != model_name {
+            handler_error(
+                interp,
+                "Model given in TAG does not match model given in ctest_start()
+",
+            );
+        }
+        if group.is_none() {
+            group_name = existing_group.clone();
+        } else if existing_group != group_name {
+            handler_error(
+                interp,
+                "Group given in TAG does not match group given in ctest_start()
+",
+            );
+        }
+        existing_tag_message = format!("  Use existing tag: {existing_tag} - {group_name}\n");
+        existing_tag
     } else {
         report::clock("%Y%m%d-%H%M")
     };
-    let model_name = model.clone().unwrap_or_default();
-    let group_name = group.clone().unwrap_or_else(|| model_name.clone());
     {
         let state = interp.ext.ctest_script.as_mut().unwrap();
         state.source_dir = source_dir;
@@ -915,6 +959,12 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         ),
         quiet,
     );
+    if append_failed {
+        return Ok(());
+    }
+    if !existing_tag_message.is_empty() {
+        handler_output(interp, &existing_tag_message, quiet);
+    }
     if model_name.eq_ignore_ascii_case("nightly") && nightly.is_empty() {
         handler_output(
             interp,
@@ -926,10 +976,12 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let testing = PathBuf::from(&binary_dir).join("Testing");
     let _ = std::fs::create_dir_all(&testing);
-    let _ = std::fs::write(
-        testing.join("TAG"),
-        format!("{tag}\n{group_name}\n{model_name}\n"),
-    );
+    if !append {
+        let _ = std::fs::write(
+            testing.join("TAG"),
+            format!("{tag}\n{group_name}\n{model_name}\n"),
+        );
+    }
     handler_output(interp, &format!("   Use {group_name} tag: {tag}\n"), quiet);
     Ok(())
 }
@@ -1105,15 +1157,17 @@ fn ctest_empty_binary_directory(interp: &mut Interp, args: &[String]) -> CmdResu
 }
 
 fn read_custom_tree(interp: &mut Interp, dir: &Path) {
-    let mut current = Some(dir);
-    while let Some(dir) = current {
-        for name in ["CTestCustom.cmake", "CTestCustom.ctest"] {
-            let file = dir.join(name);
-            if file.is_file() {
-                let _ = interp.read_list_file(&file.to_string_lossy());
+    for name in ["CTestCustom.cmake", "CTestCustom.ctest"] {
+        let file = dir.join(name);
+        if file.is_file() {
+            if !interp.read_list_file(&file.to_string_lossy()) || interp.error {
+                handler_error(
+                    interp,
+                    &format!("Problem reading custom configuration: {}\n", file.display()),
+                );
             }
+            return;
         }
-        current = dir.parent();
     }
 }
 

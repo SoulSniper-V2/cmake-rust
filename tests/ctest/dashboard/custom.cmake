@@ -1,0 +1,5 @@
+set(dir "${CMAKE_CURRENT_LIST_DIR}/custom-dir")
+file(MAKE_DIRECTORY "${dir}")
+file(WRITE "${dir}/CTestCustom.cmake" "set(CTEST_CUSTOM_TESTS_IGNORE custom-ignore)\n")
+ctest_read_custom_files("${dir}")
+message("ignore=${CTEST_CUSTOM_TESTS_IGNORE}")

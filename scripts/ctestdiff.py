@@ -144,8 +144,17 @@ def cases():
         ("update-none", ["-S", "updatenone.cmake", "-V"]),
         ("submit-fail", ["-S", "submitfail.cmake", "-V"]),
         ("upload-file", ["-S", "uploadfile.cmake", "-V"]),
+        ("nested-script", ["-S", "nested.cmake"]),
+        ("read-custom", ["-S", "custom.cmake"]),
     ):
         yield "dashboard", name, [flags], {}
+    for name, scripts in (
+        ("append-nomodel", ["startgroup.cmake", "appendnomodel.cmake"]),
+        ("append-model", ["startgroup.cmake", "appendmodel.cmake"]),
+        ("append-group", ["startgroup.cmake", "appendgroup.cmake"]),
+        ("append-missing", ["appendnomodel.cmake"]),
+    ):
+        yield "dashboard", name, [["-S", script, "-V"] for script in scripts], {}
     for name, flags in (
         ("smoke", ["--preset", "smoke"]),
         ("smoke-attached", ["--preset=smoke"]),
