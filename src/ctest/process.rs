@@ -525,7 +525,7 @@ impl Invocation {
                     wrapped.push(option.clone());
                 }
                 if options.extra_verbose && !options.quiet {
-                    print!("Memory check command: {display}\n");
+                    println!("Memory check command: {display}");
                 }
                 wrapped.push(exe.clone());
                 wrapped.extend(args);
