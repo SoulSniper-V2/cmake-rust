@@ -185,6 +185,70 @@ fn parse_return_build(
     Ok((values, quiet))
 }
 
+fn split_capture_cmake_error(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut variable = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "CAPTURE_CMAKE_ERROR" {
+            if variable.is_some() {
+                return Err("called with more than one value for CAPTURE_CMAKE_ERROR".into());
+            }
+            if index + 1 >= args.len() {
+                return Err("CAPTURE_CMAKE_ERROR argument missing value".into());
+            }
+            variable = Some(args[index + 1].clone());
+            index += 2;
+        } else {
+            stripped.push(args[index].clone());
+            index += 1;
+        }
+    }
+    Ok((stripped, variable))
+}
+
+fn invoke_capture_cmake_error(
+    interp: &mut Interp,
+    args: &[String],
+    command: &str,
+    body: fn(&mut Interp, &[String]) -> CmdResult,
+) -> CmdResult {
+    let (stripped, variable) = match split_capture_cmake_error(args) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let Some(variable) = variable else {
+        return body(interp, &stripped);
+    };
+
+    let initial_error = interp.error;
+    let initial_fatal = interp.fatal;
+    let initial_had_error = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.had_error);
+    let result = body(interp, &stripped);
+    let handler_failed = result.is_err()
+        || interp.error != initial_error
+        || interp
+            .ext
+            .ctest_script
+            .as_ref()
+            .is_some_and(|state| state.had_error != initial_had_error);
+
+    if let Err(crate::interp::CmdErr::Error(message)) = result {
+        handler_error(interp, &format!("{command} {message}\n"));
+    }
+    interp.error = initial_error;
+    interp.fatal = initial_fatal;
+    if let Some(state) = interp.ext.ctest_script.as_mut() {
+        state.had_error = initial_had_error;
+    }
+    interp.set_def(&variable, if handler_failed { "-1" } else { "0" });
+    Ok(())
+}
+
 fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
     let text = format!("{command} {message}");
     if interp
@@ -210,6 +274,9 @@ fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
 }
 
 fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_update", ctest_update);
+    }
     let (values, quiet) = match parse_return_build(args, &[]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -379,6 +446,9 @@ fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_coverage", ctest_coverage);
+    }
     let (values, quiet) = match parse_return_build(args, &["LABELS"]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -691,6 +761,9 @@ fn run_memcheck_commands(interp: &Interp, commands: &str, kind: &str) -> bool {
 }
 
 fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_memcheck", ctest_memcheck);
+    }
     let (values, quiet) = match parse_return_build(args, &["DEFECT_COUNT"]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -967,6 +1040,9 @@ fn parse_upload_args(args: &[String]) -> Result<(Vec<String>, bool), String> {
 }
 
 fn ctest_upload(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_upload", ctest_upload);
+    }
     let (files, quiet) = match parse_upload_args(args) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -1303,6 +1379,9 @@ fn cdash_submit(interp: &mut Interp, parsed: &SubmitArgs) -> CmdResult {
 }
 
 fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_submit", ctest_submit);
+    }
     let mut parsed = match parse_submit_args(args) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -1876,6 +1955,9 @@ fn test_options(interp: &Interp, binary: &Path) -> Options {
 }
 
 fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_test", ctest_test);
+    }
     let keywords = [
         "BUILD",
         "RETURN_VALUE",
@@ -2322,9 +2404,6 @@ fn parse_handler_args(
         } else if flags.contains(&arg.as_str()) {
             present.insert(arg.clone());
             index += 1;
-        } else if !map.contains_key("BUILD") && values.contains(&"BUILD") {
-            map.insert("BUILD".into(), arg.clone());
-            index += 1;
         } else {
             return Err(format!("called with unknown argument \"{arg}\"."));
         }
@@ -2349,6 +2428,9 @@ fn required_build_directory(
 }
 
 fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_configure", ctest_configure);
+    }
     let (parsed, present) = match parse_handler_args(
         args,
         &["BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "SUBMIT_INDEX"],
@@ -2470,6 +2552,9 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_build", ctest_build);
+    }
     let (parsed, present) = match parse_handler_args(
         args,
         &[
