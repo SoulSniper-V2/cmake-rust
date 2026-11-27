@@ -5,11 +5,12 @@ use super::{
     Flags, append, append_options, cmake_space, shell, shell_flag, shell_with_make_vars,
     unix_command_line,
 };
+use crate::cache::convert_to_unix_slashes as unix_slashes;
 use crate::generator::{ctx::GenCtx, target::SourceInfo};
 use crate::policy::PolicyStatus;
 use crate::props::Props;
 use crate::state::{Target, TargetKind};
-use crate::util::{expand_list, is_on, is_on_opt};
+use crate::util::{collapse_full_path, expand_list, is_full_path, is_on, is_on_opt};
 
 /// Per-object bindings for the Ninja build statement.
 #[derive(Clone, Debug, Default)]
@@ -726,22 +727,69 @@ fn includes(inputs: &Flags<'_, '_>, source: &SourceInfo, properties: &Props) -> 
     flags
 }
 
-fn unix_slashes(path: &str) -> String {
-    let mut result = path.replace('\\', "/");
-    while result.contains("//") {
-        result = result.replace("//", "/");
-    }
-    if result.len() > 1 && result.ends_with('/') {
-        result.pop();
-    }
-    result
-}
-
 fn real_path(path: &str) -> String {
     std::fs::canonicalize(path).map_or_else(
         |_| path.to_owned(),
         |path| path.to_string_lossy().into_owned(),
     )
+}
+
+/// Compiler search paths used by cmLocalGenerator::GetIncludeDirectoriesImplicit.
+struct IncludeSearch {
+    standard: Vec<String>,
+    implicit_dirs: Vec<String>,
+    implicit_paths: HashSet<String>,
+    exclude_usr_include: bool,
+    cpath: HashSet<String>,
+}
+
+impl IncludeSearch {
+    fn new(inputs: &Flags<'_, '_>) -> Self {
+        let read_dirs = |suffix| {
+            expand_list(&inputs.lang_var(suffix).unwrap_or_default(), false)
+                .iter()
+                .map(|dir| unix_slashes(dir))
+                .collect::<Vec<_>>()
+        };
+        let standard = read_dirs("STANDARD_INCLUDE_DIRECTORIES");
+        let mut implicit_dirs = standard.clone();
+        if inputs.lang != "Fortran" {
+            implicit_dirs.extend(read_dirs("IMPLICIT_INCLUDE_DIRECTORIES"));
+        }
+        let exclude_usr_include = !implicit_dirs.iter().any(|dir| dir == "/usr/include")
+            && ((inputs.lang == "HIP" && implicit_dirs.len() == standard.len())
+                || (matches!(inputs.lang, "C" | "CXX" | "CUDA")
+                    && implicit_dirs
+                        .iter()
+                        .any(|dir| dir.ends_with("/usr/include"))));
+
+        let mut implicit_paths = HashSet::new();
+        implicit_dirs.retain(|dir| implicit_paths.insert(real_path(dir)));
+        let cpath = if matches!(inputs.lang, "C" | "CXX") {
+            std::env::var_os("CPATH")
+                .iter()
+                .flat_map(std::env::split_paths)
+                .map(|path| unix_slashes(&path.to_string_lossy()))
+                .filter(|dir| is_full_path(dir))
+                .map(|dir| real_path(&collapse_full_path(&dir, "")))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        Self {
+            standard,
+            implicit_dirs,
+            implicit_paths,
+            exclude_usr_include,
+            cpath,
+        }
+    }
+
+    fn excludes(&self, dir: &str) -> bool {
+        let real = real_path(dir);
+        (self.implicit_paths.contains(&real) || (self.exclude_usr_include && dir == "/usr/include"))
+            && !self.cpath.contains(&real)
+    }
 }
 
 fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
@@ -757,52 +805,13 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
         emit(&directory.binary_dir);
         emit(&directory.source_dir);
     }
-    let standard = expand_list(
-        &inputs
-            .lang_var("STANDARD_INCLUDE_DIRECTORIES")
-            .unwrap_or_default(),
-        false,
-    );
-    let standard: Vec<_> = standard.iter().map(|dir| unix_slashes(dir)).collect();
-    let mut implicit = standard.clone();
-    let implicit_start = implicit.len();
-    if inputs.lang != "Fortran" {
-        implicit.extend(
-            expand_list(
-                &inputs
-                    .lang_var("IMPLICIT_INCLUDE_DIRECTORIES")
-                    .unwrap_or_default(),
-                false,
-            )
-            .iter()
-            .map(|dir| unix_slashes(dir)),
-        );
-    }
-    let exclude_usr = (inputs.lang == "HIP" && implicit.len() == implicit_start)
-        || (matches!(inputs.lang, "C" | "CXX" | "CUDA")
-            && implicit.iter().any(|dir| dir.ends_with("/usr/include")));
-    let implicit: HashSet<_> = implicit.iter().map(|dir| real_path(dir)).collect();
-    let cpath: HashSet<_> = if matches!(inputs.lang, "C" | "CXX") {
-        std::env::var_os("CPATH")
-            .iter()
-            .flat_map(std::env::split_paths)
-            .filter(|path| path.is_absolute())
-            .map(|path| real_path(&path.to_string_lossy()))
-            .collect()
-    } else {
-        HashSet::new()
-    };
-    let is_excluded = |dir: &str| {
-        let real = real_path(dir);
-        ((exclude_usr && dir == "/usr/include") || implicit.contains(&real))
-            && !cpath.contains(&real)
-    };
+    let search = IncludeSearch::new(inputs);
 
     let mut directories = Vec::new();
     for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
         // The target's own ISPC header directory is used verbatim.
         if item.raw {
-            if !is_excluded(&item.value) {
+            if !search.excludes(&item.value) {
                 directories.push(item.value);
             }
             continue;
@@ -816,13 +825,13 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
             break;
         }
         let dir = unix_slashes(&dir);
-        if !is_excluded(&dir) {
+        if !search.excludes(&dir) {
             directories.push(dir);
         }
     }
     // The framework include directories end the target's list.
     for dir in framework_includes(inputs) {
-        if !directories.contains(&dir) && !is_excluded(&dir) {
+        if !directories.contains(&dir) && !search.excludes(&dir) {
             directories.push(dir);
         }
     }
@@ -843,7 +852,7 @@ fn target_includes(inputs: &Flags<'_, '_>) -> Vec<String> {
     for dir in &directories {
         emit(dir);
     }
-    for dir in &standard {
+    for dir in &search.standard {
         emit(dir);
     }
     result
@@ -1213,49 +1222,10 @@ fn include_directories_impl(
         config,
         lang,
     };
-    let standard: Vec<String> = expand_list(
-        &inputs
-            .lang_var("STANDARD_INCLUDE_DIRECTORIES")
-            .unwrap_or_default(),
-        false,
-    )
-    .iter()
-    .map(|dir| unix_slashes(dir))
-    .collect();
-    let mut implicit = standard.clone();
-    if lang != "Fortran" {
-        implicit.extend(
-            expand_list(
-                &inputs
-                    .lang_var("IMPLICIT_INCLUDE_DIRECTORIES")
-                    .unwrap_or_default(),
-                false,
-            )
-            .iter()
-            .map(|dir| unix_slashes(dir)),
-        );
-    }
-    let mut implicit_set = HashSet::new();
-    implicit.retain(|dir| implicit_set.insert(real_path(dir)));
-    let implicit_dirs = implicit;
-    let implicit = implicit_set;
-    let cpath: HashSet<String> = if matches!(lang, "C" | "CXX") {
-        std::env::var_os("CPATH")
-            .iter()
-            .flat_map(std::env::split_paths)
-            .filter(|path| path.is_absolute())
-            .map(|path| real_path(&path.to_string_lossy()))
-            .collect()
-    } else {
-        HashSet::new()
-    };
-    let not_excluded = |dir: &str| {
-        let real = real_path(dir);
-        !implicit.contains(&real) || cpath.contains(&real)
-    };
+    let search = IncludeSearch::new(&inputs);
+    let system_dirs = system_include_dirs(&inputs);
 
-    // (path, is_system, backtrace, is_user_entry)
-    let mut users: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
+    let mut users: Vec<(String, bool, Vec<crate::messages::Frame>)> = Vec::new();
     for item in inputs.usage_items("INCLUDE_DIRECTORIES") {
         if !item.raw && !Path::new(&item.value).is_absolute() && !crate::util::is_off(&item.value) {
             break;
@@ -1265,26 +1235,22 @@ fn include_directories_impl(
         } else {
             unix_slashes(&item.value)
         };
-        let system = item.system
-            || inputs.system_include_cache().binary_search(&dir).is_ok()
-            || target
-                .system_include_directories
-                .contains(dir.trim_end_matches('/'));
-        users.push((dir, system, ctx.backtrace(item.backtrace), true));
+        let system = item.system || system_dirs.contains(&dir);
+        users.push((dir, system, ctx.backtrace(item.backtrace)));
     }
     // The framework include directories end the target's list.
     for dir in framework_includes(&inputs) {
         if !users.iter().any(|entry| entry.0 == dir) {
-            let system = inputs.system_include_cache().binary_search(&dir).is_ok();
-            users.push((dir, system, Vec::new(), true));
+            let system = system_dirs.contains(&dir);
+            users.push((dir, system, Vec::new()));
         }
     }
 
-    let mut result: Vec<(String, bool, Vec<crate::messages::Frame>, bool)> = Vec::new();
+    let mut result: Vec<(String, bool, Vec<crate::messages::Frame>)> = Vec::new();
     let mut seen = HashSet::new();
     let mut emit =
-        |entry: (String, bool, Vec<crate::messages::Frame>, bool),
-         result: &mut Vec<(String, bool, Vec<crate::messages::Frame>, bool)>| {
+        |entry: (String, bool, Vec<crate::messages::Frame>),
+         result: &mut Vec<(String, bool, Vec<crate::messages::Frame>)>| {
             if seen.insert(entry.0.clone()) {
                 result.push(entry);
             }
@@ -1292,19 +1258,10 @@ fn include_directories_impl(
     if is_on_opt(inputs.var("CMAKE_INCLUDE_CURRENT_DIR").as_deref()) {
         // MoveSystemIncludesToEnd asks IsSystemIncludeDirectory about these
         // entries too.
-        let is_system = |dir: &str| {
-            inputs
-                .system_include_cache()
-                .binary_search(&dir.to_owned())
-                .is_ok()
-                || target
-                    .system_include_directories
-                    .contains(dir.trim_end_matches('/'))
-        };
         let directory = &ctx.interp.makefiles[target.makefile];
         for dir in [&directory.binary_dir, &directory.source_dir] {
             emit(
-                (dir.clone(), is_system(dir), Vec::new(), false),
+                (dir.clone(), system_dirs.contains(dir), Vec::new()),
                 &mut result,
             );
         }
@@ -1315,7 +1272,7 @@ fn include_directories_impl(
             .as_deref(),
     ) {
         for entry in &users {
-            if not_excluded(&entry.0)
+            if !search.excludes(&entry.0)
                 && (Path::new(&entry.0).starts_with(&ctx.interp.home_source)
                     || Path::new(&entry.0).starts_with(&ctx.interp.home_binary))
             {
@@ -1324,7 +1281,7 @@ fn include_directories_impl(
         }
     }
     for entry in &users {
-        if not_excluded(&entry.0) {
+        if !search.excludes(&entry.0) {
             emit(entry.clone(), &mut result);
         }
     }
@@ -1332,28 +1289,29 @@ fn include_directories_impl(
     let (non_system, system): (Vec<_>, Vec<_>) = result.into_iter().partition(|e| !e.1);
     let mut result = non_system;
     result.extend(system);
-    for dir in &standard {
-        emit((dir.clone(), false, Vec::new(), false), &mut result);
+    for dir in &search.standard {
+        emit(
+            (dir.clone(), system_dirs.contains(dir), Vec::new()),
+            &mut result,
+        );
     }
     // Re-emit user-requested dirs that are implicit when the caller wants
     // the unstripped codemodel view.  GetIncludeDirectories itself strips
     // these entries unless appendAllImplicitDirs is requested.
     if reemit_user_implicit {
         for entry in &users {
-            if implicit.contains(&real_path(&entry.0)) {
+            if search.implicit_paths.contains(&real_path(&entry.0)) {
                 emit(entry.clone(), &mut result);
             }
         }
     }
     if append_implicit {
-        for dir in implicit_dirs {
-            emit((dir, false, Vec::new(), false), &mut result);
+        for dir in search.implicit_dirs {
+            let system = system_dirs.contains(&dir);
+            emit((dir, system, Vec::new()), &mut result);
         }
     }
     result
-        .into_iter()
-        .map(|(path, system, backtrace, _)| (path, system, backtrace))
-        .collect()
 }
 
 /// `cmGeneratorTarget::GetPrecompileHeaders` as codemodel
