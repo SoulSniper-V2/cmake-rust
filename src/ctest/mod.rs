@@ -735,12 +735,15 @@ pub(in crate::ctest) fn execute_detailed(
     };
     let last_path = temporary.join(last_name);
     let mut no_tests = false;
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(&binary);
+    instrumentation.load();
+    let instrument_tests = instrumentation.enabled;
+    let instrument_ctest = instrument_tests && !options.script;
+    let collect_post_test = instrument_ctest;
+    let ctest_clock = instrumentation.timer();
     let result = testfile::discover(&dir, &mut options, ignore, log).and_then(|all| {
         let mut tests = testfile::select(&all, &options, &temporary, log)?;
         let mut last_log = report::start_log();
-        let mut instrumentation = crate::instrumentation::Instrumentation::new(&binary);
-        instrumentation.load();
-        let instrument_tests = instrumentation.enabled;
         let context = runner::RunContext {
             options: &options,
             all_count: all.len(),
@@ -836,9 +839,6 @@ pub(in crate::ctest) fn execute_detailed(
                 &mut last_log,
             )
         });
-        if instrument_tests {
-            instrumentation.collect("postTest");
-        }
         let _ = std::fs::write(&last_path, crate::bytes::encode(&last_log));
         if let Some(path) = &options.junit {
             let build = config.get("BuildName").map_or("", String::as_str);
@@ -860,6 +860,21 @@ pub(in crate::ctest) fn execute_detailed(
         }
         Ok(success)
     });
+    if instrument_ctest {
+        let command: Vec<String> = std::env::args_os()
+            .map(|arg| crate::bytes::decode(arg.as_encoded_bytes()))
+            .collect();
+        instrumentation.write_snippet_fields(
+            "ctest",
+            &command,
+            ctest_clock,
+            if result == Ok(true) { 0 } else { -1 },
+            serde_json::json!({}),
+        );
+    }
+    if collect_post_test {
+        instrumentation.collect("postTest");
+    }
     if result == Ok(true) {
         (0, no_tests)
     } else {
