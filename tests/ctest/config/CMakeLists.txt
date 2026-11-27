@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+project(CTestConfigurations NONE)
+enable_testing()
+add_test(NAME config-specific COMMAND /bin/echo "$<CONFIG>")
+add_test(NAME debug-only COMMAND /bin/echo debug CONFIGURATIONS Debug)
