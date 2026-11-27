@@ -101,6 +101,7 @@ pub(super) struct Options {
     pub dashboard_model: String,
     pub dashboard_site: String,
     pub dashboard_build_name: String,
+    pub change_id: String,
     pub list_presets: bool,
     pub preset_binary_dir: String,
 }

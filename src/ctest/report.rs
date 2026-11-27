@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
+use std::io::Write as _;
 use std::path::Path;
 
 use crate::commands::string::json::{Json, write_json_multiline};
@@ -586,6 +587,122 @@ pub(super) fn junit(
     std::fs::write(path, xml)
 }
 
+fn base64(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in data.chunks(3) {
+        let a = u32::from(chunk[0]);
+        let b = u32::from(*chunk.get(1).unwrap_or(&0));
+        let c = u32::from(*chunk.get(2).unwrap_or(&0));
+        let value = (a << 16) | (b << 8) | c;
+        output.push(ALPHABET[(value >> 18) as usize & 63] as char);
+        output.push(ALPHABET[(value >> 12) as usize & 63] as char);
+        output.push(if chunk.len() > 1 {
+            ALPHABET[(value >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            ALPHABET[value as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
+fn measurement_attribute<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!("{name}=\"");
+    let start = text.find(&key)? + key.len();
+    let end = text[start..].find('"')? + start;
+    Some(&text[start..end])
+}
+
+fn measurement_content<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let start = text.find('>')? + 1;
+    let end = text.rfind(&format!("</{tag}>"))?;
+    (end >= start).then_some(&text[start..end])
+}
+
+fn compressed_file(path: &Path) -> Option<Vec<u8>> {
+    let data = std::fs::read(path).ok()?;
+    let filename = path.file_name()?.to_string_lossy().into_owned();
+    let mut header = tar::Header::new_gnu();
+    header.set_size(data.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append_data(&mut header, filename, data.as_slice())
+        .ok()?;
+    let tar = builder.into_inner().ok()?;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&tar).ok()?;
+    encoder.finish().ok()
+}
+
+fn custom_measurements(measurements: &[String]) -> String {
+    let mut xml = String::new();
+    for measurement in measurements {
+        let file = measurement.starts_with("<DartMeasurementFile")
+            || measurement.starts_with("<CTestMeasurementFile");
+        let tag = if file {
+            if measurement.starts_with("<Dart") {
+                "DartMeasurementFile"
+            } else {
+                "CTestMeasurementFile"
+            }
+        } else if measurement.starts_with("<Dart") {
+            "DartMeasurement"
+        } else {
+            "CTestMeasurement"
+        };
+        let Some(name) = measurement_attribute(measurement, "name") else {
+            continue;
+        };
+        let Some(content) = measurement_content(measurement, tag) else {
+            continue;
+        };
+        if !file {
+            let measurement_type = measurement_attribute(measurement, "type").unwrap_or("");
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement type=\"{}\" name=\"{}\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_escape(measurement_type),
+                xml_escape(name),
+                xml_content(content),
+            );
+            continue;
+        }
+        let measurement_type = measurement_attribute(measurement, "type").unwrap_or("");
+        let path = Path::new(content);
+        if measurement_type == "file" {
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default();
+            let data = compressed_file(path).unwrap_or_default();
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement name=\"{}\" encoding=\"base64\" compression=\"tar/gzip\" filename=\"{}\" type=\"file\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_escape(name),
+                xml_escape(&filename),
+                base64(&data),
+            );
+        } else {
+            let data = std::fs::read(path).unwrap_or_default();
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement name=\"{}\" type=\"{}\" encoding=\"base64\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_escape(name),
+                xml_escape(measurement_type),
+                base64(&data),
+            );
+        }
+    }
+    xml
+}
+
 fn xml_content(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -685,6 +802,13 @@ pub(super) fn test_xml(
         value("totalPhysicalMemory"),
         value("processorClockFrequency"),
     );
+    if !options.change_id.is_empty() {
+        xml = xml.replacen(
+            "\n\t>\n",
+            &format!("\n\tChangeId=\"{}\"\n\t>\n", xml_escape(&options.change_id)),
+            1,
+        );
+    }
     xml.push_str("\t<Testing>\n");
     let _ = writeln!(
         xml,
@@ -766,12 +890,20 @@ pub(super) fn test_xml(
                 );
             }
         }
+        let custom_measurements = custom_measurements(&result.measurements);
+        let environment = if result.environment.is_empty() {
+            "#CTEST_RESOURCE_GROUP_COUNT=".into()
+        } else {
+            result.environment.clone()
+        };
         let _ = writeln!(
             xml,
-            "\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Processors\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Completion Status\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Command Line\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Environment\">\n\t\t\t\t\t<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<Measurement>\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</Measurement>\n\t\t\t</Results>",
+            "{}\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Processors\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Completion Status\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Command Line\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Environment\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<Measurement>\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</Measurement>\n\t\t\t</Results>",
+            custom_measurements,
             test.processors(),
             xml_escape(&result.completion),
             xml_content(&command),
+            xml_content(&environment),
             xml_content(&truncate_test_output(
                 &result.output,
                 if result.status == Status::Passed {

@@ -64,6 +64,8 @@ pub(super) struct ResultData {
     pub alternate_used: bool,
     pub completion_order: usize,
     pub labels: Vec<String>,
+    pub environment: String,
+    pub measurements: Vec<String>,
 }
 
 impl ResultData {
@@ -88,6 +90,8 @@ impl ResultData {
             alternate_used: false,
             completion_order: 0,
             labels: Vec::new(),
+            environment: String::new(),
+            measurements: Vec::new(),
         }
     }
 }
@@ -305,12 +309,79 @@ pub(super) fn processors_available() -> BTreeSet<usize> {
     }
 }
 
+fn environment_measurement(test: &Test, resource_env: &BTreeMap<String, String>) -> String {
+    let mut values: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for assignment in test.list("ENVIRONMENT") {
+        let (name, value) = assignment.split_once('=').unwrap_or((assignment, ""));
+        values.insert(name.into(), Some(value.into()));
+    }
+    for spec in test.list("ENVIRONMENT_MODIFICATION") {
+        let Some((name, operation)) = spec.split_once('=') else {
+            continue;
+        };
+        let Some((op, value)) = operation.split_once(':') else {
+            continue;
+        };
+        match op {
+            "reset" => {
+                values.remove(name);
+            }
+            "set" => {
+                values.insert(name.into(), Some(value.into()));
+            }
+            "unset" => {
+                values.insert(name.into(), None);
+            }
+            "string_append" | "string_prepend" | "path_list_append" | "path_list_prepend"
+            | "cmake_list_append" | "cmake_list_prepend" => {
+                let separator = if op.starts_with("path") {
+                    ":"
+                } else if op.starts_with("cmake") {
+                    ";"
+                } else {
+                    ""
+                };
+                let current = values
+                    .get(name)
+                    .cloned()
+                    .flatten()
+                    .or_else(|| std::env::var(name).ok())
+                    .unwrap_or_default();
+                let separator = if current.is_empty() { "" } else { separator };
+                let updated = if op.ends_with("prepend") {
+                    format!("{value}{separator}{current}")
+                } else {
+                    format!("{current}{separator}{value}")
+                };
+                values.insert(name.into(), Some(updated));
+            }
+            _ => {}
+        }
+    }
+    for (name, value) in resource_env {
+        values.insert(name.clone(), Some(value.clone()));
+    }
+    let mut lines: Vec<_> = values
+        .iter()
+        .map(|(name, value)| {
+            value
+                .as_ref()
+                .map_or_else(|| format!("#{name}="), |value| format!("{name}={value}"))
+        })
+        .collect();
+    if resource_env.is_empty() {
+        lines.push("#CTEST_RESOURCE_GROUP_COUNT=".into());
+    }
+    lines.join("\n")
+}
+
 pub(super) struct Invocation {
     pub exe: String,
     args: Vec<String>,
     dir: PathBuf,
     affinity: Vec<usize>,
     env: Environment,
+    environment_measurement: String,
     timeout: f64,
     stop_at_timeout: bool,
     alternate: Option<(f64, Vec<String>)>,
@@ -407,6 +478,7 @@ impl Invocation {
             dir: test.dir.clone(),
             affinity,
             env,
+            environment_measurement: environment_measurement(test, resource_env),
             timeout,
             stop_at_timeout,
             alternate,
@@ -567,7 +639,10 @@ impl Invocation {
         }
         let status = status.unwrap();
         let exit_value = status.code().unwrap_or(-1);
-        let (status, reason, completion) = classify(test, &output.text, expired, status);
+        let (status, reason, mut completion) = classify(test, &output.text, expired, status);
+        if let Some(details) = &output.details {
+            completion = details.clone();
+        }
         ResultData {
             status,
             output: output.text,
@@ -587,6 +662,8 @@ impl Invocation {
             alternate_used,
             completion_order: 0,
             labels: output.labels,
+            environment: self.environment_measurement,
+            measurements: output.measurements,
         }
     }
 }
@@ -598,6 +675,8 @@ struct ProcessOutput<'a> {
     partial: Vec<u8>,
     text: String,
     labels: Vec<String>,
+    details: Option<String>,
+    measurements: Vec<String>,
 }
 
 impl<'a> ProcessOutput<'a> {
@@ -609,6 +688,8 @@ impl<'a> ProcessOutput<'a> {
             partial: Vec::new(),
             text: String::new(),
             labels: Vec::new(),
+            details: None,
+            measurements: Vec::new(),
         }
     }
 
@@ -632,6 +713,10 @@ impl<'a> ProcessOutput<'a> {
         let line = crate::bytes::decode(line);
         let index = self.test.index;
         let _ = self.send.send(Event::Output(index, line.clone()));
+        if line.starts_with("<DartMeasurement") || line.starts_with("<CTestMeasurement") {
+            self.measurements.push(line.clone());
+            return None;
+        }
         for (tag, notice) in [
             ("CTestDetails", "Test Details changed to"),
             ("CTestLabel", "Test Label added:"),
@@ -651,6 +736,8 @@ impl<'a> ProcessOutput<'a> {
                         .send(Event::Output(index, format!("{notice} '{label}'")));
                     if tag == "CTestLabel" {
                         self.labels.push(label.into());
+                    } else {
+                        self.details = Some(label.into());
                     }
                 }
                 return None;
