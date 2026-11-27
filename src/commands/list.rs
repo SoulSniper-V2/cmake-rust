@@ -1,6 +1,6 @@
 //! `list()` command: port of `cmListCommand.cxx` and `cmList.cxx`.
 
-use crate::cmregex::{Match, Regex};
+use crate::cmregex::Regex;
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
@@ -391,29 +391,6 @@ impl ReplaceHelper {
         }
     }
 
-    /// Repeated find with the CMP0186 anchor semantics.
-    fn find_at(
-        &self,
-        input: &[u8],
-        base: usize,
-        bol_at_offset: bool,
-        nonempty_at_offset: bool,
-    ) -> Option<Match> {
-        let mut start = base;
-        loop {
-            // `^` can match at `start` when bol_at_offset (regbol == offset)
-            // or when start is the beginning of the full text.
-            let not_bol = if bol_at_offset { false } else { start != 0 };
-            let found = self.regex.find_bytes(input, start, not_bol)?;
-            if nonempty_at_offset && found.groups[0] == Some((base, base)) {
-                // Match ending at the reject position: skip to next offset.
-                start = base + 1;
-                continue;
-            }
-            return Some(found);
-        }
-    }
-
     fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
         // Byte ranges may split multi-byte characters; assemble bytes.
         let input_bytes = crate::bytes::encode(input);
@@ -422,7 +399,10 @@ impl ReplaceHelper {
 
         let mut base = 0usize;
         let mut nonempty = false;
-        while let Some(found) = self.find_at(&input_bytes, base, bol_at_offset, nonempty) {
+        while let Some(found) =
+            self.regex
+                .find_bytes_with(&input_bytes, base, bol_at_offset, nonempty)
+        {
             let (start, end) = found.groups[0].unwrap_or((0, 0));
             crate::state::clear_matches(interp);
             crate::state::store_matches(interp, input, &found);
