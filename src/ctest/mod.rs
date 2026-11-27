@@ -143,6 +143,9 @@ pub fn main() -> i32 {
             return 1;
         }
     };
+    if options.list_presets {
+        return 0;
+    }
     if options.build_and_test.active {
         return buildandtest::run(&options.build_and_test, &options.config);
     }
@@ -246,10 +249,14 @@ pub(in crate::ctest) fn execute_detailed(
     log: &mut Log,
 ) -> (i32, bool) {
     let config = read_configuration(&dir, log, !options.script);
-    let binary = config
-        .get("BuildDirectory")
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| dir.clone(), PathBuf::from);
+    let binary = if options.preset_binary_dir.is_empty() {
+        config
+            .get("BuildDirectory")
+            .filter(|value| !value.is_empty())
+            .map_or_else(|| dir.clone(), PathBuf::from)
+    } else {
+        PathBuf::from(&options.preset_binary_dir)
+    };
     if options.dir.is_none() && binary.is_dir() && std::env::set_current_dir(&binary).is_ok() {
         dir = binary.clone();
     }

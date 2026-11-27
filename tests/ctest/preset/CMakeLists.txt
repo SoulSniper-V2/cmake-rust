@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(preset NONE)
+enable_testing()
+add_test(pass /usr/bin/echo hello)
+add_test(other /usr/bin/echo other)
+add_test(fail /bin/sh -c "echo bad; exit 3")
+configure_file(CMakePresets.json CMakePresets.json COPYONLY)

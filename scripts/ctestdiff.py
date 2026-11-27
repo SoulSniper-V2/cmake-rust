@@ -132,6 +132,16 @@ def cases():
         ("configure-build", ["-S", "scriptbuild.cmake", "-V"]),
     ):
         yield "dashboard", name, [flags], {}
+    for name, flags in (
+        ("smoke", ["--preset", "smoke"]),
+        ("smoke-attached", ["--preset=smoke"]),
+        ("json", ["--preset", "json"]),
+        ("exclude-fail", ["--preset", "exclude-fail"]),
+        ("quiet-failure", ["--preset", "quiet-failure"]),
+        ("list", ["--list-presets"]),
+        ("missing", ["--preset", "missing"]),
+    ):
+        yield "preset", name, [flags], {}
     for mode in ("", "error", "ignore"):
         for option in ([], ["-N"], ["--show-only=json-v1"], ["-Q"], ["-V"], ["--print-labels"]):
             yield "empty", f"{mode}/{option}", [[*option, *([f"--no-tests={mode}"] if mode else [])]], {}

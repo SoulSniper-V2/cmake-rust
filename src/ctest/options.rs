@@ -88,6 +88,197 @@ pub(super) struct Options {
     pub dashboard_model: String,
     pub dashboard_site: String,
     pub dashboard_build_name: String,
+    pub list_presets: bool,
+    pub preset_binary_dir: String,
+}
+
+fn apply_test_preset(
+    preset_name: &str,
+    list_presets: bool,
+    options: &mut Options,
+) -> Result<(), String> {
+    use crate::presets::{NoTestsAction, RepeatMode, ShowOnly, Verbosity};
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let home = cwd.to_string_lossy().into_owned();
+    let mut graph = crate::presets::Graph::default();
+    if !graph.read_project_presets(&home, false) {
+        return Err(format!(
+            "Could not read presets from {home}:\n{}",
+            graph.parse_state.error_message()
+        ));
+    }
+    if list_presets {
+        graph.print_test_preset_list(None);
+        options.list_presets = true;
+        return Ok(());
+    }
+    let Some(pair) = graph.test_presets.get(preset_name) else {
+        graph.print_test_preset_list(None);
+        return Err(format!("No such test preset in {home}: \"{preset_name}\""));
+    };
+    if pair.unexpanded.base.hidden {
+        graph.print_test_preset_list(None);
+        return Err(format!(
+            "Cannot use hidden test preset in {home}: \"{preset_name}\""
+        ));
+    }
+    let Some(preset) = &pair.expanded else {
+        graph.print_test_preset_list(None);
+        return Err(format!(
+            "Could not evaluate test preset \"{preset_name}\": Invalid macro expansion"
+        ));
+    };
+    if !preset.base.condition_result {
+        return Err(format!(
+            "Cannot use disabled test preset in {home}: \"{preset_name}\""
+        ));
+    }
+    let configure_name = &preset.configure_preset;
+    let Some(configure_pair) = graph.configure_presets.get(configure_name) else {
+        graph.print_configure_preset_list(&|_| true, None);
+        return Err(format!(
+            "No such configure preset in {home}: \"{configure_name}\""
+        ));
+    };
+    if configure_pair.unexpanded.base.hidden {
+        graph.print_configure_preset_list(&|_| true, None);
+        return Err(format!(
+            "Cannot use hidden configure preset in {home}: \"{configure_name}\""
+        ));
+    }
+    let Some(configure) = &configure_pair.expanded else {
+        return Err(format!(
+            "Could not evaluate configure preset \"{configure_name}\": Invalid macro expansion"
+        ));
+    };
+    for (name, value) in &preset.base.environment {
+        if let Some(value) = value {
+            // SAFETY: preset application is single-threaded before any worker threads exist.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+    if !preset.configuration.is_empty() {
+        options.config = preset.configuration.clone();
+    }
+    if !configure.binary_dir.is_empty() {
+        options.preset_binary_dir = configure.binary_dir.clone();
+    }
+    if let Some(output) = &preset.output {
+        options.progress = output.short_progress.unwrap_or(false);
+        match output.verbosity {
+            Some(Verbosity::Verbose) => options.verbose = true,
+            Some(Verbosity::Extra) => {
+                options.verbose = true;
+                options.extra_verbose = true;
+            }
+            _ => {}
+        }
+        options.output_on_failure = output.output_on_failure.unwrap_or(false);
+        options.quiet = output.quiet.unwrap_or(false);
+        if !output.output_log_file.is_empty() {
+            options.output_log = Some(output.output_log_file.clone().into());
+        }
+        if !output.output_junit_file.is_empty() {
+            options.junit = Some(output.output_junit_file.clone().into());
+        }
+        options.no_label_summary = !output.label_summary.unwrap_or(true);
+        if let Some(width) = output.max_test_name_width {
+            options.width = width.max(0) as usize;
+        }
+    }
+    if let Some(filter) = &preset.filter {
+        if let Some(include) = &filter.include {
+            options.include = include.name.clone();
+            if !include.label.is_empty() {
+                options.include_labels.push(include.label.clone());
+            }
+            if let Some(index) = &include.index {
+                if index.index_file.is_empty() {
+                    let mut text = String::new();
+                    if let Some(start) = index.start {
+                        text.push_str(&start.to_string());
+                    }
+                    text.push(',');
+                    if let Some(end) = index.end {
+                        text.push_str(&end.to_string());
+                    }
+                    text.push(',');
+                    if let Some(stride) = index.stride {
+                        text.push_str(&stride.to_string());
+                    }
+                    text.push(',');
+                    text.push_str(
+                        &index
+                            .specific_tests
+                            .iter()
+                            .map(i32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                    options.index = text;
+                } else {
+                    options.index = index.index_file.clone();
+                }
+            }
+            options.union = include.use_union.unwrap_or(false);
+        }
+        if let Some(exclude) = &filter.exclude {
+            options.exclude = exclude.name.clone();
+            if !exclude.label.is_empty() {
+                options.exclude_labels.push(exclude.label.clone());
+            }
+            if let Some(fixtures) = &exclude.fixtures {
+                options.exclude_fixture = fixtures.any.clone();
+                options.exclude_setup = fixtures.setup.clone();
+                options.exclude_cleanup = fixtures.cleanup.clone();
+            }
+        }
+    }
+    if let Some(execution) = &preset.execution {
+        options.stop_on_failure = execution.stop_on_failure.unwrap_or(false);
+        if let Some(jobs) = execution.jobs {
+            options.parallel = Some(jobs.max(0) as usize);
+        }
+        if !execution.resource_spec_file.is_empty() {
+            options.resource_spec = Some(execution.resource_spec_file.clone().into());
+        }
+        if let Some(load) = execution.test_load {
+            options.test_load = Some(load.max(0) as u64);
+        }
+        if let Some(show) = execution.show_only {
+            options.show = match show {
+                ShowOnly::Human => Show::Human,
+                ShowOnly::JsonV1 => {
+                    options.quiet = true;
+                    Show::Json
+                }
+            };
+        }
+        if let Some(repeat) = &execution.repeat {
+            options.repeat = Some((
+                match repeat.mode {
+                    RepeatMode::UntilFail => Repeat::UntilFail,
+                    RepeatMode::UntilPass => Repeat::UntilPass,
+                    RepeatMode::AfterTimeout => Repeat::AfterTimeout,
+                },
+                repeat.count.max(0) as usize,
+            ));
+        }
+        if let Some(interactive) = execution.interactive_debugging {
+            options.interactive_debug = interactive;
+        }
+        options.random = execution.schedule_random.unwrap_or(false);
+        if let Some(timeout) = execution.timeout {
+            options.timeout = timeout as f64;
+        }
+        options.no_tests = match execution.no_tests_action {
+            Some(NoTestsAction::Error) => "error".into(),
+            Some(NoTestsAction::Ignore) => "ignore".into(),
+            _ => options.no_tests.clone(),
+        };
+    }
+    Ok(())
 }
 
 impl Options {
@@ -100,6 +291,28 @@ impl Options {
             config: std::env::var("CMAKE_CONFIG_TYPE").unwrap_or_default(),
             ..Self::default()
         };
+        let list_presets = args.iter().any(|arg| arg == "--list-presets");
+        let mut preset_name = None;
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(name) = arg.strip_prefix("--preset=") {
+                preset_name = Some(name.to_owned());
+                break;
+            }
+            if arg == "--preset" {
+                let Some(name) = args.get(index + 1) else {
+                    return Err("'--preset' requires an argument".into());
+                };
+                preset_name = Some(name.clone());
+                break;
+            }
+        }
+        if list_presets || preset_name.is_some() {
+            apply_test_preset(
+                preset_name.as_deref().unwrap_or(""),
+                list_presets,
+                &mut options,
+            )?;
+        }
         let mut parallel_set = false;
         let mut args = args.iter().peekable();
         while let Some(arg) = args.next() {
@@ -230,6 +443,10 @@ impl Options {
                 }
                 "-M" | "--test-model" => options.model = value()?.into(),
                 "-T" | "--test-action" => options.actions.push(value()?.into()),
+                "--list-presets" => {}
+                "--preset" => {
+                    let _ = value()?;
+                }
                 "--build-and-test" => {
                     let required = "--build-and-test must have source and binary dir";
                     let (source, binary) = if let Some(attached) = attached {

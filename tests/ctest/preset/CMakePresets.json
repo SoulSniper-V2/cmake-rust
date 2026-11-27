@@ -1,0 +1,56 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "smoke",
+      "configurePreset": "default",
+      "output": {
+        "verbosity": "verbose",
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^pass$"
+        }
+      },
+      "execution": {
+        "jobs": 1
+      }
+    },
+    {
+      "name": "json",
+      "configurePreset": "default",
+      "execution": {
+        "showOnly": "json-v1"
+      }
+    },
+    {
+      "name": "exclude-fail",
+      "configurePreset": "default",
+      "filter": {
+        "exclude": {
+          "name": "fail"
+        }
+      }
+    },
+    {
+      "name": "quiet-failure",
+      "configurePreset": "default",
+      "output": {
+        "quiet": true
+      },
+      "filter": {
+        "include": {
+          "name": "^fail$"
+        }
+      }
+    }
+  ]
+}
