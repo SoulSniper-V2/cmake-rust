@@ -1,5 +1,6 @@
 //! Standalone CTest driver for generated CTest test files.
 
+mod buildandtest;
 mod options;
 mod process;
 mod report;
@@ -132,6 +133,9 @@ pub fn main() -> i32 {
             return 1;
         }
     };
+    if options.build_and_test.active {
+        return buildandtest::run(&options.build_and_test, &options.config);
+    }
     let mut log = Log::new(&options);
     if !matches!(options.no_tests.as_str(), "" | "error" | "ignore") {
         log.error(&format!(

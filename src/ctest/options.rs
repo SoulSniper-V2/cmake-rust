@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::util::is_on;
+use crate::util::{collapse_full_path, is_on};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Show {
@@ -15,6 +15,29 @@ pub(super) enum Repeat {
     UntilFail,
     UntilPass,
     AfterTimeout,
+}
+
+#[derive(Default)]
+pub(super) struct BuildAndTest {
+    pub active: bool,
+    pub source_dir: String,
+    pub binary_dir: String,
+    pub targets: Vec<String>,
+    pub no_clean: bool,
+    pub no_cmake: bool,
+    pub two_config: bool,
+    pub run_dir: String,
+    pub exe_dir: String,
+    pub timeout: f64,
+    pub generator: String,
+    pub platform: String,
+    pub toolset: String,
+    pub project: String,
+    pub makeprogram: String,
+    pub config_sample: String,
+    pub options: Vec<String>,
+    pub test_command: String,
+    pub test_args: Vec<String>,
 }
 
 #[derive(Default)]
@@ -53,6 +76,7 @@ pub(super) struct Options {
     pub resource_spec: Option<PathBuf>,
     pub width: usize,
     pub interactive_debug: bool,
+    pub build_and_test: BuildAndTest,
 }
 
 impl Options {
@@ -154,6 +178,81 @@ impl Options {
                         _ => None,
                     };
                     parallel_set = true;
+                }
+                "--build-and-test" => {
+                    let required = "--build-and-test must have source and binary dir";
+                    let (source, binary) = if let Some(attached) = attached {
+                        let mut parts = attached.split(';');
+                        let source = parts.next().unwrap_or_default().to_owned();
+                        let binary = parts.next().unwrap_or_default().to_owned();
+                        if parts.next().is_some() || source.is_empty() || binary.is_empty() {
+                            return Err(required.into());
+                        }
+                        (source, binary)
+                    } else {
+                        let Some(source) = args.next() else {
+                            return Err(required.into());
+                        };
+                        let Some(binary) = args.next() else {
+                            return Err(required.into());
+                        };
+                        (source.clone(), binary.clone())
+                    };
+                    let cwd = std::env::current_dir().unwrap_or_default();
+                    let cwd = cwd.to_string_lossy();
+                    let build = &mut options.build_and_test;
+                    build.active = true;
+                    build.source_dir = collapse_full_path(&source, &cwd);
+                    build.binary_dir = collapse_full_path(&binary, &cwd);
+                    let _ = std::fs::create_dir_all(&build.binary_dir);
+                }
+                "--build-target" => options.build_and_test.targets.push(value()?.into()),
+                "--build-noclean" => options.build_and_test.no_clean = true,
+                "--build-nocmake" => options.build_and_test.no_cmake = true,
+                "--build-two-config" => options.build_and_test.two_config = true,
+                "--build-run-dir" => options.build_and_test.run_dir = value()?.into(),
+                "--build-exe-dir" => options.build_and_test.exe_dir = value()?.into(),
+                "--test-timeout" => options.build_and_test.timeout = number(value()?),
+                "--build-generator" => options.build_and_test.generator = value()?.into(),
+                "--build-generator-platform" => {
+                    options.build_and_test.platform = value()?.into();
+                }
+                "--build-generator-toolset" => options.build_and_test.toolset = value()?.into(),
+                "--build-project" => options.build_and_test.project = value()?.into(),
+                "--build-makeprogram" => options.build_and_test.makeprogram = value()?.into(),
+                "--build-config-sample" => options.build_and_test.config_sample = value()?.into(),
+                _ if arg == "--build-options" => {
+                    while let Some(next) = args.next() {
+                        if next == "--build-target" {
+                            if let Some(target) = args.next() {
+                                options.build_and_test.targets.push(target.clone());
+                            }
+                            break;
+                        }
+                        if next == "--test-command" {
+                            if let Some(command) = args.next() {
+                                options.build_and_test.test_command = command.clone();
+                            }
+                            for rest in args.by_ref() {
+                                options.build_and_test.test_args.push(rest.clone());
+                            }
+                            break;
+                        }
+                        options.build_and_test.options.push(next.clone());
+                    }
+                }
+                _ if arg == "--test-command" => {
+                    if args.peek().is_none() {
+                        return Err(format!(
+                            "Unknown argument: {arg}\nCMake Error: Run 'ctest --help' for all supported options."
+                        ));
+                    }
+                    if let Some(command) = args.next() {
+                        options.build_and_test.test_command = command.clone();
+                    }
+                    for rest in args.by_ref() {
+                        options.build_and_test.test_args.push(rest.clone());
+                    }
                 }
                 "--test-load" => {
                     let raw = value()?;

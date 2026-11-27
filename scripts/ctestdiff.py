@@ -102,6 +102,27 @@ def cases():
         ("failed-setup-json", ["-R", "^broken-consumer$", "--show-only=json-v1"]),
     ):
         yield "fixtures", name, [flags], {}
+    for name, flags in (
+        ("success", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--test-command", "bt"]),
+        ("args-noclean", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-noclean", "--test-command", "bt", "one", "two words"]),
+        ("missing-generator", ["--build-and-test", "bt-src", "bt-build", "--test-command", "bt"]),
+        ("missing-executable", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--test-command", "missing"]),
+        ("no-test-command", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja"]),
+        ("no-cmake-empty", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-nocmake", "--test-command", "bt"]),
+        ("test-failure", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-options", "-DTEST_RESULT=7", "--test-command", "bt"]),
+        ("build-failure", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-options", "-DBREAK_BUILD=ON", "--test-command", "bt"]),
+        ("target", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-target", "bt", "--test-command", "bt"]),
+        ("two-config", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-two-config", "--test-command", "bt"]),
+        ("makeprogram", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-makeprogram", "/usr/bin/ninja", "--test-command", "bt"]),
+        ("exe-dir", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-exe-dir", "bin", "--build-options", "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=bin", "--test-command", "bt"]),
+        ("run-dir", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-run-dir", "..", "--test-command", "bt"]),
+        ("config-sample", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--build-config-sample", "bt", "--test-command", "bt"]),
+        ("timeout", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja", "--test-timeout", "3", "--test-command", "sleep", "5"]),
+        ("unix-makefiles", ["--build-and-test", "bt-src", "bt-build", "--build-generator", "Unix Makefiles", "--test-command", "bt"]),
+        ("multi-config", ["-C", "Debug", "--build-and-test", "bt-src", "bt-build", "--build-generator", "Ninja Multi-Config", "--test-command", "bt"]),
+        ("binary-is-file", ["--build-and-test", "bt-src", "bt-file", "--build-generator", "Ninja", "--test-command", "bt"]),
+    ):
+        yield "buildtest", name, [flags], {}
     for mode in ("", "error", "ignore"):
         for option in ([], ["-N"], ["--show-only=json-v1"], ["-Q"], ["-V"], ["--print-labels"]):
             yield "empty", f"{mode}/{option}", [[*option, *([f"--no-tests={mode}"] if mode else [])]], {}
@@ -115,6 +136,7 @@ def normalize(data, work, path):
     data = re.sub(rb"(?<= )\d+\.\d+(?= sec\b)", b"<SECONDS>", data)
     data = re.sub(rb"(?m)(?<=: )\w{3} \d{2} \d{2}:\d{2} UTC$", b"<DATETIME>", data)
     data = re.sub(rb"(?m)(?<=time elapsed: )\d\d:\d\d:\d\d$", b"<DURATION>", data)
+    data = re.sub(rb"(?<=\()\d+\.\d+(?=s\))", b"<SECONDS>", data)
     if path.name == "CTestCostData.txt":
         values, found, rest = data.partition(b"---\n")
         # A zero cost with zero runs is part of the scheduling state.
@@ -152,7 +174,10 @@ def run_case(case, binaries, configure):
                     result[(number, key)] = normalize(getattr(proc, key), root, Path(key))
                 for path in sorted(build.rglob("*")):
                     if path.is_file() and not (snapshot / path.relative_to(build)).exists():
-                        result[(number, str(path.relative_to(build)))] = normalize(path.read_bytes(), root, path)
+                        relative = path.relative_to(build)
+                        if fixture == "buildtest" and relative.parts[0] == "bt-build":
+                            continue
+                        result[(number, str(relative))] = normalize(path.read_bytes(), root, path)
             results.append(result)
             shutil.rmtree(build)
             shutil.copytree(snapshot, build)
