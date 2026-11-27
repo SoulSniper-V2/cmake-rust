@@ -15,6 +15,7 @@ use super::ctx::GenCtx;
 use super::custom;
 use super::flags;
 use super::module_support::ModuleSupport;
+use super::osx_bundle::{self, SourceFileType};
 use super::target::{self as gt, ArtifactType, SourceKind};
 use crate::policy::PolicyStatus;
 use crate::state::CustomCommandKind;
@@ -840,6 +841,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .map(|output| self.top_rule_path(output))
             .collect();
         write_make_rule(&mut build, None, &codegen, &codegen_depends, &[], true);
+        let mut mac_content_folders = BTreeSet::new();
+        let (osx_extra_files, osx_clean) = self.write_mac_osx_content_statements(
+            target,
+            &sources,
+            &mut mac_content_folders,
+            &mut build,
+        );
         for source in sources
             .iter()
             .filter(|s| s.kind == SourceKind::ObjectSource)
@@ -882,6 +890,8 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 target,
                 &object_paths,
                 &external_paths,
+                &osx_extra_files,
+                &mut mac_content_folders,
                 &support_rel_cur,
                 &support_rel_top,
                 compiler_depends,
@@ -901,7 +911,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         self.write_flags(target);
         self.write_depend_info(target, &impl_depends);
         self.write_dependency_placeholders(&support, compiler_depends, &target.name);
-        self.write_clean_files(target, &object_paths, &custom_clean);
+        self.write_clean_files(target, &object_paths, &custom_clean, &osx_clean);
         self.implicit.insert(target.name.clone(), impl_depends);
     }
 
@@ -1575,7 +1585,16 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         if !rule_flags.before_language.is_empty() {
             parts.push(rule_flags.before_language);
         }
-        parts.push(format!("$({}_FLAGS)", source.language));
+        let mut filter_arch = String::new();
+        for arch in super::pch::pch_archs(self.ctx, target, &self.ctx.config, &source.language) {
+            let pch_source =
+                super::pch::pch_source(self.ctx, target, &self.ctx.config, &source.language, &arch);
+            if pch_source == source.path {
+                filter_arch = arch;
+                break;
+            }
+        }
+        parts.push(format!("$({}_FLAGS{filter_arch})", source.language));
         if !rule_flags.after_language.is_empty() {
             parts.push(rule_flags.after_language);
         }
@@ -1812,6 +1831,74 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         lines
     }
 
+    /// `cmOSXBundleGenerator::GenerateMacOSXContentStatements` driven over
+    /// the target's header and extra source kinds, with Makefile copy rules
+    /// from `cmMakefileTargetGenerator::MacOSXContentGeneratorType`.
+    fn write_mac_osx_content_statements(
+        &mut self,
+        target: &Target,
+        sources: &[gt::SourceInfo],
+        mac_content_folders: &mut BTreeSet<String>,
+        out: &mut String,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut extra_files = Vec::new();
+        let mut clean_files = Vec::new();
+        if !matches!(
+            target.kind,
+            TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+                | TargetKind::Executable
+        ) {
+            return (extra_files, clean_files);
+        }
+        let config = self.ctx.config.clone();
+        for kind in [SourceKind::Header, SourceKind::Extra] {
+            for source in sources.iter().filter(|source| source.kind == kind) {
+                let flags =
+                    osx_bundle::target_source_file_flags(self.ctx, target, &source.path, None);
+                if flags.kind == SourceFileType::Normal || !target.is_bundle_on_apple() {
+                    continue;
+                }
+                let macdir = osx_bundle::init_mac_osx_content_directory(
+                    self.ctx,
+                    target,
+                    &flags.mac_folder,
+                    &config,
+                    mac_content_folders,
+                );
+                let output_full = format!("{}/{}", macdir, util::filename_name(&source.path));
+                clean_files.push(maybe_relative_cur(self.ctx, target.makefile, &output_full));
+                let output = maybe_relative_top(self.ctx, &output_full);
+                let echo_text = format!("Copying OS X content {output}");
+                let copy = if Path::new(&source.path).is_dir() {
+                    "copy_directory"
+                } else {
+                    "copy"
+                };
+                let command = format!(
+                    "$(CMAKE_COMMAND) -E {copy} {} {}",
+                    shell_path(self.ctx, &source.path),
+                    shell_path(self.ctx, &output)
+                );
+                write_make_rule(
+                    out,
+                    None,
+                    &output,
+                    std::slice::from_ref(&source.path),
+                    &[
+                        format!("@{}", self.echo(&echo_text, "--green", None)),
+                        command,
+                    ],
+                    false,
+                );
+                extra_files.push(output);
+            }
+        }
+        (extra_files, clean_files)
+    }
+
     fn write_object_library_rule(
         &mut self,
         target: &Target,
@@ -1869,6 +1956,8 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         target: &Target,
         objects: &[String],
         externals: &[String],
+        extra_files: &[String],
+        mac_content_folders: &mut BTreeSet<String>,
         support_rel_cur: &str,
         support_rel_top: &str,
         _compiler_depends: bool,
@@ -1913,8 +2002,28 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
         let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let target_full = format!("{directory}/{}", names.real);
-        let output_full = format!("{directory}/{}", names.output);
+        // cmOSXBundleGenerator: create the bundle layout at generate time.
+        if target.is_app_bundle_on_apple() {
+            osx_bundle::create_app_bundle(self.ctx, target, &names.output, &directory, &config);
+        } else if target.is_framework_on_apple() {
+            let mut skip = osx_bundle::SkipParts::default();
+            if gt::has_import_library(self.ctx, target, &config) {
+                skip.text_stubs = false;
+            }
+            osx_bundle::create_framework(
+                self.ctx,
+                target,
+                &names.output,
+                &directory,
+                &config,
+                skip,
+                mac_content_folders,
+            );
+        } else if target.is_cf_bundle_on_apple() {
+            osx_bundle::create_cf_bundle(self.ctx, target, &names.output, &directory, &config);
+        }
+        let target_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, true);
+        let output_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, false);
         let target_rel_cur = maybe_relative_cur(self.ctx, dir, &target_full);
         let target_rel_top = format!(
             "{}{}",
@@ -1980,6 +2089,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::Executable => "executable",
             TargetKind::StaticLibrary => "static library",
             TargetKind::SharedLibrary => "shared library",
+            TargetKind::ModuleLibrary if target.is_cf_bundle_on_apple() => "CFBundle shared module",
             TargetKind::ModuleLibrary => "shared module",
             TargetKind::ObjectLibrary => "object library",
             _ => "target",
@@ -2025,7 +2135,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         commands.push(format!(
             "$(CMAKE_COMMAND) -E cmake_link_script {link_script} --verbose=$(VERBOSE)"
         ));
-        if names.output != names.real {
+        if names.output != names.real && !target.is_framework_on_apple() {
             let symlink_rule = if target.kind == TargetKind::Executable {
                 "cmake_symlink_executable"
             } else {
@@ -2122,14 +2232,51 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             home_relative_output_path(self.ctx, dir),
             maybe_relative_cur(self.ctx, dir, &output_full)
         );
+        let mut driver_depends = vec![output_driver];
+        let mut extra_files = extra_files.to_vec();
+        extra_files.sort();
+        extra_files.dedup();
+        driver_depends.extend(extra_files);
         write_make_rule(
             out,
             Some("Rule to build all files generated by this target."),
             &driver,
-            &[output_driver],
+            &driver_depends,
             &[],
             true,
         );
+    }
+
+    /// `cmCommonTargetGenerator::AppendOSXVerFlag`.
+    fn append_osx_ver_flag(
+        &self,
+        flags_text: &mut String,
+        language: &str,
+        name: &str,
+        so: bool,
+        target: &Target,
+    ) {
+        let Some(flag) = self
+            .ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_{language}_OSX_{name}_VERSION_FLAG"),
+            )
+            .filter(|flag| !flag.is_empty())
+        else {
+            return;
+        };
+        let (major, minor, patch) = gt::target_version_fallback(
+            target,
+            &format!("MACHO_{name}_VERSION"),
+            if so { "SOVERSION" } else { "VERSION" },
+        );
+        if major > 0 || minor > 0 || patch > 0 {
+            if !flags_text.is_empty() {
+                flags_text.push(' ');
+            }
+            flags_text.push_str(&format!("{flag}{major}.{minor}.{patch}"));
+        }
     }
 
     fn write_link_script(
@@ -2144,8 +2291,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
-        let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let target_full = format!("{directory}/{}", names.real);
+        let target_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, true);
         let target_shell = shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_full));
         let entries = makefile_object_entries(self.ctx, target, objects, externals);
         let (mut use_response_objects, object_strings) =
@@ -2233,7 +2379,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             flags::append(&mut s, &link_vars.arch_flags);
             s
         };
-        let link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
+        let mut link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
+        if matches!(
+            target.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
+            self.append_osx_ver_flag(&mut link_flags, language, "COMPATIBILITY", true, target);
+            self.append_osx_ver_flag(&mut link_flags, language, "CURRENT", false, target);
+        }
         let object_dir = shell_path(
             self.ctx,
             &maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target)),
@@ -2308,7 +2461,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             ("FLAGS", flags),
             (
                 "LANGUAGE_COMPILE_FLAGS",
-                link_vars.language_compile_flags.clone(),
+                if target.kind == TargetKind::Executable {
+                    link_vars.language_compile_flags.clone()
+                } else {
+                    let mut combined = link_vars.language_compile_flags.clone();
+                    flags::append(&mut combined, &link_vars.arch_flags);
+                    combined
+                },
             ),
             ("ARCH_FLAGS", link_vars.arch_flags.clone()),
             ("LINK_FLAGS", link_flags),
@@ -2549,7 +2708,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             let vars = flags::compile_target_vars(self.ctx, target, &config, lang);
             let _ = writeln!(out, "{lang}_DEFINES = {}\n", vars.defines);
             let _ = writeln!(out, "{lang}_INCLUDES = {}\n", vars.includes);
-            let _ = writeln!(out, "{lang}_FLAGS = {}\n", vars.flags_untrimmed);
+            let mut architectures = flags::apple_archs(self.ctx, target, &config, lang);
+            architectures.push(String::new());
+            for arch in architectures {
+                let vars =
+                    flags::compile_target_vars_for_arch(self.ctx, target, &config, lang, &arch);
+                let _ = writeln!(out, "{lang}_FLAGS{arch} = {}\n", vars.flags_untrimmed);
+            }
         }
         let dir = target.makefile;
         let rel_home = home_relative_output_path(self.ctx, dir);
@@ -2778,9 +2943,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 format!("{}/{depfile}", self.ctx.interp.makefiles[dir].binary_dir)
             };
             let dep_rel = maybe_relative_top(self.ctx, &dep_full);
-            let names = gt::names(self.ctx, target, &config);
-            let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-            let output = maybe_relative_top(self.ctx, &format!("{directory}/{}", names.output));
+            let output = maybe_relative_top(
+                self.ctx,
+                &gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, false),
+            );
             let format = self.ctx.var_safe(
                 target.makefile,
                 &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"),
@@ -2928,7 +3094,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
     }
 
-    fn write_clean_files(&self, target: &Target, objects: &[String], custom_clean: &[String]) {
+    fn write_clean_files(
+        &self,
+        target: &Target,
+        objects: &[String],
+        custom_clean: &[String],
+        extra_clean: &[String],
+    ) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let mf = &self.ctx.interp.makefiles[dir];
@@ -2991,6 +3163,9 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         for file in custom_clean {
             clean_set.insert(file.clone());
         }
+        for file in extra_clean {
+            clean_set.insert(file.clone());
+        }
 
         if !mf.props.get("CLEAN_NO_CUSTOM").is_some_and(is_on) {
             for command in target.custom_commands.iter().filter(|command| {
@@ -3024,15 +3199,27 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::ObjectLibrary | TargetKind::InterfaceLibrary
         ) {
             artifacts.push(format!("{directory}/{}", names.pdb));
-            for name in [
-                &names.output,
-                &names.shared_object,
-                &names.real,
-                &names.import_library,
-            ] {
-                if !name.is_empty() {
-                    artifacts.push(format!("{directory}/{name}"));
-                }
+            artifacts.push(gt::full_path(
+                self.ctx,
+                target,
+                &config,
+                ArtifactType::Runtime,
+                false,
+            ));
+            if !names.shared_object.is_empty() {
+                artifacts.push(format!("{directory}/{}", names.shared_object));
+            }
+            artifacts.push(gt::full_path(
+                self.ctx,
+                target,
+                &config,
+                ArtifactType::Runtime,
+                true,
+            ));
+            if !names.import_library.is_empty() {
+                let import_directory =
+                    gt::directory(self.ctx, target, &config, ArtifactType::Import);
+                artifacts.push(format!("{import_directory}/{}", names.import_library));
             }
         }
         for artifact in artifacts {
@@ -3218,7 +3405,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let _ =
             crate::fsutil::write_if_different(Path::new(&format!("{support}/progress.make")), "\n");
-        self.write_clean_files(target, &[], &custom_clean);
+        self.write_clean_files(target, &[], &custom_clean, &[]);
     }
 
     fn write_progress_marks(&mut self) {

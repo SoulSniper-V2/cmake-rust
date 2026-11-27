@@ -2,18 +2,19 @@
 
 Branch: `t3/unix-makefiles-11`
 
-Most recent completed full Unix Makefiles projdiff lane: **156/177**
-(`/tmp/umf11-batch1-projdiff-umf.log`).  The part-10 reference lane was
+Most recent completed full Unix Makefiles projdiff lane: **164/177**
+(`/tmp/umf11-osx-projdiff-umf.log`).  The part-10 reference lane was
 153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
 177.  The full Unix Makefiles RunCMake lane is **5566/5566**
 (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: CUDA, install/platform variants
-(Darwin, MSVC, and clang-cl), ISPC, Makefile2/progress/DependInfo ordering,
-and response-file/PCH corners.  `link/items`, `export/shared_deps`,
-`install/namelink`, `languages/asm_mixed_linker_language`, and
-`autogen/ninja` are down to Makefile2 direct-dependency ordering;
-`export/error_order_link_cycle` is a configure diagnostic-order difference.
+Known remaining projdiff failure groups: CUDA, MSVC/clang-cl platform variants,
+ISPC, Makefile2/progress/DependInfo ordering, and response-file/PCH corners.
+`link/items`, `export/shared_deps`, and `install/namelink` are down to
+Makefile2 direct-dependency ordering; `export/error_order_link_cycle` is a
+configure diagnostic-order difference.  Makefile2 ordering is sensitive to
+upstream's pointer-ordered `cmTargetDependSet`, so individual ordering-only
+cases can appear or disappear between oracle process layouts.
 
 ## Part 11 batch 1: autogen cleaning, ASM dialect rules, and IPO archivers
 
@@ -39,6 +40,45 @@ difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
 **156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
+
+## Part 11 batch 2: Apple bundle and Mach-O generation
+
+Unix Makefiles now wires the existing `cmOSXBundleGenerator` port into target
+build-rule generation.  Bundle and framework content copies are emitted as
+make rules, their outputs are accumulated in upstream's sorted `ExtraFiles`
+set for the target build driver, copied content is added to clean scripts, and
+framework folder symlinks are created at generate time.  Bundle executables,
+CFBundles, and frameworks now use the bundle-content binary path for link
+outputs, dependency-file link rows, and clean artifacts.  CFBundle link echo
+text uses upstream's `CFBundle shared module` spelling.
+
+Apple universal/PCH compile rules now select per-architecture flag variables
+such as `C_FLAGSarm64`; the compile-flag helper exposes upstream's filtered
+architecture form without changing its unfiltered callers.  Link rule variable
+expansion now supplies architecture flags through `LANGUAGE_COMPILE_FLAGS` in
+the same shape as the upstream Makefile templates.  Versioned shared libraries
+and frameworks append Mach-O `-compatibility_version` and `-current_version`
+flags using the `MACHO_*_VERSION`/`SOVERSION`/`VERSION` fallback chain.  The
+import-artifact clean entry intentionally uses the computed import name even
+when no import library is needed on Apple, preserving upstream's unusual `.3`
+entry for versioned non-import-library Mach-O targets.
+
+Custom-command outputs remain on the target `depend` rule rather than the
+target `build` driver for executables and libraries, matching the
+`OnDepends` setting in `cmMakefileExecutableTargetGenerator` and
+`cmMakefileLibraryTargetGenerator`; only bundle extra files are driven by the
+build rule.
+
+Focused Unix Makefiles evidence: **10/10** representative cases pass
+(`autogen/imported`, `autogen/warn`, `targets/custom_command_imported_scope`,
+`targets/wrap_commands`, all five `platform/darwin_*` cases, and
+`install/apple`; `/tmp/umf11-osx-focus-fixed.log`).  Gate evidence:
+`cargo fmt --check` clean, clippy clean, **941/941** Rust tests
+(`/tmp/umf11-osx-test.log`), difftest **1283/1283**
+(`/tmp/umf11-osx-difftest.log`), clitest **538/538**
+(`/tmp/umf11-osx-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-osx-projdiff-ninja.log`), and Unix Makefiles projdiff **164/177**
+(`/tmp/umf11-osx-projdiff-umf.log`).
 
 ## Part 10 inherited Batch 9 validation
 
