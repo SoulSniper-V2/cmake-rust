@@ -11,6 +11,7 @@ pub(super) struct Jobserver {
     writer: OwnedFd,
     held: usize,
     implicit_available: bool,
+    pending_writes: usize,
 }
 
 #[cfg(unix)]
@@ -34,9 +35,7 @@ impl Jobserver {
         if let Some(path) = auth.strip_prefix("fifo:") {
             return Self::connect_fifo(path);
         }
-        let (reader, writer) = auth.split_once(',')?;
-        let reader = reader.parse().ok()?;
-        let writer = writer.parse().ok()?;
+        let (reader, writer) = parse_fd_pair(&auth)?;
         Self::connect_fds(reader, writer)
     }
 
@@ -70,11 +69,13 @@ impl Jobserver {
         let reader = Self::duplicate(reader, false)?;
         let writer = Self::duplicate(writer, true)?;
         Self::make_nonblocking(&reader)?;
+        Self::make_nonblocking(&writer)?;
         Some(Self {
             reader,
             writer,
             held: 0,
             implicit_available: true,
+            pending_writes: 0,
         })
     }
 
@@ -94,6 +95,7 @@ impl Jobserver {
             writer,
             held: 0,
             implicit_available: true,
+            pending_writes: 0,
         })
     }
 
@@ -112,6 +114,7 @@ impl Jobserver {
     }
 
     pub(super) fn try_acquire(&mut self) -> bool {
+        self.flush_writes();
         if self.implicit_available {
             self.implicit_available = false;
             self.held += 1;
@@ -146,14 +149,20 @@ impl Jobserver {
             self.implicit_available = true;
             return;
         }
+        self.pending_writes += 1;
+        self.flush_writes();
+    }
+
+    fn flush_writes(&mut self) {
         use std::os::fd::AsRawFd;
-        let byte = b'.';
-        loop {
+        while self.pending_writes > 0 {
+            let byte = b'.';
             // SAFETY: the buffer is readable for one byte and fd is a live descriptor.
             let count =
                 unsafe { libc::write(self.writer.as_raw_fd(), (&raw const byte).cast(), 1) };
             if count == 1 {
-                break;
+                self.pending_writes -= 1;
+                continue;
             }
             if count < 0 {
                 // SAFETY: reading the thread-local errno is safe.
@@ -161,10 +170,45 @@ impl Jobserver {
                 if error == libc::EINTR {
                     continue;
                 }
+                if error == libc::EAGAIN || error == libc::EWOULDBLOCK {
+                    break;
+                }
+                self.pending_writes = 0;
             }
             break;
         }
     }
+}
+
+#[cfg(unix)]
+fn parse_fd_pair(auth: &str) -> Option<(RawFd, RawFd)> {
+    fn integer(input: &str) -> Option<(RawFd, usize)> {
+        let mut length = 0;
+        let mut end = 0;
+        for byte in input.bytes() {
+            if end == 0 && (byte == b'+' || byte == b'-') {
+                end += 1;
+                length += 1;
+                continue;
+            }
+            if byte.is_ascii_digit() {
+                end += 1;
+                length += 1;
+            } else {
+                break;
+            }
+        }
+        if end == 0 || input[..end].ends_with(['+', '-']) {
+            return None;
+        }
+        input[..end].parse().ok().map(|value| (value, length))
+    }
+    let input = auth.trim_start();
+    let (reader, used) = integer(input)?;
+    let input = input[used..].strip_prefix(',')?;
+    let input = input.trim_start();
+    let (writer, _) = integer(input)?;
+    Some((reader, writer))
 }
 
 #[cfg(not(unix))]

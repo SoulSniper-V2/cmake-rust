@@ -201,6 +201,7 @@ struct Running {
     allocation: Allocation,
     affinity: Vec<usize>,
     attempt: usize,
+    jobserver_token: bool,
 }
 
 struct Session<'a> {
@@ -434,7 +435,7 @@ pub(super) fn run(
         log.output("Connected to MAKE jobserver\n");
     }
     let jobs = if options.parallel.is_none() && jobserver.is_some() {
-        usize::MAX
+        0x10000
     } else {
         options.jobs()
     };
@@ -637,6 +638,7 @@ pub(super) fn run(
                     allocation,
                     affinity,
                     attempt: 1,
+                    jobserver_token: jobserver.is_some(),
                 });
                 false
             });
@@ -692,7 +694,9 @@ pub(super) fn run(
                         session.start(test, &active.allocation, &affinity, None, Some(&result));
                     } else {
                         let finished = running[position].take().unwrap();
-                        if let Some(server) = jobserver.as_mut() {
+                        if finished.jobserver_token
+                            && let Some(server) = jobserver.as_mut()
+                        {
                             server.release();
                         }
                         session.affinity_free.extend(finished.affinity);
