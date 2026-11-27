@@ -67,6 +67,9 @@ pub struct GenCtx<'a> {
     /// `CMAKE_DEFAULT_CONFIGS`.
     pub default_configs: BTreeSet<String>,
     pub errors: Rc<RefCell<Vec<Diagnostic>>>,
+    /// Link-information diagnostics already issued, per configuration:
+    /// cmComputeLinkInformation runs once per target and configuration.
+    pub link_diagnostics: Rc<RefCell<std::collections::HashSet<String>>>,
     /// Free-form memo for expensive per-target computations.
     pub memo: Rc<RefCell<HashMap<String, String>>>,
     /// Backtrace table referenced by generator-expression provenance ids.
@@ -142,6 +145,7 @@ impl<'a> GenCtx<'a> {
             cross_configs: interp.ext.gen_cross_configs.clone(),
             default_configs: interp.ext.gen_default_configs.clone(),
             errors: Rc::new(RefCell::new(Vec::new())),
+            link_diagnostics: Rc::new(RefCell::new(std::collections::HashSet::new())),
             memo: Rc::new(RefCell::new(HashMap::new())),
             backtraces: Rc::new(RefCell::new(Vec::new())),
             target_objects: Rc::new(RefCell::new(HashMap::new())),
@@ -881,18 +885,20 @@ impl<'a> GenCtx<'a> {
             }
         };
         if self.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
-            // The Makefile generator writes the install rules, test files and
-            // build export sets before its local generators.
-            for dir in 0..self.interp.makefiles.len() {
-                report(super::install::write_install_script(self, dir));
-            }
-            for dir in 0..self.interp.makefiles.len() {
-                report(super::tests::write_test_file(self, dir));
-            }
-            report(super::export::write_build_exports(self));
             // cmGlobalGenerator::Generate runs every local generator even
             // after an earlier error (for example from an evaluation file).
-            super::makefile::generate(self);
+            let mut makefile = super::makefile::MakefileGenerator::new(self);
+            makefile.generate_with(
+                &mut |dir| {
+                    report(super::install::write_install_script(self, dir));
+                    report(super::tests::write_test_file(self, dir));
+                },
+                &mut || report(super::export::write_build_exports(self)),
+            );
+            // cmGlobalGenerator::Generate finishes by invoking the extra
+            // (IDE project file) generator, if one was selected.
+            let globals = super::makefile::global_targets(self);
+            super::extra::generate(self, &globals);
         } else {
             // cmGlobalGenerator::Generate runs every local generator and
             // writes TargetDirectories.txt even after an earlier error (for

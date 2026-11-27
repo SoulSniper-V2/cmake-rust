@@ -1328,6 +1328,53 @@
   ]
  },
  {
+  "name": "open-sublime-makefiles",
+  "steps": [
+   {
+    "argv": [
+     "-S",
+     "src",
+     "-B",
+     "b",
+     "-G",
+     "Sublime Text 2 - Unix Makefiles",
+     "-DCMAKE_SUBLIMETEXT_EXECUTABLE={work}/subl.sh"
+    ]
+   },
+   {
+    "argv": [
+     "--open",
+     "b"
+    ]
+   }
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(op NONE)\n",
+   "subl.sh": {
+    "text": "#!/bin/sh\necho \"subl $@\" > \"$(dirname \"$0\")/subl.log\"\n",
+    "mode": "755"
+   }
+  },
+  "inspect": [
+   "subl.log"
+  ]
+ },
+ {
+  "name": "sublime-invalid-env-setting",
+  "argv": [
+   "-S",
+   "src",
+   "-B",
+   "b",
+   "-G",
+   "Sublime Text 2 - Unix Makefiles",
+   "-DCMAKE_SUBLIME_TEXT_2_ENV_SETTINGS=NO_EQUALS"
+  ],
+  "files": {
+   "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(op NONE)\n"
+  }
+ },
+ {
   "name": "cache-definition-nonutf8",
   "dirs": [
    "src",

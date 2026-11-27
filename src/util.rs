@@ -3,6 +3,11 @@
 
 use std::ffi::CString;
 
+/// `cmTrimWhitespace` uses the C whitespace characters.
+pub fn trim_whitespace(value: &str) -> &str {
+    value.trim_matches(|ch: char| ch.is_ascii_whitespace() || ch == '\u{b}')
+}
+
 /// `cmValue::IsOn`.
 pub fn is_on(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
@@ -307,8 +312,7 @@ pub fn collapse_full_path(path: &str, base: &str) -> String {
 /// directory, and each ascent is spelled `../` (so a pure ascent keeps its
 /// trailing slash). With nothing in common the remote path is returned.
 pub fn relative_path(local: &str, remote: &str) -> String {
-    let full = |path: &str| path.starts_with('/');
-    if !full(local) || !full(remote) {
+    if !is_full_path(local) || !is_full_path(remote) {
         return String::new();
     }
     // kwsys SplitString(path, '/', true): a leading "/" becomes its own

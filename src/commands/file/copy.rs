@@ -11,10 +11,10 @@ use crate::cmregex::Regex;
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::util::{expand_list, filename_name, filename_path, is_full_path, is_on};
 
+use super::super::{legacy_fs::collapse_from_cwd, path::relative};
 use super::glob::pattern_regex;
 use super::{
-    copy_file_always, copy_times, mkdir, mode, relative, same_file, source_path, system_error,
-    unix_slashes,
+    copy_file_always, copy_times, mkdir, mode, same_file, source_path, system_error, unix_slashes,
 };
 
 #[derive(Default)]
@@ -594,7 +594,7 @@ impl Copier {
         let mut destination = destination.to_owned();
         let mut visited = HashSet::new();
         while let Ok(target) = fs::read_link(&source) {
-            if !visited.insert(super::collapse_from_cwd(&source)) {
+            if !visited.insert(collapse_from_cwd(&source)) {
                 return Err(CmdErr::Error(format!(
                     "{} encountered a symlink cycle at \"{source}\".",
                     self.name()

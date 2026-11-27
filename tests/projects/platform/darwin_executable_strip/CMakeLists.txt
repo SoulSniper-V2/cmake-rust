@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+project(darwin_executable_strip C)
+set(CMAKE_STRIP "/usr/bin/strip")
+add_executable(app main.c)
+install(TARGETS app)

@@ -190,12 +190,15 @@ fn filename_directory(path: &str) -> String {
 }
 
 fn split_root(path: &str) -> (&str, &str) {
-    if let Some(rest) = path.strip_prefix("//") {
+    if let Some(rest) = path
+        .strip_prefix("//")
+        .or_else(|| path.strip_prefix("\\\\"))
+    {
         ("//", rest)
-    } else if let Some(rest) = path.strip_prefix('/') {
+    } else if let Some(rest) = path.strip_prefix(['/', '\\']) {
         ("/", rest)
-    } else if path.as_bytes().get(1) == Some(&b':') && path.is_char_boundary(2) {
-        let end = if path.as_bytes().get(2) == Some(&b'/') {
+    } else if path.as_bytes().get(1) == Some(&b':') {
+        let end = if matches!(path.as_bytes().get(2), Some(b'/' | b'\\')) {
             3
         } else {
             2
@@ -206,26 +209,47 @@ fn split_root(path: &str) -> (&str, &str) {
     }
 }
 
-pub fn collapse(path: &str, base: &str) -> String {
-    let path = path.replace('\\', "/");
-    let base = base.replace('\\', "/");
-    let expand_home = |path: String| {
-        if path.starts_with('~') {
-            unix_slashes(&path)
-        } else {
-            path
-        }
+fn split_home(path: &str) -> (Option<String>, &str) {
+    let Some(path) = path.strip_prefix('~') else {
+        return (None, path);
     };
-    let path = expand_home(path);
-    let base = expand_home(base);
-    let (root, tail) = split_root(&path);
-    let (root, base) = if root.is_empty() {
-        split_root(&base)
+    // SplitPathRootComponent only recognizes forward slash after the user.
+    let (user, tail) = path.split_once('/').unwrap_or((path, ""));
+    let mut home = if user.is_empty() {
+        std::env::var_os("HOME")
+            .as_deref()
+            .map(crate::bytes::decode_os)
     } else {
-        (root, "")
-    };
+        home_directory(user)
+    }
+    .unwrap_or_default();
+    if home.ends_with(['/', '\\']) {
+        home.pop();
+    }
+    if home.starts_with('~') {
+        home = collapse(&home, "");
+    }
+    (Some(home), tail)
+}
+
+fn collapse_parts<'a>(path: &'a str, home: Option<&'a str>) -> (&'a str, [&'a str; 2]) {
+    let (root, tail) = split_root(home.unwrap_or(path));
+    let remainder = if home.is_some() { path } else { "" };
+    (root, [tail, remainder])
+}
+
+pub fn collapse(path: &str, base: &str) -> String {
+    let (home, path) = split_home(path);
+    let (root, path_parts) = collapse_parts(path, home.as_deref());
+    let (base_home, base) = split_home(if root.is_empty() { base } else { "" });
+    let (base_root, base_parts) = collapse_parts(base, base_home.as_deref());
+    let root = if root.is_empty() { base_root } else { root };
     let mut parts = Vec::new();
-    for part in base.split('/').chain(tail.split('/')) {
+    for part in base_parts
+        .into_iter()
+        .chain(path_parts)
+        .flat_map(|path| path.split(['/', '\\']))
+    {
         match part {
             "" | "." => {}
             ".." if parts.last().is_some_and(|last| *last != "..") => {
@@ -235,7 +259,7 @@ pub fn collapse(path: &str, base: &str) -> String {
             _ => parts.push(part),
         }
     }
-    format!("{root}{}", parts.join("/"))
+    format!("{}{}", root.replace('\\', "/"), parts.join("/"))
 }
 
 /// kwsys SplitString skips a separator immediately after each separator it finds.

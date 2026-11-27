@@ -23,14 +23,14 @@ use std::path::Path;
 use crate::interp::{CmdErr, CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::{PolicyStatus, policy_warning};
-use crate::util::is_full_path;
+use crate::util::{is_full_path, relative_path};
 
 use super::configure_file::{configure_text, newline_style};
 use super::legacy_fs::{
-    can_write, collapse, collapse_from_cwd, fatal, mkdir, mode, raw_error, real_path, source_path,
-    split_search_path, system_error, unix_slashes, write,
+    can_write, collapse, fatal, mkdir, mode, raw_error, real_path, source_path, split_search_path,
+    system_error, unix_slashes, write,
 };
-use super::path::{append, generic, missing_values, relative};
+use super::path::{append, generic, missing_values};
 
 pub fn register(interp: &mut Interp) {
     interp.register("file", command);
@@ -736,25 +736,6 @@ fn realpath(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-fn sys_relative(base: &str, target: &str) -> String {
-    if !is_full_path(base) || !is_full_path(target) {
-        return String::new();
-    }
-    let base = collapse_from_cwd(base);
-    let target = collapse_from_cwd(target);
-    if base.starts_with("//") != target.starts_with("//") {
-        return target;
-    }
-    let mut path = relative(&target, &base);
-    if path == "." {
-        path.clear();
-    }
-    if path.rsplit('/').all(|part| part == "..") {
-        path.push('/');
-    }
-    path
-}
-
 fn native_path(path: &str) -> String {
     let mut out = String::new();
     let mut last = '\0';
@@ -787,7 +768,7 @@ fn convert_path(interp: &mut Interp, args: &[String]) -> CmdResult {
                 ));
             }
         }
-        interp.set_def(variable, sys_relative(base, path));
+        interp.set_def(variable, relative_path(base, path));
     } else {
         let [action, path, variable] = args else {
             return err(

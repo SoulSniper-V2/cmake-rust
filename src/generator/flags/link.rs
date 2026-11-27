@@ -229,7 +229,28 @@ pub fn makefile_link_flags(ctx: &GenCtx, target: &Target, config: &str, language
     };
     let upper_config = config.to_ascii_uppercase();
     if target.kind == TargetKind::StaticLibrary {
-        return link_flag_vars(ctx, target, config, language).link_flags;
+        let mut flags = String::new();
+        append(
+            &mut flags,
+            &inputs.config_flags("CMAKE_STATIC_LINKER_FLAGS"),
+        );
+        for name in [
+            "STATIC_LIBRARY_FLAGS".to_owned(),
+            format!("STATIC_LIBRARY_FLAGS_{upper_config}"),
+        ] {
+            if (name == "STATIC_LIBRARY_FLAGS" || !config.is_empty())
+                && let Some(raw) = inputs.prop(&name)
+            {
+                append(&mut flags, raw);
+            }
+        }
+        let options = target_options(inputs.usage("STATIC_LIBRARY_OPTIONS"));
+        append_options_gen(
+            &inputs,
+            &mut flags,
+            resolve_wrapper(&inputs, options, "ARCHIVER"),
+        );
+        return flags;
     }
 
     // cmMakefileTargetGenerator::GetTargetLinkFlags.

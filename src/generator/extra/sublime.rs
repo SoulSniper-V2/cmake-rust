@@ -6,17 +6,19 @@ use crate::generator::ninja::GlobalTarget;
 use crate::state::{Target, TargetKind};
 use crate::util;
 
-/// `cmExtraSublimeTextGenerator::BuildMakeCommand` (Ninja base).
+/// `cmExtraSublimeTextGenerator::BuildMakeCommand`.
 fn build_make_command(s: &Shared, make: &str, makefile: &str, target: &str) -> String {
     let mut command = format!("\"{make}\"");
     let generator = s.var_safe(0, "CMAKE_GENERATOR");
     if generator == "Ninja" {
+        let makefile_name = crate::commands::sysinfo::convert_to_unix_output_path(makefile);
         command += ", \"-f\", \"";
-        command += makefile;
+        command += &makefile_name;
         command += "\"";
         command += &format!(", \"{target}\"");
     } else {
-        command += &format!(", \"-f\", \"{makefile}\", \"{target}\"");
+        let makefile_name = crate::commands::sysinfo::convert_to_unix_output_path(makefile);
+        command += &format!(", \"-f\", \"{makefile_name}\", \"{target}\"");
     }
     command
 }
@@ -159,6 +161,13 @@ pub fn generate(ctx: &GenCtx, globals: &[GlobalTarget]) {
                     out.push_str("\":\"");
                     out.push_str(var_value);
                     out.push('"');
+                } else {
+                    s.ctx.error(
+                        s.ctx.dir_backtrace(dir),
+                        format!(
+                            "Could not parse Env Vars specified in \"CMAKE_SUBLIME_TEXT_2_ENV_SETTINGS\", corrupted string {token}"
+                        ),
+                    );
                 }
             }
             out.push_str("\n\t\t}\n\t}");
