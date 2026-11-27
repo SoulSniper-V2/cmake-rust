@@ -1085,7 +1085,7 @@ impl Generator {
             let prefix = format!("CPACK_INSTALL_TYPE_{}", name.to_ascii_uppercase());
             let display = option_nonempty(interp, &format!("{prefix}_DISPLAY_NAME"))
                 .unwrap_or_else(|| name.to_owned());
-            let index = self.installation_types.len();
+            let index = self.installation_types.len() + 1;
             self.installation_types.insert(
                 name.to_owned(),
                 InstallationType {
@@ -1106,6 +1106,12 @@ impl Generator {
             let description =
                 option_nonempty(interp, &format!("{prefix}_DESCRIPTION")).unwrap_or_default();
             let parent = option_nonempty(interp, &format!("{prefix}_PARENT_GROUP"));
+            if let Some(parent_name) = &parent
+                && parent_name != name
+                && !self.groups.contains_key(parent_name)
+            {
+                self.get_component_group(interp, parent_name);
+            }
             let group = ComponentGroup {
                 name: name.into(),
                 display_name: display,

@@ -129,7 +129,7 @@ pub(super) fn package_files(
             ),
         );
     }
-    package_all_in_one(generator, interp, log)
+    package_all_in_one(generator, interp, log, true)
 }
 
 fn package_one_pack(
@@ -139,7 +139,7 @@ fn package_one_pack(
     initial_top: &str,
     package_name: &str,
 ) -> bool {
-    let sanitized = package_name.replace(' ', "-");
+    let sanitized = super::sanitize_name(package_name, false);
     let local_top = format!("{initial_top}/{sanitized}");
     let output = format!(
         "{}-{}{}",
@@ -166,7 +166,7 @@ fn package_one_pack(
         "CPACK_DEB_PACKAGE_COMPONENT_PART_PATH",
         &format!("/{sanitized}"),
     );
-    package_all_in_one(generator, interp, log)
+    package_all_in_one(generator, interp, log, false)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -174,7 +174,31 @@ fn package_all_in_one(
     generator: &mut Generator,
     interp: &mut crate::interp::Interp,
     log: &mut Logger,
+    recompute_output: bool,
 ) -> bool {
+    // Unlike the archive generators, the DEB generator recomputes the
+    // proposed output name here, replacing any value inherited from the
+    // config or command line.  CPackDeb.cmake can then replace it through
+    // CPACK_DEBIAN_FILE_NAME.
+    if recompute_output {
+        let output = format!(
+            "{}{}",
+            option(interp, "CPACK_PACKAGE_FILE_NAME").unwrap_or_default(),
+            generator.output_extension(interp)
+        );
+        set_option(interp, "CPACK_OUTPUT_FILE_NAME", &output);
+        set_option(
+            interp,
+            "CPACK_TEMPORARY_PACKAGE_FILE_NAME",
+            &format!(
+                "{}/{output}",
+                Path::new(&generator.toplevel)
+                    .parent()
+                    .unwrap_or(Path::new("/"))
+                    .display()
+            ),
+        );
+    }
     if !read_module(interp, "Internal/CPack/CPackDeb.cmake") {
         log.error("Error while execution CPackDeb.cmake");
         return false;
@@ -369,6 +393,11 @@ fn package_all_in_one(
                 continue;
             };
             let local = format!("{workdir}/{filename}");
+            if !Path::new(&original).is_file() {
+                log.warning(&format!(
+                    "Adding file to tar:\n#top level directory: {workdir}\n#missing file: {original}"
+                ));
+            }
             if fs::copy(&original, &local).is_ok() {
                 control_tar.clear_permissions();
                 if !control_tar.add_options(&local, workdir.len(), Some("."), false) {

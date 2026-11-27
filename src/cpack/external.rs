@@ -244,9 +244,12 @@ pub(super) fn package_files(
             if let Some(parent) = &group.parent_group {
                 fields.push(("parentGroup", string(parent.clone())));
             }
-            // The first CPack External format has no nested-group population in
-            // the Linux component-install path; the key is still always present.
-            fields.push(("subgroups", Json::Array(Vec::new())));
+            let subgroups = generator
+                .groups
+                .values()
+                .filter(|child| child.parent_group.as_deref() == Some(group.name.as_str()))
+                .map(|child| child.name.clone());
+            fields.push(("subgroups", array_strings(subgroups)));
             fields.push(("components", array_strings(group.components.clone())));
             (group.name.clone(), object(fields))
         })
