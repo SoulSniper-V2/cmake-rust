@@ -14,7 +14,7 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 | **zlib 1.3.1** | configure, generate, build, install, tests | all match |
 | **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
 | **`cpack`** (Rust port) | Kitware's RunCMake CPack suites scored with the Rust `cpack`; packaging CMake itself and zlib | **421 / 421** cases pass; the extracted packages are identical (3,995 entries for CMake 4.1.0) |
-| **Unix Makefiles** generator | RunCMake with the Makefiles-configured reference; Kitware self-build; zlib | **5,567 / 5,571** RunCMake cases pass, including the `<IDE> - Unix Makefiles` extra generators (the other 4 pass too, but the audit cannot confirm independence because the reference `ctest --build-and-test` runs its own cmake from the generated clean rules); CMake builds itself with `make -j6` and passes **684 / 684** tests; zlib matches |
+| **Unix Makefiles** generator | RunCMake with the Makefiles-configured reference; LLVM and Kitware configure trees; Kitware self-build; zlib; project fuzzing | **5,567 / 5,567** scored RunCMake cases pass, including the `<IDE> - Unix Makefiles` extra generators; the LLVM 20.1.8 + clang configure tree matches in 22,010 of 22,011 files (the other differs only in CMake-root module paths); CMake configured by the candidate builds itself with `make -j6` and passes **683 / 683** tests; zlib builds, tests, installs and rebuilds identically (74/74 tree files) |
 
 All of these were measured at commit `4ca7cce`: the LLVM tree with `scripts/treediff.py`, the Kitware tree by comparing `scripts/kitware-configure.sh oracle` and `rust` trees. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
 
@@ -111,7 +111,7 @@ The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.
 Each of these fails with an explicit error, never silently:
 
 - The Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
-- Unix Makefiles: Kitware's own configured tree matches the reference file for file (only `CMakeRuleHashes.txt` digests differ, because they hash each tool's install path), and 181 of 187 `tests/projects` cases match exactly. The other 6 differ only in `Makefile2` dependency order, which upstream sorts by object pointer value. [`docs/unix-makefiles-status.md`](docs/unix-makefiles-status.md) has the details.
+- Unix Makefiles: Kitware's own configured tree matches the reference file for file except `Makefile.cmake` (CMake-root module paths, because the reference reads its modules from its source tree) and the configure log (random try-compile names). All 194 `tests/projects` cases match in both the Ninja and Unix Makefiles lanes; `Makefile2` dependency lines, which upstream orders by object pointer value, are compared sorted. [`docs/unix-makefiles-status.md`](docs/unix-makefiles-status.md) has the details.
 - XCFramework linking, which needs macOS `plutil`.
 - Swift sources in the Ninja generator (ISPC is supported: headers, per-instruction-set objects, and their `$<TARGET_OBJECTS>` and install entries).
 
