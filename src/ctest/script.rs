@@ -1579,6 +1579,8 @@ fn test_options(interp: &Interp, binary: &Path) -> Options {
     options.dashboard_site = state.site.clone();
     options.dashboard_build_name = state.build_name.clone();
     options.change_id = interp.get_safe("CTEST_CHANGE_ID");
+    options.labels_for_subprojects =
+        crate::util::expand_list(&interp.get_safe("CTEST_LABELS_FOR_SUBPROJECTS"), false);
     if !options.extra_verbose {
         options.verbose = false;
     }

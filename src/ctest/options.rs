@@ -54,6 +54,8 @@ pub(super) struct Options {
     pub show: Show,
     pub print_labels: bool,
     pub no_label_summary: bool,
+    pub no_subproject_summary: bool,
+    pub labels_for_subprojects: Vec<String>,
     pub output_on_failure: bool,
     pub output_log: Option<PathBuf>,
     pub output_size_passed: Option<usize>,
@@ -315,6 +317,7 @@ fn apply_test_preset(
             options.junit = Some(output.output_junit_file.clone().into());
         }
         options.no_label_summary = !output.label_summary.unwrap_or(true);
+        options.no_subproject_summary = !output.subproject_summary.unwrap_or(true);
         if let Some(width) = output.max_test_name_width {
             options.width = width.max(0) as usize;
         }
@@ -495,8 +498,8 @@ impl Options {
                 }
                 "--print-labels" => options.print_labels = true,
                 "--no-label-summary" => options.no_label_summary = true,
-                "--no-subproject-summary" | "--show-line-numbers" | "--force-new-ctest-process" => {
-                }
+                "--no-subproject-summary" => options.no_subproject_summary = true,
+                "--show-line-numbers" | "--force-new-ctest-process" => {}
                 "--output-on-failure" => options.output_on_failure = true,
                 "-O" | "--output-log" => {
                     let path = value()?;

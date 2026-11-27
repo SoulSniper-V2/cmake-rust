@@ -283,6 +283,11 @@ pub(in crate::ctest) fn execute_detailed(
     log: &mut Log,
 ) -> (i32, bool) {
     let config = read_configuration(&dir, log, !options.script);
+    if options.labels_for_subprojects.is_empty()
+        && let Some(value) = config.get("LabelsForSubprojects")
+    {
+        options.labels_for_subprojects = crate::util::expand_list(value, false);
+    }
     let binary = if options.preset_binary_dir.is_empty() {
         config
             .get("BuildDirectory")

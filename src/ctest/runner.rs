@@ -744,29 +744,52 @@ pub(super) fn summarize(
         "\n{}% tests passed, {failed} tests failed out of {total}\n",
         percent.round()
     ));
-    if !options.no_label_summary {
-        let mut labels: BTreeMap<&str, (usize, f64)> = BTreeMap::new();
-        for (test, result) in tests.iter().zip(results) {
-            for label in test.list("LABELS") {
-                let (count, seconds) = labels.entry(label).or_default();
-                if let Some(result) = result {
-                    *count += 1;
-                    *seconds += result.seconds * test.processors() as f64;
+    let mut label_times: BTreeMap<&str, (usize, f64)> = BTreeMap::new();
+    for (test, result) in tests.iter().zip(results) {
+        for label in test.list("LABELS") {
+            let (count, seconds) = label_times.entry(label).or_default();
+            if let Some(result) = result {
+                *count += 1;
+                *seconds += result.seconds * test.processors() as f64;
+            }
+        }
+    }
+    let write_summary =
+        |title: &str, labels: Vec<(&str, (usize, f64))>, log: &mut Log, last_log: &mut String| {
+            if let Some(width) = labels.iter().map(|(label, _)| label.len()).max() {
+                log.output(&format!("\n{title}:\n"));
+                for (label, (count, seconds)) in labels {
+                    let plural = if count > 1 { "s" } else { "" };
+                    let padding = " ".repeat(width + 3 - label.len());
+                    log.output(&format!(
+                        "{label}{padding} = {seconds:6.2} sec*proc ({count} test{plural})\n"
+                    ));
+                    let _ = writeln!(last_log, "\n{label} = {seconds:6.2} sec*proc");
                 }
+                last_log.push('\n');
             }
-        }
-        if let Some(width) = labels.keys().map(|label| label.len()).max() {
-            log.output("\nLabel Time Summary:\n");
-            for (label, (count, seconds)) in labels {
-                let plural = if count > 1 { "s" } else { "" };
-                let padding = " ".repeat(width + 3 - label.len());
-                log.output(&format!(
-                    "{label}{padding} = {seconds:6.2} sec*proc ({count} test{plural})\n"
-                ));
-                let _ = writeln!(last_log, "\n{label} = {seconds:6.2} sec*proc");
-            }
-            last_log.push('\n');
-        }
+        };
+    let mut subprojects: Vec<_> = options
+        .labels_for_subprojects
+        .iter()
+        .map(String::as_str)
+        .collect();
+    subprojects.sort_unstable();
+    subprojects.dedup();
+    let subproject_times: Vec<_> = subprojects
+        .iter()
+        .filter_map(|label| label_times.get(label).map(|value| (*label, *value)))
+        .collect();
+    if !options.no_subproject_summary {
+        write_summary("Subproject Time Summary", subproject_times, log, last_log);
+    }
+    if !options.no_label_summary {
+        let labels: Vec<_> = label_times
+            .iter()
+            .filter(|(label, _)| !subprojects.contains(label))
+            .map(|(label, value)| (*label, *value))
+            .collect();
+        write_summary("Label Time Summary", labels, log, last_log);
     }
     if !options.script_quiet {
         log.output(&format!(
