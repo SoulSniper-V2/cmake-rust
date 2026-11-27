@@ -154,6 +154,12 @@ impl GenexHost for CtxHost<'_, '_> {
             "Ninja"
         }
     }
+    fn mapped_imported_config(&self, name: &str, config: &str) -> Option<String> {
+        self.find(name)
+            .and_then(|target| gt::mapped_import_config(target, config))
+            .map(|mapped| mapped.suffix)
+    }
+
     fn resolve_alias(&self, name: &str) -> Option<String> {
         let interp = self.ctx.interp;
         let mut dir = Some(self.dir);

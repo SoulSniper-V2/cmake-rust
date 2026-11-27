@@ -1,0 +1,18 @@
+[
+  {
+    "name": "deprecated-link-synthetic-discovery",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 4.1)\nproject(DeprecatedLink C)\nadd_library(dep STATIC dep.c)\nset_target_properties(dep PROPERTIES DEPRECATION \"old\")\nadd_executable(app main.c)\ntarget_link_libraries(app PRIVATE dep)\n",
+      "src/dep.c": "void dep(void) {}\n",
+      "src/main.c": "int main(void) { return 0; }\n"
+    }
+  }
+]

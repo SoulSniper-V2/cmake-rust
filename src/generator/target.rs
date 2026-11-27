@@ -2228,7 +2228,7 @@ fn collect_sources(
                     objects
                         .into_iter()
                         .map(|path| Listed::Object {
-                            path,
+                            path: collapse_full_path(&path, ""),
                             library: library.name.clone(),
                             backtrace: backtrace.clone(),
                         })
