@@ -511,7 +511,7 @@ fn read_configuration(dir: &Path, log: &mut Log, verbose_config: bool) -> BTreeM
     config
 }
 
-fn read_custom(dir: &Path, log: &mut Log) -> Vec<String> {
+fn read_custom(dir: &Path, log: &mut Log, memcheck: bool) -> Vec<String> {
     let file = ["CTestCustom.cmake", "CTestCustom.ctest"]
         .into_iter()
         .map(|filename| dir.join(filename))
@@ -524,7 +524,14 @@ fn read_custom(dir: &Path, log: &mut Log) -> Vec<String> {
             file.display()
         ));
     }
-    expand_list(&interp.get_safe("CTEST_CUSTOM_TESTS_IGNORE"), false)
+    expand_list(
+        &interp.get_safe(if memcheck {
+            "CTEST_CUSTOM_MEMCHECK_IGNORE"
+        } else {
+            "CTEST_CUSTOM_TESTS_IGNORE"
+        }),
+        false,
+    )
 }
 
 fn execute(dir: PathBuf, options: Options, log: &mut Log) -> i32 {
@@ -553,7 +560,7 @@ pub(in crate::ctest) fn execute_detailed(
     if options.dir.is_none() && binary.is_dir() && std::env::set_current_dir(&binary).is_ok() {
         dir = binary.clone();
     }
-    let ignore = read_custom(&binary, log);
+    let ignore = read_custom(&binary, log, !options.memcheck_type.is_empty());
     if !options.script_quiet && options.memcheck_type.is_empty() {
         log.output(&format!("Test project {}\n", dir.display()));
     }

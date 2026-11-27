@@ -571,6 +571,27 @@ fn postprocess_sanitizer_logs(
     total
 }
 
+fn run_memcheck_commands(interp: &Interp, commands: &str, kind: &str) -> bool {
+    for command in crate::util::expand_list(commands, false) {
+        let args = crate::commands::try_compile::parse_arguments(&command);
+        if args.is_empty() {
+            continue;
+        }
+        let status = std::process::Command::new(&args[0])
+            .args(&args[1..])
+            .status();
+        if !status.is_ok_and(|status| status.success()) {
+            handler_error(interp, &format!("Problem running command: {command}\n"));
+            handler_error(
+                interp,
+                &format!("Problem executing {kind}-memcheck command(s).\n"),
+            );
+            return false;
+        }
+    }
+    true
+}
+
 fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     let (values, quiet) = match parse_return_build(args, &["DEFECT_COUNT"]) {
         Ok(parsed) => parsed,
@@ -586,9 +607,9 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         quiet,
     );
     let checker = interp.get_safe("CTEST_MEMORYCHECK_COMMAND");
-    let checker_type = interp.get_safe("CTEST_MEMORYCHECK_TYPE");
+    let configured_type = interp.get_safe("CTEST_MEMORYCHECK_TYPE");
     let sanitizer = matches!(
-        checker_type.as_str(),
+        configured_type.as_str(),
         "AddressSanitizer"
             | "LeakSanitizer"
             | "ThreadSanitizer"
@@ -609,7 +630,44 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         return Ok(());
     }
-    if !sanitizer {
+    let filename = Path::new(&checker)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let checker_type = if sanitizer {
+        configured_type.clone()
+    } else if filename.contains("valgrind") || configured_type == "Valgrind" {
+        "Valgrind".into()
+    } else if filename.contains("purify") || configured_type == "Purify" {
+        "Purify".into()
+    } else if filename.contains("BC") || configured_type == "BoundsChecker" {
+        "BoundsChecker".into()
+    } else if filename.contains("cuda-memcheck")
+        || filename.contains("compute-sanitizer")
+        || configured_type == "CudaSanitizer"
+    {
+        "CudaSanitizer".into()
+    } else {
+        handler_error(
+            interp,
+            &format!("Do not understand memory checker: {checker}\n"),
+        );
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        if let Some(variable) = values.get("RETURN_VALUE") {
+            interp.set_def(variable, "-1");
+        }
+        if let Some(variable) = values.get("DEFECT_COUNT") {
+            interp.set_def(variable, "0");
+        }
+        return Ok(());
+    };
+    let suppressions = interp.get_safe("CTEST_MEMORYCHECK_SUPPRESSIONS_FILE");
+    if !suppressions.is_empty() && !Path::new(&suppressions).is_file() {
+        handler_error(
+            interp,
+            &format!("Cannot find memory checker suppression file: {suppressions}\n"),
+        );
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         if let Some(variable) = values.get("RETURN_VALUE") {
             interp.set_def(variable, "-1");
         }
@@ -646,11 +704,83 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
 
     let temporary = binary.join("Testing/Temporary");
     let _ = std::fs::create_dir_all(&temporary);
+    let log_pattern = temporary
+        .join("MemoryChecker.??.log")
+        .to_string_lossy()
+        .into_owned();
+    let mut memcheck_options = if sanitizer {
+        Vec::new()
+    } else {
+        crate::commands::try_compile::parse_arguments(
+            &interp.get_safe("CTEST_MEMORYCHECK_COMMAND_OPTIONS"),
+        )
+    };
+    let mut dynamic_options = Vec::new();
+    match checker_type.as_str() {
+        "Valgrind" => {
+            if memcheck_options.is_empty() {
+                memcheck_options = [
+                    "-q",
+                    "--tool=memcheck",
+                    "--leak-check=yes",
+                    "--show-reachable=yes",
+                    "--num-callers=50",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            }
+            if !suppressions.is_empty() {
+                memcheck_options.push(format!("--suppressions={suppressions}"));
+            }
+            dynamic_options.push(format!("--log-file={log_pattern}"));
+        }
+        "Purify" => dynamic_options.push(format!("-log-file={log_pattern}")),
+        "BoundsChecker" => {
+            dynamic_options.extend([
+                "/B".into(),
+                temporary
+                    .join("MemoryChecker.??.DPbd")
+                    .to_string_lossy()
+                    .into_owned(),
+                "/X".into(),
+                log_pattern.clone(),
+            ]);
+            memcheck_options.push("/M".into());
+        }
+        "CudaSanitizer" => {
+            if memcheck_options.is_empty() {
+                memcheck_options = ["--tool", "memcheck", "--leak-check", "full"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+            }
+            dynamic_options.extend(["--log-file".into(), log_pattern.clone()]);
+        }
+        _ => {}
+    }
     let mut options = test_options(interp, &binary);
     options.memcheck_type = checker_type.clone();
     options.memcheck_sanitizer_options = interp.get_safe("CTEST_MEMORYCHECK_SANITIZER_OPTIONS");
     options.memcheck_log_dir = temporary.to_string_lossy().into_owned();
     options.memcheck_cmake_command = interp.cmake_command.clone();
+    options.memcheck_command = if sanitizer {
+        String::new()
+    } else {
+        checker.clone()
+    };
+    options.memcheck_options = memcheck_options;
+    options.memcheck_dynamic_options = dynamic_options;
+    if !run_memcheck_commands(interp, &interp.get_safe("CTEST_CUSTOM_PRE_MEMCHECK"), "pre") {
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        if let Some(variable) = values.get("RETURN_VALUE") {
+            interp.set_def(variable, "-1");
+        }
+        if let Some(variable) = values.get("DEFECT_COUNT") {
+            interp.set_def(variable, "0");
+        }
+        return Ok(());
+    }
     let handler_verbose = interp
         .ext
         .ctest_script
@@ -662,7 +792,16 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     let (code, no_tests) = execute_detailed(binary.clone(), options, &mut log);
     let _ = std::env::set_current_dir(old_dir);
     let defects = postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet);
+    let post_ok = run_memcheck_commands(
+        interp,
+        &interp.get_safe("CTEST_CUSTOM_POST_MEMCHECK"),
+        "post",
+    );
+    if !post_ok {
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+    }
     let result_code = if no_tests && code == 8 { 0 } else { code };
+    let result_code = if post_ok { result_code } else { -1 };
     if let Some(variable) = values.get("RETURN_VALUE") {
         interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
