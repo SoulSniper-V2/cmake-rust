@@ -961,14 +961,15 @@ pub(crate) fn define_items(ctx: &GenCtx, target: &Target, config: &str, lang: &s
 }
 
 /// `cmLocalGenerator::GetIncludeDirectories` as codemodel
-/// "includes"/"frameworks" entries: (path, is_system, backtrace).
+/// "includes"/"frameworks" entries: (path, is_system, backtrace). The
+/// defaults strip implicit directories, user-requested ones included.
 pub(crate) fn include_items(
     ctx: &GenCtx,
     target: &Target,
     config: &str,
     lang: &str,
 ) -> Vec<(String, bool, Vec<crate::messages::Frame>)> {
-    include_directories_impl(ctx, target, config, lang, false, true)
+    include_directories_impl(ctx, target, config, lang, false, false)
 }
 
 /// `cmLocalGenerator::GetIncludeDirectories` with implicit directories
