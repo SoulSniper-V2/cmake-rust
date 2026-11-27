@@ -2362,3 +2362,25 @@ fn directory_permissions(value: &str) -> Option<String> {
 fn glob_to_regex_match(pattern: &str, name: &str) -> bool {
     configure::glob_to_regex(pattern).find(name).is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::known_generator;
+
+    #[test]
+    fn accepts_extra_unix_makefiles_generators() {
+        for generator in [
+            "CodeBlocks - Unix Makefiles",
+            "CodeLite - Unix Makefiles",
+            "Eclipse CDT4 - Unix Makefiles",
+            "Kate - Unix Makefiles",
+            "Sublime Text 2 - Unix Makefiles",
+        ] {
+            assert!(known_generator(generator), "{generator} should be accepted");
+        }
+        assert!(!known_generator(
+            "   Generates Sublime Text 2 project files."
+        ));
+        assert!(!known_generator("Unknown - Unix Makefiles"));
+    }
+}
