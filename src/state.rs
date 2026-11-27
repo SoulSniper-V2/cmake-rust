@@ -422,6 +422,7 @@ pub struct EvaluationFile {
 #[derive(Debug, Default)]
 pub struct Ext {
     pub(crate) ctest_discovery: Option<crate::ctest::testfile::Discovery>,
+    pub(crate) ctest_script: Option<crate::ctest::script::State>,
     /// `cmGlobalGenerator::ExtraGenerator`: the selected IDE extra
     /// generator name (`CodeBlocks`, `Kate`, ...), if any.
     pub extra_generator: Option<String>,

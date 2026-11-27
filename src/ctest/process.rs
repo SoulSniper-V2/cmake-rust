@@ -53,6 +53,7 @@ pub(super) struct ResultData {
     pub output: String,
     pub reason: String,
     pub completion: String,
+    pub exit_value: i32,
     pub seconds: f64,
     pub actual: String,
     pub args: Vec<String>,
@@ -76,6 +77,7 @@ impl ResultData {
             },
             reason: String::new(),
             completion: completion.into(),
+            exit_value: -1,
             seconds: 0.0,
             actual: String::new(),
             args: Vec::new(),
@@ -539,12 +541,14 @@ impl Invocation {
             output.line(&partial);
         }
         let status = status.unwrap();
+        let exit_value = status.code().unwrap_or(-1);
         let (status, reason, completion) = classify(test, &output.text, expired, status);
         ResultData {
             status,
             output: output.text,
             reason,
             completion,
+            exit_value,
             seconds: exited
                 .unwrap_or_else(Instant::now)
                 .duration_since(started)

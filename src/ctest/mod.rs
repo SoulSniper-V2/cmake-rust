@@ -6,6 +6,7 @@ mod process;
 mod report;
 mod resources;
 mod runner;
+pub(crate) mod script;
 pub(crate) mod testfile;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +31,7 @@ pub(crate) fn sibling(name: &str) -> PathBuf {
 
 struct Log {
     quiet: bool,
+    suppress_output: bool,
     extra: bool,
     progress: bool,
     progress_line: bool,
@@ -40,15 +42,23 @@ impl Log {
     fn new(options: &Options) -> Self {
         Self {
             quiet: options.quiet || options.show == Show::Json,
+            suppress_output: false,
             extra: options.verbose,
             progress: options.progress
                 && options.output_log.is_none()
                 && crate::stdio::stdout_is_vt100(),
             progress_line: false,
-            file: options
-                .output_log
-                .as_ref()
-                .and_then(|path| std::fs::File::create(path).ok()),
+            file: options.output_log.as_ref().and_then(|path| {
+                if options.script {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .ok()
+                } else {
+                    std::fs::File::create(path).ok()
+                }
+            }),
         }
     }
 
@@ -81,7 +91,7 @@ impl Log {
                 let mut stream = io::stderr().lock();
                 let _ = stream.write_all(&crate::bytes::encode(text));
                 let _ = stream.flush();
-            } else {
+            } else if !self.suppress_output {
                 self.direct(text);
             }
         }
@@ -99,7 +109,7 @@ impl Log {
     }
 }
 
-fn directory_error(dir: &Path) -> String {
+pub(in crate::ctest) fn directory_error(dir: &Path) -> String {
     let error = if dir.exists() {
         "Not a directory"
     } else {
@@ -135,6 +145,9 @@ pub fn main() -> i32 {
     };
     if options.build_and_test.active {
         return buildandtest::run(&options.build_and_test, &options.config);
+    }
+    if !options.scripts.is_empty() {
+        return script::run_scripts(&options);
     }
     let mut log = Log::new(&options);
     if !matches!(options.no_tests.as_str(), "" | "error" | "ignore") {
@@ -174,15 +187,17 @@ pub fn main() -> i32 {
     execute(dir, options, &mut log)
 }
 
-fn read_configuration(dir: &Path, log: &mut Log) -> BTreeMap<String, String> {
+fn read_configuration(dir: &Path, log: &mut Log, verbose_config: bool) -> BTreeMap<String, String> {
     let mut file = dir.join("CTestConfiguration.ini");
     if !file.exists() {
         file = dir.join("DartConfiguration.tcl");
     }
-    log.verbose(&format!(
-        "UpdateCTestConfiguration  from :{}\n",
-        file.display()
-    ));
+    if verbose_config {
+        log.verbose(&format!(
+            "UpdateCTestConfiguration  from :{}\n",
+            file.display()
+        ));
+    }
     let Ok(contents) = std::fs::read_to_string(&file) else {
         return BTreeMap::new();
     };
@@ -221,8 +236,16 @@ fn read_custom(dir: &Path, log: &mut Log) -> Vec<String> {
     expand_list(&interp.get_safe("CTEST_CUSTOM_TESTS_IGNORE"), false)
 }
 
-fn execute(mut dir: PathBuf, mut options: Options, log: &mut Log) -> i32 {
-    let config = read_configuration(&dir, log);
+fn execute(dir: PathBuf, options: Options, log: &mut Log) -> i32 {
+    execute_detailed(dir, options, log).0
+}
+
+pub(in crate::ctest) fn execute_detailed(
+    mut dir: PathBuf,
+    mut options: Options,
+    log: &mut Log,
+) -> (i32, bool) {
+    let config = read_configuration(&dir, log, !options.script);
     let binary = config
         .get("BuildDirectory")
         .filter(|value| !value.is_empty())
@@ -233,10 +256,19 @@ fn execute(mut dir: PathBuf, mut options: Options, log: &mut Log) -> i32 {
     let ignore = read_custom(&binary, log);
     log.output(&format!("Test project {}\n", dir.display()));
     let started = Instant::now();
+    let start_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
     let date = report::clock("%Y-%m-%dT%H:%M:%S");
     let temporary = binary.join("Testing/Temporary");
     let _ = std::fs::create_dir_all(&temporary);
-    let last_path = temporary.join("LastTest.log");
+    let last_name = if options.dashboard_tag.is_empty() {
+        "LastTest.log".into()
+    } else {
+        format!("LastTest_{}.log", options.dashboard_tag)
+    };
+    let last_path = temporary.join(last_name);
+    let mut no_tests = false;
     let result = testfile::discover(&dir, &mut options, ignore, log).and_then(|all| {
         let mut tests = testfile::select(&all, &options, &temporary, log)?;
         let mut last_log = report::start_log();
@@ -280,7 +312,21 @@ fn execute(mut dir: PathBuf, mut options: Options, log: &mut Log) -> i32 {
                 }
             },
         };
+        if !options.dashboard_tag.is_empty()
+            && let Some(results) = &results
+        {
+            let _ = report::test_xml(&binary, &options, &tests, results, start_epoch);
+        }
         let _ = writeln!(last_log, "End testing: {}", report::clock("%b %d %H:%M %Z"));
+        if let Some(results) = &results {
+            no_tests = results
+                .iter()
+                .flatten()
+                .filter(|result| result.status != process::Status::Disabled)
+                .count()
+                == 0
+                && options.no_tests != "ignore";
+        }
         let success = results.as_ref().is_none_or(|results| {
             runner::summarize(
                 &tests,
@@ -314,12 +360,14 @@ fn execute(mut dir: PathBuf, mut options: Options, log: &mut Log) -> i32 {
         Ok(success)
     });
     if result == Ok(true) {
-        0
+        (0, no_tests)
     } else {
-        log.error("Errors while running CTest\n");
-        if !options.output_on_failure {
-            log.error(&format!("Output from these tests are in: {}\nUse \"--rerun-failed --output-on-failure\" to re-run the failed cases verbosely.\n", last_path.display()));
+        if !options.script {
+            log.error("Errors while running CTest\n");
+            if !options.output_on_failure {
+                log.error(&format!("Output from these tests are in: {}\nUse \"--rerun-failed --output-on-failure\" to re-run the failed cases verbosely.\n", last_path.display()));
+            }
         }
-        8
+        (8, no_tests)
     }
 }

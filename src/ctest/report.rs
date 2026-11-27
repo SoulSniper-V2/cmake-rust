@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::path::Path;
 
@@ -583,4 +584,206 @@ pub(super) fn junit(
     }
     xml.push_str("</testsuite>\n");
     std::fs::write(path, xml)
+}
+
+fn xml_content(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn clock_at(format: &str, time: libc::time_t) -> String {
+    let format = std::ffi::CString::new(format).unwrap();
+    let mut output = [0; 128];
+    // SAFETY: the C functions receive valid buffers and localtime_r initializes tm on success.
+    unsafe {
+        let mut local = std::mem::MaybeUninit::uninit();
+        if libc::localtime_r(&time, local.as_mut_ptr()).is_null() {
+            return String::new();
+        }
+        let len = libc::strftime(
+            output.as_mut_ptr().cast(),
+            output.len(),
+            format.as_ptr(),
+            local.as_ptr(),
+        );
+        String::from_utf8_lossy(&output[..len]).into_owned()
+    }
+}
+
+fn xml_attribute_number(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Bool(value) => u8::from(*value).to_string(),
+        serde_json::Value::String(value) => xml_escape(value),
+        _ => String::new(),
+    }
+}
+
+fn command_line(result: &ResultData, test: &Test) -> String {
+    let actual = if result.actual.is_empty() {
+        test.command.first().cloned().unwrap_or_default()
+    } else {
+        result.actual.clone()
+    };
+    let args = if result.args.is_empty() && result.actual.is_empty() {
+        &test.command[1..]
+    } else {
+        result.args.as_slice()
+    };
+    let mut line = actual.replace(' ', "\\ ");
+    for arg in args {
+        let _ = write!(line, " \"{arg}\"");
+    }
+    line
+}
+
+pub(super) fn test_xml(
+    binary: &Path,
+    options: &Options,
+    tests: &[Test],
+    results: &[Option<ResultData>],
+    start_epoch: i64,
+) -> std::io::Result<()> {
+    let info = crate::commands::sysinfo::instrumentation_static_info();
+    let value = |key: &str| xml_attribute_number(info.get(key).unwrap_or(&serde_json::Value::Null));
+    let end_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
+    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let _ = writeln!(
+        xml,
+        "<Site BuildName=\"{}\"\n\tBuildStamp=\"{}-{}\"\n\tName=\"{}\"\n\tGenerator=\"ctest-{}\"\n\tCompilerName=\"\"\n\tCompilerVersion=\"\"\n\tOSName=\"{}\"\n\tHostname=\"{}\"\n\tOSRelease=\"{}\"\n\tOSVersion=\"{}\"\n\tOSPlatform=\"{}\"\n\tIs64Bits=\"{}\"\n\tVendorString=\"{}\"\n\tVendorID=\"{}\"\n\tFamilyID=\"{}\"\n\tModelID=\"{}\"\n\tModelName=\"{}\"\n\tProcessorCacheSize=\"{}\"\n\tNumberOfLogicalCPU=\"{}\"\n\tNumberOfPhysicalCPU=\"{}\"\n\tTotalVirtualMemory=\"{}\"\n\tTotalPhysicalMemory=\"{}\"\n\tLogicalProcessorsPerPhysical=\"1\"\n\tProcessorClockFrequency=\"{}\"\n\t>",
+        xml_escape(&options.dashboard_build_name),
+        xml_escape(&options.dashboard_tag),
+        xml_escape(&options.dashboard_model),
+        xml_escape(&options.dashboard_site),
+        crate::interp::VERSION_STRING,
+        value("OSName"),
+        value("hostname"),
+        value("OSRelease"),
+        value("OSVersion"),
+        value("OSPlatform"),
+        value("is64Bits"),
+        value("vendorString"),
+        value("vendorID"),
+        value("familyId"),
+        value("modelId"),
+        value("processorName"),
+        value("processorCacheSize"),
+        value("numberOfLogicalCPU"),
+        value("numberOfPhysicalCPU"),
+        value("totalVirtualMemory"),
+        value("totalPhysicalMemory"),
+        value("processorClockFrequency"),
+    );
+    xml.push_str("\t<Testing>\n");
+    let _ = writeln!(
+        xml,
+        "\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartTestTime>{}</StartTestTime>",
+        clock_at("%b %d %H:%M %Z", start_epoch),
+        start_epoch
+    );
+    let relative = |test: &Test| {
+        test.dir
+            .strip_prefix(binary)
+            .ok()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map_or_else(
+                || ".".to_owned(),
+                |path| path.to_string_lossy().replace('\\', "/"),
+            )
+    };
+    let full_name = |test: &Test| {
+        let path = relative(test);
+        if path == "." {
+            format!("./{}", test.name)
+        } else {
+            format!("{path}/{}", test.name)
+        }
+    };
+    if results.iter().all(Option::is_none) {
+        xml.push_str("\t\t<TestList/>\n");
+    } else {
+        xml.push_str("\t\t<TestList>\n");
+        for (test, result) in tests.iter().zip(results) {
+            if result.is_some() {
+                let _ = writeln!(xml, "\t\t\t<Test>{}</Test>", xml_escape(&full_name(test)));
+            }
+        }
+        xml.push_str("\t\t</TestList>\n");
+    }
+    for (test, result) in tests.iter().zip(results) {
+        let Some(result) = result else { continue };
+        let status = if result.status == Status::Passed {
+            "passed"
+        } else if result.status.not_run() {
+            "notrun"
+        } else {
+            "failed"
+        };
+        let command = command_line(result, test);
+        let _ = writeln!(
+            xml,
+            "\t\t<Test Status=\"{status}\">\n\t\t\t<Name>{}</Name>\n\t\t\t<Path>{}</Path>\n\t\t\t<FullName>{}</FullName>\n\t\t\t<FullCommandLine>{}</FullCommandLine>\n\t\t\t<Results>",
+            xml_escape(&test.name),
+            xml_escape(&relative(test)),
+            xml_escape(&full_name(test)),
+            xml_content(&command),
+        );
+        if !result.status.not_run() && (result.status != Status::Passed || result.exit_value != 0) {
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Exit Code\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Exit Value\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                xml_content(result.status.description()),
+                result.exit_value,
+            );
+        }
+        if !result.status.not_run() {
+            let _ = writeln!(
+                xml,
+                "\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Execution Time\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                number_text(result.seconds),
+            );
+            if !result.reason.is_empty() {
+                let name = if result.status == Status::Passed {
+                    "Pass Reason"
+                } else {
+                    "Fail Reason"
+                };
+                let _ = writeln!(
+                    xml,
+                    "\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"{name}\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                    xml_content(&result.reason),
+                );
+            }
+        }
+        let _ = writeln!(
+            xml,
+            "\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Processors\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Completion Status\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Command Line\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Environment\">\n\t\t\t\t\t<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<Measurement>\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</Measurement>\n\t\t\t</Results>",
+            test.processors(),
+            xml_escape(&result.completion),
+            xml_content(&command),
+            xml_content(&result.output),
+        );
+        let labels: BTreeSet<_> = test.list("LABELS").iter().chain(&result.labels).collect();
+        if !labels.is_empty() {
+            xml.push_str("\t\t\t<Labels>\n");
+            for label in labels {
+                let _ = writeln!(xml, "\t\t\t\t<Label>{}</Label>", xml_content(label));
+            }
+            xml.push_str("\t\t\t</Labels>\n");
+        }
+        xml.push_str("\t\t</Test>\n");
+    }
+    let _ = writeln!(
+        xml,
+        "\t\t<EndDateTime>{}</EndDateTime>\n\t\t<EndTestTime>{}</EndTestTime>\n\t\t<ElapsedMinutes>{}</ElapsedMinutes>\n\t</Testing>\n</Site>",
+        clock_at("%b %d %H:%M %Z", end_epoch),
+        end_epoch,
+        (end_epoch - start_epoch) / 60,
+    );
+    let directory = binary.join("Testing").join(&options.dashboard_tag);
+    std::fs::create_dir_all(&directory)?;
+    std::fs::write(directory.join("Test.xml"), xml)
 }

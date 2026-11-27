@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.10)
+set(CTEST_SITE "test-site")
+set(CTEST_BUILD_NAME "test-build")
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/emptydir")
+ctest_start(Experimental)
+ctest_test()

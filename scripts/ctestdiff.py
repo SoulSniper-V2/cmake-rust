@@ -123,6 +123,14 @@ def cases():
         ("binary-is-file", ["--build-and-test", "bt-src", "bt-file", "--build-generator", "Ninja", "--test-command", "bt"]),
     ):
         yield "buildtest", name, [flags], {}
+    for name, flags in (
+        ("pass-v", ["-S", "pass.cmake", "-V"]),
+        ("pass-vv", ["-S", "pass.cmake", "-VV"]),
+        ("fail-v", ["-S", "fail.cmake", "-V"]),
+        ("empty-v", ["-S", "empty.cmake", "-V"]),
+        ("output-log", ["-S", "pass.cmake", "-V", "--output-log", "console.log"]),
+    ):
+        yield "dashboard", name, [flags], {}
     for mode in ("", "error", "ignore"):
         for option in ([], ["-N"], ["--show-only=json-v1"], ["-Q"], ["-V"], ["--print-labels"]):
             yield "empty", f"{mode}/{option}", [[*option, *([f"--no-tests={mode}"] if mode else [])]], {}
@@ -137,6 +145,7 @@ def normalize(data, work, path):
     data = re.sub(rb"(?m)(?<=: )\w{3} \d{2} \d{2}:\d{2} UTC$", b"<DATETIME>", data)
     data = re.sub(rb"(?m)(?<=time elapsed: )\d\d:\d\d:\d\d$", b"<DURATION>", data)
     data = re.sub(rb"(?<=\()\d+\.\d+(?=s\))", b"<SECONDS>", data)
+    data = re.sub(rb"\d{8}-\d{4}", b"<STAMP>", data)
     if path.name == "CTestCostData.txt":
         values, found, rest = data.partition(b"---\n")
         # A zero cost with zero runs is part of the scheduling state.
@@ -145,6 +154,12 @@ def normalize(data, work, path):
     if path.suffix == ".xml":
         data = re.sub(rb'(?<=timestamp=")[^"]*', b"<DATETIME>", data)
         data = re.sub(rb'(?<=time=")[^"]*', b"<SECONDS>", data)
+    if path.name == "Test.xml":
+        data = re.sub(rb"(?<=TestTime>)\d+(?=</)", b"<EPOCH>", data)
+        data = re.sub(rb"(?<=DateTime>)[^<]+", b"<DATETIME>", data)
+        data = re.sub(rb'(?<=ProcessorClockFrequency=")[^"]*', b"<CLOCK>", data)
+        data = re.sub(
+            rb'(name="Execution Time">\n\s*<Value>)[^<]+', rb"\1<SECONDS>", data)
     return data
 
 

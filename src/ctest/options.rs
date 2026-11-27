@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::util::{collapse_full_path, is_on};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Show {
     #[default]
     Run,
@@ -10,14 +10,14 @@ pub(super) enum Show {
     Json,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Repeat {
     UntilFail,
     UntilPass,
     AfterTimeout,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct BuildAndTest {
     pub active: bool,
     pub source_dir: String,
@@ -40,11 +40,12 @@ pub(super) struct BuildAndTest {
     pub test_args: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct Options {
     pub dir: Option<PathBuf>,
     pub config: String,
     pub verbose: bool,
+    pub extra_verbose: bool,
     pub quiet: bool,
     pub progress: bool,
     pub show: Show,
@@ -77,6 +78,16 @@ pub(super) struct Options {
     pub width: usize,
     pub interactive_debug: bool,
     pub build_and_test: BuildAndTest,
+    pub scripts: Vec<(PathBuf, bool)>,
+    pub definitions: std::collections::BTreeMap<String, String>,
+    pub script: bool,
+    pub dashboard: Vec<String>,
+    pub model: String,
+    pub actions: Vec<String>,
+    pub dashboard_tag: String,
+    pub dashboard_model: String,
+    pub dashboard_site: String,
+    pub dashboard_build_name: String,
 }
 
 impl Options {
@@ -111,7 +122,11 @@ impl Options {
                 "-C" | "--build-config" => {
                     options.config = value()?.rsplit('/').next().unwrap_or_default().into()
                 }
-                "-V" | "-VV" | "--verbose" | "--extra-verbose" => options.verbose = true,
+                "-V" | "--verbose" => options.verbose = true,
+                "-VV" | "--extra-verbose" => {
+                    options.verbose = true;
+                    options.extra_verbose = true;
+                }
                 "-Q" | "--quiet" => options.quiet = true,
                 "--progress" => options.progress = true,
                 "-N" => options.show = Show::Human,
@@ -179,6 +194,42 @@ impl Options {
                     };
                     parallel_set = true;
                 }
+                "-S" | "--script" | "-SR" | "--script-run" => {
+                    let script = collapse_full_path(
+                        value()?,
+                        &std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
+                    );
+                    options.scripts.push((script.into(), true));
+                }
+                "-SP" | "--script-new-process" => {
+                    let script = collapse_full_path(
+                        value()?,
+                        &std::env::current_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
+                    );
+                    options.scripts.push((script.into(), false));
+                }
+                "-D" | "--dashboard" => {
+                    let raw = value()?;
+                    if let Some((name, value)) = raw.split_once('=') {
+                        let name = name.split_once(':').map_or(name, |(name, _)| name);
+                        options.definitions.insert(name.into(), value.into());
+                    } else {
+                        options.dashboard.push(raw.into());
+                    }
+                }
+                _ if arg.starts_with("-D") && arg.len() > 2 => {
+                    let raw = &arg[2..];
+                    if let Some((name, value)) = raw.split_once('=') {
+                        let name = name.split_once(':').map_or(name, |(name, _)| name);
+                        options.definitions.insert(name.into(), value.into());
+                    }
+                }
+                "-M" | "--test-model" => options.model = value()?.into(),
+                "-T" | "--test-action" => options.actions.push(value()?.into()),
                 "--build-and-test" => {
                     let required = "--build-and-test must have source and binary dir";
                     let (source, binary) = if let Some(attached) = attached {

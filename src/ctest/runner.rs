@@ -710,7 +710,7 @@ pub(super) fn summarize(
         if options.no_tests != "ignore" {
             log.error("No tests were found!!!\n");
         }
-        return options.no_tests != "error";
+        return options.no_tests != "error" && !(options.script && options.no_tests != "ignore");
     }
     if options.verbose
         && total > failed
@@ -807,7 +807,12 @@ pub(super) fn summarize(
     }
     if !failed_log.is_empty() {
         log.output(&format!("\nThe following tests FAILED:\n{failed_text}"));
-        let _ = std::fs::write(temporary.join("LastTestsFailed.log"), failed_log);
+        let name = if options.dashboard_tag.is_empty() {
+            "LastTestsFailed.log".into()
+        } else {
+            format!("LastTestsFailed_{}.log", options.dashboard_tag)
+        };
+        let _ = std::fs::write(temporary.join(name), failed_log);
     }
     failed == 0
 }
