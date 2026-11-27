@@ -361,14 +361,46 @@ fn environment_measurement(test: &Test, resource_env: &BTreeMap<String, String>)
     for (name, value) in resource_env {
         values.insert(name.clone(), Some(value.clone()));
     }
-    let mut lines: Vec<_> = values
+    let resource_index = |name: &str| -> Option<(usize, usize, usize)> {
+        let rest = name.strip_prefix("CTEST_RESOURCE_GROUP_")?;
+        if rest == "COUNT" {
+            return Some((0, 0, 0));
+        }
+        let mut parts = rest.split('_');
+        let group = parts.next()?.parse::<usize>().ok()?;
+        let kind_order = usize::from(parts.next().is_some());
+        Some((group + 1, kind_order, name.len()))
+    };
+    let mut ordered: Vec<_> = values.iter().collect();
+    ordered.sort_by_key(|(name, _)| {
+        resource_index(name).map_or((usize::MAX, usize::MAX, usize::MAX), |key| key)
+    });
+    let resource_count = ordered
         .iter()
-        .map(|(name, value)| {
+        .filter(|(name, _)| resource_index(name).is_some())
+        .count();
+    let mut lines = Vec::new();
+    for (name, value) in ordered
+        .iter()
+        .filter(|(name, _)| resource_index(name).is_none())
+    {
+        lines.push(
             value
                 .as_ref()
-                .map_or_else(|| format!("#{name}="), |value| format!("{name}={value}"))
-        })
-        .collect();
+                .map_or_else(|| format!("#{name}="), |value| format!("{name}={value}")),
+        );
+    }
+    for (name, value) in ordered
+        .iter()
+        .filter(|(name, _)| resource_index(name).is_some())
+    {
+        lines.push(
+            value
+                .as_ref()
+                .map_or_else(|| format!("#{name}="), |value| format!("{name}={value}")),
+        );
+    }
+    let _ = resource_count;
     if resource_env.is_empty() {
         lines.push("#CTEST_RESOURCE_GROUP_COUNT=".into());
     }

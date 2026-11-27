@@ -1809,6 +1809,11 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     if let Some(value) = values.get("RESOURCE_SPEC_FILE") {
         options.resource_spec = Some(value.into());
+    } else if let Some(value) = interp
+        .get_def("CTEST_RESOURCE_SPEC_FILE")
+        .filter(|value| !value.is_empty())
+    {
+        options.resource_spec = Some(value.into());
     }
     if let Some(value) = values.get("OUTPUT_JUNIT") {
         options.junit = Some(value.into());
