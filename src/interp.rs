@@ -295,6 +295,9 @@ pub struct Interp {
     /// Stack of macro substitution contexts; `None` entries mark function
     /// frames.
     pub stdout_log: Option<Vec<u8>>,
+    /// CPack install-script progress capture: when present, lines that would
+    /// go to stdout are collected here instead of printed immediately.
+    pub stdout_capture: Option<std::rc::Rc<std::cell::RefCell<Vec<String>>>>,
     /// When set, diagnostics and `message()` stderr lines are appended here
     /// instead of written to the process stderr (used by in-process tests).
     pub stderr_capture: Option<String>,
@@ -383,6 +386,7 @@ impl Interp {
             deprecated_as_errors: false,
             recursion_depth: 0,
             stdout_log: None,
+            stdout_capture: None,
             stderr_capture: None,
             sarif_log: crate::sarif::ResultsLog::default(),
             instrument_build_hooks: false,
@@ -1359,7 +1363,11 @@ impl Interp {
 
     /// Writes a line to stdout (message STATUS etc.).
     pub fn stdout_line(&mut self, text: &str) {
-        crate::bytes::stdout_line(text);
+        if let Some(capture) = &self.stdout_capture {
+            capture.borrow_mut().push(text.to_owned());
+        } else {
+            crate::bytes::stdout_line(text);
+        }
     }
 
     pub fn set_fatal(&mut self) {
