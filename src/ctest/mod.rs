@@ -124,6 +124,141 @@ pub(in crate::ctest) fn directory_error(dir: &Path) -> String {
     )
 }
 
+fn xml_escape_launch(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn launcher_labels(current_build_dir: &str, target_name: &str, source: &str) -> Vec<String> {
+    if current_build_dir.is_empty() || target_name.is_empty() {
+        return Vec::new();
+    }
+    let file = Path::new(current_build_dir)
+        .join("CMakeFiles")
+        .join(format!("{target_name}.dir"))
+        .join("Labels.txt");
+    let Ok(contents) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    let source = source.replace('\\', "/");
+    let mut labels = Vec::new();
+    let mut in_target = true;
+    let mut in_source = false;
+    for line in contents.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(label) = line.strip_prefix(' ') {
+            if in_target || in_source {
+                let label = label.to_owned();
+                if !labels.contains(&label) {
+                    labels.push(label);
+                }
+            }
+        } else if !source.is_empty() && !in_source {
+            in_target = false;
+            in_source = line.replace('\\', "/") == source;
+        } else {
+            break;
+        }
+    }
+    labels.sort();
+    labels
+}
+
+fn launcher_xml(
+    log_dir: &Path,
+    hash: &str,
+    error: bool,
+    options: &BTreeMap<String, String>,
+    real_args: &[String],
+    stdout: &str,
+    stderr: &str,
+    exit_code: i32,
+) {
+    let write_output = |tag: &str, text: &str, xml: &mut String| {
+        xml.push_str(&format!("    <{tag}>"));
+        let filter = options.get("filter-prefix").map_or("", String::as_str);
+        let mut first = true;
+        for line in text.lines() {
+            if !filter.is_empty() && line.starts_with(filter) {
+                continue;
+            }
+            if !first {
+                xml.push('\n');
+            }
+            first = false;
+            xml.push_str(&xml_escape_launch(line));
+        }
+        xml.push_str(&format!("</{tag}>\n"));
+    };
+    let mut xml = String::new();
+    xml.push_str(&format!(
+        "  <Failure type=\"{}\">\n",
+        if error { "Error" } else { "Warning" }
+    ));
+    xml.push_str("    <Action>\n");
+    for (key, tag) in [
+        ("target-name", "TargetName"),
+        ("language", "Language"),
+        ("source", "SourceFile"),
+        ("output", "OutputFile"),
+    ] {
+        if let Some(value) = options.get(key).filter(|value| !value.is_empty()) {
+            let _ = writeln!(xml, "      <{tag}>{}</{tag}>", xml_escape_launch(value));
+        }
+    }
+    let output_type = match options.get("target-type").map_or("", String::as_str) {
+        "EXECUTABLE" => "executable",
+        "SHARED_LIBRARY" => "shared library",
+        "MODULE_LIBRARY" => "module library",
+        "STATIC_LIBRARY" => "static library",
+        _ if options
+            .get("source")
+            .is_some_and(|source| !source.is_empty()) =>
+        {
+            "object file"
+        }
+        _ => "",
+    };
+    if !output_type.is_empty() {
+        let _ = writeln!(xml, "      <OutputType>{output_type}</OutputType>");
+    }
+    xml.push_str("    </Action>\n    <Command>\n");
+    if let Ok(cwd) = std::env::current_dir() {
+        let _ = writeln!(
+            xml,
+            "      <WorkingDirectory>{}</WorkingDirectory>",
+            xml_escape_launch(&cwd.to_string_lossy())
+        );
+    }
+    for arg in real_args {
+        let _ = writeln!(xml, "      <Argument>{}</Argument>", xml_escape_launch(arg));
+    }
+    xml.push_str("    </Command>\n    <Result>\n");
+    write_output("StdOut", stdout, &mut xml);
+    write_output("StdErr", stderr, &mut xml);
+    let _ = writeln!(xml, "      <ExitCondition>{exit_code}</ExitCondition>");
+    xml.push_str("    </Result>\n");
+    let labels = launcher_labels(
+        options.get("current-build-dir").map_or("", String::as_str),
+        options.get("target-name").map_or("", String::as_str),
+        options.get("source").map_or("", String::as_str),
+    );
+    if !labels.is_empty() {
+        xml.push_str("    <Labels>\n");
+        for label in labels {
+            let _ = writeln!(xml, "      <Label>{}</Label>", xml_escape_launch(&label));
+        }
+        xml.push_str("    </Labels>\n");
+    }
+    xml.push_str("  </Failure>\n");
+    let kind = if error { "error" } else { "warning" };
+    let _ = std::fs::write(log_dir.join(format!("{kind}-{hash}.xml")), xml);
+}
+
 fn launch(args: &[String]) -> i32 {
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
         eprintln!("No launch/command separator ('--') found!");
@@ -133,16 +268,125 @@ fn launch(args: &[String]) -> i32 {
     if command.is_empty() || command[0] == ":" {
         return 0;
     }
-    let status = std::process::Command::new(&command[0])
+    let mut options = BTreeMap::new();
+    let mut index = 0;
+    while index < separator {
+        let arg = &args[index];
+        if let Some(name) = arg.strip_prefix("--")
+            && index + 1 < separator
+        {
+            options.insert(name.to_owned(), args[index + 1].clone());
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    let real_args: Vec<String> = command.to_vec();
+    let log_dir = std::env::var("CTEST_LAUNCH_LOGS")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from);
+    let passthru = log_dir.is_none();
+    if passthru {
+        let status = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status();
+        return match status {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(_) => 1,
+        };
+    }
+    let log_dir = log_dir.unwrap();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let mut child = match std::process::Command::new(&command[0])
         .args(&command[1..])
         .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status();
-    match status {
-        Ok(status) => status.code().unwrap_or(1),
-        Err(_) => 1,
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return 1,
+    };
+    fn forward<R: std::io::Read + Send + 'static, W: std::io::Write + Send + 'static>(
+        mut input: R,
+        mut output: W,
+    ) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            let mut buffer = [0; 8192];
+            loop {
+                match input.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        captured.extend_from_slice(&buffer[..count]);
+                        let _ = output.write_all(&buffer[..count]);
+                        let _ = output.flush();
+                    }
+                    Err(_) => break,
+                }
+            }
+            captured
+        })
     }
+    let stdout_thread = child
+        .stdout
+        .take()
+        .map(|pipe| forward(pipe, std::io::stdout()));
+    let stderr_thread = child
+        .stderr
+        .take()
+        .map(|pipe| forward(pipe, std::io::stderr()));
+    let status = child
+        .wait()
+        .ok()
+        .and_then(|status| status.code())
+        .unwrap_or(1);
+    let stdout = stdout_thread
+        .and_then(|thread| thread.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_thread
+        .and_then(|thread| thread.join().ok())
+        .unwrap_or_default();
+    let stdout_text = crate::bytes::decode(&stdout);
+    let stderr_text = crate::bytes::decode(&stderr);
+    use md5::Digest;
+    let mut hasher = md5::Md5::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        hasher.update(cwd.to_string_lossy().as_bytes());
+    }
+    for arg in &real_args {
+        hasher.update(arg.as_bytes());
+    }
+    let hash = format!("{:x}", hasher.finalize());
+    let base = format!("launch-{hash}");
+    let _ = std::fs::write(log_dir.join(format!("{base}-out.txt")), &stdout);
+    let _ = std::fs::write(log_dir.join(format!("{base}-err.txt")), &stderr);
+    let warning = status == 0
+        && [&stdout_text, &stderr_text].into_iter().any(|text| {
+            text.lines().any(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.contains("warning") || lower.contains("remark") || lower.contains("note")
+            })
+        });
+    if status != 0 || warning {
+        launcher_xml(
+            &log_dir,
+            &hash,
+            status != 0,
+            &options,
+            &real_args,
+            &stdout_text,
+            &stderr_text,
+            status,
+        );
+    }
+    let _ = std::fs::remove_file(log_dir.join(format!("{base}-out.txt")));
+    let _ = std::fs::remove_file(log_dir.join(format!("{base}-err.txt")));
+    status
 }
 
 pub fn main() -> i32 {

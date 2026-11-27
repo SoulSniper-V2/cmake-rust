@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::commands::string::json::{Json, write_json_multiline};
 use crate::fileapi::{JsonExt, jarr, jobj, jstr, juint};
@@ -1067,6 +1067,7 @@ pub(super) fn build_xml(
     options: &Options,
     command: &str,
     diagnostics: &[BuildDiagnostic],
+    launch_dir: Option<&Path>,
     start_epoch: i64,
     end_epoch: i64,
 ) -> std::io::Result<()> {
@@ -1076,16 +1077,47 @@ pub(super) fn build_xml(
         start_epoch,
         xml_content(command),
     );
-    for diagnostic in diagnostics.iter().take(50) {
-        let tag = if diagnostic.error { "Error" } else { "Warning" };
-        let _ = writeln!(
-            body,
-            "\t\t<{tag}>\n\t\t\t<BuildLogLine>{}</BuildLogLine>\n\t\t\t<Text>{}</Text>\n\t\t\t<PreContext>{}</PreContext>\n\t\t\t<PostContext>{}</PostContext>\n\t\t\t<RepeatCount>0</RepeatCount>\n\t\t</{tag}>",
-            diagnostic.line,
-            xml_content(&diagnostic.text),
-            xml_content(&diagnostic.pre_context),
-            xml_content(&diagnostic.post_context),
-        );
+    if let Some(launch_dir) = launch_dir {
+        let mut fragments: Vec<PathBuf> = std::fs::read_dir(launch_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy();
+                    (name.starts_with("error-") || name.starts_with("warning-"))
+                        && name.ends_with(".xml")
+                })
+            })
+            .collect();
+        fragments.sort_by_key(|path| {
+            (
+                path.metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok(),
+                path.clone(),
+            )
+        });
+        for fragment in fragments.into_iter().take(100) {
+            if let Ok(contents) = std::fs::read_to_string(fragment) {
+                body.push_str(&contents);
+                if !contents.ends_with('\n') {
+                    body.push('\n');
+                }
+            }
+        }
+    } else {
+        for diagnostic in diagnostics.iter().take(50) {
+            let tag = if diagnostic.error { "Error" } else { "Warning" };
+            let _ = writeln!(
+                body,
+                "\t\t<{tag}>\n\t\t\t<BuildLogLine>{}</BuildLogLine>\n\t\t\t<Text>{}</Text>\n\t\t\t<PreContext>{}</PreContext>\n\t\t\t<PostContext>{}</PostContext>\n\t\t\t<RepeatCount>0</RepeatCount>\n\t\t</{tag}>",
+                diagnostic.line,
+                xml_content(&diagnostic.text),
+                xml_content(&diagnostic.pre_context),
+                xml_content(&diagnostic.post_context),
+            );
+        }
     }
     let _ = writeln!(
         body,

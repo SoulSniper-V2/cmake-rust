@@ -2264,15 +2264,36 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
     }
     handler_output(interp, "Build project\n", quiet);
+    let use_launchers = interp.is_on("CTEST_USE_LAUNCHERS");
     handler_output(
         interp,
-        "   Each symbol represents 1024 bytes of output.\n   '!' represents an error and '*' a warning.\n",
+        if use_launchers {
+            "   Each symbol represents 1024 bytes of output.\n"
+        } else {
+            "   Each symbol represents 1024 bytes of output.\n   '!' represents an error and '*' a warning.\n"
+        },
         quiet,
     );
     let build_path = PathBuf::from(collapse_input(&build));
+    let tag = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .map_or_else(String::new, |state| state.tag.clone());
+    let launch_dir = (!tag.is_empty()).then(|| build_path.join("Testing").join(&tag).join("Build"));
+    if let Some(launch_dir) = &launch_dir {
+        let _ = std::fs::remove_dir_all(launch_dir);
+        if use_launchers {
+            let _ = std::fs::create_dir_all(launch_dir);
+            unsafe { std::env::set_var("CTEST_LAUNCH_LOGS", launch_dir) };
+        }
+    }
     let start = epoch_now();
     let (output, status) = shell_command(&command, &build_path);
     let end = epoch_now();
+    if use_launchers {
+        unsafe { std::env::remove_var("CTEST_LAUNCH_LOGS") };
+    }
     let lines: Vec<&str> = output.lines().collect();
     let mut diagnostics = Vec::new();
     for (index, line) in lines.iter().enumerate() {
@@ -2289,8 +2310,32 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             });
         }
     }
-    let errors = diagnostics.iter().filter(|item| item.error).count();
-    let warnings = diagnostics.iter().filter(|item| !item.error).count();
+    let (errors, warnings) = if use_launchers {
+        let mut errors = 0;
+        let mut warnings = 0;
+        if let Some(launch_dir) = &launch_dir
+            && let Ok(entries) = std::fs::read_dir(launch_dir)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("error-") && name.ends_with(".xml") {
+                    errors += 1;
+                } else if name.starts_with("warning-") && name.ends_with(".xml") {
+                    warnings += 1;
+                }
+            }
+        }
+        (errors, warnings)
+    } else {
+        (
+            diagnostics.iter().filter(|item| item.error).count(),
+            diagnostics.iter().filter(|item| !item.error).count(),
+        )
+    };
+    if use_launchers {
+        diagnostics.clear();
+    }
     let state = interp.ext.ctest_script.as_ref().unwrap();
     let temporary = build_path.join("Testing/Temporary");
     let _ = std::fs::create_dir_all(&temporary);
@@ -2306,7 +2351,19 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         quiet,
     );
     let options = dashboard_options(interp, &build_path);
-    let _ = report::build_xml(&build_path, &options, &command, &diagnostics, start, end);
+    let _ = report::build_xml(
+        &build_path,
+        &options,
+        &command,
+        &diagnostics,
+        if use_launchers {
+            launch_dir.as_deref()
+        } else {
+            None
+        },
+        start,
+        end,
+    );
     if status != 0 || errors != 0 {
         handler_error(interp, "Error(s) when building project\n");
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
