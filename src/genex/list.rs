@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::cmregex::Regex;
+use crate::cmregex::{Regex, ReplacePart, parse_replacement};
 use crate::commands::list::{CaseSensitivity, CompareMethod, OrderMode, SortConfig};
 use crate::policy::PolicyStatus;
 use crate::util;
@@ -405,18 +405,12 @@ fn unexpected(args: &[String]) -> String {
     )
 }
 
-enum ReplacePart<'a> {
-    Literal(&'a str),
-    Capture(usize),
-}
-
 struct Replacement<'a> {
     regex: Regex,
     pattern: &'a str,
     source: &'a str,
-    parts: Vec<ReplacePart<'a>>,
+    parts: Vec<ReplacePart>,
     anchor: PolicyStatus,
-    capture_count: usize,
 }
 
 impl<'a> Replacement<'a> {
@@ -424,58 +418,13 @@ impl<'a> Replacement<'a> {
         let error = |message: &str| format!("sub-command TRANSFORM, action REPLACE: {message}.");
         let regex = Regex::new(pattern)
             .map_err(|_| error(&format!("Failed to compile regex \"{pattern}\"")))?;
-        let mut rest = source;
-        let mut parts = Vec::new();
-        while let Some(at) = rest.find('\\') {
-            parts.push(ReplacePart::Literal(&rest[..at]));
-            let escape = rest[at + 1..]
-                .chars()
-                .next()
-                .ok_or_else(|| error("replace-expression ends in a backslash"))?;
-            parts.push(match escape {
-                '0'..='9' => ReplacePart::Capture(escape as usize - '0' as usize),
-                'n' => ReplacePart::Literal("\n"),
-                '\\' => ReplacePart::Literal("\\"),
-                _ => {
-                    return Err(error(&format!(
-                        "Unknown escape \"\\{escape}\" in replace-expression"
-                    )));
-                }
-            });
-            rest = &rest[at + 1 + escape.len_utf8()..];
-        }
-        parts.push(ReplacePart::Literal(rest));
-        let mut capture_count = 0;
-        let mut bytes = pattern.bytes().take_while(|b| *b != 0).peekable();
-        while let Some(byte) = bytes.next() {
-            match byte {
-                b'\\' => {
-                    bytes.next();
-                }
-                b'[' => {
-                    if bytes.peek() == Some(&b'^') {
-                        bytes.next();
-                    }
-                    if matches!(bytes.peek(), Some(b']' | b'-')) {
-                        bytes.next();
-                    }
-                    for next in bytes.by_ref() {
-                        if next == b']' {
-                            break;
-                        }
-                    }
-                }
-                b'(' => capture_count += 1,
-                _ => {}
-            }
-        }
+        let parts = parse_replacement(source).map_err(|message| error(&message))?;
         Ok(Self {
             regex,
             pattern,
             source,
             parts,
             anchor,
-            capture_count,
         })
     }
 
@@ -493,18 +442,18 @@ impl<'a> Replacement<'a> {
             host.record_regex_match(input, &found.groups);
             result.extend_from_slice(&input_bytes[base..start]);
             for part in &self.parts {
-                match *part {
+                match part {
                     ReplacePart::Literal(value) => {
                         result.extend_from_slice(&crate::bytes::encode(value))
                     }
                     ReplacePart::Capture(i) => {
-                        if i > self.capture_count {
+                        if *i > self.regex.num_groups() {
                             return Err(format!(
                                 "sub-command TRANSFORM, action REPLACE: replace expression \"{}\" contains an out-of-range escape for regex \"{}\".",
                                 self.source, self.pattern
                             ));
                         }
-                        if let Some((start, end)) = found.groups[i] {
+                        if let Some((start, end)) = found.groups[*i] {
                             result.extend_from_slice(&input_bytes[start..end]);
                         }
                     }

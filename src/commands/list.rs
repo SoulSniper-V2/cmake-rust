@@ -1,6 +1,6 @@
 //! `list()` command: port of `cmListCommand.cxx` and `cmList.cxx`.
 
-use crate::cmregex::Regex;
+use crate::cmregex::{Regex, ReplacePart, parse_replacement};
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
@@ -187,18 +187,11 @@ impl CmList {
 // cmStringReplaceHelper
 // ------------------------------------------------------------------
 
-/// One piece of a parsed replace expression: literal text or group number.
-enum Replacement {
-    Text(String),
-    Group(usize),
-}
-
 struct ReplaceHelper {
     regex_string: String,
     regex: Regex,
     replace_expression: String,
-    replacements: Vec<Replacement>,
-    error: Option<String>,
+    replacements: Vec<ReplacePart>,
 }
 
 impl ReplaceHelper {
@@ -208,60 +201,15 @@ impl ReplaceHelper {
                 "sub-command TRANSFORM, action REPLACE: Failed to compile regex \"{regex}\"."
             )));
         };
-        let mut helper = ReplaceHelper {
+        let replacements = parse_replacement(replace).map_err(|error| {
+            OutOfRange(format!("sub-command TRANSFORM, action REPLACE: {error}."))
+        })?;
+        Ok(Self {
             regex_string: regex.to_owned(),
             regex: compiled,
             replace_expression: replace.to_owned(),
-            replacements: Vec::new(),
-            error: None,
-        };
-        helper.parse_replace_expression();
-        if let Some(error) = &helper.error {
-            return Err(OutOfRange(format!(
-                "sub-command TRANSFORM, action REPLACE: {error}."
-            )));
-        }
-        Ok(helper)
-    }
-
-    fn parse_replace_expression(&mut self) {
-        let expr = self.replace_expression.as_bytes();
-        let mut l = 0usize;
-        while l < expr.len() {
-            let r = expr[l..].iter().position(|&b| b == b'\\').map(|p| l + p);
-            match r {
-                None => {
-                    self.replacements
-                        .push(Replacement::Text(self.replace_expression[l..].to_owned()));
-                    break;
-                }
-                Some(r) => {
-                    if r > l {
-                        self.replacements
-                            .push(Replacement::Text(self.replace_expression[l..r].to_owned()));
-                    }
-                    if r == expr.len() - 1 {
-                        self.error = Some("replace-expression ends in a backslash".to_owned());
-                        return;
-                    }
-                    match expr[r + 1] {
-                        b'0'..=b'9' => self
-                            .replacements
-                            .push(Replacement::Group((expr[r + 1] - b'0') as usize)),
-                        b'n' => self.replacements.push(Replacement::Text("\n".to_owned())),
-                        b'\\' => self.replacements.push(Replacement::Text("\\".to_owned())),
-                        other => {
-                            self.error = Some(format!(
-                                "Unknown escape \"\\{}\" in replace-expression",
-                                other as char
-                            ));
-                            return;
-                        }
-                    }
-                    l = r + 2;
-                }
-            }
-        }
+            replacements,
+        })
     }
 
     fn replace(&self, interp: &mut Interp, input: &str, output: &mut String) -> LResult<()> {
@@ -286,8 +234,10 @@ impl ReplaceHelper {
             // Concatenate the replacement for the match.
             for replacement in &self.replacements {
                 match replacement {
-                    Replacement::Text(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
-                    Replacement::Group(n) => {
+                    ReplacePart::Literal(text) => {
+                        bytes.extend_from_slice(&crate::bytes::encode(text))
+                    }
+                    ReplacePart::Capture(n) => {
                         if *n > self.regex.num_groups() {
                             return Err(OutOfRange(format!(
                                 "replace expression \"{}\" contains an out-of-range escape for regex \"{}\"",
