@@ -1145,6 +1145,11 @@ pub fn write_json_indent2(value: &Json) -> String {
     crate::bytes::decode(&Writer::write_indented(value, b"  ", false))
 }
 
+/// JsonCpp StreamWriter with two-space indentation and expanded arrays.
+pub(crate) fn write_json_multiline(value: &Json) -> String {
+    crate::bytes::decode(&Writer::write_indented(value, b"  ", true))
+}
+
 fn write_json(value: &Json) -> String {
     crate::bytes::decode(&Writer::write(value))
 }

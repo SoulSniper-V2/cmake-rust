@@ -12,6 +12,10 @@ publish = false
 name = "cmake"
 path = "src/main.rs"
 
+[[bin]]
+name = "ctest"
+path = "src/ctest_main.rs"
+
 [dependencies]
 flate2 = "1"
 libc = "0.2"

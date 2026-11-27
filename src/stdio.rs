@@ -233,6 +233,10 @@ fn write_attrs(out: &mut impl Write, attrs: TermAttrSet) -> io::Result<()> {
     Ok(())
 }
 
+pub(crate) fn stdout_is_vt100() -> bool {
+    out_kind() == TermKind::VT100
+}
+
 fn print_to(out: &mut impl Write, kind: TermKind, attrs: TermAttrSet, text: &str) {
     let kind = term_env_cached().unwrap_or(kind);
     if kind == TermKind::VT100 {
