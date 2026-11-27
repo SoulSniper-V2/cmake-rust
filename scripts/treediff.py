@@ -89,8 +89,18 @@ def normalizer(build: Path, cmake: Path):
     return apply
 
 
-def configure(cmake: Path, source: Path, build: Path, extra: list[str], log: Path, generator: str) -> int:
+FILEAPI_QUERIES = ("codemodel-v2", "cache-v2", "cmakeFiles-v1", "toolchains-v1")
+
+
+def configure(cmake: Path, source: Path, build: Path, extra: list[str], log: Path, generator: str,
+              queries: tuple[str, ...] = ()) -> int:
     shutil.rmtree(build, ignore_errors=True)
+    # Stateless file-API queries (e.g. codemodel-v2): their replies become
+    # part of the compared tree.
+    for kind in queries:
+        query = build / ".cmake/api/v1/query"
+        query.mkdir(parents=True, exist_ok=True)
+        (query / kind).touch()
     env = {k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "CMAKE_RUST_DATA_ROOT")}
     with log.open("wb") as stream:
         proc = subprocess.run(
@@ -149,6 +159,44 @@ def ignored(rel: str) -> bool:
     return name in (".ninja_log", ".ninja_deps") or abi_probe or "/.git/" in f"/{rel}/"
 
 
+def canonical_target_reply(data: bytes) -> bytes:
+    """A codemodel target object with each backtrace index resolved to its
+    frames and the dependencies sorted.  Upstream orders a target's
+    dependencies by cmGeneratorTarget pointer (cmTargetDepend::operator<),
+    which also decides the backtrace node numbering; everything else stays
+    compared.  (projdiff.py byte-compares replies, layout included.)"""
+    try:
+        obj = json.loads(data)
+    except ValueError:
+        return data
+    graph = obj.pop("backtraceGraph", None)
+    if not isinstance(graph, dict):
+        return data
+    nodes, commands, files = graph.get("nodes", []), graph.get("commands", []), graph.get("files", [])
+
+    def frames(index):
+        out = []
+        while isinstance(index, int) and 0 <= index < len(nodes):
+            node = nodes[index]
+            command = node.get("command")
+            out.append([files[node["file"]] if node.get("file", -1) < len(files) else None,
+                        node.get("line"), commands[command] if isinstance(command, int) else None])
+            index = node.get("parent")
+        return out
+
+    def walk(value):
+        if isinstance(value, dict):
+            return {k: (frames(v) if k == "backtrace" else walk(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        return value
+
+    obj = walk(obj)
+    if isinstance(obj.get("dependencies"), list):
+        obj["dependencies"].sort(key=lambda dep: json.dumps(dep, sort_keys=True))
+    return json.dumps(obj, indent=1, sort_keys=True).encode()
+
+
 def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
     files: dict[str, tuple[str, bytes]] = {}
     if not build.exists():
@@ -158,6 +206,20 @@ def gather(build: Path, normalize) -> dict[str, tuple[str, bytes]]:
         if ignored(rel):
             continue
         norm_rel = normalize(rel.encode(errors="surrogateescape")).decode(errors="surrogateescape")
+        if rel.startswith(".cmake/api/v1/reply/") and path.is_file():
+            # Reply objects are named by content hash (the index and error
+            # replies by time): key them by kind, and hide the hashed
+            # references between them, as projdiff.py does.
+            name = path.name
+            if name.startswith("index-"):
+                continue
+            key = re.sub(r"-[0-9a-f]{20}\.json$", "", name)
+            key = re.sub(r"^error-[0-9T:-]+\.json$", "error", key)
+            data = re.sub(rb'"jsonFile" ?: "[^"]*"', b'"jsonFile" : "<HASH>"', normalize(path.read_bytes()))
+            if key.startswith("target-"):
+                data = canonical_target_reply(data)
+            files[f".cmake/api/v1/reply/{key}"] = ("file", data)
+            continue
         if path.is_symlink():
             files[norm_rel] = ("symlink", normalize(os.readlink(path).encode(errors="surrogateescape")))
         elif path.is_file():
@@ -213,6 +275,8 @@ def main() -> int:
     parser.add_argument("--generator", default="Ninja", help="CMake generator to use")
     parser.add_argument("--json", type=Path, help="write machine-readable comparison results")
     parser.add_argument("--show", type=int, default=12)
+    parser.add_argument("--fileapi", action="store_true",
+                        help="request codemodel-v2, cache-v2, cmakeFiles-v1 and toolchains-v1 replies")
     parser.add_argument("source", type=Path)
     parser.add_argument("cmake_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -228,8 +292,11 @@ def main() -> int:
     candidate_build = work / "c" / "build"
     oracle_build.parent.mkdir(parents=True, exist_ok=True)
     candidate_build.parent.mkdir(parents=True, exist_ok=True)
-    oracle_rc = configure(args.oracle, source, oracle_build, args.cmake_args, work / "oracle-configure.log", args.generator)
-    candidate_rc = configure(args.candidate, source, candidate_build, args.cmake_args, work / "candidate-configure.log", args.generator)
+    queries = FILEAPI_QUERIES if args.fileapi else ()
+    oracle_rc = configure(args.oracle, source, oracle_build, args.cmake_args, work / "oracle-configure.log",
+                          args.generator, queries)
+    candidate_rc = configure(args.candidate, source, candidate_build, args.cmake_args,
+                             work / "candidate-configure.log", args.generator, queries)
 
     oracle = gather(oracle_build, normalizer(oracle_build, args.oracle))
     candidate = gather(candidate_build, normalizer(candidate_build, args.candidate))

@@ -263,7 +263,9 @@ def make_case(seed, index, cxx=False):
 
 def run_side(cmake, src, build, do_build, generator="Ninja"):
     log = build.parent / f"{build.name}.log"
-    rc = treediff.configure(Path(cmake), src, build, [], log, generator)
+    # The file-API replies (codemodel: targets, source groups, include
+    # paths, install rules; cache; cmakeFiles; toolchains) are compared too.
+    rc = treediff.configure(Path(cmake), src, build, [], log, generator, treediff.FILEAPI_QUERIES)
     out = log.read_bytes()
     norm = treediff.normalizer(build, Path(cmake))
     # Compare the configured tree before building: built binaries embed
