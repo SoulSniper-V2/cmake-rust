@@ -6,6 +6,9 @@ use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
 use crate::util;
 
+mod sort;
+pub(crate) use sort::{CaseSensitivity, CompareMethod, OrderMode, SortConfig};
+
 pub fn register(interp: &mut Interp) {
     interp.register("list", list_command);
 }
@@ -178,102 +181,6 @@ impl CmList {
             .retain(|item| regex.find(item).is_some() == include);
         Ok(())
     }
-
-    fn sort(&mut self, config: &SortConfig) {
-        let compare = |a: &str, b: &str| -> std::cmp::Ordering {
-            let filter = |s: &str| -> String {
-                let mut result = s.to_owned();
-                if config.compare == CompareMethod::FileBasename {
-                    result = util::filename_name(&result);
-                }
-                if config.case == CaseSensitivity::Insensitive {
-                    result = result.to_ascii_lowercase();
-                }
-                result
-            };
-            let af = filter(a);
-            let bf = filter(b);
-            let ord = if config.compare == CompareMethod::Natural {
-                strverscmp(&af, &bf)
-            } else {
-                af.cmp(&bf)
-            };
-            if config.order == OrderMode::Descending {
-                ord.reverse()
-            } else {
-                ord
-            }
-        };
-        if config.compare == CompareMethod::String
-            && config.case == CaseSensitivity::Sensitive
-            && config.order == OrderMode::Ascending
-        {
-            self.values.sort_unstable();
-        } else {
-            self.values.sort_unstable_by(|a, b| compare(a, b));
-        }
-    }
-}
-
-/// `cmSystemTools::strverscmp`.
-fn strverscmp(lhs: &str, rhs: &str) -> std::cmp::Ordering {
-    let l = lhs.as_bytes();
-    let r = rhs.as_bytes();
-    let at = |s: &[u8], i: usize| s.get(i).copied().unwrap_or(0);
-    let first_difference = |a: &[u8], b: &[u8]| {
-        let mut i = 0;
-        while at(a, i) == at(b, i) && at(a, i) != 0 {
-            i += 1;
-        }
-        i
-    };
-    let digits_begin = |s: &[u8], mut i: usize| {
-        while i > 0 && s[i - 1].is_ascii_digit() {
-            i -= 1;
-        }
-        i
-    };
-    let digits_end = |s: &[u8], mut i: usize| {
-        while i < s.len() && s[i].is_ascii_digit() {
-            i += 1;
-        }
-        i
-    };
-    let count_leading_zeros = |s: &[u8], b: usize| {
-        let mut i = b;
-        while at(s, i) == b'0' && at(s, i + 1).is_ascii_digit() {
-            i += 1;
-        }
-        i - b
-    };
-
-    let i = first_difference(l, r);
-    if at(l, i) != at(r, i) {
-        let b = digits_begin(l, i);
-        if b != i || (at(l, i).is_ascii_digit() && at(r, i).is_ascii_digit()) {
-            let lz = count_leading_zeros(l, b);
-            let rz = count_leading_zeros(r, b);
-            if lz != rz {
-                return if rz > lz {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                };
-            }
-            if lz == 0 {
-                let le = digits_end(l, i);
-                let re = digits_end(r, i);
-                if le != re {
-                    return if le > re {
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
-                    };
-                }
-            }
-        }
-    }
-    (at(l, i) as i8 as i32 - at(r, i) as i8 as i32).cmp(&0)
 }
 
 // ------------------------------------------------------------------
@@ -1055,31 +962,6 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
 
 // --- SORT ---
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CompareMethod {
-    String,
-    FileBasename,
-    Natural,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CaseSensitivity {
-    Sensitive,
-    Insensitive,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OrderMode {
-    Ascending,
-    Descending,
-}
-
-struct SortConfig {
-    compare: CompareMethod,
-    case: CaseSensitivity,
-    order: OrderMode,
-}
-
 fn handle_sort(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() > 8 {
         return err("sub-command SORT only takes up to six arguments.");
@@ -1172,7 +1054,7 @@ fn handle_sort(interp: &mut Interp, args: &[String]) -> CmdResult {
     let Some(mut list) = get_list(interp, &list_name) else {
         return Ok(());
     };
-    list.sort(&config);
+    config.sort(&mut list.values);
     interp.set_def(list_name, list.join());
     Ok(())
 }

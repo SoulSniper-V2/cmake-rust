@@ -1,9 +1,9 @@
 //! cmGeneratorExpressionNode's list operations on cmList strings.
 
-use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use crate::cmregex::Regex;
+use crate::commands::list::{CaseSensitivity, CompareMethod, OrderMode, SortConfig};
 use crate::policy::PolicyStatus;
 use crate::util;
 
@@ -226,67 +226,25 @@ fn sort(values: &mut [String], args: &[String]) -> Result<(), String> {
         }
         *setting = Some(value);
     }
-    let key = |value: &str| {
-        let value = if compare == Some("FILE_BASENAME") {
-            super::path::filename_name(value).to_owned()
+    SortConfig {
+        compare: match compare {
+            Some("FILE_BASENAME") => CompareMethod::FileBasename,
+            Some("NATURAL") => CompareMethod::Natural,
+            _ => CompareMethod::String,
+        },
+        case: if case == Some("INSENSITIVE") {
+            CaseSensitivity::Insensitive
         } else {
-            value.to_owned()
-        };
-        if case == Some("INSENSITIVE") {
-            value.to_ascii_lowercase()
+            CaseSensitivity::Sensitive
+        },
+        order: if order == Some("DESCENDING") {
+            OrderMode::Descending
         } else {
-            value
-        }
-    };
-    values.sort_by(|left, right| {
-        let left = key(left);
-        let right = key(right);
-        let result = if compare == Some("NATURAL") {
-            natural(&left, &right)
-        } else {
-            left.cmp(&right)
-        };
-        if order == Some("DESCENDING") {
-            result.reverse()
-        } else {
-            result
-        }
-    });
-    Ok(())
-}
-
-fn natural(left: &str, right: &str) -> Ordering {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    let i = left.iter().zip(right).take_while(|(a, b)| a == b).count();
-    let a = left.get(i).copied().unwrap_or(0);
-    let b = right.get(i).copied().unwrap_or(0);
-    let begin = i - left[..i]
-        .iter()
-        .rev()
-        .take_while(|b| b.is_ascii_digit())
-        .count();
-    if a != b && (begin != i || (a.is_ascii_digit() && b.is_ascii_digit())) {
-        let zeros = |bytes: &[u8]| {
-            bytes[begin..]
-                .windows(2)
-                .take_while(|pair| pair[0] == b'0' && pair[1].is_ascii_digit())
-                .count()
-        };
-        let left_zeros = zeros(left);
-        let right_zeros = zeros(right);
-        if left_zeros != right_zeros {
-            return right_zeros.cmp(&left_zeros);
-        }
-        if left_zeros == 0 {
-            let count = |bytes: &[u8]| bytes[i..].iter().take_while(|b| b.is_ascii_digit()).count();
-            let order = count(left).cmp(&count(right));
-            if order != Ordering::Equal {
-                return order;
-            }
-        }
+            OrderMode::Ascending
+        },
     }
-    (a as std::ffi::c_char).cmp(&(b as std::ffi::c_char))
+    .sort(values);
+    Ok(())
 }
 
 fn transform(
