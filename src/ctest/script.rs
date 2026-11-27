@@ -2181,31 +2181,32 @@ fn update_dashboard_configuration(interp: &mut Interp, binary: &Path) {
     }
     if !file.is_file() {
         eprintln!("Cannot find file: {}", file.display());
-    } else if file.extension().is_some_and(|extension| extension == "ini") {
-        if let Ok(contents) = std::fs::read_to_string(&file) {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = line.split_once(':') {
-                    let value = value.trim().to_owned();
-                    set_step_configuration(interp, key, &value);
-                }
-            }
+    } else if let Ok(contents) = std::fs::read_to_string(&file) {
+        if interp
+            .ext
+            .ctest_script
+            .as_ref()
+            .is_some_and(|state| state.options.extra_verbose)
+        {
+            handler_output(
+                interp,
+                &format!("Parse Config file:{}\n", file.display()),
+                false,
+            );
         }
-    } else {
-        let _ = interp.read_list_file(&file.to_string_lossy());
-        for (key, variable) in [
-            ("Site", "CTEST_SITE"),
-            ("BuildName", "CTEST_BUILD_NAME"),
-            ("NightlyStartTime", "CTEST_NIGHTLY_START_TIME"),
-            ("SourceDirectory", "CTEST_SOURCE_DIRECTORY"),
-            ("BuildDirectory", "CTEST_BINARY_DIRECTORY"),
-        ] {
-            if let Some(value) = interp.get_def(variable) {
-                let value = value.to_owned();
-                set_step_configuration(interp, key, &value);
+        let mut lines = contents.lines();
+        while let Some(line) = lines.next() {
+            let mut line = line.trim().to_owned();
+            while line.ends_with('\\') {
+                line.pop();
+                let Some(next) = lines.next() else { break };
+                line.push_str(next.trim());
+            }
+            if !line.is_empty()
+                && !line.starts_with('#')
+                && let Some((key, value)) = line.split_once(':')
+            {
+                set_step_configuration(interp, key, value.trim());
             }
         }
     }

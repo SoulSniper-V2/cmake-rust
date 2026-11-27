@@ -772,7 +772,15 @@ pub(super) fn test_xml(
             test.processors(),
             xml_escape(&result.completion),
             xml_content(&command),
-            xml_content(&result.output),
+            xml_content(&truncate_test_output(
+                &result.output,
+                if result.status == Status::Passed {
+                    options.output_size_passed.unwrap_or(1024)
+                } else {
+                    options.output_size_failed.unwrap_or(300 * 1024)
+                },
+                &options.output_truncation,
+            )),
         );
         let labels: BTreeSet<_> = test.list("LABELS").iter().chain(&result.labels).collect();
         if !labels.is_empty() {
@@ -794,6 +802,37 @@ pub(super) fn test_xml(
     let directory = binary.join("Testing").join(&options.dashboard_tag);
     std::fs::create_dir_all(&directory)?;
     std::fs::write(directory.join("Test.xml"), xml)
+}
+
+fn truncate_test_output(output: &str, length: usize, mode: &str) -> String {
+    if length == 0 || length >= output.len() || output.contains("CTEST_FULL_OUTPUT") {
+        return output.to_owned();
+    }
+    let message = format!(
+        "\n[This part of the test output was removed since it exceeds the threshold of {length} bytes.]\n"
+    );
+    let boundary = |mut index: usize| {
+        while index < output.len() && !output.is_char_boundary(index) {
+            index += 1;
+        }
+        index.min(output.len())
+    };
+    match mode {
+        "head" => {
+            let index = boundary(output.len().saturating_sub(length));
+            format!("{message}...{}", &output[index..])
+        }
+        "middle" => {
+            let first = boundary(length / 2);
+            let keep_tail = length - length / 2;
+            let second = boundary(output.len().saturating_sub(keep_tail));
+            format!("{}...{message}...{}", &output[..first], &output[second..])
+        }
+        _ => {
+            let index = boundary(length);
+            format!("{}...{message}", &output[..index])
+        }
+    }
 }
 
 fn site_xml_header(options: &Options) -> String {

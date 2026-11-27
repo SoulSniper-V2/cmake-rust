@@ -55,6 +55,9 @@ pub(super) struct Options {
     pub no_label_summary: bool,
     pub output_on_failure: bool,
     pub output_log: Option<PathBuf>,
+    pub output_size_passed: Option<usize>,
+    pub output_size_failed: Option<usize>,
+    pub output_truncation: String,
     pub junit: Option<PathBuf>,
     pub include: String,
     pub exclude: String,
@@ -491,6 +494,25 @@ impl Options {
                 "-O" | "--output-log" => {
                     let path = value()?;
                     options.output_log = (!path.is_empty()).then(|| path.into());
+                }
+                "--test-output-size-passed" => {
+                    if let Ok(size) = value()?.parse() {
+                        options.output_size_passed = Some(size);
+                    }
+                }
+                "--test-output-size-failed" => {
+                    if let Ok(size) = value()?.parse() {
+                        options.output_size_failed = Some(size);
+                    }
+                }
+                "--test-output-truncation" => {
+                    let mode = value()?;
+                    if !matches!(mode, "head" | "middle" | "tail") {
+                        return Err(format!(
+                            "Invalid value for '--test-output-truncation': {mode}"
+                        ));
+                    }
+                    options.output_truncation = mode.into();
                 }
                 "--output-junit" => {
                     let path = value()?;
