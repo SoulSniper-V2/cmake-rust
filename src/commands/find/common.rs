@@ -158,10 +158,13 @@ impl Options {
                     result.push(path.clone());
                 } else if path.is_empty() || path.starts_with('~') {
                     result.push(String::new());
-                } else if path.trim_matches('/').is_empty() {
-                    result.push(root.clone());
                 } else {
-                    result.push(format!("{root}/{}", path.trim_start_matches('/')));
+                    let (_, rest) = crate::commands::legacy_fs::split_root(path);
+                    result.push(if rest.is_empty() {
+                        root.clone()
+                    } else {
+                        format!("{root}/{rest}")
+                    });
                 }
             }
         }

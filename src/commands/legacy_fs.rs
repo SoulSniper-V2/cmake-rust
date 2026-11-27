@@ -191,7 +191,7 @@ fn filename_directory(path: &str) -> String {
     path
 }
 
-fn split_root(path: &str) -> (&str, &str) {
+pub(super) fn split_root(path: &str) -> (&str, &str) {
     if let Some(rest) = path
         .strip_prefix("//")
         .or_else(|| path.strip_prefix("\\\\"))
