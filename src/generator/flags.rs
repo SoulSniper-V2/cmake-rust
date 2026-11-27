@@ -13,8 +13,8 @@ pub(crate) use compile::{
 };
 pub(crate) use compile::{FlagCls, classified_flags_for_source};
 pub use compile::{
-    compile_target_vars, compile_vars_with_source_props, source_define_flags, source_include_flags,
-    source_rule_flags,
+    compile_target_vars, compile_target_vars_for_arch, compile_vars_with_source_props,
+    source_define_flags, source_include_flags, source_rule_flags,
 };
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{
