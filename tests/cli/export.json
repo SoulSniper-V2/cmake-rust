@@ -35,5 +35,40 @@
     "inspect": [
       "b/build.ninja"
     ]
+  },
+  {
+    "name": "exported-object-path-collapse",
+    "steps": [
+      {
+        "argv": [
+          "-S",
+          "src",
+          "-B",
+          "b",
+          "-G",
+          "Ninja"
+        ]
+      },
+      {
+        "argv": [
+          "-S",
+          "consumer",
+          "-B",
+          "cb",
+          "-G",
+          "Ninja"
+        ]
+      }
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 4.1)\nproject(ExportObjectPath C)\nadd_subdirectory(sub)\nexport(TARGETS obj NAMESPACE x:: FILE ${CMAKE_CURRENT_BINARY_DIR}/xTargets.cmake)\nfile(WRITE ${CMAKE_CURRENT_BINARY_DIR}/xConfig.cmake \"include(\\\"${CMAKE_CURRENT_BINARY_DIR}/xTargets.cmake\\\")\n\")\n",
+      "src/sub/CMakeLists.txt": "add_library(obj OBJECT obj.c)\n",
+      "src/sub/obj.c": "void obj(void) {}\n",
+      "consumer/CMakeLists.txt": "cmake_minimum_required(VERSION 4.1)\nproject(ConsumeObjectPath C)\nfind_package(x REQUIRED PATHS {work}/b NO_DEFAULT_PATH)\nadd_executable(app main.c)\ntarget_link_libraries(app PRIVATE x::obj)\n",
+      "consumer/main.c": "int main(void) { return 0; }\n"
+    },
+    "inspect": [
+      "cb/build.ninja"
+    ]
   }
 ]
