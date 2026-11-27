@@ -48,38 +48,6 @@ pub fn parse_replace_expression(expr: &str) -> Result<Vec<Segment>, String> {
     Ok(replacements)
 }
 
-/// Counts capturing groups the way kwsys `regnpar` does: every unescaped `(`
-/// outside a bracket expression (brackets have no backslash handling and an
-/// immediate `]` or `-` is literal).
-pub fn count_groups(pattern: &str) -> usize {
-    let bytes = pattern.as_bytes();
-    let mut groups = 0usize;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => {
-                i += 1;
-            }
-            b'[' => {
-                i += 1;
-                if i < bytes.len() && bytes[i] == b'^' {
-                    i += 1;
-                }
-                if i < bytes.len() && matches!(bytes[i], b']' | b'-') {
-                    i += 1;
-                }
-                while i < bytes.len() && bytes[i] != b']' {
-                    i += 1;
-                }
-            }
-            b'(' => groups += 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    groups
-}
-
 /// `RegexReplace` (`cmStringReplaceHelper::Replace`).
 pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
     let regex = &args[2];
@@ -103,7 +71,6 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
             ));
         }
     };
-    let num_groups = count_groups(regex);
 
     let input = cm_join(&args[5..], "", "");
     let old_policy = old_bol(interp);
@@ -125,7 +92,7 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
             match replacement {
                 Segment::Literal(text) => output.extend_from_slice(&crate::bytes::encode(text)),
                 Segment::Group(n) => {
-                    if *n > num_groups {
+                    if *n > re.num_groups() {
                         return err(format!(
                             "sub-command REGEX, mode REPLACE: replace expression \"{replace}\" \
                              contains an out-of-range escape for regex \"{regex}\"."

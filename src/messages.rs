@@ -92,7 +92,11 @@ pub fn format_text(text: &str, indent: usize) -> String {
         let last = end.is_none();
         let line = match end {
             Some(end) => &text[start..end],
-            None => &text[start..],
+            // The formatter constructs the final line from a C string.
+            None => {
+                let tail = &text[start..];
+                tail.split_once('\0').map_or(tail, |(prefix, _)| prefix)
+            }
         };
         if line.starts_with(' ') {
             out.push_str(&padding);

@@ -139,12 +139,18 @@ impl Match {
 #[derive(Clone)]
 pub struct Regex {
     program: Vec<u8>,
+    num_groups: usize,
     regstart: u8,             // byte that must begin a match; 0 = none obvious
     reganch: bool,            // match is anchored at beginning-of-line
     regmust: Option<Vec<u8>>, // literal that must appear in any match
 }
 
 impl Regex {
+    /// The number of explicit capture groups in the compiled expression.
+    pub fn num_groups(&self) -> usize {
+        self.num_groups
+    }
+
     /// Compile `pattern`. Mirrors `RegularExpression::compile(char
     /// const*)`, including the C-string convention that the pattern ends
     /// at its first NUL byte.
@@ -173,6 +179,7 @@ impl Regex {
 
         let mut re = Regex {
             program: comp.code,
+            num_groups: comp.regnpar - 1,
             regstart: 0,
             reganch: false,
             regmust: None,

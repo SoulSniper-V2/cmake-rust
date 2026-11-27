@@ -292,39 +292,6 @@ struct ReplaceHelper {
     replace_expression: String,
     replacements: Vec<Replacement>,
     error: Option<String>,
-    num_groups: usize,
-}
-
-/// Count capture groups in the kwsys regex dialect: every unescaped `(`
-/// outside a bracket expression. Bracket expressions do not treat `\` as
-/// an escape; an immediate `]` or `-` is literal, matching kwsys `regnpar`.
-fn count_groups(pattern: &str) -> usize {
-    let bytes = pattern.as_bytes();
-    let mut count = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => {
-                i += 1;
-            }
-            b'[' => {
-                i += 1;
-                if i < bytes.len() && bytes[i] == b'^' {
-                    i += 1;
-                }
-                if i < bytes.len() && matches!(bytes[i], b']' | b'-') {
-                    i += 1;
-                }
-                while i < bytes.len() && bytes[i] != b']' {
-                    i += 1;
-                }
-            }
-            b'(' => count += 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    count
 }
 
 impl ReplaceHelper {
@@ -336,7 +303,6 @@ impl ReplaceHelper {
         };
         let mut helper = ReplaceHelper {
             regex_string: regex.to_owned(),
-            num_groups: count_groups(regex),
             regex: compiled,
             replace_expression: replace.to_owned(),
             replacements: Vec::new(),
@@ -415,7 +381,7 @@ impl ReplaceHelper {
                 match replacement {
                     Replacement::Text(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
                     Replacement::Group(n) => {
-                        if *n > self.num_groups {
+                        if *n > self.regex.num_groups() {
                             return Err(OutOfRange(format!(
                                 "replace expression \"{}\" contains an out-of-range escape for regex \"{}\"",
                                 self.replace_expression, self.regex_string
