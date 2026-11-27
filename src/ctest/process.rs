@@ -210,13 +210,13 @@ fn environment(test: &Test, options: &Options) -> Result<Environment, Vec<String
     for spec in test.list("ENVIRONMENT_MODIFICATION") {
         let Some((name, operation)) = spec.split_once('=') else {
             errors.push(format!(
-                "CMake Error: Error: Missing `=` after the variable name in: {spec}\n\n"
+                "Error: Missing `=` after the variable name in: {spec}\n\n"
             ));
             continue;
         };
         let Some((op, value)) = operation.split_once(':') else {
             errors.push(format!(
-                "CMake Error: Error: Missing `:` after the operation in: {spec}\n\n"
+                "Error: Missing `:` after the operation in: {spec}\n\n"
             ));
             continue;
         };
@@ -261,7 +261,7 @@ fn environment(test: &Test, options: &Options) -> Result<Environment, Vec<String
             }
             _ => {
                 errors.push(format!(
-                    "CMake Error: Error: Unrecognized environment manipulation argument: {op}\n\n"
+                    "Error: Unrecognized environment manipulation argument: {op}\n\n"
                 ));
                 continue;
             }

@@ -36,6 +36,7 @@ struct Log {
     progress: bool,
     progress_line: bool,
     file: Option<std::fs::File>,
+    pub(in crate::ctest) system_error: bool,
 }
 
 impl Log {
@@ -48,6 +49,7 @@ impl Log {
                 && options.output_log.is_none()
                 && crate::stdio::stdout_is_vt100(),
             progress_line: false,
+            system_error: false,
             file: options.output_log.as_ref().and_then(|path| {
                 if options.script {
                     std::fs::OpenOptions::new()
@@ -67,6 +69,11 @@ impl Log {
     }
 
     fn error(&mut self, text: &str) {
+        if text.starts_with("Error: Missing `")
+            || text.starts_with("Error: Unrecognized environment manipulation argument:")
+        {
+            self.system_error = true;
+        }
         self.write(text, true);
     }
 
@@ -269,6 +276,20 @@ pub(in crate::ctest) fn execute_detailed(
     }
     let ignore = read_custom(&binary, log);
     log.output(&format!("Test project {}\n", dir.display()));
+    if options.script
+        && !options.output_truncation.is_empty()
+        && !matches!(
+            options.output_truncation.as_str(),
+            "head" | "middle" | "tail"
+        )
+    {
+        log.error(&format!(
+            "Invalid value for CTEST_CUSTOM_TEST_OUTPUT_TRUNCATION: {}\n",
+            options.output_truncation
+        ));
+        log.system_error = true;
+        return (8, false);
+    }
     let started = Instant::now();
     let start_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

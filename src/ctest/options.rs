@@ -76,6 +76,7 @@ pub(super) struct Options {
     pub name_file: Option<PathBuf>,
     pub exclude_name_file: Option<PathBuf>,
     pub parallel: Option<usize>,
+    pub parallel_explicit: bool,
     pub test_load: Option<u64>,
     pub timeout: f64,
     pub repeat: Option<(Repeat, usize)>,
@@ -554,6 +555,7 @@ impl Options {
                         _ => None,
                     };
                     parallel_set = true;
+                    options.parallel_explicit = true;
                 }
                 "-S" | "--script" | "-SR" | "--script-run" => {
                     let script = collapse_full_path(
@@ -740,6 +742,7 @@ impl Options {
                             .map_err(|_| format!("'-j' given invalid value '{level}'"))?,
                     );
                     parallel_set = true;
+                    options.parallel_explicit = true;
                 }
                 _ if arg.starts_with('-') => {
                     return Err(format!(

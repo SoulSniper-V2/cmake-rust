@@ -1586,6 +1586,13 @@ fn test_options(interp: &Interp, binary: &Path) -> Options {
             .get_def("CTEST_TEST_TIMEOUT")
             .map_or(600.0, super::options::number);
     }
+    if !options.parallel_explicit {
+        options.parallel = match std::env::var("CTEST_PARALLEL_LEVEL") {
+            Ok(value) if value.trim().is_empty() => None,
+            Ok(value) => value.trim().parse::<usize>().ok().or(Some(1)),
+            Err(_) => Some(1),
+        };
+    }
     options
 }
 
@@ -1729,13 +1736,16 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
         options.index = format!("{start},{end},{stride}");
     }
     if let Some(value) = values.get("PARALLEL_LEVEL") {
-        if !value.is_empty() {
+        if value.is_empty() {
+            options.parallel = None;
+        } else {
             match value.parse::<usize>() {
                 Ok(level) => options.parallel = Some(level),
-                Err(_) => handler_error(
-                    interp,
-                    &format!("Invalid value for 'PARALLEL_LEVEL' : {value}\n"),
-                ),
+                Err(_) => {
+                    handler_error(interp, &format!("ParallelLevel invalid value: {value}\n"));
+                    interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+                    return Ok(());
+                }
             }
         }
     }
@@ -1755,6 +1765,7 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         if options.repeat.is_none() {
             handler_error(interp, &format!("Repeat option invalid value: {value}\n"));
+            interp.ext.ctest_script.as_mut().unwrap().had_error = true;
             if let Some(variable) = &return_value {
                 interp.set_def(variable, "-1");
             }
@@ -1808,6 +1819,7 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     let old_dir = std::env::current_dir().unwrap_or_default();
     let (code, no_tests) = execute_detailed(binary, options, &mut log);
+    let system_error = log.system_error;
     let _ = std::env::set_current_dir(old_dir);
     // Dashboard handlers use legacy no-tests semantics unless the explicit
     // error action is selected: an empty test set is not itself a handler
@@ -1816,7 +1828,7 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(variable) = return_value {
         interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
-    if no_tests {
+    if no_tests || system_error {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
     }
     Ok(())
