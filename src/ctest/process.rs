@@ -376,9 +376,34 @@ impl Invocation {
                 .map_or(1.0, |value| number(value));
             (signal_name.to_owned(), signal, grace)
         });
+        let mut exe = exe;
+        let mut args = test.command[1..].to_vec();
+        if !options.memcheck_type.is_empty() {
+            let variable = match options.memcheck_type.as_str() {
+                "AddressSanitizer" => "ASAN_OPTIONS",
+                "LeakSanitizer" => "LSAN_OPTIONS",
+                "ThreadSanitizer" => "TSAN_OPTIONS",
+                "MemorySanitizer" => "MSAN_OPTIONS",
+                _ => "UBSAN_OPTIONS",
+            };
+            let log_file = format!(
+                "{}/MemoryChecker.{}.log",
+                options.memcheck_log_dir, test.index
+            );
+            let extra = if options.memcheck_sanitizer_options.is_empty() {
+                String::new()
+            } else {
+                format!(":{}", options.memcheck_sanitizer_options)
+            };
+            args.insert(0, exe.clone());
+            args.insert(0, format!("{variable}=log_path='{log_file}'{extra}"));
+            args.insert(0, "env".into());
+            args.insert(0, "-E".into());
+            exe = options.memcheck_cmake_command.clone();
+        }
         Some(Self {
             exe,
-            args: test.command[1..].to_vec(),
+            args,
             dir: test.dir.clone(),
             affinity,
             env,

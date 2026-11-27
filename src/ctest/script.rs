@@ -426,6 +426,145 @@ fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
+fn sanitizer_defect(line: &str, checker: &str) -> Option<String> {
+    match checker {
+        "AddressSanitizer" => line
+            .split("ERROR: AddressSanitizer: ")
+            .nth(1)
+            .map(|rest| rest.split(" on").next().unwrap_or(rest).to_owned()),
+        "LeakSanitizer" => {
+            if line.contains("Direct leak of ") {
+                Some("Direct leak".into())
+            } else if line.contains("Indirect leak of ") {
+                Some("Indirect leak".into())
+            } else {
+                None
+            }
+        }
+        "ThreadSanitizer" => line
+            .split("WARNING: ThreadSanitizer: ")
+            .nth(1)
+            .map(|rest| {
+                rest.split(" (pid=")
+                    .next()
+                    .unwrap_or(rest)
+                    .trim()
+                    .to_owned()
+            })
+            .filter(|defect| !defect.is_empty()),
+        "MemorySanitizer" => line
+            .split("WARNING: MemorySanitizer: ")
+            .nth(1)
+            .map(|rest| rest.trim().to_owned())
+            .filter(|defect| !defect.is_empty()),
+        "UndefinedBehaviorSanitizer" => line
+            .split("runtime error: ")
+            .nth(1)
+            .map(|rest| rest.trim().to_owned())
+            .filter(|defect| !defect.is_empty()),
+        _ => None,
+    }
+}
+
+fn postprocess_sanitizer_logs(
+    interp: &Interp,
+    temporary: &Path,
+    checker: &str,
+    quiet: bool,
+) -> usize {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(temporary) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("MemoryChecker.") && name.contains(".log.") {
+                files.push(entry.path());
+            }
+        }
+    }
+    files.sort();
+    let mut order = Vec::<String>::new();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    let mut total = 0;
+    let mut per_test = Vec::<(usize, usize)>::new();
+    for file in files {
+        let contents = std::fs::read_to_string(&file).unwrap_or_default();
+        let mut test_defects = 0;
+        for line in contents.lines() {
+            if let Some(defect) = sanitizer_defect(line, checker) {
+                if !counts.contains_key(&defect) {
+                    order.push(defect.clone());
+                }
+                *counts.entry(defect).or_insert(0) += 1;
+                test_defects += 1;
+                total += 1;
+            }
+        }
+        let test_number = file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| {
+                name.strip_prefix("MemoryChecker.")?
+                    .split('.')
+                    .next()?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .unwrap_or(0);
+        per_test.push((test_number, test_defects));
+        if let Some(name) = file.file_name().and_then(|name| name.to_str())
+            && let Some((base, _pid)) = name.rsplit_once('.')
+        {
+            let target = file.with_file_name(base);
+            let source = file.display().to_string();
+            if std::fs::rename(&file, &target).is_ok() {
+                let verbose = interp
+                    .ext
+                    .ctest_script
+                    .as_ref()
+                    .is_some_and(|state| state.options.verbose);
+                if verbose {
+                    handler_output(
+                        interp,
+                        &format!("Renaming: {source} to: {}\n", target.display()),
+                        quiet,
+                    );
+                }
+            }
+        }
+    }
+    handler_output(interp, "-- Processing memory checking output:\n", quiet);
+    for (test, defects) in per_test {
+        if defects > 0 {
+            handler_output(
+                interp,
+                &format!(
+                    "1/1 MemCheck: #{test}: TestSan ..........................   Defects: {defects}\n"
+                ),
+                quiet,
+            );
+        }
+    }
+    handler_output(
+        interp,
+        "MemCheck log files can be found here: (<#> corresponds to test number)\n",
+        quiet,
+    );
+    handler_output(
+        interp,
+        &format!("{}/MemoryChecker.<#>.log\n", temporary.display()),
+        quiet,
+    );
+    handler_output(interp, "Memory checking results:\n", quiet);
+    for defect in order {
+        handler_output(
+            interp,
+            &format!("{} - {}\n", defect, counts[&defect]),
+            quiet,
+        );
+    }
+    total
+}
+
 fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     let (values, quiet) = match parse_return_build(args, &["DEFECT_COUNT"]) {
         Ok(parsed) => parsed,
@@ -442,8 +581,16 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     );
     let checker = interp.get_safe("CTEST_MEMORYCHECK_COMMAND");
     let checker_type = interp.get_safe("CTEST_MEMORYCHECK_TYPE");
-    let valid = !checker.is_empty() && Path::new(&checker).is_file();
-    if !valid || checker_type.is_empty() {
+    let sanitizer = matches!(
+        checker_type.as_str(),
+        "AddressSanitizer"
+            | "LeakSanitizer"
+            | "ThreadSanitizer"
+            | "MemorySanitizer"
+            | "UndefinedBehaviorSanitizer"
+    );
+    let valid = sanitizer || (!checker.is_empty() && Path::new(&checker).is_file());
+    if !valid {
         handler_error(
             interp,
             "Memory checker (MemoryCheckCommand) not set, or cannot find the specified program.\n",
@@ -456,11 +603,65 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         return Ok(());
     }
+    if !sanitizer {
+        if let Some(variable) = values.get("RETURN_VALUE") {
+            interp.set_def(variable, "-1");
+        }
+        if let Some(variable) = values.get("DEFECT_COUNT") {
+            interp.set_def(variable, "0");
+        }
+        return Ok(());
+    }
+
+    if interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.extra_verbose)
+    {
+        handler_output(
+            interp,
+            &format!(
+                "SetCTestConfigurationFromCMakeVariable:MemoryCheckType:CTEST_MEMORYCHECK_TYPE\nSetCTestConfiguration:MemoryCheckType:{checker_type}\n"
+            ),
+            quiet,
+        );
+        let sanitizer_options = interp.get_safe("CTEST_MEMORYCHECK_SANITIZER_OPTIONS");
+        if !sanitizer_options.is_empty() {
+            handler_output(
+                interp,
+                &format!(
+                    "SetCTestConfigurationFromCMakeVariable:MemoryCheckSanitizerOptions:CTEST_MEMORYCHECK_SANITIZER_OPTIONS\nSetCTestConfiguration:MemoryCheckSanitizerOptions:{sanitizer_options}\n"
+                ),
+                quiet,
+            );
+        }
+    }
+
+    let temporary = binary.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+    let mut options = test_options(interp, &binary);
+    options.memcheck_type = checker_type.clone();
+    options.memcheck_sanitizer_options = interp.get_safe("CTEST_MEMORYCHECK_SANITIZER_OPTIONS");
+    options.memcheck_log_dir = temporary.to_string_lossy().into_owned();
+    options.memcheck_cmake_command = interp.cmake_command.clone();
+    let handler_verbose = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.verbose);
+    let mut log = Log::new(&options);
+    log.suppress_output = !handler_verbose || quiet;
+    let old_dir = std::env::current_dir().unwrap_or_default();
+    let (code, no_tests) = execute_detailed(binary.clone(), options, &mut log);
+    let _ = std::env::set_current_dir(old_dir);
+    let defects = postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet);
+    let result_code = if no_tests && code == 8 { 0 } else { code };
     if let Some(variable) = values.get("RETURN_VALUE") {
-        interp.set_def(variable, "-1");
+        interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
     if let Some(variable) = values.get("DEFECT_COUNT") {
-        interp.set_def(variable, "0");
+        interp.set_def(variable, defects.to_string());
     }
     Ok(())
 }
