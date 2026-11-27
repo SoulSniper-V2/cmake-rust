@@ -112,7 +112,7 @@ fn array_strings(values: impl IntoIterator<Item = String>) -> Json {
 pub(super) fn package_files(
     generator: &mut Generator,
     interp: &mut crate::interp::Interp,
-    _log: &mut Logger,
+    log: &mut Logger,
 ) -> bool {
     let filename = generator
         .package_file_names
@@ -273,11 +273,7 @@ pub(super) fn package_files(
 
     if let Some(script) = option_nonempty(interp, "CPACK_EXTERNAL_PACKAGE_SCRIPT") {
         if !std::path::Path::new(&script).is_absolute() {
-            // Reported by the caller through CPack's normal error path in
-            // upstream; use the same text here.
-            eprintln!(
-                "CPack Error: CPACK_EXTERNAL_PACKAGE_SCRIPT does not contain a full file path"
-            );
+            log.error("CPACK_EXTERNAL_PACKAGE_SCRIPT does not contain a full file path");
             return false;
         }
         if !interp.read_list_file(&script) || interp.error || interp.fatal {
