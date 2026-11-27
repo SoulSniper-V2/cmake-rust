@@ -80,6 +80,181 @@ fn open_writer(file: File, compress: Compress, format: &str, threads: i32) -> Op
 }
 
 #[allow(clippy::too_many_lines)]
+fn write_dbgsym_ddeb(
+    generator: &mut Generator,
+    interp: &crate::interp::Interp,
+    log: &mut Logger,
+) -> bool {
+    let Some(workdir) = option_nonempty(interp, "GEN_DBGSYMDIR") else {
+        return true;
+    };
+    if !is_on(interp, "GEN_CPACK_DEBIAN_DEBUGINFO_PACKAGE") {
+        return true;
+    }
+    let files = recursive_files(&workdir);
+    if files.is_empty() {
+        log.error("Cannot find any files in the installed directory");
+        return false;
+    }
+
+    let package_name = option(interp, "GEN_CPACK_DEBIAN_PACKAGE_NAME").unwrap_or_default();
+    let package_lower = package_name.to_lowercase();
+    let version = option(interp, "GEN_CPACK_DEBIAN_PACKAGE_VERSION").unwrap_or_default();
+    let mut control = vec![
+        ("Package".to_owned(), format!("{package_lower}-dbgsym")),
+        ("Package-Type".to_owned(), "ddeb".to_owned()),
+        ("Version".to_owned(), version.clone()),
+        ("Auto-Built-Package".to_owned(), "debug-symbols".to_owned()),
+        (
+            "Depends".to_owned(),
+            format!("{package_name} (= {version})"),
+        ),
+        ("Section".to_owned(), "debug".to_owned()),
+        ("Priority".to_owned(), "optional".to_owned()),
+        (
+            "Architecture".to_owned(),
+            option(interp, "GEN_CPACK_DEBIAN_PACKAGE_ARCHITECTURE").unwrap_or_default(),
+        ),
+        (
+            "Maintainer".to_owned(),
+            option(interp, "GEN_CPACK_DEBIAN_PACKAGE_MAINTAINER").unwrap_or_default(),
+        ),
+        (
+            "Description".to_owned(),
+            format!("debug symbols for {package_lower}"),
+        ),
+    ];
+    if let Some(source) = option_nonempty(interp, "GEN_CPACK_DEBIAN_PACKAGE_SOURCE") {
+        control.push(("Source".to_owned(), source));
+    }
+    if let Some(build_ids) = option_nonempty(interp, "GEN_BUILD_IDS") {
+        control.push(("Build-Ids".to_owned(), build_ids));
+    }
+    control.sort();
+
+    let mut control_text = String::new();
+    for (key, value) in &control {
+        control_text.push_str(&format!("{key}: {value}\n"));
+    }
+    let total_size: u64 = files
+        .iter()
+        .map(|file| fs::metadata(file).map(|m| m.len()).unwrap_or(0))
+        .sum();
+    control_text.push_str(&format!("Installed-Size: {}\n", total_size.div_ceil(1024)));
+    if fs::write(format!("{workdir}/control"), control_text).is_err()
+        || fs::write(format!("{workdir}/debian-binary"), "2.0\n").is_err()
+    {
+        return false;
+    }
+
+    let (compress, suffix) =
+        compression(option(interp, "GEN_CPACK_DEBIAN_COMPRESSION_TYPE").as_deref());
+    let archive_type =
+        option(interp, "GEN_CPACK_DEBIAN_ARCHIVE_TYPE").unwrap_or_else(|| "gnutar".into());
+    let threads = option(interp, "CPACK_THREADS")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+
+    let data_name = format!("{workdir}/data.tar{suffix}");
+    let Some(file) = File::create(&data_name).ok() else {
+        return false;
+    };
+    let Some(mut data) = open_writer(file, compress, &archive_type, threads) else {
+        return false;
+    };
+    if !data.open() {
+        return false;
+    }
+    data.set_uid_gid(0, 0);
+    data.set_uname_gname("root", "root");
+    for file in ordered_with_parents(&files, &workdir) {
+        if !data.add_options(&file, workdir.len(), Some("."), false) {
+            log.error(&format!("Problem adding file to tar:\n#top level directory: {workdir}\n#file: {file}\n#error:{}", data.error()));
+            return false;
+        }
+    }
+    drop(data);
+
+    let temporary_dir =
+        option(interp, "CPACK_TEMPORARY_DIRECTORY").unwrap_or_else(|| workdir.clone());
+    let prefix = format!("{temporary_dir}/");
+    let mut md5s = String::new();
+    for file in &files {
+        let meta = match fs::symlink_metadata(file) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        let relative = file.strip_prefix(&prefix).unwrap_or(file);
+        md5s.push_str(&format!("{}  {relative}\n", md5_file(file)));
+    }
+    let md5name = format!("{workdir}/md5sums");
+    if fs::write(&md5name, md5s).is_err() {
+        return false;
+    }
+
+    let control_name = format!("{workdir}/control.tar.gz");
+    let Some(file) = File::create(&control_name).ok() else {
+        return false;
+    };
+    let Some(mut control_tar) = open_writer(file, Compress::GZip, &archive_type, 0) else {
+        return false;
+    };
+    if !control_tar.open() {
+        return false;
+    }
+    control_tar.set_uid_gid(0, 0);
+    control_tar.set_uname_gname("root", "root");
+    control_tar.set_permissions(0o644);
+    if !control_tar.add_options(&md5name, workdir.len(), Some("."), false)
+        || !control_tar.add_options(
+            &format!("{workdir}/control"),
+            workdir.len(),
+            Some("."),
+            false,
+        )
+    {
+        return false;
+    }
+    drop(control_tar);
+
+    let output_name = match option_nonempty(interp, "GEN_CPACK_DBGSYM_OUTPUT_FILE_NAME") {
+        Some(name) => name,
+        None => return false,
+    };
+    let output_root =
+        option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_else(|| generator.toplevel.clone());
+    let output_path = format!("{output_root}/{output_name}");
+    let Some(file) = File::create(&output_path).ok() else {
+        return false;
+    };
+    let Some(mut deb) = open_writer(file, Compress::None, "arbsd", 0) else {
+        return false;
+    };
+    if !deb.open() {
+        return false;
+    }
+    deb.set_uid_gid(0, 0);
+    deb.set_uname_gname("root", "root");
+    let tl = format!("{workdir}/");
+    if !deb.add_options(&format!("{tl}debian-binary"), tl.len(), None, false)
+        || !deb.add_options(&format!("{tl}control.tar.gz"), tl.len(), None, false)
+        || !deb.add_options(&format!("{tl}data.tar{suffix}"), tl.len(), None, false)
+    {
+        log.error(&format!("Error creating debian package:\n#top level directory: {}\n#file: {output_name}\n#error:{}", generator.toplevel, deb.error()));
+        return false;
+    }
+    drop(deb);
+    generator.package_file_names.push(format!(
+        "{}/{output_name}",
+        option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_else(|| generator.toplevel.clone())
+    ));
+    true
+}
+
+#[allow(clippy::too_many_lines)]
 pub(super) fn package_files(
     generator: &mut Generator,
     interp: &mut crate::interp::Interp,
@@ -352,7 +527,7 @@ fn package_all_in_one(
     {
         return false;
     }
-    if is_on(interp, "GEN_CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS")
+    if is_on(interp, "CPACK_DEBIAN_PACKAGE_GENERATE_SHLIBS")
         && let Some(shlibs) = option_nonempty(interp, "GEN_CPACK_DEBIAN_PACKAGE_SHLIBS")
     {
         let shlibs_name = format!("{workdir}/shlibs");
@@ -444,5 +619,5 @@ fn package_all_in_one(
         "{}/{output_name}",
         option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_else(|| generator.toplevel.clone())
     ));
-    true
+    write_dbgsym_ddeb(generator, interp, log)
 }
