@@ -241,18 +241,8 @@ fn add_test(
         empty_argument_policy: interp.policy_status("CMP0178"),
         emulator_policy: interp.policy_status("CMP0158"),
         backtrace: vec![
-            Frame {
-                file: file.clone(),
-                line: 0,
-                name: None,
-                deferred: false,
-            },
-            Frame {
-                file,
-                line,
-                name: Some("add_test".into()),
-                deferred: false,
-            },
+            Frame::directory(file.clone(), 0),
+            Frame::new(file, line, Some("add_test".into()), false),
         ],
     });
 }

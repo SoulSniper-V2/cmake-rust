@@ -17,6 +17,8 @@ use crate::state::{FileSet, Scope, Target, TargetKind};
 use crate::util::{expand_list, is_on_opt, relative_if_under};
 
 /// The deduplicated `backtraceGraph` (`BacktraceData`).
+type NodeKey = (u64, u32, usize, Option<u32>, Option<u32>);
+
 #[derive(Default)]
 struct BtGraph {
     files: Vec<String>,
@@ -24,7 +26,7 @@ struct BtGraph {
     commands: Vec<String>,
     command_map: HashMap<String, u32>,
     nodes: Vec<Json>,
-    node_map: HashMap<(u32, usize, Option<u32>, Option<u32>), u32>,
+    node_map: HashMap<NodeKey, u32>,
     top_source: String,
 }
 
@@ -68,7 +70,7 @@ impl BtGraph {
             .filter(|name| !name.is_empty())
             .map(|name| self.command(name));
         let parent = (depth > 0).then(|| self.add_from(frames, depth - 1));
-        let key = (file, frame.line, command, parent);
+        let key = (frame.id, file, frame.line, command, parent);
         if let Some(i) = self.node_map.get(&key) {
             return *i;
         }

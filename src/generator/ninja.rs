@@ -2938,12 +2938,10 @@ impl<'a> NinjaGenerator<'a> {
                 .cloned()
                 .unwrap_or_else(|| format!("{}/CMakeLists.txt", directory.source_dir));
             self.ctx.error(
-                vec![crate::messages::Frame {
-                    file: std::rc::Rc::from(file.as_str()),
-                    line: 0,
-                    name: None,
-                    deferred: false,
-                }],
+                vec![crate::messages::Frame::directory(
+                    std::rc::Rc::from(file.as_str()),
+                    target.makefile,
+                )],
                 format!(
                     "The language {language} was requested for compilation but was not enabled. To enable a language it needs to be specified in a 'project' or 'enable_language' command in the root CMakeLists.txt"
                 ),

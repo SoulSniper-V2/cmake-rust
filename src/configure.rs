@@ -1240,12 +1240,7 @@ fn configure_root(interp: &mut Interp, list_file: &str) {
         let text = format!(
             "No cmake_minimum_required command is present.  A line of code such as\n  cmake_minimum_required(VERSION {major}.{minor})\nshould be added at the top of the file.  The version specified may be lower if you wish to support older CMake versions for this project.  For more information run \"cmake --help-policy CMP0000\"."
         );
-        let frame = Frame {
-            file: std::rc::Rc::from(list_file),
-            line: 0,
-            name: None,
-            deferred: false,
-        };
+        let frame = Frame::directory(std::rc::Rc::from(list_file), 0);
         interp.issue_at(MessageType::FatalError, &text, &[frame]);
         interp.set_fatal();
     }

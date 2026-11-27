@@ -421,12 +421,10 @@ impl Interp {
             exclude_from_all: false,
             deferred: Vec::new(),
             defer_counter: 0,
-            backtrace: vec![Frame {
-                file: Rc::from(format!("{home_source}/CMakeLists.txt").as_str()),
-                line: 0,
-                name: None,
-                deferred: false,
-            }],
+            backtrace: vec![Frame::directory(
+                Rc::from(format!("{home_source}/CMakeLists.txt").as_str()),
+                0,
+            )],
         });
         interp.mf_stack.push(0);
         crate::commands::register_all(&mut interp);
@@ -890,12 +888,10 @@ impl Interp {
             defer_counter: 0,
             // cmMakefile::Configure pushes the directory's list-file
             // context as the permanent bottom of its backtrace.
-            backtrace: vec![Frame {
-                file: Rc::from(self.project_list_file(source)),
-                line: 0,
-                name: None,
-                deferred: false,
-            }],
+            backtrace: vec![Frame::directory(
+                Rc::from(self.project_list_file(source)),
+                index,
+            )],
         });
         self.makefiles[parent].children.push(index);
         // cmState::CreateBuildsystemDirectorySnapshot runs
@@ -1275,12 +1271,8 @@ impl Interp {
         self.ext
             .execution_file_bases
             .push(self.ext.execution_files.len());
-        self.backtrace.push(Frame {
-            file: Rc::from(path),
-            line: 0,
-            name: None,
-            deferred: false,
-        });
+        self.backtrace
+            .push(Frame::directory(Rc::from(path), self.mf_index()));
         let saved = self.push_list_file_vars(path);
         // `cmMakefile::Configure` sets CMAKE_PARENT_LIST_FILE to the
         // directory's own list file for the duration of the configure;
@@ -1446,12 +1438,12 @@ impl Interp {
         let (commands, diags) = lexer::parse_bytes(&path, bytes);
         for diag in &diags {
             let mut backtrace = self.backtrace.clone();
-            backtrace.push(Frame {
-                file: path.clone(),
-                line: diag.line,
-                name: diag.command.as_deref().map(Rc::from),
-                deferred: false,
-            });
+            backtrace.push(Frame::new(
+                path.clone(),
+                diag.line,
+                diag.command.as_deref().map(Rc::from),
+                false,
+            ));
             let kind = if diag.warning {
                 MessageType::AuthorWarning
             } else {
@@ -1499,12 +1491,8 @@ impl Interp {
     pub fn read_dependent_file(&mut self, path: &str, no_policy_scope: bool) -> bool {
         let path = util::collapse_full_path(path, &self.current_source_dir());
         let depth_before = self.mf().policies.len();
-        self.backtrace.push(Frame {
-            file: Rc::from(path.as_str()),
-            line: 0,
-            name: None,
-            deferred: false,
-        });
+        self.backtrace
+            .push(Frame::new(Rc::from(path.as_str()), 0, None, false));
         self.policy_barriers.push((self.mf_index(), depth_before));
         if !no_policy_scope {
             self.push_policy(false, PolicyMap::default());
@@ -1571,12 +1559,8 @@ impl Interp {
         self.ext
             .execution_file_bases
             .push(self.ext.execution_files.len());
-        self.backtrace.push(Frame {
-            file: Rc::from(path),
-            line: 0,
-            name: None,
-            deferred: false,
-        });
+        self.backtrace
+            .push(Frame::directory(Rc::from(path), self.mf_index()));
         let saved = self.push_list_file_vars(path);
         // `cmMakefile::Configure` explicitly sets CMAKE_PARENT_LIST_FILE to
         // the directory's own list file for the duration of the configure;
@@ -1612,12 +1596,8 @@ impl Interp {
 
     /// Runs a script file in script mode (-P) or as the top-level file.
     pub fn read_list_file(&mut self, path: &str) -> bool {
-        self.backtrace.push(Frame {
-            file: Rc::from(path),
-            line: 0,
-            name: None,
-            deferred: false,
-        });
+        self.backtrace
+            .push(Frame::new(Rc::from(path), 0, None, false));
         // ListFileScope: an inline list-file snapshot (a new policy scope).
         self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(path);
@@ -1644,12 +1624,8 @@ impl Interp {
     /// `cmMakefile::ReadListFileAsString` (cmake_language EVAL).
     pub fn run_string(&mut self, code: &str, virtual_name: &str) -> bool {
         let path = util::collapse_full_path(virtual_name, &self.current_source_dir());
-        self.backtrace.push(Frame {
-            file: Rc::from(path.as_str()),
-            line: 0,
-            name: None,
-            deferred: false,
-        });
+        self.backtrace
+            .push(Frame::new(Rc::from(path.as_str()), 0, None, false));
         // ListFileScope, as for ReadListFile.
         self.enter_policy_snapshot();
         let saved = self.push_list_file_vars(&path);
@@ -1680,6 +1656,9 @@ impl Interp {
     }
 
     fn run_deferred(&mut self, path: &str) {
+        // cmMakefile::DeferScope is one backtrace frame around the whole
+        // deferred-call loop.
+        let deferred_frame = Frame::new(Rc::from(path), 0, None, true);
         loop {
             if self.fatal {
                 return;
@@ -1695,12 +1674,7 @@ impl Interp {
             let Some(deferred) = next else {
                 return;
             };
-            self.backtrace.push(Frame {
-                file: Rc::from(path),
-                line: 0,
-                name: None,
-                deferred: true,
-            });
+            self.backtrace.push(deferred_frame.clone());
             self.ext.execution_files.push(deferred.file.to_string());
             let depth = self.mf().policies.len();
             let parsed = Rc::new(ParsedFile::new(
@@ -1910,12 +1884,12 @@ impl Interp {
     }
 
     fn frame_for(&self, file: &Rc<ParsedFile>, command: &Command) -> Frame {
-        Frame {
-            file: file.path.clone(),
-            line: command.line,
-            name: Some(Rc::from(command.name.as_str())),
-            deferred: false,
-        }
+        Frame::new(
+            file.path.clone(),
+            command.line,
+            Some(Rc::from(command.name.as_str())),
+            false,
+        )
     }
 
     /// The debugger side of `cmMakefile::CallScope`: pushes a stack frame
@@ -3548,12 +3522,7 @@ impl Interp {
         }
         if !self.fatal {
             let mut backtrace = self.backtrace.clone();
-            backtrace.push(Frame {
-                file: Rc::from(path),
-                line: 0,
-                name: None,
-                deferred: false,
-            });
+            backtrace.push(Frame::new(Rc::from(path), 0, None, false));
             self.issue_at(
                 MessageType::FatalError,
                 "cmake_policy PUSH without matching POP",

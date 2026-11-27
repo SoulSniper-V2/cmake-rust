@@ -1045,12 +1045,9 @@ pub(super) fn read_package(
 
 /// `cmMakefile::CallRAII`: push a file context without a command.
 fn push_file_frame(interp: &mut Interp, file: &str) {
-    interp.backtrace.push(Frame {
-        file: Rc::from(file),
-        line: 0,
-        name: None,
-        deferred: false,
-    });
+    interp
+        .backtrace
+        .push(Frame::new(Rc::from(file), 0, None, false));
 }
 
 impl Package {
