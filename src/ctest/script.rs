@@ -2008,6 +2008,8 @@ fn dashboard_options(interp: &Interp, binary: &Path) -> Options {
     options.dashboard_site = state.site.clone();
     options.dashboard_build_name = state.build_name.clone();
     options.dir = Some(binary.into());
+    options.labels_for_subprojects =
+        crate::util::expand_list(&interp.get_safe("CTEST_LABELS_FOR_SUBPROJECTS"), false);
     options
 }
 

@@ -802,6 +802,7 @@ pub(super) fn test_xml(
         value("totalPhysicalMemory"),
         value("processorClockFrequency"),
     );
+    xml.push_str(&subprojects_xml(options));
     if !options.change_id.is_empty() {
         xml = xml.replacen(
             "\n\t>\n",
@@ -997,6 +998,22 @@ fn site_xml_header(options: &Options) -> String {
     )
 }
 
+fn subprojects_xml(options: &Options) -> String {
+    let mut labels = options.labels_for_subprojects.clone();
+    labels.sort();
+    labels.dedup();
+    let mut xml = String::new();
+    for label in labels {
+        let _ = writeln!(
+            xml,
+            "\t<Subproject name=\"{}\">\n\t\t<Label>{}</Label>\n\t</Subproject>",
+            xml_escape(&label),
+            xml_content(&label),
+        );
+    }
+    xml
+}
+
 fn write_step_xml(
     binary: &Path,
     options: &Options,
@@ -1005,6 +1022,7 @@ fn write_step_xml(
 ) -> std::io::Result<()> {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str(&site_xml_header(options));
+    xml.push_str(&subprojects_xml(options));
     xml.push_str(&body);
     xml.push_str("</Site>\n");
     let directory = binary.join("Testing").join(&options.dashboard_tag);
