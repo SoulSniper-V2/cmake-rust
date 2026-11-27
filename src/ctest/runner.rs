@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write;
 use std::path::Path;
 use std::sync::mpsc;
@@ -202,6 +202,13 @@ struct Running {
     affinity: Vec<usize>,
     attempt: usize,
     jobserver_token: bool,
+}
+
+struct Queued {
+    position: usize,
+    allocation: Allocation,
+    affinity: Vec<usize>,
+    unavailable: Option<String>,
 }
 
 struct Session<'a> {
@@ -409,6 +416,36 @@ impl Session<'_> {
     }
 }
 
+fn start_queued(
+    tests: &[Test],
+    queued_tests: &mut VecDeque<Queued>,
+    server: &mut Jobserver,
+    session: &mut Session<'_>,
+    running: &mut [Option<Running>],
+) {
+    while let Some(queued) = queued_tests.front() {
+        if !server.try_acquire() {
+            break;
+        }
+        let position = queued.position;
+        let test = &tests[position];
+        let queued = queued_tests.pop_front().unwrap();
+        session.start(
+            test,
+            &queued.allocation,
+            &queued.affinity,
+            queued.unavailable,
+            None,
+        );
+        running[position] = Some(Running {
+            allocation: queued.allocation,
+            affinity: queued.affinity,
+            attempt: 1,
+            jobserver_token: true,
+        });
+    }
+}
+
 pub(super) struct RunContext<'a> {
     pub options: &'a Options,
     pub all_count: usize,
@@ -489,6 +526,7 @@ pub(super) fn run(
         .map(|test| parse_groups(test.property("RESOURCE_GROUPS")).unwrap_or_default())
         .collect();
     let mut running: Vec<Option<Running>> = (0..tests.len()).map(|_| None).collect();
+    let mut queued_tests = VecDeque::new();
     let mut results: Results = (0..tests.len()).map(|_| None).collect();
     let affinity_total = if tests.iter().any(|test| test.enabled("PROCESSOR_AFFINITY")) {
         processors_available()
@@ -537,6 +575,9 @@ pub(super) fn run(
         processors
     };
     loop {
+        if let Some(server) = jobserver.as_mut() {
+            start_queued(tests, &mut queued_tests, server, &mut session, &mut running);
+        }
         if !session.stop_time_passed && (!options.stop_on_failure || session.failed.is_empty()) {
             let mut occupied = 0usize;
             let mut serial = false;
@@ -569,6 +610,12 @@ pub(super) fn run(
                     serial |= test.enabled("RUN_SERIAL");
                     locks.extend(test.list("RESOURCE_LOCK").iter().cloned());
                 }
+            }
+            for queued in &queued_tests {
+                let test = &tests[queued.position];
+                occupied = occupied.saturating_add(processors(test));
+                serial |= test.enabled("RUN_SERIAL");
+                locks.extend(test.list("RESOURCE_LOCK").iter().cloned());
             }
             pending.retain(|&position| {
                 let test = &tests[position];
@@ -607,14 +654,6 @@ pub(super) fn run(
                 } else {
                     return true;
                 };
-                if let Some(server) = jobserver.as_mut()
-                    && !server.try_acquire()
-                {
-                    if unavailable.is_none() {
-                        session.resources.release(&allocation);
-                    }
-                    return true;
-                }
                 let affinity: Vec<_> = if wants_affinity {
                     session
                         .affinity_free
@@ -633,13 +672,22 @@ pub(super) fn run(
                 occupied += processors(test);
                 serial = test.enabled("RUN_SERIAL");
                 locks.extend(test.list("RESOURCE_LOCK").iter().cloned());
-                session.start(test, &allocation, &affinity, unavailable, None);
-                running[position] = Some(Running {
-                    allocation,
-                    affinity,
-                    attempt: 1,
-                    jobserver_token: jobserver.is_some(),
-                });
+                if jobserver.is_some() {
+                    queued_tests.push_back(Queued {
+                        position,
+                        allocation,
+                        affinity,
+                        unavailable,
+                    });
+                } else {
+                    session.start(test, &allocation, &affinity, unavailable, None);
+                    running[position] = Some(Running {
+                        allocation,
+                        affinity,
+                        attempt: 1,
+                        jobserver_token: false,
+                    });
+                }
                 false
             });
             if session.test_load > 0 && !load_started && !pending.is_empty() {
@@ -660,8 +708,11 @@ pub(super) fn run(
                 }
             }
         }
+        if let Some(server) = jobserver.as_mut() {
+            start_queued(tests, &mut queued_tests, server, &mut session, &mut running);
+        }
         if running.iter().all(Option::is_none) {
-            if pending.is_empty()
+            if pending.is_empty() && queued_tests.is_empty()
                 || session.stop_time_passed
                 || (options.stop_on_failure && !session.failed.is_empty())
             {
