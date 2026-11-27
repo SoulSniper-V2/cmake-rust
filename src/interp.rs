@@ -257,6 +257,8 @@ pub struct TraceConfig {
 
 pub struct Interp {
     pub mode: Mode,
+    /// The CMAKE_ROLE global property (`cmState::Role`).
+    pub role: &'static str,
     pub cache: Cache,
     scopes: Vec<Scope>,
     captured_scopes: CapturedScopes,
@@ -349,6 +351,11 @@ pub struct Interp {
 
 impl Interp {
     pub fn new(mode: Mode, home_source: &str, home_binary: &str, cmake_root: &str) -> Interp {
+        let role = match mode {
+            Mode::Project => "PROJECT",
+            Mode::Script => "SCRIPT",
+            Mode::FindPackage => "FIND_PACKAGE",
+        };
         let cmake_command = std::env::current_exe()
             .ok()
             .and_then(|path| path.canonicalize().ok())
@@ -356,6 +363,7 @@ impl Interp {
             .unwrap_or_else(|| "cmake".to_owned());
         let mut interp = Interp {
             mode,
+            role,
             cache: Cache::default(),
             scopes: vec![Scope::default()],
             captured_scopes: CapturedScopes {

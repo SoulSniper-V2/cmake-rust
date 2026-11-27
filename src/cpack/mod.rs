@@ -1697,6 +1697,7 @@ fn nuget_package_files(_gen: &mut Generator, interp: &mut Interp, log: &mut Logg
 fn new_script_interp(cwd: &str, trace: bool, trace_expand: bool) -> Interp {
     let root = crate::configure::find_cmake_root().unwrap_or_default();
     let mut interp = Interp::new(Mode::Script, cwd, cwd, &root);
+    interp.role = "CPACK";
     crate::configure::add_default_definitions(&mut interp);
     crate::configure::add_cmake_paths(&mut interp);
     if trace {
@@ -1991,6 +1992,7 @@ pub fn main() -> i32 {
         }
     };
     let mut interp = Interp::new(Mode::Script, &cwd, &cwd, &root);
+    interp.role = "CPACK";
     crate::configure::add_default_definitions(&mut interp);
     crate::configure::add_cmake_paths(&mut interp);
     if trace {
