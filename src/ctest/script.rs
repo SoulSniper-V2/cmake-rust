@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::interp::{CmdResult, Interp, err};
 use crate::util::collapse_full_path;
 
-use super::options::{Options, integer};
+use super::options::{Options, Repeat, integer};
 use super::{Log, Show, execute_detailed, report, testfile};
 
 #[derive(Clone, Debug)]
@@ -1590,33 +1590,68 @@ fn test_options(interp: &Interp, binary: &Path) -> Options {
 }
 
 fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
-    let mut build = None;
-    let mut return_value = None;
+    let keywords = [
+        "BUILD",
+        "RETURN_VALUE",
+        "START",
+        "END",
+        "STRIDE",
+        "EXCLUDE",
+        "INCLUDE",
+        "EXCLUDE_LABEL",
+        "INCLUDE_LABEL",
+        "EXCLUDE_FROM_FILE",
+        "INCLUDE_FROM_FILE",
+        "EXCLUDE_FIXTURE",
+        "EXCLUDE_FIXTURE_SETUP",
+        "EXCLUDE_FIXTURE_CLEANUP",
+        "PARALLEL_LEVEL",
+        "REPEAT",
+        "SCHEDULE_RANDOM",
+        "SCHEDULE_RANDOM_SEED",
+        "STOP_TIME",
+        "TEST_LOAD",
+        "RESOURCE_SPEC_FILE",
+        "OUTPUT_JUNIT",
+        "STOP_ON_FAILURE",
+        "APPEND",
+        "QUIET",
+    ];
+    let mut values = BTreeMap::<String, String>::new();
     let mut quiet = false;
+    let mut stop_on_failure = false;
     let mut index = 0;
     while index < args.len() {
-        match args[index].as_str() {
-            "BUILD" | "RETURN_VALUE" | "PARALLEL_LEVEL" | "INCLUDE" | "EXCLUDE"
-            | "INCLUDE_LABEL" | "EXCLUDE_LABEL" | "TEST_LOAD" | "STOP_TIME" | "SCHEDULE_RANDOM"
-            | "REPEAT" | "RESOURCE_SPEC_FILE" | "OUTPUT_JUNIT" => {
-                let key = args[index].clone();
+        let key = args[index].as_str();
+        match key {
+            "QUIET" => quiet = true,
+            "APPEND" => {}
+            "STOP_ON_FAILURE" => stop_on_failure = true,
+            "PARALLEL_LEVEL" => {
+                index += 1;
+                let value = if index < args.len() && !keywords.contains(&args[index].as_str()) {
+                    let value = args[index].clone();
+                    index += 1;
+                    value
+                } else {
+                    String::new()
+                };
+                values.insert(key.into(), value);
+                continue;
+            }
+            _ if keywords.contains(&key) => {
                 index += 1;
                 if index >= args.len() {
                     return err(format!("{key} argument missing value"));
                 }
-                match key.as_str() {
-                    "BUILD" => build = Some(args[index].clone()),
-                    "RETURN_VALUE" => return_value = Some(args[index].clone()),
-                    _ => {}
-                }
+                values.insert(key.into(), args[index].clone());
             }
-            "QUIET" => quiet = true,
-            "APPEND" | "STOP_ON_FAILURE" => {}
-            value if build.is_none() => build = Some(value.to_owned()),
             value => return err(format!("called with unknown argument \"{value}\".")),
         }
         index += 1;
     }
+    let build = values.get("BUILD").cloned();
+    let return_value = values.get("RETURN_VALUE").cloned();
     let fallback = interp.get_safe("CTEST_BINARY_DIRECTORY");
     let state_binary = interp
         .ext
@@ -1659,7 +1694,110 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
             false,
         );
     }
-    let options = test_options(interp, &binary);
+    let mut options = test_options(interp, &binary);
+    if let Some(value) = values.get("INCLUDE") {
+        options.include = value.clone();
+    }
+    if let Some(value) = values.get("EXCLUDE") {
+        options.exclude = value.clone();
+    }
+    if let Some(value) = values.get("INCLUDE_LABEL") {
+        options.include_labels.push(value.clone());
+    }
+    if let Some(value) = values.get("EXCLUDE_LABEL") {
+        options.exclude_labels.push(value.clone());
+    }
+    if let Some(value) = values.get("INCLUDE_FROM_FILE") {
+        options.name_file = Some(value.into());
+    }
+    if let Some(value) = values.get("EXCLUDE_FROM_FILE") {
+        options.exclude_name_file = Some(value.into());
+    }
+    if let Some(value) = values.get("EXCLUDE_FIXTURE") {
+        options.exclude_fixture = value.clone();
+    }
+    if let Some(value) = values.get("EXCLUDE_FIXTURE_SETUP") {
+        options.exclude_setup = value.clone();
+    }
+    if let Some(value) = values.get("EXCLUDE_FIXTURE_CLEANUP") {
+        options.exclude_cleanup = value.clone();
+    }
+    let start = values.get("START").map(String::as_str).unwrap_or_default();
+    let end = values.get("END").map(String::as_str).unwrap_or_default();
+    let stride = values.get("STRIDE").map(String::as_str).unwrap_or_default();
+    if !start.is_empty() || !end.is_empty() || !stride.is_empty() {
+        options.index = format!("{start},{end},{stride}");
+    }
+    if let Some(value) = values.get("PARALLEL_LEVEL") {
+        if !value.is_empty() {
+            match value.parse::<usize>() {
+                Ok(level) => options.parallel = Some(level),
+                Err(_) => handler_error(
+                    interp,
+                    &format!("Invalid value for 'PARALLEL_LEVEL' : {value}\n"),
+                ),
+            }
+        }
+    }
+    if let Some(value) = values.get("REPEAT") {
+        if let Some((mode, count)) = value.split_once(':')
+            && let Ok(count) = count.parse::<usize>()
+        {
+            let mode = match mode {
+                "UNTIL_FAIL" => Some(Repeat::UntilFail),
+                "UNTIL_PASS" => Some(Repeat::UntilPass),
+                "AFTER_TIMEOUT" => Some(Repeat::AfterTimeout),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                options.repeat = Some((mode, count));
+            }
+        }
+        if options.repeat.is_none() {
+            handler_error(interp, &format!("Repeat option invalid value: {value}\n"));
+            if let Some(variable) = &return_value {
+                interp.set_def(variable, "-1");
+            }
+            return Ok(());
+        }
+    }
+    if let Some(value) = values.get("SCHEDULE_RANDOM") {
+        options.random = crate::util::is_on(value);
+    }
+    if let Some(value) = values.get("SCHEDULE_RANDOM_SEED")
+        && let Ok(seed) = value.parse::<u32>()
+    {
+        options.seed = Some(seed);
+    }
+    if let Some(value) = values.get("TEST_LOAD") {
+        match value.parse::<u64>() {
+            Ok(load) => options.test_load = Some(load),
+            Err(_) => handler_error(
+                interp,
+                &format!("Invalid value for 'TEST_LOAD' : {value}\n"),
+            ),
+        }
+    }
+    if let Some(value) = values.get("RESOURCE_SPEC_FILE") {
+        options.resource_spec = Some(value.into());
+    }
+    if let Some(value) = values.get("OUTPUT_JUNIT") {
+        options.junit = Some(value.into());
+    }
+    options.stop_on_failure = stop_on_failure;
+    if let Some(value) = interp.get_def("CTEST_CUSTOM_MAXIMUM_PASSED_TEST_OUTPUT_SIZE")
+        && let Ok(size) = value.parse::<usize>()
+    {
+        options.output_size_passed = Some(size);
+    }
+    if let Some(value) = interp.get_def("CTEST_CUSTOM_MAXIMUM_FAILED_TEST_OUTPUT_SIZE")
+        && let Ok(size) = value.parse::<usize>()
+    {
+        options.output_size_failed = Some(size);
+    }
+    if let Some(value) = interp.get_def("CTEST_CUSTOM_TEST_OUTPUT_TRUNCATION") {
+        options.output_truncation = value.to_owned();
+    }
     let mut log = Log::new(&options);
     log.suppress_output = !handler_verbose || quiet;
     if !binary.is_dir() {
