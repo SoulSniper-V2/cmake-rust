@@ -139,6 +139,11 @@ def cases():
         ("invalid-type", ["-D", "Bad"]),
         ("invalid-action", ["-T", "bad"]),
         ("invalid-model", ["-M", "bad"]),
+        ("commands", ["-S", "commands.cmake", "-V"]),
+        ("update-unknown", ["-S", "updateunknown.cmake", "-V"]),
+        ("update-none", ["-S", "updatenone.cmake", "-V"]),
+        ("submit-fail", ["-S", "submitfail.cmake", "-V"]),
+        ("upload-file", ["-S", "uploadfile.cmake", "-V"]),
     ):
         yield "dashboard", name, [flags], {}
     for name, flags in (
@@ -169,6 +174,8 @@ def normalize(data, work, path):
     data = re.sub(rb"(?m)(?<=time elapsed: )\d\d:\d\d:\d\d$", b"<DURATION>", data)
     data = re.sub(rb"(?<=\()\d+\.\d+(?=s\))", b"<SECONDS>", data)
     data = re.sub(rb"\d{8}-\d{4}", b"<STAMP>", data)
+    data = re.sub(rb"(?<=Performing coverage: )\d+", b"<CLOCK>", data)
+    data = re.sub(rb"(?<=after )\d+(?= ms: Could not connect)", b"<MS>", data)
     if path.name == "CTestCostData.txt":
         values, found, rest = data.partition(b"---\n")
         # A zero cost with zero runs is part of the scheduling state.

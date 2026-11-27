@@ -1,0 +1,5 @@
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+ctest_start(Experimental)
+ctest_submit(RETURN_VALUE submit_rv)
+message("submit=${submit_rv}")

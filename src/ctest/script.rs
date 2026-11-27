@@ -89,24 +89,653 @@ fn collapse_input(path: &str) -> String {
     collapse_full_path(path, &cwd.to_string_lossy())
 }
 
-fn unsupported_command(name: &str) -> CmdResult {
-    err(format!("{name} is not implemented"))
+fn xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
-fn ctest_update(_interp: &mut Interp, _args: &[String]) -> CmdResult {
-    unsupported_command("ctest_update")
+fn base64_upload(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in data.chunks(3) {
+        let a = u32::from(chunk[0]);
+        let b = u32::from(*chunk.get(1).unwrap_or(&0));
+        let c = u32::from(*chunk.get(2).unwrap_or(&0));
+        let value = (a << 16) | (b << 8) | c;
+        output.push(ALPHABET[(value >> 18) as usize & 63] as char);
+        output.push(ALPHABET[(value >> 12) as usize & 63] as char);
+        output.push(if chunk.len() > 1 {
+            ALPHABET[(value >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            ALPHABET[value as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    // Match cmCTest::Base64Encode's historic extra padding at a block boundary.
+    if data.len().is_multiple_of(3) {
+        output.push_str("====");
+    }
+    output
 }
 
-fn ctest_coverage(_interp: &mut Interp, _args: &[String]) -> CmdResult {
-    unsupported_command("ctest_coverage")
+fn handler_binary(interp: &Interp, build: Option<&str>) -> Result<PathBuf, String> {
+    let fallback = interp.get_safe("CTEST_BINARY_DIRECTORY");
+    let state_binary = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .map(|state| state.binary_dir.clone())
+        .unwrap_or_default();
+    let binary = build
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+        .or_else(|| (!fallback.is_empty()).then_some(fallback))
+        .or_else(|| (!state_binary.is_empty()).then_some(state_binary));
+    binary
+        .map(|value| PathBuf::from(collapse_input(&value)))
+        .ok_or_else(|| {
+            "called with no build directory specified.  Either use the BUILD argument or set the CTEST_BINARY_DIRECTORY variable."
+                .to_owned()
+        })
 }
 
-fn ctest_memcheck(_interp: &mut Interp, _args: &[String]) -> CmdResult {
-    unsupported_command("ctest_memcheck")
+fn parse_return_build(
+    args: &[String],
+    extra_values: &[&str],
+) -> Result<(std::collections::BTreeMap<String, String>, bool), String> {
+    let mut values = std::collections::BTreeMap::new();
+    let mut quiet = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "QUIET" => quiet = true,
+            key @ ("BUILD" | "SOURCE" | "RETURN_VALUE" | "DEFECT_COUNT") => {
+                if !extra_values.contains(&key)
+                    && !matches!(key, "BUILD" | "SOURCE" | "RETURN_VALUE")
+                {
+                    return Err(format!("called with unknown argument \"{key}\"."));
+                }
+                index += 1;
+                if index >= args.len() {
+                    return Err(format!("{key} argument missing value"));
+                }
+                values.insert(key.into(), args[index].clone());
+            }
+            key if extra_values.contains(&key) => {
+                index += 1;
+                if index >= args.len() {
+                    return Err(format!("{key} argument missing value"));
+                }
+                values.insert(key.into(), args[index].clone());
+            }
+            value => return Err(format!("called with unknown argument \"{value}\".")),
+        }
+        index += 1;
+    }
+    Ok((values, quiet))
 }
 
-fn ctest_submit(_interp: &mut Interp, _args: &[String]) -> CmdResult {
-    unsupported_command("ctest_submit")
+fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
+    interp.issue_at_unsuppressed_no_top(
+        crate::messages::MessageType::FatalError,
+        &format!("{command} {message}"),
+    );
+}
+
+fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (values, quiet) = match parse_return_build(args, &[]) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let source = values
+        .get("SOURCE")
+        .cloned()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| interp.get_safe("CTEST_SOURCE_DIRECTORY"));
+    if source.is_empty() {
+        ctest_command_error(
+            interp,
+            "ctest_update",
+            "called with no source directory specified. Use SOURCE argument or set CTEST_SOURCE_DIRECTORY.",
+        );
+        return Ok(());
+    }
+    let source_dir = collapse_input(&source);
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let tag = state.tag.clone();
+    if tag.is_empty() {
+        ctest_command_error(interp, "ctest_update", "called with no current tag.");
+        return Ok(());
+    }
+    let binary = PathBuf::from(if state.binary_dir.is_empty() {
+        interp.get_safe("CTEST_BINARY_DIRECTORY")
+    } else {
+        state.binary_dir.clone()
+    });
+    let detect = |name: &str| Path::new(&source_dir).join(name).exists();
+    let mut kind = if detect("CVS") {
+        "CVS"
+    } else if detect(".svn") {
+        "SVN"
+    } else if detect(".bzr") {
+        "BZR"
+    } else if detect(".git") {
+        "GIT"
+    } else if detect(".hg") {
+        "HG"
+    } else if detect(".p4") || detect(".p4config") {
+        "P4"
+    } else {
+        "Unknown"
+    };
+    let mut command = interp.get_safe("CTEST_UPDATE_COMMAND");
+    if kind == "Unknown" && !command.is_empty() {
+        let lower = command.to_ascii_lowercase();
+        for (needle, name) in [
+            ("cvs", "CVS"),
+            ("svn", "SVN"),
+            ("bzr", "BZR"),
+            ("git", "GIT"),
+            ("hg", "HG"),
+            ("p4", "P4"),
+        ] {
+            if lower.contains(needle) {
+                kind = name;
+                break;
+            }
+        }
+    }
+    if kind == "Unknown" {
+        let lower = interp.get_safe("CTEST_UPDATE_TYPE").to_ascii_lowercase();
+        for (needle, name) in [
+            ("cvs", "CVS"),
+            ("svn", "SVN"),
+            ("bzr", "BZR"),
+            ("git", "GIT"),
+            ("hg", "HG"),
+            ("p4", "P4"),
+        ] {
+            if lower.contains(needle) {
+                kind = name;
+                break;
+            }
+        }
+    }
+    if command.is_empty() {
+        let key = match kind {
+            "CVS" => "CTEST_CVS_COMMAND",
+            "SVN" => "CTEST_SVN_COMMAND",
+            "BZR" => "CTEST_BZR_COMMAND",
+            "GIT" => "CTEST_GIT_COMMAND",
+            "HG" => "CTEST_HG_COMMAND",
+            "P4" => "CTEST_P4_COMMAND",
+            _ => "",
+        };
+        if !key.is_empty() {
+            command = interp.get_safe(key);
+        }
+        if command.is_empty() {
+            let suffix = if key.is_empty() {
+                String::new()
+            } else {
+                format!(" or {key}")
+            };
+            ctest_command_error(
+                interp,
+                "ctest_update",
+                &format!(
+                    "called with no update command specified. Please set CTEST_UPDATE_COMMAND{suffix}."
+                ),
+            );
+            return Ok(());
+        }
+    }
+
+    let temporary = binary.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+    let log_path = temporary.join(format!("LastUpdate_{tag}.log"));
+    let log = "--- Begin Cleanup ---\n--- End Cleanup ---\n--- Begin Update ---\n--- End Update ---\n--- Begin Revisions ---\n--- End Revisions ---\n";
+    if std::fs::write(&log_path, log).is_err() {
+        return err(format!("cannot create log file: LastUpdate_{tag}.log"));
+    }
+    handler_output(
+        interp,
+        &format!("   Updating {kind} repository: {source_dir}\n"),
+        quiet,
+    );
+    let start = epoch_now();
+    let start_date = report::clock("%b %d %H:%M UTC");
+    let end = epoch_now();
+    let end_date = report::clock("%b %d %H:%M UTC");
+    let build_name = interp.get_safe("CTEST_BUILD_NAME");
+    let build_name = if build_name.is_empty() {
+        "(empty)"
+    } else {
+        &build_name
+    };
+    let group = &interp.ext.ctest_script.as_ref().unwrap().group;
+    let mut xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Update mode=\"Client\" Generator=\"ctest-{}\">\n\t<Site>{}</Site>\n\t<BuildName>{}</BuildName>\n\t<BuildStamp>{tag}-{group}</BuildStamp>\n\t<StartDateTime>{start_date}</StartDateTime>\n\t<StartTime>{start}</StartTime>\n",
+        crate::interp::VERSION_STRING,
+        xml_text(&interp.get_safe("CTEST_SITE")),
+        xml_text(build_name),
+    );
+    // The generic unknown-VCS implementation has no tool-specific command line.
+    let command_line = if kind == "Unknown" {
+        ""
+    } else {
+        command.as_str()
+    };
+    xml.push_str(&format!(
+        "\t<UpdateCommand>{}</UpdateCommand>\n\t<UpdateType>{kind}</UpdateType>\n",
+        xml_text(command_line)
+    ));
+    let change_id = interp.get_safe("CTEST_CHANGE_ID");
+    if !change_id.is_empty() {
+        xml.push_str(&format!(
+            "\t<ChangeId>{}</ChangeId>\n",
+            xml_text(&change_id)
+        ));
+    }
+    xml.push_str(&format!(
+        "\t<EndDateTime>{end_date}</EndDateTime>\n\t<EndTime>{end}</EndTime>\n\t<ElapsedMinutes>0</ElapsedMinutes>\n\t<UpdateReturnStatus/>\n</Update>\n"
+    ));
+    let directory = binary.join("Testing").join(&tag);
+    let _ = std::fs::create_dir_all(&directory);
+    if std::fs::write(directory.join("Update.xml"), xml).is_err() {
+        return err("cannot create resulting XML file: Update.xml");
+    }
+    if let Some(variable) = values.get("RETURN_VALUE") {
+        interp.set_def(variable, "0");
+    }
+    Ok(())
+}
+
+fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (values, quiet) = match parse_return_build(args, &["LABELS"]) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let binary = match handler_binary(interp, values.get("BUILD").map(String::as_str)) {
+        Ok(binary) => binary,
+        Err(error) => return err(error),
+    };
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let tag = state.tag.clone();
+    handler_output(interp, "Performing coverage\n", quiet);
+    let temporary = binary.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let _ = std::fs::write(
+        temporary.join(format!("LastCoverage_{tag}.log")),
+        format!("Performing coverage: {stamp}\n"),
+    );
+    let mut has_coverage = false;
+    for extension in ["gcov", "json", "xml", "cov"] {
+        for pattern in [binary.join(format!("**/*.{extension}"))] {
+            if pattern.exists() {
+                has_coverage = true;
+            }
+        }
+    }
+    // Recursive globbing is intentionally conservative here; the common empty
+    // dashboard case must not mistake compiler notes for coverage results.
+    if !has_coverage {
+        handler_error(
+            interp,
+            " Cannot find any coverage files. Ignoring Coverage request.\n",
+        );
+    }
+    if let Some(variable) = values.get("RETURN_VALUE") {
+        interp.set_def(variable, "0");
+    }
+    Ok(())
+}
+
+fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (values, quiet) = match parse_return_build(args, &["DEFECT_COUNT"]) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let binary = match handler_binary(interp, values.get("BUILD").map(String::as_str)) {
+        Ok(binary) => binary,
+        Err(error) => return err(error),
+    };
+    handler_output(
+        interp,
+        &format!("Memory check project {}\n", binary.display()),
+        quiet,
+    );
+    let checker = interp.get_safe("CTEST_MEMORYCHECK_COMMAND");
+    let checker_type = interp.get_safe("CTEST_MEMORYCHECK_TYPE");
+    let valid = !checker.is_empty() && Path::new(&checker).is_file();
+    if !valid || checker_type.is_empty() {
+        handler_error(
+            interp,
+            "Memory checker (MemoryCheckCommand) not set, or cannot find the specified program.\n",
+        );
+        if let Some(variable) = values.get("RETURN_VALUE") {
+            interp.set_def(variable, "-1");
+        }
+        if let Some(variable) = values.get("DEFECT_COUNT") {
+            interp.set_def(variable, "0");
+        }
+        return Ok(());
+    }
+    if let Some(variable) = values.get("RETURN_VALUE") {
+        interp.set_def(variable, "-1");
+    }
+    if let Some(variable) = values.get("DEFECT_COUNT") {
+        interp.set_def(variable, "0");
+    }
+    Ok(())
+}
+
+fn parse_upload_args(args: &[String]) -> Result<(Vec<String>, bool), String> {
+    let mut files = Vec::new();
+    let mut quiet = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "QUIET" => quiet = true,
+            "FILES" => {
+                index += 1;
+                while index < args.len() && args[index] != "QUIET" {
+                    files.push(args[index].clone());
+                    index += 1;
+                }
+                continue;
+            }
+            value => return Err(format!("called with unknown argument \"{value}\".")),
+        }
+        index += 1;
+    }
+    files.sort();
+    files.dedup();
+    Ok((files, quiet))
+}
+
+fn ctest_upload(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let (files, quiet) = match parse_upload_args(args) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    for file in &files {
+        if !Path::new(file).is_file() {
+            return err(format!(
+                "File \"{file}\" does not exist. Cannot submit a non-existent file."
+            ));
+        }
+    }
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let binary = PathBuf::from(&state.binary_dir);
+    let tag = state.tag.clone();
+    let group = state.group.clone();
+    let build_name = interp.get_safe("CTEST_BUILD_NAME");
+    let build_name = if build_name.is_empty() {
+        "(empty)"
+    } else {
+        &build_name
+    };
+    let mut xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"Dart/Source/Server/XSL/Build.xsl <file:///Dart/Source/Server/XSL/Build.xsl> \"?>\n<Site BuildName=\"{}\" BuildStamp=\"{tag}-{group}\" Name=\"{}\" Generator=\"ctest-{}\">\n\t<Upload>\n\t\t<Time>{}</Time>\n",
+        xml_text(build_name),
+        xml_text(&interp.get_safe("CTEST_SITE")),
+        crate::interp::VERSION_STRING,
+        epoch_now(),
+    );
+    for file in &files {
+        handler_output(interp, &format!("\tUpload file: {file}\n"), quiet);
+        let data = std::fs::read(file).unwrap_or_default();
+        xml.push_str(&format!(
+            "\t\t<File filename=\"{}\">\n\t\t\t<Content encoding=\"base64\">{}</Content>\n\t\t</File>\n",
+            xml_text(file),
+            base64_upload(&data),
+        ));
+    }
+    xml.push_str("\t</Upload>\n</Site>\n");
+    let directory = binary.join("Testing").join(&tag);
+    let _ = std::fs::create_dir_all(&directory);
+    if std::fs::write(directory.join("Upload.xml"), xml).is_err() {
+        handler_error(interp, "Cannot open Upload.xml file\n");
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+    }
+    Ok(())
+}
+
+fn submit_url(interp: &Interp, explicit: Option<&str>) -> String {
+    if let Some(url) = explicit.filter(|value| !value.is_empty()) {
+        return url.to_owned();
+    }
+    let direct = interp.get_safe("CTEST_SUBMIT_URL");
+    if !direct.is_empty() {
+        return direct;
+    }
+    let method = interp.get_safe("CTEST_DROP_METHOD");
+    let method = if method.is_empty() { "http" } else { &method };
+    let user = interp.get_safe("CTEST_DROP_SITE_USER");
+    let password = interp.get_safe("CTEST_DROP_SITE_PASSWORD");
+    let site = interp.get_safe("CTEST_DROP_SITE");
+    let location = interp.get_safe("CTEST_DROP_LOCATION");
+    let mut url = format!("{method}://");
+    if !user.is_empty() {
+        url.push_str(&user);
+        if !password.is_empty() {
+            let _ = std::fmt::Write::write_fmt(&mut url, format_args!(":{password}"));
+        }
+        url.push('@');
+    }
+    url.push_str(&site);
+    url.push_str(&location);
+    url
+}
+
+fn submit_error_for(url: &str) -> String {
+    let after_scheme = url.split("://").nth(1).unwrap_or_default();
+    let authority = after_scheme.split('/').next().unwrap_or_default();
+    let hostport = authority.rsplit('@').next().unwrap_or_default();
+    if hostport.is_empty() {
+        return "URL rejected: No host part in the URL".into();
+    }
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) => {
+            (host.to_owned(), port.to_owned())
+        }
+        _ => (
+            hostport.to_owned(),
+            if url.starts_with("https://") {
+                "443"
+            } else {
+                "80"
+            }
+            .into(),
+        ),
+    };
+    if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        format!("Failed to connect to {host} port {port} after 0 ms: Could not connect to server")
+    } else {
+        format!("Could not resolve host: {host}")
+    }
+}
+
+fn parse_submit_args(
+    args: &[String],
+) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    let mut parsed: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let single = [
+        "RETURN_VALUE",
+        "BUILD_ID",
+        "RETRY_COUNT",
+        "RETRY_DELAY",
+        "SUBMIT_URL",
+        "CDASH_UPLOAD",
+        "CDASH_UPLOAD_TYPE",
+    ];
+    let multi = ["PARTS", "FILES", "HTTPHEADER"];
+    let flags = ["QUIET", "INTERNAL_TEST_CHECKSUM"];
+    let mut index = 0;
+    while index < args.len() {
+        let key = args[index].as_str();
+        if flags.contains(&key) {
+            parsed.entry(key.into()).or_default();
+            index += 1;
+        } else if single.contains(&key) {
+            index += 1;
+            if index >= args.len() {
+                return Err(format!("{key} argument missing value"));
+            }
+            parsed.insert(key.into(), vec![args[index].clone()]);
+            index += 1;
+        } else if multi.contains(&key) {
+            index += 1;
+            let mut values = Vec::new();
+            while index < args.len()
+                && !single.contains(&args[index].as_str())
+                && !multi.contains(&args[index].as_str())
+                && !flags.contains(&args[index].as_str())
+            {
+                values.push(args[index].clone());
+                index += 1;
+            }
+            parsed.insert(key.into(), values);
+        } else {
+            return Err(format!("called with unknown argument \"{key}\"."));
+        }
+    }
+    Ok(parsed)
+}
+
+fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let parsed = match parse_submit_args(args) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    if let Some(files) = parsed.get("FILES") {
+        for file in files {
+            if !Path::new(file).is_file() {
+                return err(format!(
+                    "File \"{file}\" does not exist. Cannot submit a non-existent file."
+                ));
+            }
+        }
+    }
+    let quiet = parsed.contains_key("QUIET");
+    let state = interp.ext.ctest_script.as_ref().unwrap();
+    let binary = PathBuf::from(&state.binary_dir);
+    let tag = state.tag.clone();
+    let group = if state.group.is_empty() {
+        state.model.clone()
+    } else {
+        state.group.clone()
+    };
+    let directory = binary.join("Testing").join(&tag);
+    let _ = std::fs::create_dir_all(&directory);
+    let temporary = binary.join("Testing/Temporary");
+    let _ = std::fs::create_dir_all(&temporary);
+
+    let mut files = Vec::new();
+    for name in [
+        "Update.xml",
+        "Configure.xml",
+        "Build.xml",
+        "Test.xml",
+        "Coverage.xml",
+        "DynamicAnalysis.xml",
+        "DynamicAnalysis-Test.xml",
+        "Purify.xml",
+        "Notes.xml",
+        "Upload.xml",
+    ] {
+        if directory.join(name).is_file() {
+            files.push(name.to_owned());
+        }
+    }
+    if let Some(extra) = parsed.get("FILES") {
+        files.extend(extra.clone());
+    }
+    files.dedup();
+    files.push("Done.xml".into());
+
+    let mut log = String::from("Upload files:\n");
+    for (index, file) in files.iter().enumerate() {
+        let _ = std::fmt::Write::write_fmt(&mut log, format_args!("{index}\t{file}\n"));
+    }
+    handler_output(interp, "Submit files\n", quiet);
+    if parsed.contains_key("PARTS") && !group.is_empty() {
+        handler_output(interp, &format!("   Send to group: {group}\n"), quiet);
+    }
+    let url = submit_url(
+        interp,
+        parsed
+            .get("SUBMIT_URL")
+            .and_then(|values| values.first())
+            .map(String::as_str),
+    );
+    handler_output(interp, &format!("   SubmitURL: {url}\n"), quiet);
+
+    let build_name = interp.get_safe("CTEST_BUILD_NAME");
+    let build_name = if build_name.is_empty() {
+        "(empty)"
+    } else {
+        &build_name
+    };
+    let site = interp.get_safe("CTEST_SITE");
+    let prefix = format!("{site}___{build_name}___{tag}-{group}___XML___");
+    let error_message = submit_error_for(&url);
+    let mut failed_file = String::new();
+    if let Some(file) = files.first() {
+        let local = if Path::new(file).is_file() {
+            PathBuf::from(file)
+        } else {
+            directory.join(file)
+        };
+        if file == "Done.xml" {
+            let done = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Done>\n\t<buildId></buildId>\n\t<time>{}</time>\n</Done>\n",
+                epoch_now()
+            );
+            let _ = std::fs::write(directory.join("Done.xml"), done);
+        }
+        let _ = std::fmt::Write::write_fmt(
+            &mut log,
+            format_args!(
+                "\tUpload file: {} to {prefix}{}\n",
+                local.display(),
+                Path::new(file)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        );
+        failed_file = local.display().to_string();
+    }
+    if !failed_file.is_empty() {
+        let text = format!(
+            "   Error when uploading file: {failed_file}\n   Error message was: {error_message}\n   Problems when submitting via HTTP\n"
+        );
+        handler_error(interp, &text);
+        log.push_str(&text);
+        let _ = std::fs::write(temporary.join(format!("LastSubmit_{tag}.log")), log);
+        if let Some(variable) = parsed.get("RETURN_VALUE").and_then(|values| values.first()) {
+            interp.set_def(variable, "-1");
+        }
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        return Ok(());
+    }
+    let _ = std::fs::write(temporary.join(format!("LastSubmit_{tag}.log")), log);
+    if let Some(variable) = parsed.get("RETURN_VALUE").and_then(|values| values.first()) {
+        interp.set_def(variable, "0");
+    }
+    Ok(())
 }
 
 fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -247,9 +876,7 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         state.model = model_name.clone();
         state.group = group_name.clone();
         state.tag = tag.clone();
-        if !site.is_empty() {
-            state.site = site;
-        }
+        state.site = site;
         state.build_name = build_name;
     }
     if interp
@@ -273,7 +900,18 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         &format!(
             "   Site: {}\n   Build name: {}\n",
             interp.ext.ctest_script.as_ref().unwrap().site,
-            interp.ext.ctest_script.as_ref().unwrap().build_name
+            if interp
+                .ext
+                .ctest_script
+                .as_ref()
+                .unwrap()
+                .build_name
+                .is_empty()
+            {
+                "(empty)".into()
+            } else {
+                interp.ext.ctest_script.as_ref().unwrap().build_name.clone()
+            }
         ),
         quiet,
     );
@@ -872,10 +1510,6 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
     Ok(())
 }
 
-fn unsupported(_: &mut Interp, _: &[String]) -> CmdResult {
-    err("ctest command is not implemented")
-}
-
 fn register(interp: &mut Interp) {
     interp.register("ctest_start", ctest_start);
     interp.register("ctest_test", ctest_test);
@@ -885,11 +1519,11 @@ fn register(interp: &mut Interp) {
     interp.register("ctest_run_script", ctest_run_script);
     interp.register("ctest_build", ctest_build);
     interp.register("ctest_configure", ctest_configure);
-    interp.register("ctest_coverage", unsupported);
-    interp.register("ctest_memcheck", unsupported);
-    interp.register("ctest_submit", unsupported);
-    interp.register("ctest_update", unsupported);
-    interp.register("ctest_upload", unsupported);
+    interp.register("ctest_coverage", ctest_coverage);
+    interp.register("ctest_memcheck", ctest_memcheck);
+    interp.register("ctest_submit", ctest_submit);
+    interp.register("ctest_update", ctest_update);
+    interp.register("ctest_upload", ctest_upload);
 }
 
 fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {

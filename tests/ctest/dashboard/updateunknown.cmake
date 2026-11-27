@@ -1,0 +1,6 @@
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_UPDATE_COMMAND "/bin/false")
+ctest_start(Experimental)
+ctest_update(RETURN_VALUE update_rv)
+message("update=${update_rv}")

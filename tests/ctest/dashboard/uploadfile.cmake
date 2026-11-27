@@ -1,0 +1,4 @@
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+ctest_start(Experimental)
+ctest_upload(FILES "${CMAKE_CURRENT_LIST_DIR}/upload.txt")

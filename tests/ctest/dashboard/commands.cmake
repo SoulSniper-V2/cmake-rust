@@ -1,0 +1,7 @@
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+ctest_start(Experimental)
+ctest_coverage(RETURN_VALUE coverage_rv)
+ctest_memcheck(RETURN_VALUE memcheck_rv DEFECT_COUNT defects)
+ctest_upload()
+message("coverage=${coverage_rv} memcheck=${memcheck_rv} defects=${defects}")
