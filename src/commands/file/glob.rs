@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::bytes;
 use crate::cmregex::Regex;
 use crate::interp::{CmdResult, Interp, Mode, err};
 use crate::messages::{Frame, MessageType};
@@ -191,22 +192,22 @@ impl Glob {
     fn walk(&mut self, base: &str, index: usize, recursive: bool) -> bool {
         let last = index + 1 == self.patterns.len();
         let recursive = recursive || last && self.recurse;
-        let Ok(entries) = fs::read_dir(base) else {
+        let Ok(entries) = fs::read_dir(bytes::path(base)) else {
             return true;
         };
         for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = bytes::decode_os(&entry.file_name());
             let path = if base.ends_with('/') && index == 0 {
                 format!("{base}{name}")
             } else {
                 format!("{base}/{name}")
             };
-            let dir = Path::new(&path).is_dir();
+            let dir = entry.path().is_dir();
             let link = entry.file_type().is_ok_and(|kind| kind.is_symlink());
             if recursive && dir && (!link || self.follow) {
                 if link {
-                    let canonical = match fs::canonicalize(base) {
-                        Ok(path) => path.to_string_lossy().into_owned(),
+                    let canonical = match fs::canonicalize(bytes::path(base)) {
+                        Ok(path) => bytes::decode_os(path.as_os_str()),
                         Err(error) => {
                             self.messages.push(GlobMessage::Error(format!(
                                 "Canonical path generation from path '{base}' failed! Reason: '{}'",
@@ -260,7 +261,7 @@ pub(super) fn walk(
     let expression = if is_full_path(expression) {
         expression.to_owned()
     } else {
-        format!("{}/{expression}", cwd.display())
+        format!("{}/{expression}", bytes::decode_os(cwd.as_os_str()))
     };
     let mut skip = 0;
     let mut previous = b'\0';
@@ -293,6 +294,12 @@ pub(super) fn walk(
         glob.walk(&base, 0, false);
     }
     (glob.files, glob.messages)
+}
+
+fn sort_and_dedup(files: &mut Vec<String>) {
+    // cmFileCommand sorts std::string values by their original bytes.
+    files.sort_unstable_by(|lhs, rhs| bytes::encode(lhs).cmp(&bytes::encode(rhs)));
+    files.dedup();
 }
 
 pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -375,8 +382,7 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
                         *file = relative_path(relative, file);
                     }
                 }
-                files.sort_unstable();
-                files.dedup();
+                sort_and_dedup(&mut files);
                 results.extend(files.iter().cloned());
                 if tracked {
                     let top = interp.top_source().map(str::to_owned);
@@ -419,8 +425,7 @@ pub(super) fn run(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }
     }
-    results.sort_unstable();
-    results.dedup();
+    sort_and_dedup(&mut results);
     interp.set_def(variable, results.join(";"));
     Ok(())
 }
