@@ -124,11 +124,35 @@ pub(in crate::ctest) fn directory_error(dir: &Path) -> String {
     )
 }
 
+fn launch(args: &[String]) -> i32 {
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        eprintln!("No launch/command separator ('--') found!");
+        return 1;
+    };
+    let command = &args[separator + 1..];
+    if command.is_empty() || command[0] == ":" {
+        return 0;
+    }
+    let status = std::process::Command::new(&command[0])
+        .args(&command[1..])
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
+    match status {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(_) => 1,
+    }
+}
+
 pub fn main() -> i32 {
     let args: Vec<_> = std::env::args_os()
         .skip(1)
         .map(|arg| crate::bytes::decode(arg.as_encoded_bytes()))
         .collect();
+    if args.first().is_some_and(|arg| arg == "--launch") {
+        return launch(&args[1..]);
+    }
     if args
         .iter()
         .any(|arg| matches!(arg.as_str(), "--version" | "-version" | "/V"))
