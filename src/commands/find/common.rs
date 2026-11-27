@@ -310,9 +310,11 @@ pub(super) fn env_paths(name: &str) -> Vec<String> {
 }
 
 pub(super) fn split_env_paths(value: &str) -> Vec<String> {
-    env::split_paths(value)
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(|path| normalized(&path.to_string_lossy()))
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    value
+        .split(separator)
+        .filter(|path| !path.is_empty())
+        .map(crate::pathresolver::to_normalized_path_on_disk)
         .collect()
 }
 
