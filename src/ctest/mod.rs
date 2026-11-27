@@ -168,16 +168,26 @@ fn launcher_labels(current_build_dir: &str, target_name: &str, source: &str) -> 
     labels
 }
 
-fn launcher_xml(
-    log_dir: &Path,
-    hash: &str,
+struct LaunchReport<'a> {
+    log_dir: &'a Path,
+    hash: &'a str,
     error: bool,
-    options: &BTreeMap<String, String>,
-    real_args: &[String],
-    stdout: &str,
-    stderr: &str,
+    options: &'a BTreeMap<String, String>,
+    real_args: &'a [String],
+    stdout: &'a str,
+    stderr: &'a str,
     exit_code: i32,
-) {
+}
+
+fn launcher_xml(report: &LaunchReport) {
+    let log_dir = report.log_dir;
+    let hash = report.hash;
+    let error = report.error;
+    let options = report.options;
+    let real_args = report.real_args;
+    let stdout = report.stdout;
+    let stderr = report.stderr;
+    let exit_code = report.exit_code;
     let write_output = |tag: &str, text: &str, xml: &mut String| {
         xml.push_str(&format!("    <{tag}>"));
         let filter = options.get("filter-prefix").map_or("", String::as_str);
@@ -373,16 +383,16 @@ fn launch(args: &[String]) -> i32 {
             })
         });
     if status != 0 || warning {
-        launcher_xml(
-            &log_dir,
-            &hash,
-            status != 0,
-            &options,
-            &real_args,
-            &stdout_text,
-            &stderr_text,
-            status,
-        );
+        launcher_xml(&LaunchReport {
+            log_dir: &log_dir,
+            hash: &hash,
+            error: status != 0,
+            options: &options,
+            real_args: &real_args,
+            stdout: &stdout_text,
+            stderr: &stderr_text,
+            exit_code: status,
+        });
     }
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-out.txt")));
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-err.txt")));
