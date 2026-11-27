@@ -354,7 +354,7 @@ fn instrument_launch(
     );
 }
 
-fn launch(args: &[String], instrument: bool) -> i32 {
+fn launch(args: &[String], _instrument: bool) -> i32 {
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
         eprintln!("No launch/command separator ('--') found!");
         return 1;
@@ -377,7 +377,7 @@ fn launch(args: &[String], instrument: bool) -> i32 {
         }
     }
     let real_args: Vec<String> = command.to_vec();
-    let launch_instrumentation = if instrument {
+    let launch_instrumentation = if true {
         let build_dir = options.get("build-dir").map_or("", String::as_str);
         let mut instrumentation = crate::instrumentation::Instrumentation::new(build_dir);
         instrumentation.load();
@@ -405,10 +405,8 @@ fn launch(args: &[String], instrument: bool) -> i32 {
             Ok(status) => status.code().unwrap_or(1),
             Err(_) => 1,
         };
-        if instrument {
-            if let Some(instrumentation) = &launch_instrumentation {
-                instrument_launch(&real_args, &options, code, clock, instrumentation);
-            }
+        if let Some(instrumentation) = &launch_instrumentation {
+            instrument_launch(&real_args, &options, code, clock, instrumentation);
         }
         return code;
     }
@@ -499,10 +497,8 @@ fn launch(args: &[String], instrument: bool) -> i32 {
     }
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-out.txt")));
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-err.txt")));
-    if instrument {
-        if let Some(instrumentation) = &launch_instrumentation {
-            instrument_launch(&real_args, &options, status, clock, instrumentation);
-        }
+    if let Some(instrumentation) = &launch_instrumentation {
+        instrument_launch(&real_args, &options, status, clock, instrumentation);
     }
     status
 }
@@ -743,8 +739,7 @@ pub(in crate::ctest) fn execute_detailed(
         let mut last_log = report::start_log();
         let mut instrumentation = crate::instrumentation::Instrumentation::new(&binary);
         instrumentation.load();
-        let instrument_tests = instrumentation.enabled && !options.script;
-        let ctest_clock = instrumentation.timer();
+        let instrument_tests = instrumentation.enabled;
         let context = runner::RunContext {
             options: &options,
             all_count: all.len(),
@@ -786,27 +781,6 @@ pub(in crate::ctest) fn execute_detailed(
             },
         };
         if instrument_tests {
-            let invocation: Vec<String> = std::env::args_os()
-                .skip(1)
-                .map(|arg| crate::bytes::decode(arg.as_encoded_bytes()))
-                .collect();
-            let ctest_result = if results.as_ref().is_some_and(|results| {
-                results
-                    .iter()
-                    .flatten()
-                    .any(|result| result.status.failed())
-            }) {
-                1
-            } else {
-                0
-            };
-            instrumentation.write_snippet_fields(
-                "ctest",
-                &invocation,
-                ctest_clock,
-                ctest_result,
-                serde_json::json!({}),
-            );
             if let Some(results) = &results {
                 for (test, result) in tests
                     .iter()
@@ -835,6 +809,9 @@ pub(in crate::ctest) fn execute_detailed(
         if !options.dashboard_tag.is_empty()
             && let Some(results) = &results
         {
+            if instrument_tests {
+                instrumentation.collect("prepareForCDash");
+            }
             let _ = report::test_xml(&binary, &options, &tests, results, start_epoch);
         }
         let _ = writeln!(last_log, "End testing: {}", report::clock("%b %d %H:%M %Z"));

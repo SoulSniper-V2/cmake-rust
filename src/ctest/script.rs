@@ -2436,6 +2436,12 @@ fn required_build_directory(
     }
 }
 
+fn collect_instrumentation_for_xml(build_path: &Path) {
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(build_path);
+    instrumentation.load();
+    instrumentation.collect("prepareForCDash");
+}
+
 fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
         return invoke_capture_cmake_error(interp, args, "ctest_configure", ctest_configure);
@@ -2552,6 +2558,7 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(variable) = parsed.get("RETURN_VALUE") {
         interp.set_def(variable, status.to_string());
     }
+    collect_instrumentation_for_xml(&build_path);
     let options = dashboard_options(interp, &build_path);
     let _ = report::configure_xml(&build_path, &options, &command, &output, status, start, end);
     if status != 0 {
@@ -2753,6 +2760,7 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             }
         }
     }
+    collect_instrumentation_for_xml(&build_path);
     let options = dashboard_options(interp, &build_path);
     let _ = report::build_xml(
         &build_path,

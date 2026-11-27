@@ -814,6 +814,53 @@ fn command_line(result: &ResultData, test: &Test) -> String {
     line
 }
 
+fn instrumentation_measurements(binary: &Path, test_name: &str) -> String {
+    let directory = binary.join(format!(
+        ".cmake/instrumentation-{}/v1/cdash/test",
+        crate::instrumentation::UUID
+    ));
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return String::new();
+    };
+    let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    let mut xml = String::new();
+    for path in paths {
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(root) = serde_json::from_slice::<serde_json::Value>(&data) else {
+            continue;
+        };
+        if root["role"].as_str() != Some("test") || root["testName"].as_str() != Some(test_name) {
+            continue;
+        }
+        if let Some(dynamic) = root["dynamicSystemInformation"].as_object() {
+            for (key, value) in dynamic {
+                let mut name = key.clone();
+                if let Some(first) = name.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                let value = match value {
+                    serde_json::Value::String(text) => text.clone(),
+                    value => value.to_string(),
+                };
+                let _ = writeln!(
+                    xml,
+                    "\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"{}\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>",
+                    xml_escape(&name),
+                    xml_content(&value),
+                );
+            }
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    xml
+}
+
 pub(super) fn test_xml(
     binary: &Path,
     options: &Options,
@@ -958,7 +1005,7 @@ pub(super) fn test_xml(
         };
         let _ = writeln!(
             xml,
-            "{}\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Processors\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Completion Status\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Command Line\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Environment\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<Measurement>\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</Measurement>\n\t\t\t</Results>",
+            "{}\t\t\t\t<NamedMeasurement type=\"numeric/double\" name=\"Processors\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Completion Status\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Command Line\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<NamedMeasurement type=\"text/string\" name=\"Environment\">\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</NamedMeasurement>\n\t\t\t\t<Measurement>\n\t\t\t\t\t<Value>{}</Value>\n\t\t\t\t</Measurement>\n{}\t\t\t</Results>",
             custom_measurements,
             test.processors(),
             xml_escape(&result.completion),
@@ -973,6 +1020,7 @@ pub(super) fn test_xml(
                 },
                 &options.output_truncation,
             )),
+            instrumentation_measurements(binary, &test.name),
         );
         let labels: BTreeSet<_> = test.list("LABELS").iter().chain(&result.labels).collect();
         if !labels.is_empty() {
@@ -1112,6 +1160,162 @@ fn write_step_xml(
     std::fs::write(directory.join(format!("{name}.xml")), xml)
 }
 
+fn snippet_xml(path: &Path, indent: &str) -> Option<String> {
+    let root: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let role = root["role"].as_str()?;
+    if root["command"].is_null() || root["dynamicSystemInformation"].is_null() {
+        return None;
+    }
+    let mut element = role.to_owned();
+    if let Some(first) = element.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    let mut attrs = String::new();
+    if let Some(object) = root.as_object() {
+        let mut keys: Vec<_> = object.keys().collect();
+        keys.sort();
+        for key in keys {
+            let value = &root[key];
+            if value.is_object()
+                || value.is_array()
+                || matches!(
+                    key.as_str(),
+                    "role" | "target" | "targetType" | "targetLabels"
+                )
+            {
+                continue;
+            }
+            let mut text = match value {
+                serde_json::Value::String(text) => text.clone(),
+                value => value.to_string(),
+            };
+            if key == "command"
+                && let Some(end) = text.find(char::is_whitespace)
+            {
+                text.truncate(end);
+                text.push_str(" (truncated)");
+            }
+            let _ = write!(attrs, " {}=\"{}\"", xml_escape(key), xml_escape(&text));
+        }
+    }
+    let mut xml = format!("{indent}<{element}{attrs}>\n");
+    if let Some(dynamic) = root["dynamicSystemInformation"].as_object() {
+        for (key, value) in dynamic {
+            let mut name = key.clone();
+            if let Some(first) = name.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            let value = match value {
+                serde_json::Value::String(text) => text.clone(),
+                value => value.to_string(),
+            };
+            let _ = writeln!(
+                xml,
+                "{indent}\t<NamedMeasurement type=\"numeric/double\" name=\"{}\">\n{indent}\t\t<Value>{}</Value>\n{indent}\t</NamedMeasurement>",
+                xml_escape(&name),
+                xml_content(&value)
+            );
+        }
+    }
+    if let (Some(outputs), Some(sizes)) =
+        (root["outputs"].as_array(), root["outputSizes"].as_array())
+    {
+        let count = outputs.len().min(sizes.len());
+        if count != 0 {
+            let _ = writeln!(xml, "{indent}\t<Outputs>");
+            for index in 0..count {
+                let _ = writeln!(
+                    xml,
+                    "{indent}\t\t<Output name=\"{}\" size=\"{}\"/>",
+                    xml_escape(outputs[index].as_str().unwrap_or_default()),
+                    xml_escape(&sizes[index].to_string())
+                );
+            }
+            let _ = writeln!(xml, "{indent}\t</Outputs>");
+        }
+    }
+    let _ = writeln!(xml, "{indent}</{element}>");
+    let _ = std::fs::remove_file(path);
+    Some(xml)
+}
+
+fn snippet_files_xml(directory: &Path, indent: &str) -> String {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return String::new();
+    };
+    let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|path| snippet_xml(&path, indent))
+        .collect()
+}
+
+fn configure_instrumentation_xml(binary: &Path) -> String {
+    let dir = binary.join(format!(
+        ".cmake/instrumentation-{}/v1/cdash/configure",
+        crate::instrumentation::UUID
+    ));
+    let commands = snippet_files_xml(&dir, "\t\t\t");
+    if commands.is_empty() {
+        String::new()
+    } else {
+        format!("\t\t<Commands>\n{commands}\t\t</Commands>\n")
+    }
+}
+
+fn build_instrumentation_xml(binary: &Path) -> String {
+    let base = binary.join(format!(
+        ".cmake/instrumentation-{}/v1/cdash/build",
+        crate::instrumentation::UUID
+    ));
+    let mut xml = String::new();
+    let targets_dir = base.join("targets");
+    if let Ok(entries) = std::fs::read_dir(&targets_dir) {
+        let mut targets: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        targets.sort();
+        let mut all = String::new();
+        for target in targets {
+            let mut target_type = String::new();
+            if let Ok(files) = std::fs::read_dir(&target) {
+                for file in files.flatten() {
+                    if let Ok(data) = std::fs::read(file.path())
+                        && let Ok(root) = serde_json::from_slice::<serde_json::Value>(&data)
+                        && let Some(value) = root["targetType"].as_str()
+                    {
+                        target_type = value.to_owned();
+                        break;
+                    }
+                }
+            }
+            let commands = snippet_files_xml(&target, "\t\t\t\t");
+            if !commands.is_empty() {
+                let name = target.file_name().unwrap_or_default().to_string_lossy();
+                let _ = writeln!(
+                    all,
+                    "\t\t\t<Target name=\"{}\" type=\"{}\">\n\t\t\t\t<Commands>\n{commands}\t\t\t\t</Commands>\n\t\t\t</Target>",
+                    xml_escape(&name),
+                    xml_escape(&target_type)
+                );
+            }
+            let _ = std::fs::remove_dir(&target);
+        }
+        if !all.is_empty() {
+            let _ = writeln!(xml, "\t\t<Targets>\n{all}\t\t</Targets>");
+        }
+    }
+    let commands = snippet_files_xml(&base.join("commands"), "\t\t\t");
+    if !commands.is_empty() {
+        let _ = writeln!(xml, "\t\t<Commands>\n{commands}\t\t</Commands>");
+    }
+    xml
+}
+
 pub(super) fn configure_xml(
     binary: &Path,
     options: &Options,
@@ -1122,7 +1326,7 @@ pub(super) fn configure_xml(
     end_epoch: i64,
 ) -> std::io::Result<()> {
     let body = format!(
-        "\t<Configure>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartConfigureTime>{}</StartConfigureTime>\n\t\t<ConfigureCommand>{}</ConfigureCommand>\n\t\t<Log>{}</Log>\n\t\t<ConfigureStatus>{}</ConfigureStatus>\n\t\t<EndDateTime>{}</EndDateTime>\n\t\t<EndConfigureTime>{}</EndConfigureTime>\n\t\t<ElapsedMinutes>{}</ElapsedMinutes>\n\t</Configure>\n",
+        "\t<Configure>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartConfigureTime>{}</StartConfigureTime>\n\t\t<ConfigureCommand>{}</ConfigureCommand>\n\t\t<Log>{}</Log>\n\t\t<ConfigureStatus>{}</ConfigureStatus>\n\t\t<EndDateTime>{}</EndDateTime>\n\t\t<EndConfigureTime>{}</EndConfigureTime>\n\t\t<ElapsedMinutes>{}</ElapsedMinutes>\n{}\t</Configure>\n",
         clock_at("%b %d %H:%M %Z", start_epoch),
         start_epoch,
         xml_content(command),
@@ -1131,6 +1335,7 @@ pub(super) fn configure_xml(
         clock_at("%b %d %H:%M %Z", end_epoch),
         end_epoch,
         (end_epoch - start_epoch) / 60,
+        configure_instrumentation_xml(binary),
     );
     write_step_xml(binary, options, "Configure", body)
 }
@@ -1154,10 +1359,11 @@ pub(super) fn build_xml(
     end_epoch: i64,
 ) -> std::io::Result<()> {
     let mut body = format!(
-        "\t<Build>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartBuildTime>{}</StartBuildTime>\n\t\t<BuildCommand>{}</BuildCommand>\n",
+        "\t<Build>\n\t\t<StartDateTime>{}</StartDateTime>\n\t\t<StartBuildTime>{}</StartBuildTime>\n\t\t<BuildCommand>{}</BuildCommand>\n{}",
         clock_at("%b %d %H:%M %Z", start_epoch),
         start_epoch,
         xml_content(command),
+        build_instrumentation_xml(binary),
     );
     if let Some(launch_dir) = launch_dir {
         let mut fragments: Vec<PathBuf> = std::fs::read_dir(launch_dir)
