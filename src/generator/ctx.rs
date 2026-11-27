@@ -92,9 +92,9 @@ pub struct GenCtx<'a> {
     /// `cmGlobalGenerator::CMP0068WarnTargets`: targets that tripped the
     /// OLD-behavior CMP0068 checks during generation.
     pub cmp0068_warn_targets: Rc<RefCell<BTreeSet<String>>>,
-    /// `cmMakefile::ListFiles` appended at generation time
-    /// (`AddCMakeDependFile` from generated `Info.plist` configuration).
-    pub cmake_depend_files: Rc<RefCell<Vec<String>>>,
+    /// `(directory, file)` for `cmMakefile::ListFiles` entries appended at
+    /// generation time (`AddCMakeDependFile` from generated configuration).
+    pub cmake_depend_files: Rc<RefCell<Vec<(usize, String)>>>,
     /// `cmMakefile::OutputFiles` appended at generation time
     /// (`AddCMakeOutputFile`); recorded for parity though only the Makefile
     /// generators consult them.

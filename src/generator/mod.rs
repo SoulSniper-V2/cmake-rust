@@ -216,12 +216,21 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     run_build_database_actions(interp, &mut expand_output_genex);
     // cmLocalGenerator::TraceDependencies for every directory.
     trace::trace_dependencies(interp);
-    let (computed, mut diagnostics) = {
+    let (computed, mut diagnostics, cmake_depend_files) = {
         let ctx = ctx::GenCtx::new(interp);
         let (computed, generated) = ctx.check_and_generate(&autogen);
         module_diagnostics.extend(generated);
-        (computed, module_diagnostics)
+        let depend_files = ctx.cmake_depend_files.borrow().clone();
+        (computed, module_diagnostics, depend_files)
     };
+    // Generation-time ConfigureFile/file(GENERATE) input reads are
+    // cmMakefile::AddCMakeDependFile entries once generation finishes (the
+    // file API observes the makefiles after generation).  During generation
+    // the generators already consumed ctx.cmake_depend_files for their
+    // re-run rules.
+    for (dir, file) in cmake_depend_files {
+        interp.makefiles[dir].list_files.push(file);
+    }
     issue_diagnostics(interp, std::mem::take(&mut diagnostics));
     if !computed {
         return -1;

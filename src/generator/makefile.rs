@@ -3601,7 +3601,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         if let Some(extra) = self.ctx.interp.ext.misc.get("cmake-depend-files") {
             lfiles.extend(crate::util::expand_list(extra, false));
         }
-        lfiles.extend(self.ctx.cmake_depend_files.borrow().iter().cloned());
+        lfiles.extend(
+            self.ctx
+                .cmake_depend_files
+                .borrow()
+                .iter()
+                .map(|(_, file)| file.clone()),
+        );
         if let Some((script, stamp)) = &self.ctx.interp.ext.glob_verify {
             lfiles.push(script.clone());
             lfiles.push(stamp.clone());

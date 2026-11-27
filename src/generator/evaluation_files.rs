@@ -110,7 +110,6 @@ pub fn create_outputs(interp: &mut Interp) {
     }
     let mut diagnostics = Vec::new();
     let mut marked: Vec<(usize, String, BTreeSet<String>)> = Vec::new();
-    let mut depend: Vec<(usize, String)> = Vec::new();
     {
         let ctx = GenCtx::new(interp);
         let languages = interp.langs.enabled.clone();
@@ -137,32 +136,8 @@ pub fn create_outputs(interp: &mut Interp) {
                 }
             }
         }
-        for file in &interp.ext.evaluation_files {
-            // cmMakefile::AddCMakeDependFile: the input file joins the build
-            // system's check files so edits re-run CMake. Resolve it here —
-            // silently, since CreateOutputFile does not read the input —
-            // where &mut access to the makefile exists.
-            if !file.input_is_content {
-                let dir_backtrace = ctx.dir_backtrace(file.dir);
-                depend.push((file.dir, input_file_name(&ctx, file, &dir_backtrace, false)));
-            }
-        }
         marked.sort_by_key(|(dir, _, _)| *dir);
         diagnostics.extend(ctx.errors.borrow().iter().cloned());
-    }
-    for (dir, path) in depend {
-        // The list file vector drives the Ninja "re-run cmake" rule.
-        interp.makefiles[dir].list_files.push(path.clone());
-        interp.ext.configure_dependencies.insert(path.clone());
-        let deps = interp
-            .ext
-            .misc
-            .entry("cmake-depend-files".to_string())
-            .or_default();
-        if !deps.is_empty() {
-            deps.push(';');
-        }
-        deps.push_str(&path);
     }
     for (dir, path, depends) in marked {
         // cmMakefile::GetOrCreateGeneratedSource(name): the source file is
@@ -217,6 +192,13 @@ pub fn generate(ctx: &GenCtx) {
             file.input.clone()
         } else {
             let input_name = input_file_name(ctx, file, &dir_backtrace, true);
+            // cmMakefile::AddCMakeDependFile, reached from
+            // cmGeneratorExpressionEvaluationFile::Generate.  Inputs are
+            // generation-time dependencies rather than configure-time list
+            // files, so collect them with the other generation-time inputs.
+            ctx.cmake_depend_files
+                .borrow_mut()
+                .push((file.dir, input_name.clone()));
             if permissions == 0
                 && let Ok(meta) = std::fs::metadata(&input_name)
             {

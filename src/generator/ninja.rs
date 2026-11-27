@@ -2145,7 +2145,7 @@ impl<'a> NinjaGenerator<'a> {
         }
         // Inputs read by configure_file-style generation during generate
         // (Info.plist templates and friends).
-        for extra in self.ctx.cmake_depend_files.borrow().iter() {
+        for (_, extra) in self.ctx.cmake_depend_files.borrow().iter() {
             deps.push(self.ninja_path(extra));
         }
         deps.push(self.output_path("CMakeCache.txt"));
