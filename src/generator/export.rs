@@ -178,12 +178,7 @@ fn is_linkable(tgt: &Target) -> bool {
 /// frame reported by `IssueMessage` for generate-time export errors.
 pub(super) fn dir_backtrace(ctx: &GenCtx, dir: usize) -> Vec<Frame> {
     let file = format!("{}/CMakeLists.txt", ctx.interp.makefiles[dir].source_dir);
-    vec![Frame {
-        file: file.into(),
-        line: 0,
-        name: None,
-        deferred: false,
-    }]
+    vec![Frame::directory(file.into(), dir)]
 }
 
 pub(super) struct Record<'a> {

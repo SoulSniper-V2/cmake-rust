@@ -535,7 +535,9 @@ fn configure_file(
         ));
         return;
     }
-    ctx.cmake_depend_files.borrow_mut().push(infile.to_owned());
+    ctx.cmake_depend_files
+        .borrow_mut()
+        .push((makefile, infile.to_owned()));
     ctx.cmake_output_files
         .borrow_mut()
         .push((makefile, outfile.to_owned()));

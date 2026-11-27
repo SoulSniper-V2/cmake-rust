@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.21)
+project(RepeatedInstallBacktrace NONE)
+foreach(f a.txt b.txt c.txt)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/${f} DESTINATION share)
+endforeach()
