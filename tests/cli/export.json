@@ -1,0 +1,39 @@
+[
+  {
+    "name": "export-fileset-multi-config",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja Multi-Config"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.28)\nproject(ExportFileSet C)\nadd_library(exp STATIC exp.c)\ntarget_sources(exp PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/inc FILES inc/e.h)\ninstall(TARGETS exp EXPORT expTargets ARCHIVE DESTINATION lib FILE_SET HEADERS DESTINATION include)\nexport(TARGETS exp FILE ${CMAKE_CURRENT_BINARY_DIR}/ExpTargets.cmake)\n",
+      "src/exp.c": "void exp(void) {}\n",
+      "src/inc/e.h": "#pragma once\n"
+    },
+    "inspect": [
+      "b/ExpTargets.cmake"
+    ]
+  },
+  {
+    "name": "imported-config-genex-fallback",
+    "argv": [
+      "-S",
+      "src",
+      "-B",
+      "b",
+      "-G",
+      "Ninja"
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(ImportedConfigGenex C)\nadd_library(imp STATIC IMPORTED)\nset_target_properties(imp PROPERTIES\n  IMPORTED_CONFIGURATIONS DEBUG\n  IMPORTED_LOCATION_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/libimpd.a\n  INTERFACE_COMPILE_DEFINITIONS \"$<$<CONFIG:Debug>:DBG>\" )\nadd_executable(app main.c)\ntarget_link_libraries(app PRIVATE imp)\n",
+      "src/main.c": "int main(void) { return 0; }\n"
+    },
+    "inspect": [
+      "b/build.ninja"
+    ]
+  }
+]

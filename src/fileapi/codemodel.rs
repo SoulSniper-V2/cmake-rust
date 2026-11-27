@@ -14,7 +14,10 @@ use crate::install_model::{CopyKind, InstallAction};
 use crate::interp::Interp;
 use crate::messages::Frame;
 use crate::state::{FileSet, Scope, Target, TargetKind};
-use crate::util::{expand_list, is_on_opt, relative_if_under};
+use crate::util::{
+    collapse_full_path, expand_list, filename_path, is_full_path, is_on_opt, is_subdirectory,
+    relative_if_under, relative_path,
+};
 
 /// The deduplicated `backtraceGraph` (`BacktraceData`).
 #[derive(Default)]
@@ -512,8 +515,11 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 let rename = genex_at(self.ctx, mf, &opts.rename);
                 let mut out_paths = jarr();
                 if matches!(kind, CopyKind::Directory) {
+                    let mut evaluated = Vec::new();
                     for dir in paths {
-                        let dir = genex_at(self.ctx, mf, dir);
+                        evaluated.extend(expand_list(&genex_at(self.ctx, mf, dir), false));
+                    }
+                    for dir in &evaluated {
                         if let Some(stripped) = dir.strip_suffix('/') {
                             out_paths.push(installer_path(
                                 &relative_if_under(&self.top_source, stripped),
@@ -521,8 +527,8 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                             ));
                         } else {
                             out_paths.push(installer_path(
-                                &relative_if_under(&self.top_source, &dir),
-                                &crate::util::filename_name(&dir),
+                                &relative_if_under(&self.top_source, dir),
+                                &crate::util::filename_name(dir),
                             ));
                         }
                     }
@@ -541,6 +547,9 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                             out_paths.push(jstr(relative_if_under(&self.top_source, path)));
                         }
                     }
+                }
+                if out_paths.is_empty_container() {
+                    return;
                 }
                 installer.set("paths", out_paths);
                 if opts.optional {
@@ -1096,45 +1105,70 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 ),
             );
             out.push(fs);
-            for (_dir, file) in self.eval_file_set_files(target, set, &dirs) {
-                fsdb.insert(file.clone(), index as u32);
+            for (dir, file) in self.eval_file_set_files(target, set, &dirs) {
+                let key = if dir.is_empty() {
+                    file
+                } else {
+                    format!("{dir}/{file}")
+                };
+                fsdb.insert(key, index as u32);
             }
         }
         out
     }
 
     fn eval_file_set_dirs(&self, target: &Target, set: &FileSet) -> Vec<String> {
+        let source_dir = &self.ctx.interp.makefiles[target.makefile].source_dir;
         let mut dirs = Vec::new();
         for entry in &set.base_dirs {
-            for dir in expand_list(&self.ctx.genex(&entry.0, Some(target), None), false) {
-                if !dir.is_empty() {
-                    dirs.push(dir);
+            for part in expand_list(&entry.0, false) {
+                for dir in expand_list(&self.ctx.genex(&part, Some(target), None), false) {
+                    if dir.is_empty() {
+                        continue;
+                    }
+                    if is_full_path(&dir) {
+                        dirs.push(dir);
+                    } else {
+                        dirs.push(format!("{source_dir}/{dir}"));
+                    }
                 }
             }
         }
         dirs
     }
 
-    /// `(base_dir, full_path)` pairs (`EvaluateFileEntry` simplified:
-    /// files are relative to each base directory).
     fn eval_file_set_files(
         &self,
         target: &Target,
         set: &FileSet,
         dirs: &[String],
     ) -> Vec<(String, String)> {
+        let source_dir = &self.ctx.interp.makefiles[target.makefile].source_dir;
         let mut out = Vec::new();
         for entry in &set.files {
-            for file in expand_list(&self.ctx.genex(&entry.0, Some(target), None), false) {
-                if file.is_empty() {
-                    continue;
-                }
-                if crate::util::is_full_path(&file) {
-                    out.push((String::new(), file));
-                    continue;
-                }
-                for dir in dirs {
-                    out.push((dir.clone(), format!("{dir}/{file}")));
+            for part in expand_list(&entry.0, false) {
+                for file in expand_list(&self.ctx.genex(&part, Some(target), None), false) {
+                    if file.is_empty() {
+                        continue;
+                    }
+                    let file = if is_full_path(&file) {
+                        file
+                    } else {
+                        format!("{source_dir}/{file}")
+                    };
+                    let collapsed_file = collapse_full_path(&file, source_dir);
+                    let mut rel_dir = None;
+                    for dir in dirs {
+                        let collapsed_dir = collapse_full_path(dir, source_dir);
+                        if is_subdirectory(&collapsed_file, &collapsed_dir) {
+                            let rel = relative_path(&collapsed_dir, &collapsed_file);
+                            rel_dir = Some(filename_path(&rel));
+                            break;
+                        }
+                    }
+                    if let Some(rel_dir) = rel_dir {
+                        out.push((rel_dir, file));
+                    }
                 }
             }
         }
