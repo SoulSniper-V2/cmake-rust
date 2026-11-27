@@ -628,6 +628,7 @@ impl Invocation {
 
         let mut output = ProcessOutput::new(test, send, self.alternate);
         let mut status = None;
+        let mut measurement_start = started;
         let mut timeout_start = started;
         let mut timeout = if self.timeout > 0.0 {
             self.timeout
@@ -646,7 +647,8 @@ impl Invocation {
                     Ok(len) => {
                         if let Some(alternate) = output.read(&buffer[..len]) {
                             timeout = alternate;
-                            timeout_start = Instant::now();
+                            measurement_start = Instant::now();
+                            timeout_start = measurement_start;
                             alternate_used = true;
                         }
                     }
@@ -709,7 +711,7 @@ impl Invocation {
             reason,
             completion,
             exit_value,
-            seconds: started.elapsed().as_secs_f64(),
+            seconds: measurement_start.elapsed().as_secs_f64(),
             actual: self.exe,
             args: self.args,
             start,
