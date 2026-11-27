@@ -3,6 +3,11 @@
 
 use std::ffi::CString;
 
+/// `cmTrimWhitespace` uses the C whitespace characters.
+pub fn trim_whitespace(value: &str) -> &str {
+    value.trim_matches(|ch: char| ch.is_ascii_whitespace() || ch == '\u{b}')
+}
+
 /// `cmValue::IsOn`.
 pub fn is_on(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();

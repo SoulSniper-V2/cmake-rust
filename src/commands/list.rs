@@ -1062,7 +1062,7 @@ fn handle_transform(interp: &mut Interp, args: &[String]) -> CmdResult {
             TransformAction::Prepend => format!("{}{}", action_args[0], s),
             TransformAction::ToUpper => s.to_ascii_uppercase(),
             TransformAction::ToLower => s.to_ascii_lowercase(),
-            TransformAction::Strip => s.trim_matches(|c: char| c.is_whitespace()).to_owned(),
+            TransformAction::Strip => util::trim_whitespace(s).to_owned(),
             TransformAction::GenexStrip => strip_all_generator_expressions(s),
             TransformAction::Replace => {
                 let mut out = String::new();

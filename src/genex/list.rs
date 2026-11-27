@@ -324,11 +324,7 @@ fn transform(
             "PREPEND" => value.insert_str(0, &action_args[0]),
             "TOUPPER" => value.make_ascii_uppercase(),
             "TOLOWER" => value.make_ascii_lowercase(),
-            "STRIP" => {
-                *value = value
-                    .trim_matches(|c: char| c.is_ascii_whitespace() || c == '\u{b}')
-                    .to_owned()
-            }
+            "STRIP" => *value = crate::util::trim_whitespace(value).to_owned(),
             "REPLACE" => *value = replace.as_ref().unwrap().replace(value, host)?,
             _ => unreachable!(),
         }
