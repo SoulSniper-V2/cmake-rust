@@ -1833,21 +1833,42 @@ fn target_options_split(option: &str) -> Vec<String> {
 }
 
 /// Entry point: build the codemodel object for the current build tree.
+/// `Codemodel::Dump`: one `CodemodelConfig` per
+/// `GetGeneratorConfigs(IncludeEmptyConfig)` entry.
 pub(super) fn build(api: &mut FileApi, interp: &Interp) -> Json {
     let ctx = GenCtx::new(interp);
-    let top_source = interp.home_source.clone();
-    let top_build = interp.home_binary.clone();
-    let mut model = Codemodel {
-        api,
-        ctx: &ctx,
-        config: ctx.config.clone(),
-        top_source,
-        top_build,
-        dirs: Vec::new(),
-        dir_index: HashMap::new(),
-        projects: Vec::new(),
-        target_index: HashMap::new(),
-        target_ids: HashMap::new(),
+    let configs = if ctx.multi_config {
+        if ctx.configs.is_empty() {
+            vec![String::new()]
+        } else {
+            ctx.configs.clone()
+        }
+    } else {
+        vec![ctx.config.clone()]
     };
-    model.dump()
+    let mut result: Option<Json> = None;
+    let mut configurations = Vec::new();
+    for config in configs {
+        let config_ctx = ctx.for_config(&config);
+        let mut model = Codemodel {
+            api: &mut *api,
+            ctx: &config_ctx,
+            config,
+            top_source: interp.home_source.clone(),
+            top_build: interp.home_binary.clone(),
+            dirs: Vec::new(),
+            dir_index: HashMap::new(),
+            projects: Vec::new(),
+            target_index: HashMap::new(),
+            target_ids: HashMap::new(),
+        };
+        let dumped = model.dump();
+        if let Some(Json::Array(mut one)) = dumped.get("configurations").cloned() {
+            configurations.append(&mut one);
+        }
+        result.get_or_insert(dumped);
+    }
+    let mut codemodel = result.unwrap_or_else(jobj);
+    codemodel.set("configurations", Json::Array(configurations));
+    codemodel
 }
