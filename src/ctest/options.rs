@@ -48,6 +48,7 @@ pub(super) struct Options {
     pub verbose: bool,
     pub extra_verbose: bool,
     pub quiet: bool,
+    pub script_quiet: bool,
     pub debug: bool,
     pub progress: bool,
     pub show: Show,

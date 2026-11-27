@@ -1809,8 +1809,9 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(value) = interp.get_def("CTEST_CUSTOM_TEST_OUTPUT_TRUNCATION") {
         options.output_truncation = value.to_owned();
     }
+    options.script_quiet = quiet;
     let mut log = Log::new(&options);
-    log.suppress_output = !handler_verbose || quiet;
+    log.suppress_output = !handler_verbose;
     if !binary.is_dir() {
         let error = super::directory_error(&binary);
         handler_error(interp, &format!("{error}\n"));

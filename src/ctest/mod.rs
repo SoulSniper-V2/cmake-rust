@@ -275,7 +275,9 @@ pub(in crate::ctest) fn execute_detailed(
         dir = binary.clone();
     }
     let ignore = read_custom(&binary, log);
-    log.output(&format!("Test project {}\n", dir.display()));
+    if !options.script_quiet {
+        log.output(&format!("Test project {}\n", dir.display()));
+    }
     if options.script
         && !options.output_truncation.is_empty()
         && !matches!(

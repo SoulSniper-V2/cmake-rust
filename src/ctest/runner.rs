@@ -763,10 +763,12 @@ pub(super) fn summarize(
             last_log.push('\n');
         }
     }
-    log.output(&format!(
-        "\nTotal Test time (real) = {:6.2} sec\n",
-        started.elapsed().as_secs_f64()
-    ));
+    if !options.script_quiet {
+        log.output(&format!(
+            "\nTotal Test time (real) = {:6.2} sec\n",
+            started.elapsed().as_secs_f64()
+        ));
+    }
     let mut disabled_log = String::new();
     let mut failed_log = String::new();
     let mut disabled_text = String::new();
