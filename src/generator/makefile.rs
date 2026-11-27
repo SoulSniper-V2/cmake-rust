@@ -32,9 +32,7 @@ fn dir_support(ctx: &GenCtx<'_>, dir: usize) -> String {
 fn shell_escape(_ctx: &GenCtx<'_>, text: &str, _is_source: bool) -> String {
     crate::outconv::escape_for_shell(
         text,
-        crate::outconv::FLAG_MAKE
-            | crate::outconv::FLAG_IS_UNIX
-            | crate::outconv::FLAG_ALLOW_MAKE_VARIABLES,
+        crate::outconv::MAKE_UNIX | crate::outconv::FLAG_ALLOW_MAKE_VARIABLES,
     )
 }
 
@@ -1956,7 +1954,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 continue;
             }
             let mut line = shell_path(self.ctx, &argv[0]);
-            evaluated.append_arguments(self.ctx, index, &mut line);
+            evaluated.append_arguments(self.ctx, index, crate::outconv::MAKE_UNIX, &mut line);
             content.push_str(&line);
         }
         content
@@ -2033,7 +2031,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
             let program = shell_path(self.ctx, &program);
             let mut line = format!("{launcher}{program}");
-            evaluated.append_arguments(self.ctx, index, &mut line);
+            evaluated.append_arguments(self.ctx, index, crate::outconv::MAKE_UNIX, &mut line);
             lines.push(line);
         }
         if working_directory != relative_dir {
