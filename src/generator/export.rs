@@ -178,12 +178,7 @@ fn is_linkable(tgt: &Target) -> bool {
 /// frame reported by `IssueMessage` for generate-time export errors.
 pub(super) fn dir_backtrace(ctx: &GenCtx, dir: usize) -> Vec<Frame> {
     let file = format!("{}/CMakeLists.txt", ctx.interp.makefiles[dir].source_dir);
-    vec![Frame {
-        file: file.into(),
-        line: 0,
-        name: None,
-        deferred: false,
-    }]
+    vec![Frame::directory(file.into(), dir)]
 }
 
 pub(super) struct Record<'a> {
@@ -2001,7 +1996,8 @@ fn file_set_dirs_files(
     set_name: &str,
     record: &Record<'_>,
 ) -> (String, String) {
-    let config = &ex.ctx.config;
+    let configs = export_configs(ex.ctx);
+    let multi = configs.len() != 1;
     let kind = &file_set.kind;
     let module_error = |what: &str| {
         ex.report_error(format!(
@@ -2010,62 +2006,102 @@ fn file_set_dirs_files(
         ));
         (String::new(), String::new())
     };
+    let wrap = |value: String, config: &str, sensitive: bool| {
+        if sensitive && multi {
+            format!("\"$<$<CONFIG:{config}>:{value}>\"")
+        } else {
+            format!("\"{value}\"")
+        }
+    };
     if ex.installed {
         let dest_text = record
             .installed
             .and_then(|item| item.file_sets.get(set_name))
             .cloned()
             .unwrap_or_default();
-        let (unescaped, dest_sensitive) = ex.eval(&dest_text, tgt, config);
-        if dest_sensitive && kind == "CXX_MODULES" {
-            return module_error("base file entries");
-        }
-        let mut dest = escape_nowrap(&unescaped);
-        if !is_full_path(&unescaped) {
-            dest = format!("{}{dest}", ex.import_prefix_slash());
-        }
-        let (dirs, dir_sensitive) = eval_dirs(ex, file_set, tgt, config);
-        let (files, mut sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
-        sensitive |= dest_sensitive | dir_sensitive;
-        if sensitive && kind == "CXX_MODULES" {
-            return module_error("base file entries");
-        }
-        let mut file_out = Vec::new();
-        for (rel, names) in &files {
-            let prefix = if rel.is_empty() {
-                String::new()
-            } else {
-                format!("{rel}/")
-            };
-            for file in names {
-                file_out.push(format!(
-                    "\"{}/{}{}\"",
-                    dest,
-                    escape_nowrap(&prefix),
-                    escape_nowrap(&filename_name(file))
-                ));
+
+        let mut dirs_out = Vec::new();
+        for config in &configs {
+            let (unescaped, dest_sensitive) = ex.eval(&dest_text, tgt, config);
+            if dest_sensitive && kind == "CXX_MODULES" {
+                return module_error("base file entries");
+            }
+            let mut dest = escape_nowrap(&unescaped);
+            if !is_full_path(&unescaped) {
+                dest = format!("{}{dest}", ex.import_prefix_slash());
+            }
+            dirs_out.push(wrap(dest, config, dest_sensitive));
+            if !(dest_sensitive && multi) {
+                break;
             }
         }
-        (format!("\"{dest}\""), file_out.join(" "))
-    } else {
-        let (dirs, sensitive) = eval_dirs(ex, file_set, tgt, config);
-        if sensitive && kind == "CXX_MODULES" {
-            return module_error("base directory entries");
-        }
-        let dirs_out: Vec<String> = dirs
-            .iter()
-            // Kitware emits the first directory for a single configuration.
-            .take(1)
-            .map(|d| format!("\"{}\"", escape_nowrap(d)))
-            .collect();
-        let (files, file_sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
-        if file_sensitive && kind == "CXX_MODULES" {
-            return module_error("file entries");
-        }
+
         let mut file_out = Vec::new();
-        for names in files.values() {
-            for file in names {
-                file_out.push(format!("\"{}\"", escape_nowrap(file)));
+        for config in &configs {
+            let (dirs, dir_sensitive) = eval_dirs(ex, file_set, tgt, config);
+            let (files, file_sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
+            let (unescaped, dest_sensitive) = ex.eval(&dest_text, tgt, config);
+            let sensitive = dest_sensitive || dir_sensitive || file_sensitive;
+            if sensitive && kind == "CXX_MODULES" {
+                return module_error("base file entries");
+            }
+            let mut dest = escape_nowrap(&unescaped);
+            if !is_full_path(&unescaped) {
+                dest = format!("{}{dest}", ex.import_prefix_slash());
+            }
+            for (rel, names) in &files {
+                let prefix = if rel.is_empty() {
+                    String::new()
+                } else {
+                    format!("{rel}/")
+                };
+                for file in names {
+                    let value = format!(
+                        "{dest}/{}{}",
+                        escape_nowrap(&prefix),
+                        escape_nowrap(&filename_name(file))
+                    );
+                    file_out.push(wrap(value, config, sensitive));
+                }
+            }
+            if !(sensitive && multi) {
+                break;
+            }
+        }
+        (dirs_out.join(" "), file_out.join(" "))
+    } else {
+        let mut dirs_out = Vec::new();
+        for config in &configs {
+            let (dirs, sensitive) = eval_dirs(ex, file_set, tgt, config);
+            if sensitive && kind == "CXX_MODULES" {
+                return module_error("base directory entries");
+            }
+            for dir in &dirs {
+                let value = escape_nowrap(dir);
+                if sensitive && multi {
+                    dirs_out.push(wrap(value, config, true));
+                } else {
+                    dirs_out.push(wrap(value, config, false));
+                    break;
+                }
+            }
+        }
+
+        let mut file_out = Vec::new();
+        for config in &configs {
+            let (dirs, dir_sensitive) = eval_dirs(ex, file_set, tgt, config);
+            let (files, file_sensitive) = eval_files(ex, file_set, tgt, config, &dirs);
+            let sensitive = dir_sensitive || file_sensitive;
+            if sensitive && kind == "CXX_MODULES" {
+                return module_error("file entries");
+            }
+            for names in files.values() {
+                for file in names {
+                    file_out.push(wrap(escape_nowrap(file), config, sensitive));
+                }
+            }
+            if !(sensitive && multi) {
+                break;
             }
         }
         (dirs_out.join(" "), file_out.join(" "))

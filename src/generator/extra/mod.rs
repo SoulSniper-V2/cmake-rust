@@ -111,10 +111,11 @@ fn filename_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// `cmSystemTools::GetFilenameWithoutExtension` (last `.` removed).
+/// `cmSystemTools::GetFilenameWithoutExtension` (the longest extension,
+/// starting at the first `.`, is removed).
 fn filename_without_extension(path: &str) -> &str {
     let name = filename_name(path);
-    name.rsplit_once('.')
+    name.split_once('.')
         .filter(|(stem, _)| !stem.is_empty())
         .map_or(name, |(stem, _)| stem)
 }

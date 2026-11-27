@@ -388,6 +388,10 @@ impl GroupNode {
 fn insert_group(groups: &mut Vec<GroupNode>, name: &str, sg: &SourceGroup) {
     let parts: Vec<&str> = name.split('\\').filter(|p| !p.is_empty()).collect();
     if parts.is_empty() {
+        groups[0].files.extend(sg.files.iter().cloned());
+        if sg.regex.is_some() {
+            groups[0].regex = sg.regex.clone();
+        }
         return;
     }
     // Find (or append) the top-level group.

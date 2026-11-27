@@ -1,0 +1,5 @@
+add_library(hdrs INTERFACE h.h)
+add_executable(tool main.c)
+set_target_properties(tool PROPERTIES VERSION 1.2)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gen.inc "#define G 1\n")
+set_source_files_properties(main.c PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gen.inc)

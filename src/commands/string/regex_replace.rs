@@ -1,19 +1,60 @@
 //! Port of `cmStringReplaceHelper` (REGEX REPLACE `\N` back-references)
 //! and the `RegexReplace` handler from `cmStringCommand.cxx`.
 
-use crate::cmregex::{Regex, ReplacePart, parse_replacement};
 use crate::interp::{CmdResult, Interp, err};
 use crate::state::{clear_matches, store_matches};
 
 use super::{cm_join, old_bol, regex_find_next};
 
+pub enum Segment {
+    Literal(String),
+    Group(usize),
+}
+
+/// `cmStringReplaceHelper::ParseReplaceExpression`, over CMake's raw bytes:
+/// an unknown escape names the single byte after the backslash, even when it
+/// starts a multi-byte character. Returns the error text on failure.
+pub fn parse_replace_expression(expr: &str) -> Result<Vec<Segment>, String> {
+    let raw = crate::bytes::encode(expr);
+    let bytes: &[u8] = &raw;
+    let mut replacements = Vec::new();
+    let mut l = 0usize;
+    while l < bytes.len() {
+        let Some(r) = bytes[l..].iter().position(|&b| b == b'\\').map(|p| l + p) else {
+            replacements.push(Segment::Literal(crate::bytes::decode(&bytes[l..])));
+            break;
+        };
+        if r > l {
+            replacements.push(Segment::Literal(crate::bytes::decode(&bytes[l..r])));
+        }
+        if r == bytes.len() - 1 {
+            return Err("replace-expression ends in a backslash".to_owned());
+        }
+        let next = bytes[r + 1];
+        if next.is_ascii_digit() {
+            replacements.push(Segment::Group(usize::from(next - b'0')));
+        } else if next == b'n' {
+            replacements.push(Segment::Literal("\n".to_owned()));
+        } else if next == b'\\' {
+            replacements.push(Segment::Literal("\\".to_owned()));
+        } else {
+            let mut text = b"Unknown escape \"".to_vec();
+            text.extend_from_slice(&bytes[r..r + 2]);
+            text.extend_from_slice(b"\" in replace-expression");
+            return Err(crate::bytes::decode(&text));
+        }
+        l = r + 2;
+    }
+    Ok(replacements)
+}
+
+/// `RegexReplace` (`cmStringReplaceHelper::Replace`).
 pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
     let regex = &args[2];
     let replace = &args[3];
     let outvar = &args[4];
 
-    let compiled = Regex::new(regex);
-    let replacements = match parse_replacement(replace) {
+    let replacements = match parse_replace_expression(replace) {
         Ok(replacements) => replacements,
         Err(error) => {
             return err(format!("sub-command REGEX, mode REPLACE: {error}."));
@@ -22,7 +63,7 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
 
     clear_matches(interp);
 
-    let re = match compiled {
+    let re = match crate::cmregex::Regex::new(regex) {
         Ok(re) => re,
         Err(_) => {
             return err(format!(
@@ -49,8 +90,8 @@ pub fn regex_replace(interp: &mut Interp, args: &[String]) -> CmdResult {
 
         for replacement in &replacements {
             match replacement {
-                ReplacePart::Literal(text) => output.extend_from_slice(&crate::bytes::encode(text)),
-                ReplacePart::Capture(n) => {
+                Segment::Literal(text) => output.extend_from_slice(&crate::bytes::encode(text)),
+                Segment::Group(n) => {
                     if *n > re.num_groups() {
                         return err(format!(
                             "sub-command REGEX, mode REPLACE: replace expression \"{replace}\" \

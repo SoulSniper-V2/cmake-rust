@@ -70,10 +70,6 @@
 //!   4. pass `not_bol = false` under CMP0186 OLD so `^` re-matches at
 //!      every continuation offset, `not_bol = true` under NEW.
 
-mod replacement;
-
-pub(crate) use replacement::{ReplacePart, parse_replacement};
-
 // Opcode values; they are part of the compiled-program encoding and are
 // kept identical to the C++ source.
 const END: u8 = 0;

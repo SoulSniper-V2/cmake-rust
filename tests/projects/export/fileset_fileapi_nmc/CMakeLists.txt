@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
+project(FileSetFileApi C)
+add_library(fs STATIC fs.c)
+target_sources(fs PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/inc FILES inc/nested/fs.h)
+install(TARGETS fs EXPORT fsTargets ARCHIVE DESTINATION lib FILE_SET HEADERS DESTINATION include)
+install(EXPORT fsTargets FILE fsTargets.cmake DESTINATION lib/cmake/fs)

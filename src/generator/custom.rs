@@ -564,7 +564,10 @@ fn path_eq_or_subdir(a: &str, b: &str) -> bool {
 /// `cmOutputConverter::MaybeRelativeTo(local, remote)` for the output
 /// converter of directory `makefile` (relative-path tops computed as in
 /// ComputeRelativePathTopSource/Binary).
-pub fn maybe_relative_to(ctx: &GenCtx, makefile: usize, local: &str, remote: &str) -> String {
+/// cmOutputConverter::ComputeRelativePathTopSource/TopBinary: the highest
+/// buildsystem ancestor directory that still contains this directory's
+/// source (binary) directory. Returns (top source, top binary).
+pub fn relative_path_tops(ctx: &GenCtx, makefile: usize) -> (String, String) {
     let makefiles = &ctx.interp.makefiles;
     let top = |pick: fn(&crate::interp::Makefile) -> &str| {
         let mut current = makefile;
@@ -577,8 +580,11 @@ pub fn maybe_relative_to(ctx: &GenCtx, makefile: usize, local: &str, remote: &st
         }
         pick(&makefiles[current]).to_owned()
     };
-    let top_source = top(|m| &m.source_dir);
-    let top_binary = top(|m| &m.binary_dir);
+    (top(|m| &m.source_dir), top(|m| &m.binary_dir))
+}
+
+pub fn maybe_relative_to(ctx: &GenCtx, makefile: usize, local: &str, remote: &str) -> String {
+    let (top_source, top_binary) = relative_path_tops(ctx, makefile);
     let mut local_in_binary = path_eq_or_subdir(local, &top_binary);
     let mut remote_in_binary = path_eq_or_subdir(remote, &top_binary);
     let mut local_in_source = path_eq_or_subdir(local, &top_source);

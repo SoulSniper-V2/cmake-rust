@@ -16,6 +16,10 @@ Fixture files:
   build.txt       if present, build the fixture before packaging
   source.txt      if present, use CPackSourceConfig.cmake instead
   cmake_generator.txt  configure generator (default Ninja)
+  env.txt         extra KEY=VALUE environment for both cpack runs, one per line
+                  (checksum cases pin SOURCE_DATE_EPOCH: staging directories
+                  get install-time mtimes, so archive bytes would otherwise
+                  depend on which second each side ran in)
 """
 import argparse
 import bz2
@@ -314,6 +318,11 @@ def cpack_args(case, build, out):
 
 def run_one(binary, case, build, out):
     env = {"PATH": "/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin", "HOME": str(out), "LANG": "C", "LC_ALL": "C", "CMAKE_RUST_DATA_ROOT": DATA_ROOT_TMP}
+    if (case / "env.txt").exists():
+        for line in (case / "env.txt").read_text().splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                env[key.strip()] = value
     proc = run([binary, *cpack_args(case, build, out)], cwd=build, env=env, timeout=600)
     artifacts = {}
     sigtmp = tempfile.mkdtemp(prefix="cpd-", dir="/tmp")

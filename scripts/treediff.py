@@ -189,7 +189,9 @@ def canonical_target_reply(data: bytes) -> bytes:
 
     def walk(value):
         if isinstance(value, dict):
-            return {k: (frames(v) if k == "backtrace" else walk(v)) for k, v in value.items()}
+            return {k: (frames(v) if k == "backtrace"
+                        else [frames(i) for i in v] if k == "backtraces" and isinstance(v, list)
+                        else walk(v)) for k, v in value.items()}
         if isinstance(value, list):
             return [walk(v) for v in value]
         return value

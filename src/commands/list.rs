@@ -1,6 +1,7 @@
 //! `list()` command: port of `cmListCommand.cxx` and `cmList.cxx`.
 
-use crate::cmregex::{Regex, ReplacePart, parse_replacement};
+use crate::cmregex::Regex;
+use crate::commands::string::regex_replace::{Segment, parse_replace_expression};
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
 use crate::policy::PolicyStatus;
@@ -191,7 +192,7 @@ struct ReplaceHelper {
     regex_string: String,
     regex: Regex,
     replace_expression: String,
-    replacements: Vec<ReplacePart>,
+    replacements: Vec<Segment>,
 }
 
 impl ReplaceHelper {
@@ -201,7 +202,7 @@ impl ReplaceHelper {
                 "sub-command TRANSFORM, action REPLACE: Failed to compile regex \"{regex}\"."
             )));
         };
-        let replacements = parse_replacement(replace).map_err(|error| {
+        let replacements = parse_replace_expression(replace).map_err(|error| {
             OutOfRange(format!("sub-command TRANSFORM, action REPLACE: {error}."))
         })?;
         Ok(Self {
@@ -234,10 +235,8 @@ impl ReplaceHelper {
             // Concatenate the replacement for the match.
             for replacement in &self.replacements {
                 match replacement {
-                    ReplacePart::Literal(text) => {
-                        bytes.extend_from_slice(&crate::bytes::encode(text))
-                    }
-                    ReplacePart::Capture(n) => {
+                    Segment::Literal(text) => bytes.extend_from_slice(&crate::bytes::encode(text)),
+                    Segment::Group(n) => {
                         if *n > self.regex.num_groups() {
                             return Err(OutOfRange(format!(
                                 "replace expression \"{}\" contains an out-of-range escape for regex \"{}\"",

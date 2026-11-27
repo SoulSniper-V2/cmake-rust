@@ -2001,18 +2001,14 @@ pub(crate) fn evaluated_entries(
 /// `cmLocalGenerator::DirectoryBacktrace`: the makefile's persistent
 /// file-scope frame, used for diagnostics issued through the local generator.
 pub(crate) fn directory_backtrace(ctx: &GenCtx, makefile: usize) -> Vec<Frame> {
+    let makefile_index = makefile;
     let makefile = &ctx.interp.makefiles[makefile];
     let file = makefile
         .list_files
         .first()
         .cloned()
         .unwrap_or_else(|| format!("{}/CMakeLists.txt", makefile.source_dir));
-    vec![Frame {
-        file: Rc::from(file.as_str()),
-        line: 0,
-        name: None,
-        deferred: false,
-    }]
+    vec![Frame::directory(Rc::from(file.as_str()), makefile_index)]
 }
 
 /// `(full_path, set, entry_backtrace)` for every file-set member,
@@ -2228,7 +2224,7 @@ fn collect_sources(
                     objects
                         .into_iter()
                         .map(|path| Listed::Object {
-                            path,
+                            path: collapse_full_path(&path, ""),
                             library: library.name.clone(),
                             backtrace: backtrace.clone(),
                         })

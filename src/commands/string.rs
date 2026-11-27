@@ -4,7 +4,7 @@
 
 pub mod json;
 pub(crate) mod misc;
-mod regex_replace;
+pub(crate) mod regex_replace;
 
 use crate::interp::{CmdResult, Interp, err};
 use crate::messages::MessageType;
