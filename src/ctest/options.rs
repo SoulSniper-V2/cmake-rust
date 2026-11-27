@@ -48,6 +48,7 @@ pub(super) struct Options {
     pub verbose: bool,
     pub extra_verbose: bool,
     pub quiet: bool,
+    pub debug: bool,
     pub progress: bool,
     pub show: Show,
     pub print_labels: bool,
@@ -682,6 +683,7 @@ impl Options {
                     }
                 }
                 "--no-compress-output" => {}
+                "--debug" => options.debug = true,
                 "--schedule-random" => options.random = true,
                 "--schedule-random-seed" => {
                     let seed = value()?;

@@ -18,6 +18,7 @@ pub(crate) struct State {
     binary_dir: String,
     model: String,
     group: String,
+    specific_group: String,
     tag: String,
     site: String,
     build_name: String,
@@ -34,6 +35,7 @@ impl State {
             binary_dir: String::new(),
             model: String::new(),
             group: String::new(),
+            specific_group: String::new(),
             tag: String::new(),
             site: hostname(),
             build_name: String::new(),
@@ -590,69 +592,280 @@ fn submit_error_for(url: &str) -> String {
     }
 }
 
-fn parse_submit_args(
-    args: &[String],
-) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
-    let mut parsed: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-    let single = [
-        "RETURN_VALUE",
-        "BUILD_ID",
-        "RETRY_COUNT",
-        "RETRY_DELAY",
-        "SUBMIT_URL",
-        "CDASH_UPLOAD",
-        "CDASH_UPLOAD_TYPE",
-    ];
-    let multi = ["PARTS", "FILES", "HTTPHEADER"];
-    let flags = ["QUIET", "INTERNAL_TEST_CHECKSUM"];
+#[derive(Default)]
+struct SubmitArgs {
+    parts: Option<Vec<String>>,
+    files: Option<Vec<String>>,
+    return_value: Option<String>,
+    build_id: Option<String>,
+    headers: Vec<String>,
+    retry_count: String,
+    retry_delay: String,
+    submit_url: Option<String>,
+    quiet: bool,
+    internal_test: bool,
+    cdash_upload: bool,
+    cdash_file: String,
+    cdash_type: String,
+}
+
+fn submit_missing_value(keyword: &str) -> String {
+    format!("Error after keyword \"{keyword}\":\n  missing required value")
+}
+
+fn parse_submit_args(args: &[String]) -> Result<SubmitArgs, String> {
+    let mut parsed = SubmitArgs {
+        cdash_upload: args.first().is_some_and(|arg| arg == "CDASH_UPLOAD"),
+        ..SubmitArgs::default()
+    };
+    let keywords: &[&str] = if parsed.cdash_upload {
+        &[
+            "CDASH_UPLOAD",
+            "CDASH_UPLOAD_TYPE",
+            "RETURN_VALUE",
+            "BUILD_ID",
+            "HTTPHEADER",
+            "RETRY_COUNT",
+            "RETRY_DELAY",
+            "SUBMIT_URL",
+            "QUIET",
+            "INTERNAL_TEST_CHECKSUM",
+        ]
+    } else {
+        &[
+            "PARTS",
+            "FILES",
+            "RETURN_VALUE",
+            "BUILD_ID",
+            "HTTPHEADER",
+            "RETRY_COUNT",
+            "RETRY_DELAY",
+            "SUBMIT_URL",
+            "QUIET",
+            "INTERNAL_TEST_CHECKSUM",
+        ]
+    };
     let mut index = 0;
     while index < args.len() {
-        let key = args[index].as_str();
-        if flags.contains(&key) {
-            parsed.entry(key.into()).or_default();
-            index += 1;
-        } else if single.contains(&key) {
-            index += 1;
-            if index >= args.len() {
-                return Err(format!("{key} argument missing value"));
-            }
-            parsed.insert(key.into(), vec![args[index].clone()]);
-            index += 1;
-        } else if multi.contains(&key) {
-            index += 1;
-            let mut values = Vec::new();
-            while index < args.len()
-                && !single.contains(&args[index].as_str())
-                && !multi.contains(&args[index].as_str())
-                && !flags.contains(&args[index].as_str())
-            {
-                values.push(args[index].clone());
+        match args[index].as_str() {
+            "QUIET" => {
+                parsed.quiet = true;
                 index += 1;
             }
-            parsed.insert(key.into(), values);
-        } else {
-            return Err(format!("called with unknown argument \"{key}\"."));
+            "INTERNAL_TEST_CHECKSUM" => {
+                parsed.internal_test = true;
+                index += 1;
+            }
+            key @ ("RETURN_VALUE" | "BUILD_ID" | "RETRY_COUNT" | "RETRY_DELAY" | "SUBMIT_URL") => {
+                index += 1;
+                if index >= args.len() {
+                    return Err(submit_missing_value(key));
+                }
+                let value = args[index].clone();
+                match key {
+                    "RETURN_VALUE" => {
+                        if parsed.return_value.is_some() {
+                            return Err("called with more than one value for RETURN_VALUE".into());
+                        }
+                        parsed.return_value = Some(value);
+                    }
+                    "BUILD_ID" => parsed.build_id = Some(value),
+                    "RETRY_COUNT" => parsed.retry_count = value,
+                    "RETRY_DELAY" => parsed.retry_delay = value,
+                    "SUBMIT_URL" => parsed.submit_url = Some(value),
+                    _ => {}
+                }
+                index += 1;
+            }
+            "CDASH_UPLOAD" if parsed.cdash_upload && index == 0 => {
+                index += 1;
+                if index >= args.len() || keywords.contains(&args[index].as_str()) {
+                    return Err(submit_missing_value("CDASH_UPLOAD"));
+                }
+                parsed.cdash_file = args[index].clone();
+                index += 1;
+            }
+            "CDASH_UPLOAD_TYPE" if parsed.cdash_upload => {
+                index += 1;
+                if index >= args.len() || keywords.contains(&args[index].as_str()) {
+                    return Err(submit_missing_value("CDASH_UPLOAD_TYPE"));
+                }
+                parsed.cdash_type = args[index].clone();
+                index += 1;
+            }
+            key @ ("PARTS" | "FILES" | "HTTPHEADER")
+                if !parsed.cdash_upload || key == "HTTPHEADER" =>
+            {
+                index += 1;
+                let mut values = Vec::new();
+                while index < args.len() && !keywords.contains(&args[index].as_str()) {
+                    values.push(args[index].clone());
+                    index += 1;
+                }
+                match key {
+                    "PARTS" => parsed.parts = Some(values),
+                    "FILES" => parsed.files = Some(values),
+                    "HTTPHEADER" => parsed.headers.extend(values),
+                    _ => {}
+                }
+            }
+            value => return Err(format!("called with unknown argument \"{value}\".")),
         }
     }
     Ok(parsed)
 }
 
-fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
-    let parsed = match parse_submit_args(args) {
-        Ok(parsed) => parsed,
-        Err(error) => return err(error),
-    };
-    if let Some(files) = parsed.get("FILES") {
-        for file in files {
-            if !Path::new(file).is_file() {
-                return err(format!(
-                    "File \"{file}\" does not exist. Cannot submit a non-existent file."
-                ));
-            }
+fn valid_submit_part(part: &str) -> bool {
+    matches!(
+        part.to_ascii_lowercase().as_str(),
+        "start"
+            | "update"
+            | "configure"
+            | "build"
+            | "test"
+            | "coverage"
+            | "memcheck"
+            | "notes"
+            | "submit"
+            | "extrafiles"
+            | "upload"
+            | "done"
+    )
+}
+
+fn submit_part_file(part: &str) -> Option<&'static str> {
+    match part.to_ascii_lowercase().as_str() {
+        "update" => Some("Update.xml"),
+        "configure" => Some("Configure.xml"),
+        "build" => Some("Build.xml"),
+        "test" => Some("Test.xml"),
+        "coverage" => Some("Coverage.xml"),
+        "memcheck" => Some("DynamicAnalysis.xml"),
+        "notes" => Some("Notes.xml"),
+        "upload" => Some("Upload.xml"),
+        _ => None,
+    }
+}
+
+fn md5_file(path: &Path, internal_test: bool) -> String {
+    if internal_test {
+        return "ffffffffffffffffffffffffffffffff".into();
+    }
+    std::process::Command::new("md5sum")
+        .arg(path)
+        .output()
+        .ok()
+        .and_then(|output| {
+            String::from_utf8(output.stdout)
+                .ok()
+                .and_then(|text| text.split_whitespace().next().map(str::to_owned))
+        })
+        .unwrap_or_default()
+}
+
+fn cdash_submit(interp: &mut Interp, parsed: &SubmitArgs) -> CmdResult {
+    let file = collapse_input(&parsed.cdash_file);
+    if !Path::new(&file).is_file() {
+        handler_error(
+            interp,
+            &format!("Upload file not found: '{}'\n", parsed.cdash_file),
+        );
+        if let Some(variable) = &parsed.return_value {
+            interp.set_def(variable, "-1");
+        }
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        return Ok(());
+    }
+    let url = submit_url(interp, parsed.submit_url.as_deref());
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        handler_error(
+            interp,
+            "Only http and https are supported for CDASH_UPLOAD\n",
+        );
+        if let Some(variable) = &parsed.return_value {
+            interp.set_def(variable, "-1");
+        }
+        interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        return Ok(());
+    }
+    let debug = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.debug);
+    if debug {
+        for header in &parsed.headers {
+            handler_output(
+                interp,
+                &format!("Add HTTP Header: \"{header}\"\n"),
+                parsed.quiet,
+            );
         }
     }
-    let quiet = parsed.contains_key("QUIET");
+    let retry_count = parsed.retry_count.parse::<usize>().unwrap_or(0);
+    let retry_delay = parsed.retry_delay.parse::<u64>().unwrap_or(0);
+    if parsed.internal_test && retry_count > 0 {
+        for attempt in 1..=retry_count {
+            handler_output(
+                interp,
+                &format!(
+                    "   Upload failed, waiting {retry_delay} seconds...\n   Retry upload: Attempt {attempt} of {retry_count}\n"
+                ),
+                parsed.quiet,
+            );
+        }
+        handler_error(interp, "error uploading to CDash.\n");
+    } else {
+        handler_error(interp, "Error in HttpRequest\n");
+    }
+    if let Some(variable) = &parsed.return_value {
+        interp.set_def(variable, "-1");
+    }
+    interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+    Ok(())
+}
+
+fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
+    let mut parsed = match parse_submit_args(args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            if error.starts_with("Error after keyword") {
+                interp.issue(crate::messages::MessageType::FatalError, &error);
+                return Ok(());
+            }
+            return err(error);
+        }
+    };
+    if let Some(parts) = &mut parsed.parts {
+        parts.retain(|part| {
+            if valid_submit_part(part) {
+                true
+            } else {
+                interp.issue(
+                    crate::messages::MessageType::FatalError,
+                    &format!("Part name \"{part}\" is invalid."),
+                );
+                false
+            }
+        });
+    }
+    if let Some(files) = &mut parsed.files {
+        files.retain(|file| {
+            if Path::new(file).is_file() {
+                true
+            } else {
+                interp.issue(
+                    crate::messages::MessageType::FatalError,
+                    &format!("File \"{file}\" does not exist. Cannot submit a non-existent file."),
+                );
+                false
+            }
+        });
+    }
+    if parsed.cdash_upload {
+        return cdash_submit(interp, &parsed);
+    }
+
     let state = interp.ext.ctest_script.as_ref().unwrap();
     let binary = PathBuf::from(&state.binary_dir);
     let tag = state.tag.clone();
@@ -661,50 +874,121 @@ fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
     } else {
         state.group.clone()
     };
+    let specific_group = state.specific_group.clone();
+    let debug = state.options.debug;
     let directory = binary.join("Testing").join(&tag);
     let _ = std::fs::create_dir_all(&directory);
     let temporary = binary.join("Testing/Temporary");
     let _ = std::fs::create_dir_all(&temporary);
 
+    let default_parts = [
+        "update",
+        "configure",
+        "build",
+        "test",
+        "coverage",
+        "memcheck",
+        "notes",
+        "upload",
+        "done",
+    ];
+    let selected_parts: Vec<String> = if let Some(parts) = &parsed.parts {
+        parts.iter().map(|part| part.to_ascii_lowercase()).collect()
+    } else if parsed.files.is_some() {
+        Vec::new()
+    } else {
+        default_parts.iter().map(|part| part.to_string()).collect()
+    };
+
     let mut files = Vec::new();
-    for name in [
-        "Update.xml",
-        "Configure.xml",
-        "Build.xml",
-        "Test.xml",
-        "Coverage.xml",
-        "DynamicAnalysis.xml",
-        "DynamicAnalysis-Test.xml",
-        "Purify.xml",
-        "Notes.xml",
-        "Upload.xml",
-    ] {
-        if directory.join(name).is_file() {
+    if let Some(extra) = &parsed.files {
+        let mut extra = extra.clone();
+        extra.sort();
+        extra.dedup();
+        files.extend(extra);
+    }
+    for part in &selected_parts {
+        if let Some(name) = submit_part_file(part)
+            && directory.join(name).is_file()
+            && !files.iter().any(|file| file == name)
+        {
             files.push(name.to_owned());
         }
     }
-    if let Some(extra) = parsed.get("FILES") {
-        files.extend(extra.clone());
+    if selected_parts.iter().any(|part| part == "done") {
+        files.push("Done.xml".into());
     }
-    files.dedup();
-    files.push("Done.xml".into());
 
     let mut log = String::from("Upload files:\n");
     for (index, file) in files.iter().enumerate() {
         let _ = std::fmt::Write::write_fmt(&mut log, format_args!("{index}\t{file}\n"));
     }
-    handler_output(interp, "Submit files\n", quiet);
-    if parsed.contains_key("PARTS") && !group.is_empty() {
-        handler_output(interp, &format!("   Send to group: {group}\n"), quiet);
+    let extra_verbose = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.extra_verbose);
+    if extra_verbose {
+        let mut log_configuration = |key: &str, ctest_variable: &str, cmake_variable: &str| {
+            let ctest_value = interp.get_safe(ctest_variable);
+            let cmake_value = interp.get_safe(cmake_variable);
+            let env_value = std::env::var(cmake_variable).unwrap_or_default();
+            let (value, first) = if !ctest_value.is_empty() {
+                (
+                    ctest_value,
+                    format!("SetCTestConfigurationFromCMakeVariable:{key}:{ctest_variable}\n"),
+                )
+            } else if !cmake_value.is_empty() {
+                (
+                    cmake_value,
+                    format!("SetCTestConfiguration from {cmake_variable}:{key}"),
+                )
+            } else if !env_value.is_empty() {
+                (
+                    env_value,
+                    format!("SetCTestConfiguration from ENV{{{cmake_variable}}}:{key}"),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            if !value.is_empty() {
+                if first.starts_with("SetCTestConfiguration from") {
+                    handler_output(interp, &format!("{first}:{value}\n"), parsed.quiet);
+                } else {
+                    handler_output(interp, &first, parsed.quiet);
+                }
+                handler_output(
+                    interp,
+                    &format!("SetCTestConfiguration:{key}:{value}\n"),
+                    parsed.quiet,
+                );
+                set_step_configuration(interp, key, &value);
+            }
+        };
+        log_configuration("DropMethod", "CTEST_DROP_METHOD", "CMAKE_DROP_METHOD");
+        log_configuration("DropSite", "CTEST_DROP_SITE", "CMAKE_DROP_SITE");
+        log_configuration("TLSVersion", "CTEST_TLS_VERSION", "CMAKE_TLS_VERSION");
+        log_configuration("TLSVerify", "CTEST_TLS_VERIFY", "CMAKE_TLS_VERIFY");
     }
-    let url = submit_url(
-        interp,
-        parsed
-            .get("SUBMIT_URL")
-            .and_then(|values| values.first())
-            .map(String::as_str),
-    );
-    handler_output(interp, &format!("   SubmitURL: {url}\n"), quiet);
+    handler_output(interp, "Submit files\n", parsed.quiet);
+    if !specific_group.is_empty() {
+        handler_output(
+            interp,
+            &format!("   Send to group: {specific_group}\n"),
+            parsed.quiet,
+        );
+    }
+    let url = submit_url(interp, parsed.submit_url.as_deref());
+    handler_output(interp, &format!("   SubmitURL: {url}\n"), parsed.quiet);
+    if debug {
+        for header in &parsed.headers {
+            handler_output(
+                interp,
+                &format!("   Add HTTP Header: \"{header}\"\n"),
+                parsed.quiet,
+            );
+        }
+    }
 
     let build_name = interp.get_safe("CTEST_BUILD_NAME");
     let build_name = if build_name.is_empty() {
@@ -729,17 +1013,83 @@ fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
             );
             let _ = std::fs::write(directory.join("Done.xml"), done);
         }
+        let remote_name = Path::new(file)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         let _ = std::fmt::Write::write_fmt(
             &mut log,
             format_args!(
-                "\tUpload file: {} to {prefix}{}\n",
-                local.display(),
-                Path::new(file)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
+                "\tUpload file: {} to {prefix}{remote_name}\n",
+                local.display()
             ),
         );
+        let verbose_upload = debug
+            || interp
+                .ext
+                .ctest_script
+                .as_ref()
+                .is_some_and(|state| state.options.extra_verbose);
+        if verbose_upload {
+            if let Some(version) = interp
+                .ext
+                .ctest_script
+                .as_ref()
+                .and_then(|state| state.configuration.get("TLSVersion"))
+            {
+                if version == "1.1" {
+                    handler_output(
+                        interp,
+                        "  Set CURLOPT_SSLVERSION to CURL_SSLVERSION_TLSv1_1\n",
+                        parsed.quiet,
+                    );
+                }
+            }
+            if let Some(verify) = interp
+                .ext
+                .ctest_script
+                .as_ref()
+                .and_then(|state| state.configuration.get("TLSVerify"))
+            {
+                handler_output(
+                    interp,
+                    &format!(
+                        "  Set CURLOPT_SSL_VERIFYPEER to {}\n",
+                        if crate::util::is_on(verify) {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ),
+                    parsed.quiet,
+                );
+            }
+            let size = std::fs::metadata(&local).map_or(0, |meta| meta.len());
+            let md5 = md5_file(&local, parsed.internal_test);
+            let separator = if url.contains('?') { "&" } else { "?" };
+            let upload_url = if Path::new(file).is_file() {
+                format!("{url}{separator}FileName={prefix}{remote_name}&MD5={md5}")
+            } else {
+                let subproject = interp.global_props.get("SubProject").unwrap_or_default();
+                format!(
+                    "{url}{separator}FileName={prefix}{remote_name}&build={build_name}&site={site}&stamp={tag}-{group}{}{}&MD5={md5}",
+                    if subproject.is_empty() {
+                        ""
+                    } else {
+                        "&subproject="
+                    },
+                    subproject,
+                )
+            };
+            handler_output(
+                interp,
+                &format!(
+                    "Upload file: {} to {upload_url} Size: {size}\n",
+                    local.display()
+                ),
+                parsed.quiet,
+            );
+        }
         failed_file = local.display().to_string();
     }
     if !failed_file.is_empty() {
@@ -749,14 +1099,17 @@ fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
         handler_error(interp, &text);
         log.push_str(&text);
         let _ = std::fs::write(temporary.join(format!("LastSubmit_{tag}.log")), log);
-        if let Some(variable) = parsed.get("RETURN_VALUE").and_then(|values| values.first()) {
+        if let Some(variable) = &parsed.return_value {
             interp.set_def(variable, "-1");
+        }
+        if let Some(variable) = &parsed.build_id {
+            interp.set_def(variable, "");
         }
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         return Ok(());
     }
     let _ = std::fs::write(temporary.join(format!("LastSubmit_{tag}.log")), log);
-    if let Some(variable) = parsed.get("RETURN_VALUE").and_then(|values| values.first()) {
+    if let Some(variable) = &parsed.return_value {
         interp.set_def(variable, "0");
     }
     Ok(())
@@ -943,6 +1296,7 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         state.binary_dir = binary_dir.clone();
         state.model = model_name.clone();
         state.group = group_name.clone();
+        state.specific_group = group.clone().unwrap_or_default();
         state.tag = tag.clone();
         state.site = site;
         state.build_name = build_name;
@@ -1943,6 +2297,7 @@ pub(super) fn process_steps(options: &Options) -> i32 {
         } else {
             options.group.clone()
         };
+        state.specific_group = options.group.clone();
     }
 
     let binary_text = binary.to_string_lossy().into_owned();
