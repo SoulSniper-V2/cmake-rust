@@ -50,6 +50,27 @@ fn shell_path_keep_trailing_slash(ctx: &GenCtx<'_>, path: &str) -> String {
     converted
 }
 
+/// Convert backslashes without performing CMake's duplicate-slash collapsing.
+/// A few upstream Makefile paths intentionally concatenate a directory that
+/// already ends in `/` with another `/` and preserve the resulting `//`.
+fn shell_path_preserve_slashes(ctx: &GenCtx<'_>, path: &str) -> String {
+    shell_escape(ctx, &path.replace('\\', "/"), false)
+}
+
+fn top_rule_path_preserve_slashes(ctx: &GenCtx<'_>, path: &str) -> String {
+    let home = format!("{}/", ctx.interp.home_binary);
+    path.strip_prefix(&home).unwrap_or(path).to_owned()
+}
+
+fn maybe_relative_cur_preserve_slashes(ctx: &GenCtx<'_>, dir: usize, path: &str) -> String {
+    let cur = format!("{}/", ctx.interp.makefiles[dir].binary_dir);
+    if let Some(rest) = path.strip_prefix(&cur) {
+        rest.to_owned()
+    } else {
+        maybe_relative_cur(ctx, dir, path)
+    }
+}
+
 /// Shell escaping inside a `link.txt` script (`LinkScriptShell` enabled):
 /// no Makefile `$` doubling, while make-variable syntax remains protected
 /// as cmOutputConverter::ConvertToOutputFormat(SHELL) requests.
@@ -279,6 +300,51 @@ fn escape_json(text: &str) -> String {
     out
 }
 
+/// `cmMakefileTargetGenerator::WriteObjectRuleFile` ISPC header path logic.
+fn ispc_header_for_source(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    config: &str,
+    object_name: &str,
+) -> String {
+    let suffix = target.props.get("ISPC_HEADER_SUFFIX").unwrap_or_default();
+    let mut directory = gt::object_directory(ctx, target, config);
+    if let Some(prop) = target.props.get("ISPC_HEADER_DIRECTORY") {
+        directory = util::collapse_full_path(
+            &format!("{}/{prop}", ctx.interp.makefiles[0].binary_dir),
+            "",
+        );
+    }
+    format!(
+        "{directory}/{}{suffix}",
+        super::ispc::source_stem(object_name)
+    )
+}
+
+fn makefile_include_response_path(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    language: &str,
+    includes: &str,
+) -> Option<(String, String)> {
+    if includes.is_empty()
+        || !ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_INCLUDES"),
+            )
+            .is_some_and(|value| is_on(&value))
+    {
+        return None;
+    }
+    let full = format!(
+        "{}/includes_{language}.rsp",
+        gt::support_directory(ctx, target)
+    );
+    let rel_cur = maybe_relative_cur(ctx, target.makefile, &full);
+    Some((full, rel_cur))
+}
+
 fn makefile_object_entries(
     ctx: &GenCtx<'_>,
     target: &Target,
@@ -297,6 +363,11 @@ fn makefile_object_entries(
         .map(|object| link_script_shell_path(ctx, object))
         .chain(
             externals
+                .iter()
+                .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+        )
+        .chain(
+            super::ispc::generated_objects(ctx, target, &ctx.config)
                 .iter()
                 .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
         )
@@ -825,6 +896,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .map(|s| s.path.clone())
             .collect();
         let mut custom_outputs = Vec::new();
+        let mut object_extra_clean = Vec::new();
         let (codegen_outputs, custom_clean) = self.write_custom_commands(
             target,
             target_key,
@@ -879,6 +951,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 progress,
                 compiler_depends,
                 &mut impl_depends,
+                &mut object_extra_clean,
                 &mut build,
             );
         }
@@ -911,7 +984,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         self.write_flags(target);
         self.write_depend_info(target, &impl_depends);
         self.write_dependency_placeholders(&support, compiler_depends, &target.name);
-        self.write_clean_files(target, &object_paths, &custom_clean, &osx_clean);
+        let mut extra_clean = osx_clean;
+        extra_clean.extend(object_extra_clean);
+        extra_clean.extend(
+            super::ispc::generated_objects(self.ctx, target, &self.ctx.config)
+                .iter()
+                .map(|object| maybe_relative_cur(self.ctx, dir, object)),
+        );
+        self.write_clean_files(target, &object_paths, &custom_clean, &extra_clean);
         self.implicit.insert(target.name.clone(), impl_depends);
     }
 
@@ -1099,13 +1179,36 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         progress: usize,
         compiler_depends: bool,
         impl_depends: &mut ImplicitDepends,
+        clean_files: &mut Vec<String>,
         out: &mut String,
     ) {
         let mut depends = vec![format!("{}/flags.make", self.support_rel(target, dir))];
-        depends.push(self.top_rule_path(&source.path));
         if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
             depends.extend(util::expand_list(&object_deps, false));
         }
+        let target_includes =
+            flags::compile_target_vars(self.ctx, target, &self.ctx.config, &source.language)
+                .includes;
+        if let Some((_, include_rsp)) =
+            makefile_include_response_path(self.ctx, target, &source.language, &target_includes)
+        {
+            depends.push(format!(
+                "{}{}",
+                home_relative_output_path(self.ctx, dir),
+                include_rsp
+            ));
+        }
+        depends.push(self.top_rule_path(&source.path));
+        if source.language != "ISPC" {
+            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
+                depends.push(self.top_rule_path(&header));
+            }
+        }
+        let ispc_header = if source.language == "ISPC" {
+            ispc_header_for_source(self.ctx, target, &self.ctx.config, &source.object_name)
+        } else {
+            String::new()
+        };
         let source_compiler_depends = self.use_compiler_depends(target, &source.language);
         let properties = self.source_props(target, &source.path);
         let pch_archs = super::pch::pch_archs(self.ctx, target, &self.ctx.config, &source.language);
@@ -1257,6 +1360,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     .get("LABELS")
                     .map_or_else(String::new, |v| v.replace(';', ",")),
             ),
+            (
+                "ISPC_HEADER",
+                shell_path_preserve_slashes(self.ctx, &ispc_header),
+            ),
             ("LANGUAGE", lang.to_owned()),
             ("CONFIG", self.ctx.config.clone()),
             (
@@ -1364,6 +1471,37 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
         commands.push(command);
         write_make_rule(out, None, obj_rel_top, &depends, &commands, false);
+
+        // `WriteMakeRule` multi-output handling: additional object outputs are
+        // driven by the primary object and touched only when they exist.
+        let mut extra_outputs = Vec::new();
+        if let Some(outputs) = properties.get("OBJECT_OUTPUTS") {
+            let evaluated = self.ctx.genex(outputs, None, None);
+            if !evaluated.is_empty() {
+                extra_outputs.extend(util::expand_list(&evaluated, false));
+            }
+        }
+        if !ispc_header.is_empty() {
+            extra_outputs.push(ispc_header.clone());
+        }
+        for output in extra_outputs {
+            let output_rule = top_rule_path_preserve_slashes(self.ctx, &output);
+            clean_files.push(output.clone());
+            write_make_rule(
+                out,
+                None,
+                &output_rule,
+                std::slice::from_ref(&obj_rel_top.to_owned()),
+                &[format!(
+                    "@$(CMAKE_COMMAND) -E touch_nocreate {}",
+                    shell_path_preserve_slashes(self.ctx, &output_rule)
+                )],
+                false,
+            );
+            impl_depends
+                .output_pairs
+                .push((output, obj_rel_top.to_owned()));
+        }
         self.write_preprocess_and_assembly(target, source, dir, obj_rel_cur, obj_rel_top, out);
     }
 
@@ -2707,7 +2845,20 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         for lang in &languages {
             let vars = flags::compile_target_vars(self.ctx, target, &config, lang);
             let _ = writeln!(out, "{lang}_DEFINES = {}\n", vars.defines);
-            let _ = writeln!(out, "{lang}_INCLUDES = {}\n", vars.includes);
+            let mut includes = vars.includes.clone();
+            if let Some((full, rel_cur)) =
+                makefile_include_response_path(self.ctx, target, lang, &includes)
+            {
+                let _ =
+                    crate::fsutil::write_if_different(Path::new(&full), &format!("{includes}\n"));
+                let response_flag = self
+                    .ctx
+                    .var(target.makefile, &format!("CMAKE_{lang}_RESPONSE_FILE_FLAG"))
+                    .filter(|flag| !flag.is_empty())
+                    .unwrap_or_else(|| "@".to_owned());
+                includes = format!("{response_flag}{rel_cur}");
+            }
+            let _ = writeln!(out, "{lang}_INCLUDES = {}\n", includes);
             let mut architectures = flags::apple_archs(self.ctx, target, &config, lang);
             architectures.push(String::new());
             for arch in architectures {
@@ -3231,14 +3382,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             files.push_str("file(REMOVE_RECURSE\n");
             for file in clean_set {
                 let converted = if util::is_full_path(&file) {
-                    maybe_relative_cur(self.ctx, dir, &file)
+                    maybe_relative_cur_preserve_slashes(self.ctx, dir, &file)
                 } else {
                     file
                 };
                 let _ = writeln!(
                     files,
                     "  \"{}\"",
-                    escape_cmake(&crate::cache::convert_to_unix_slashes(&converted))
+                    escape_cmake(&converted.replace('\\', "/"))
                 );
             }
             files.push_str(")\n");

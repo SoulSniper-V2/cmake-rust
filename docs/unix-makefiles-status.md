@@ -3,16 +3,16 @@
 Branch: `t3/unix-makefiles-11`
 
 Most recent completed full Unix Makefiles projdiff lane: **164/177**
-(`/tmp/umf11-osx-projdiff-umf.log`).  The part-10 reference lane was
+(`/tmp/umf11-ispc-projdiff-umf.log`).  The part-10 reference lane was
 153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
 177.  The full Unix Makefiles RunCMake lane is **5566/5566**
 (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
 Known remaining projdiff failure groups: CUDA, MSVC/clang-cl platform variants,
 ISPC, Makefile2/progress/DependInfo ordering, and response-file/PCH corners.
-`link/items`, `export/shared_deps`, and `install/namelink` are down to
-Makefile2 direct-dependency ordering; `export/error_order_link_cycle` is a
-configure diagnostic-order difference.  Makefile2 ordering is sensitive to
+`link/items`, `export/shared_deps`, `install/namelink`, and both ISPC cases
+are down to Makefile2 direct-dependency ordering; `export/error_order_link_cycle`
+is a configure diagnostic-order difference.  Makefile2 ordering is sensitive to
 upstream's pointer-ordered `cmTargetDependSet`, so individual ordering-only
 cases can appear or disappear between oracle process layouts.
 
@@ -40,6 +40,35 @@ difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
 **156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
+
+## Part 11 batch 3: ISPC outputs and include response files
+
+Unix Makefiles object rules now implement the ISPC header contract: the
+`<ISPC_HEADER>` placeholder expands to the generated header path, the header
+is a multi-output of the object compilation with upstream's touch-nocreate
+companion rule and `CMAKE_MULTIPLE_OUTPUT_PAIRS` entry, non-ISPC objects in
+the target depend on generated ISPC headers, and multi-instruction-set ISPC
+objects are appended to link object strings and clean scripts.  Object
+`OBJECT_OUTPUTS` use the same multi-output rule shape.  The implementation
+preserves upstream's intentional `CMakeFiles/<target>.dir//<header>` spelling
+in rule, command, clean, and dependency-info text.
+
+Makefile compile flags now honor `CMAKE_<LANG>_USE_RESPONSE_FILE_FOR_INCLUDES`:
+per-target `includes_<LANG>.rsp` files are written beside `flags.make`, the
+`<LANG>_INCLUDES` make variable references them with
+`CMAKE_<LANG>_RESPONSE_FILE_FLAG` (default `@`), and object rules depend on
+the response file before the source, matching upstream's dependency order.
+
+Focused Unix Makefiles evidence: **2/2** ISPC cases pass all generated-file,
+build, and output comparisons in isolation (`/tmp/umf11-ispc-focus5.log`).
+In the full lane both ISPC cases are reduced to the known Makefile2
+pointer-ordering edge.  Gate evidence: `cargo fmt --check` clean, clippy clean,
+**941/941** Rust tests (`/tmp/umf11-ispc-test.log`), difftest **1283/1283**
+(`/tmp/umf11-ispc-difftest.log`), clitest **538/538**
+(`/tmp/umf11-ispc-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-ispc-projdiff-ninja.log`), and Unix Makefiles projdiff **164/177**
+(`/tmp/umf11-ispc-projdiff-umf.log`; MSVC/clang-cl differing-file counts also
+decreased because include response files and object outputs are now emitted).
 
 ## Part 11 batch 2: Apple bundle and Mach-O generation
 
