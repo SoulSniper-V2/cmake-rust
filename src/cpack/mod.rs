@@ -476,7 +476,7 @@ fn md5_text(text: &str) -> String {
 }
 
 fn file_hash(path: &str, algorithm: &str) -> Option<String> {
-    match algorithm.to_ascii_uppercase().as_str() {
+    match algorithm {
         "MD5" => hash_file_typed::<md5::Md5>(path),
         "SHA1" => hash_file_typed::<sha1::Sha1>(path),
         "SHA224" => hash_file_typed::<sha2::Sha224>(path),
@@ -493,7 +493,7 @@ fn file_hash(path: &str, algorithm: &str) -> Option<String> {
 
 fn valid_checksum_algorithm(name: &str) -> bool {
     matches!(
-        name.to_ascii_uppercase().as_str(),
+        name,
         "MD5"
             | "SHA1"
             | "SHA224"

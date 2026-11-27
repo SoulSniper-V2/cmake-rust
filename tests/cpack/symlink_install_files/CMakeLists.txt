@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/real.txt" "real\n")
+file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/real.txt" "${CMAKE_CURRENT_SOURCE_DIR}/link.txt" SYMBOLIC)
+file(CREATE_LINK "real.txt" "${CMAKE_CURRENT_SOURCE_DIR}/rellink.txt" SYMBOLIC)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/link.txt" "${CMAKE_CURRENT_SOURCE_DIR}/rellink.txt" DESTINATION share/probe)
+include(CPack)

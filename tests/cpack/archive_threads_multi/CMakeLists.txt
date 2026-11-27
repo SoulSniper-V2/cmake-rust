@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/blob.bin" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "${CMAKE_CURRENT_BINARY_DIR}/blob.bin" DESTINATION share/probe)
+set(CPACK_ARCHIVE_THREADS 4)
+include(CPack)
