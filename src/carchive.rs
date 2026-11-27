@@ -784,7 +784,10 @@ fn create_tar_inner(
         compress,
         if format.is_empty() { "paxr" } else { format },
         compression_level,
-        0,
+        // cmSystemTools::CreateTar uses cmArchiveWrite's default of one
+        // thread (zero would select every core and liblzma's multithreaded
+        // xz encoder, which writes block sizes into the headers).
+        1,
     );
     if !writer.open() {
         crate::cmcmd::error(writer.error().to_owned());
