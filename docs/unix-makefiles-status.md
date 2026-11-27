@@ -2,14 +2,14 @@
 
 Branch: `t3/unix-makefiles-11`
 
-Most recent completed full Unix Makefiles projdiff lane: **168/177**
-(`/tmp/umf11-msvc-gates-projdiff-umf.log`).  The part-10 reference lane was
+Most recent completed full Unix Makefiles projdiff lane: **170/177**
+(`/tmp/umf11-cuda-gates-projdiff-umf.log`).  The part-10 reference lane was
 153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
 177.  The full Unix Makefiles RunCMake lane is **5566/5566**
 (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: CUDA device-link rules and
-Makefile2/progress/DependInfo ordering.
+Known remaining projdiff failure groups: Makefile2 dependency ordering and
+one configure diagnostic-order case.
 `link/items`, `export/shared_deps`, `install/namelink`, and both ISPC cases
 are down to Makefile2 direct-dependency ordering; `export/error_order_link_cycle`
 is a configure diagnostic-order difference.  Makefile2 ordering is sensitive to
@@ -40,6 +40,33 @@ difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
 **156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
+
+## Part 11 batch 5: CUDA device linking
+
+Unix Makefiles now implements the NVIDIA driver-mode CUDA device-link step for
+executables and static/shared/module libraries.  Targets requiring resolution
+of separable-CUDA static archives emit `cmake_device_link` object rules before
+their final link rules, write `dlink.txt` link scripts, use CUDA
+`--options-file` response files for device objects and device libraries,
+include the device object in final link object lists and clean scripts, and
+allocate the additional progress mark in upstream order.  Device-link flags
+use the CMP0105-aware `<DEVICE_LINK>` link-option evaluation and IPO device
+link options.  As upstream does through repeated `CreateObjectLists` calls,
+object variable blocks are emitted once before the device-link rule and again
+before the final link rule.
+
+Focused evidence: **4/4** Unix Makefiles CUDA cases pass
+(`cuda/device_link_options`, `cuda/device_link_policy`, `cuda/resolve_shared`,
+and `cuda/separable_static`; `/tmp/umf11-cuda-focus6.log`), and the five
+corresponding Ninja CUDA cases including `cuda/multi_config` remain green
+(`/tmp/umf11-cuda-ninjafocus.log`).  Gate evidence: `cargo fmt --check` clean,
+clippy clean, **941/941** Rust tests (`/tmp/umf11-cuda-gates-test.log`),
+difftest **1283/1283** (`/tmp/umf11-cuda-gates-difftest.log`), clitest
+**538/538** (`/tmp/umf11-cuda-gates-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-cuda-gates-projdiff-ninja.log`), and Unix Makefiles projdiff
+**170/177** (`/tmp/umf11-cuda-gates-projdiff-umf.log`).  Six of the seven
+remaining cases differ only in `CMakeFiles/Makefile2` ordering; the seventh is
+`export/error_order_link_cycle`'s configure diagnostic order.
 
 ## Part 11 batch 4: MSVC/clang-cl link scripts and PCH object aliases
 

@@ -255,6 +255,11 @@ fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> 
     .unwrap_or_else(|| "@".to_owned())
 }
 
+fn makefile_device_response_flag(ctx: &GenCtx<'_>, target: &Target) -> String {
+    ctx.var(target.makefile, "CMAKE_CUDA_RESPONSE_FILE_DEVICE_LINK_FLAG")
+        .unwrap_or_else(|| "@".to_owned())
+}
+
 fn makefile_cuda_compile_mode(ctx: &GenCtx<'_>, target: &Target) -> String {
     let mut mode = String::new();
     if target
@@ -2089,6 +2094,245 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
     }
 
+    /// `cmMakefileExecutableTargetGenerator::WriteNvidiaDeviceExecutableRule`
+    /// and `cmMakefileLibraryTargetGenerator::WriteNvidiaDeviceLibraryRules`.
+    /// Returns the current-binary-relative device-link object.
+    #[allow(clippy::too_many_arguments)]
+    fn write_device_link_rule(
+        &mut self,
+        target: &Target,
+        objects: &[String],
+        externals: &[String],
+        language: &str,
+        support_rel_cur: &str,
+        support_rel_top: &str,
+        out: &mut String,
+    ) -> Option<String> {
+        let config = self.ctx.config.clone();
+        let dir = target.makefile;
+        if !super::link::requires_device_linking(self.ctx, target, &config, language) {
+            return None;
+        }
+        // Clang CUDA uses a multi-architecture fatbinary registration pipeline
+        // rather than the NVIDIA driver device-link rule.  The NVIDIA branch
+        // below is the upstream behavior for NVCC and NVIDIA driver-mode
+        // clang toolchains, which are the toolchains represented in the
+        // project corpus.
+        if self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") == "Clang" {
+            return None;
+        }
+        let object_extension = self
+            .ctx
+            .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+        let device_rel_cur = format!("{support_rel_cur}/cmake_device_link{object_extension}");
+        let device_rel_top = format!(
+            "{}{}",
+            home_relative_output_path(self.ctx, dir),
+            device_rel_cur
+        );
+        let support = gt::support_directory(self.ctx, target);
+
+        let mut device_line =
+            super::link::makefile_device_link_line(self.ctx, target, &config, language);
+        for (fragment, _) in &mut device_line.lib_fragments {
+            fragment.push(' ');
+        }
+        let mut depends: Vec<String> = objects
+            .iter()
+            .map(|object| format!("{}{}", home_relative_output_path(self.ctx, dir), object))
+            .collect();
+        depends.extend(
+            externals
+                .iter()
+                .map(|object| maybe_relative_top(self.ctx, object)),
+        );
+        depends.push(format!("{support_rel_top}/build.make"));
+        if flags::link_dependency_file(self.ctx, target, language).is_some() {
+            depends.push(format!("{support_rel_top}/compiler_depend.ts"));
+        }
+        depends.extend(
+            device_line
+                .depends
+                .iter()
+                .map(|path| maybe_relative_top(self.ctx, path)),
+        );
+        if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
+            depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
+        }
+        depends.extend(
+            gt::sources(self.ctx, target, &config)
+                .iter()
+                .filter(|source| source.kind == SourceKind::Manifest)
+                .map(|source| maybe_relative_top(self.ctx, &source.path)),
+        );
+        depends.extend(
+            device_line
+                .link_depends
+                .iter()
+                .map(|path| maybe_relative_top(self.ctx, path)),
+        );
+
+        let response_flag = makefile_device_response_flag(self.ctx, target);
+        let entries = makefile_object_entries(self.ctx, target, objects, externals);
+        let use_response_objects =
+            makefile_use_response_objects(self.ctx, target, "CUDA", &entries);
+        let object_strings = if use_response_objects {
+            makefile_object_strings(&entries, 131000)
+        } else {
+            vec![entries.join(" ")]
+        };
+        let mut object_rsp_depends = Vec::new();
+        let object_list = if use_response_objects {
+            let mut references = Vec::new();
+            for (index, contents) in object_strings.iter().enumerate() {
+                let name = format!("deviceObjects{}.rsp", index + 1);
+                let path = format!("{support}/{name}");
+                let _ =
+                    crate::fsutil::write_if_different(Path::new(&path), &format!("{contents}\n"));
+                object_rsp_depends.push(format!("{support_rel_top}/{name}"));
+                references.push(format!(
+                    "{response_flag}{}",
+                    shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+                ));
+            }
+            references.join(" ")
+        } else {
+            entries.join(" ")
+        };
+
+        let mut libraries = makefile_link_libraries(&device_line);
+        let use_response_libraries = self
+            .ctx
+            .var(
+                target.makefile,
+                "CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES",
+            )
+            .is_some_and(|value| !value.is_empty() && is_on(&value))
+            && !libraries.trim_start().is_empty();
+        if use_response_libraries {
+            let path = format!("{support}/deviceLinkLibs.rsp");
+            let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{libraries}\n"));
+            depends.push(format!("{support_rel_top}/deviceLinkLibs.rsp"));
+            libraries = format!(
+                "{response_flag}{}",
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+            );
+        }
+        depends.extend(object_rsp_depends);
+        depends.push(format!("{support_rel_top}/dlink.txt"));
+
+        let dependency_ipo = super::link::link_information(self.ctx, target, &config, language)
+            .map(|info| {
+                info.items.iter().any(|item| {
+                    item.target
+                        .as_deref()
+                        .and_then(|key| self.ctx.interp.ext.targets.get(key))
+                        .is_some_and(|dependency| {
+                            dependency.kind == TargetKind::StaticLibrary
+                                && !dependency
+                                    .props
+                                    .get("CUDA_RESOLVE_DEVICE_SYMBOLS")
+                                    .is_some_and(util::is_on)
+                                && dependency
+                                    .props
+                                    .get("CUDA_SEPARABLE_COMPILATION")
+                                    .is_some_and(util::is_on)
+                                && flags::ipo_enabled(self.ctx, dependency, &config, "CUDA")
+                        })
+                })
+            })
+            .unwrap_or(false);
+        let device_flags = flags::device_link_flag_vars(self.ctx, target, &config, dependency_ipo);
+        let rule_var = if target.kind == TargetKind::Executable {
+            "CMAKE_CUDA_DEVICE_LINK_EXECUTABLE"
+        } else {
+            "CMAKE_CUDA_DEVICE_LINK_LIBRARY"
+        };
+        let template = self.ctx.var_safe(target.makefile, rule_var);
+        if template.is_empty() {
+            self.ctx.system_error(format!(
+                "Error required internal CMake variable not set, cmake may not be built correctly.\nMissing variable is:\n{rule_var}"
+            ));
+        }
+        let device_shell = shell_path(self.ctx, &device_rel_cur);
+        let object_dir = shell_path(self.ctx, support_rel_cur);
+        let compile_pdb = gt::target_compile_pdb(self.ctx, target, &config);
+        let compile_pdb_shell = shell_path_keep_trailing_slash(
+            self.ctx,
+            &maybe_relative_cur(self.ctx, dir, &compile_pdb),
+        );
+        let vars = vec![
+            ("LANGUAGE", "CUDA".to_owned()),
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            (
+                "CMAKE_CURRENT_BINARY_DIR",
+                shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
+            ),
+            ("OBJECTS", object_list),
+            ("TARGET", device_shell.clone()),
+            ("TARGET_FILE", device_shell),
+            ("OBJECT_DIR", object_dir),
+            ("LINK_LIBRARIES", libraries),
+            ("LINK_FLAGS", device_flags.link_flags),
+            (
+                "LANGUAGE_COMPILE_FLAGS",
+                device_flags.language_compile_flags,
+            ),
+            ("TARGET_COMPILE_PDB", compile_pdb_shell),
+            ("CONFIG", config.clone()),
+        ];
+        let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
+        let mut script = String::new();
+        for part in template.split(';').filter(|part| !part.is_empty()) {
+            let expanded = flags::expand_rule_for_step(
+                self.ctx,
+                target,
+                "CUDA",
+                flags::RuleStep::Link,
+                &format!("{launcher}{part}"),
+                &vars,
+            );
+            if !expanded.is_empty() && !expanded.starts_with(':') {
+                script.push_str(&expanded);
+                script.push('\n');
+            }
+        }
+        let script_path = format!("{support}/dlink.txt");
+        let _ = crate::fsutil::write_generated(Path::new(&script_path), &script);
+
+        let progress = self.add_progress_file(target, device_rel_top.clone());
+        let mut commands = vec![format!(
+            "@{}",
+            self.echo(
+                &format!(
+                    "Linking CUDA device code {}",
+                    shell_path(self.ctx, &device_rel_cur)
+                ),
+                "--green --bold",
+                Some(progress),
+            ),
+        )];
+        let mut link_command = format!(
+            "$(CMAKE_COMMAND) -E cmake_link_script {support_rel_cur}/dlink.txt --verbose=$(VERBOSE)"
+        );
+        if dir != 0 {
+            let cur = shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir);
+            link_command = format!("cd {cur} && {link_command}");
+        }
+        commands.push(link_command);
+        write_make_rule(out, None, &device_rel_top, &depends, &commands, false);
+        write_make_rule(
+            out,
+            Some("Rule to build all files generated by this target."),
+            &format!("{support_rel_top}/build"),
+            std::slice::from_ref(&device_rel_top),
+            &[],
+            true,
+        );
+        Some(device_rel_cur)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn write_link(
         &mut self,
@@ -2102,6 +2346,9 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         _compiler_depends: bool,
         out: &mut String,
     ) {
+        let config = self.ctx.config.clone();
+        let dir = target.makefile;
+        let language = gt::linker_language(self.ctx, target, &config);
         let varname = target
             .name
             .replace(['+', '-', '*', '/', '(', ')', '$', '@', '~'], "_");
@@ -2126,6 +2373,31 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
             out.push_str("\n\n");
         };
+        let needs_device_link =
+            super::link::requires_device_linking(self.ctx, target, &config, &language)
+                && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang";
+        if needs_device_link {
+            let _ = writeln!(out, "# Object files for target {}", target.name);
+            write_objects_variable(
+                out,
+                "_OBJECTS",
+                &variable_objects
+                    .iter()
+                    .map(|o| (*o).clone())
+                    .collect::<Vec<_>>(),
+            );
+            let _ = writeln!(out, "# External object files for target {}", target.name);
+            write_objects_variable(out, "_EXTERNAL_OBJECTS", externals);
+        }
+        let device_link_object = self.write_device_link_rule(
+            target,
+            objects,
+            externals,
+            &language,
+            support_rel_cur,
+            support_rel_top,
+            out,
+        );
         let _ = writeln!(out, "# Object files for target {}", target.name);
         write_objects_variable(
             out,
@@ -2137,8 +2409,6 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let _ = writeln!(out, "# External object files for target {}", target.name);
         write_objects_variable(out, "_EXTERNAL_OBJECTS", externals);
-        let config = self.ctx.config.clone();
-        let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
         let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
         // cmOSXBundleGenerator: create the bundle layout at generate time.
@@ -2169,7 +2439,6 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             home_relative_output_path(self.ctx, dir),
             target_rel_cur
         );
-        let language = gt::linker_language(self.ctx, target, &config);
         let mut depends: Vec<String> = objects
             .iter()
             .map(|o| format!("{}{}", home_relative_output_path(self.ctx, dir), o))
@@ -2192,6 +2461,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
             depends.extend(line.depends.iter().map(|p| maybe_relative_top(self.ctx, p)));
+        }
+        if let Some(device_object) = &device_link_object {
+            depends.push(format!(
+                "{}{}",
+                home_relative_output_path(self.ctx, dir),
+                device_object
+            ));
         }
         if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
             depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
@@ -2440,7 +2716,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
         let response_flag = makefile_response_flag(self.ctx, target, language);
         let support = gt::support_directory(self.ctx, target);
-        let object_list = if use_response_objects {
+        let mut object_list = if use_response_objects {
             let mut references = Vec::new();
             for (index, contents) in object_strings.iter().enumerate() {
                 let name = format!("objects{}.rsp", index + 1);
@@ -2456,6 +2732,20 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         } else {
             entries.join(" ")
         };
+        if super::link::requires_device_linking(self.ctx, target, &config, language)
+            && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang"
+        {
+            let object_extension = self
+                .ctx
+                .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+            let support_rel = maybe_relative_cur(self.ctx, dir, &support);
+            let device_object = shell_path(
+                self.ctx,
+                &format!("{support_rel}/cmake_device_link{object_extension}"),
+            );
+            object_list.push(' ');
+            object_list.push_str(&device_object);
+        }
         let mut create_var = match target.kind {
             TargetKind::Executable => {
                 let with_exports = format!("CMAKE_{language}_LINK_EXECUTABLE_WITH_EXPORTS");
@@ -3323,6 +3613,17 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             clean_set.insert(format!(
                 "{}/link.d",
                 gt::support_directory(self.ctx, target)
+            ));
+        }
+        if super::link::requires_device_linking(self.ctx, target, &config, &language)
+            && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang"
+        {
+            let object_extension = self
+                .ctx
+                .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+            clean_set.insert(format!(
+                "{}/cmake_device_link{object_extension}",
+                maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target))
             ));
         }
         let clean_sources = gt::sources(self.ctx, target, &config);

@@ -156,6 +156,24 @@ pub(super) fn requires_device_linking(
     })
 }
 
+/// The device-link line with Unix Makefiles link-script path conversion.
+pub(crate) fn makefile_device_link_line(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> LinkLine {
+    let query = Query {
+        base_computer: true,
+        local_binary: Some(target.makefile),
+        link_script_shell: true,
+        ..Query::new(ctx, config, language)
+    };
+    link_information(ctx, target, config, language)
+        .map(|info| information::device_line(&query, target, &info))
+        .unwrap_or_default()
+}
+
 /// The device-link line (`cmLinkLineDeviceComputer`) for `target`.
 pub(super) fn device_link_line(
     ctx: &GenCtx,
