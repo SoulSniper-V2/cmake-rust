@@ -1238,6 +1238,20 @@ impl Interp {
         self.debug_message(kind, &dbg_text);
     }
 
+    /// `cmMessenger::DisplayMessage` in CTest script mode, whose messenger has
+    /// no top-source directory and therefore keeps absolute backtrace paths.
+    pub fn issue_at_unsuppressed_no_top(&mut self, kind: MessageType, text: &str) {
+        self.sarif_log.message(kind, text, &self.backtrace);
+        let rendered = messages::render(kind, text, &self.backtrace, None);
+        let dbg_text = rendered.clone();
+        if messages::is_error(kind) {
+            self.error = true;
+        }
+        let stack = self.debug_stack();
+        self.stderr_attributed(messages::term_attr(kind), &rendered, &stack);
+        self.debug_message(kind, &dbg_text);
+    }
+
     /// Writes one `cmSystemTools::Message` line to stderr (or to
     /// `stderr_capture`). The default message metadata carries the Normal
     /// attribute even though it produces no escape on a non-terminal.

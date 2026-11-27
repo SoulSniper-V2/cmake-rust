@@ -403,31 +403,38 @@ fn ctest_sleep(_interp: &mut Interp, args: &[String]) -> CmdResult {
     err("called with incorrect number of arguments")
 }
 
-fn ctest_empty_binary_directory(_interp: &mut Interp, args: &[String]) -> CmdResult {
+fn ctest_empty_binary_directory(interp: &mut Interp, args: &[String]) -> CmdResult {
     if args.len() != 1 {
         return err("called with incorrect number of arguments");
     }
     let path = PathBuf::from(&args[0]);
-    if args[0].len() < 2 {
-        return err(format!(
-            "Did not remove the binary directory:\n {}\nbecause:\n path too short",
-            args[0]
-        ));
-    }
-    if !path.exists() {
-        return Ok(());
-    }
-    if !path.join("CMakeCache.txt").exists() {
-        return err(format!(
-            "Did not remove the binary directory:\n {}\nbecause:\n path does not contain an existing CMakeCache.txt file",
-            args[0]
-        ));
-    }
-    if std::fs::remove_dir_all(path).is_err() {
-        return err(format!(
-            "Did not remove the binary directory:\n {}\nbecause:\n removal failed",
-            args[0]
-        ));
+    let reason = if args[0].len() < 2 {
+        Some("path too short".to_owned())
+    } else if !path.exists() {
+        None
+    } else if !path.join("CMakeCache.txt").exists() {
+        Some("path does not contain an existing CMakeCache.txt file".to_owned())
+    } else {
+        let mut result = Ok(());
+        for attempt in 0..5 {
+            result = std::fs::remove_dir_all(&path);
+            if result.is_ok() {
+                break;
+            }
+            if attempt + 1 < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        result.err().map(|error| error.to_string())
+    };
+    if let Some(reason) = reason {
+        interp.issue_at_unsuppressed_no_top(
+            crate::messages::MessageType::FatalError,
+            &format!(
+                "Did not remove the binary directory:\n {}\nbecause:\n {reason}",
+                args[0]
+            ),
+        );
     }
     Ok(())
 }
@@ -862,6 +869,7 @@ fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
     let (script, script_arg) = total_script
         .split_once(',')
         .map_or((total_script, ""), |(script, arg)| (script, arg));
+    let script = &collapse_input(script);
     if !Path::new(script).is_file() {
         eprintln!("CMake Error: Cannot find file: {script}");
         return 1;

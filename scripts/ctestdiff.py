@@ -130,6 +130,8 @@ def cases():
         ("empty-v", ["-S", "empty.cmake", "-V"]),
         ("output-log", ["-S", "pass.cmake", "-V", "--output-log", "console.log"]),
         ("configure-build", ["-S", "scriptbuild.cmake", "-V"]),
+        ("empty-binary", ["-S", "emptybin.cmake"]),
+        ("empty-binary-error", ["-S", "emptybinfail.cmake"]),
     ):
         yield "dashboard", name, [flags], {}
     for name, flags in (
