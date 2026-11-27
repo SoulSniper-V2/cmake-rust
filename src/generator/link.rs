@@ -701,33 +701,23 @@ impl<'a, 'i> Query<'a, 'i> {
 
     /// The diagnostic deduplication of `error` with an explicit
     /// `cmListFileBacktrace` (target-creation or property-entry origin).
-    /// A fatal error at `backtrace`, once per message and location (the
-    /// C++ computes each target's link information once).
+    /// A fatal error at `backtrace`, once per message, location and
+    /// configuration (the C++ computes each target's link information once
+    /// per configuration).
     fn error_at(&self, backtrace: Vec<Frame>, message: impl Into<String>) {
         let message = message.into();
-        let repeated = self.ctx.errors.borrow().iter().any(|existing| {
-            matches!(
-                existing,
-                crate::generator::ctx::Diagnostic::Message(_, frames, text)
-                    if *text == message && *frames == backtrace
-            )
-        });
-        if !repeated {
+        let key = format!("{}\0{message}\0{backtrace:?}", self.config);
+        if self.ctx.link_diagnostics.borrow_mut().insert(key) {
             self.ctx.error(backtrace, message);
         }
     }
 
-    /// `cmSystemTools::Error` (once per message, as the C++ computes each
-    /// target's link information once).
+    /// `cmSystemTools::Error` (once per message and configuration, as the
+    /// C++ computes each target's link information once per configuration).
     fn system_error(&self, message: impl Into<String>) {
         let message = message.into();
-        if !self
-            .ctx
-            .errors
-            .borrow()
-            .iter()
-            .any(|existing| existing.text() == message)
-        {
+        let key = format!("{}\0{message}", self.config);
+        if self.ctx.link_diagnostics.borrow_mut().insert(key) {
             self.ctx.system_error(message);
         }
     }

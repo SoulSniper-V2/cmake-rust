@@ -67,6 +67,9 @@ pub struct GenCtx<'a> {
     /// `CMAKE_DEFAULT_CONFIGS`.
     pub default_configs: BTreeSet<String>,
     pub errors: Rc<RefCell<Vec<Diagnostic>>>,
+    /// Link-information diagnostics already issued, per configuration:
+    /// cmComputeLinkInformation runs once per target and configuration.
+    pub link_diagnostics: Rc<RefCell<std::collections::HashSet<String>>>,
     /// Free-form memo for expensive per-target computations.
     pub memo: Rc<RefCell<HashMap<String, String>>>,
     /// Backtrace table referenced by generator-expression provenance ids.
@@ -142,6 +145,7 @@ impl<'a> GenCtx<'a> {
             cross_configs: interp.ext.gen_cross_configs.clone(),
             default_configs: interp.ext.gen_default_configs.clone(),
             errors: Rc::new(RefCell::new(Vec::new())),
+            link_diagnostics: Rc::new(RefCell::new(std::collections::HashSet::new())),
             memo: Rc::new(RefCell::new(HashMap::new())),
             backtraces: Rc::new(RefCell::new(Vec::new())),
             target_objects: Rc::new(RefCell::new(HashMap::new())),
