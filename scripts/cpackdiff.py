@@ -11,6 +11,7 @@ and file bytes are.
 
 Fixture files:
   generators.txt  generator list argument for -G (default TGZ)
+  preargs.txt     extra cpack arguments before -G, one shell-style line per line
   args.txt        extra cpack arguments, one shell-style line per line
   build.txt       if present, build the fixture before packaging
   source.txt      if present, use CPackSourceConfig.cmake instead
@@ -294,6 +295,10 @@ def configure_fixture(case, seed):
 
 def cpack_args(case, build, out):
     args = []
+    if (case / "preargs.txt").exists():
+        for line in (case / "preargs.txt").read_text().splitlines():
+            if line.strip():
+                args += shlex.split(line)
     if (case / "source.txt").exists():
         args += ["--config", str(build / "CPackSourceConfig.cmake")]
     gen = (case / "generators.txt").read_text().strip() if (case / "generators.txt").exists() else "TGZ"

@@ -1713,43 +1713,43 @@ fn print_generators() {
     eprintln!();
 }
 
-fn print_help() {
-    print!("Usage\n\n  cpack [options]\n\nOptions\n");
-    let rows = [
-        ("-G <generators>", "Override/define CPACK_GENERATOR"),
-        (
-            "-C <Configurations>",
-            "Specify the project configuration(s)",
-        ),
-        ("-D <var>=<value>", "Set a CPack variable."),
-        ("--config <configFile>", "Specify the config file."),
-        ("-V,--verbose", "Enable verbose output"),
-        ("--trace", "Put underlying cmake scripts in trace mode."),
-        (
-            "--trace-expand",
-            "Put underlying cmake scripts in expanded trace mode.",
-        ),
-        ("--debug", "Enable debug output (for CPack developers)"),
-        ("-P <packageName>", "Override/define CPACK_PACKAGE_NAME"),
-        (
-            "-R <packageVersion>",
-            "Override/define CPACK_PACKAGE_VERSION",
-        ),
-        (
-            "-B <packageDirectory>",
-            "Override/define CPACK_PACKAGE_DIRECTORY",
-        ),
-        (
-            "--vendor <vendorName>",
-            "Override/define CPACK_PACKAGE_VENDOR",
-        ),
-        ("--preset", "Read arguments from a package preset"),
-        ("--list-presets", "List available package presets"),
-        ("--version", "Print version number and exit."),
-    ];
-    for (opt, desc) in rows {
-        println!("  {opt:<30} = {desc}");
+/// cmakemain-style requested documentation handling, with CPack's usage,
+/// version string and generator list substituted for cmake's.
+fn documentation(args: &[String]) -> Option<i32> {
+    use crate::help::{Documentation, HelpType, check_options_with_exit};
+    if args.is_empty() {
+        return None;
     }
+    let items = check_options_with_exit(args, "-G")?;
+    let root = crate::configure::find_cmake_root().unwrap_or_default();
+    let docs = Documentation::new(&root);
+    let mut result = true;
+    let mut count = 0;
+    for item in items {
+        let mut out = String::new();
+        let ok = match item.kind {
+            HelpType::Version => {
+                out = VERSION_OUTPUT.to_owned();
+                true
+            }
+            HelpType::Usage | HelpType::Help => {
+                out = include_str!("help.txt").to_owned();
+                true
+            }
+            _ => docs.print(&item, &mut out),
+        };
+        if item.filename.is_empty() {
+            count += 1;
+            if count > 1 {
+                print!("\n\n");
+            }
+            print!("{out}");
+        } else if std::fs::write(&item.filename, out).is_err() {
+            result = false;
+        }
+        result &= ok;
+    }
+    Some(i32::from(!result))
 }
 
 #[derive(Default)]
@@ -1778,14 +1778,6 @@ fn parse_args(args: &[String], log: &mut Logger) -> Result<(DriverOptions, bool,
             args.get(*i).cloned().unwrap_or_default()
         };
         match arg.as_str() {
-            "--version" | "-version" | "/V" => {
-                print!("{VERSION_OUTPUT}");
-                return Err(0);
-            }
-            "--help" | "-h" | "-H" | "-help" | "-usage" | "/?" => {
-                print_help();
-                return Err(0);
-            }
             "-V" | "--verbose" => {
                 log.verbose = true;
                 log.output("Enable Verbose");
@@ -1848,7 +1840,10 @@ fn apply_presets(
     }
     let mut graph = crate::presets::Graph::default();
     if !graph.read_project_presets(cwd, false) {
-        log.error(&format!("Could not read presets from {cwd}:"));
+        log.error(&format!(
+            "Could not read presets from {cwd}:{}",
+            graph.parse_state.error_message()
+        ));
         return Err(1);
     }
     if options.list_presets {
@@ -1968,6 +1963,9 @@ pub fn main() -> i32 {
         Ok(None) => {}
         Err(code) => return code,
     }
+    if let Some(code) = documentation(args) {
+        return code;
+    }
     log.verbose(&format!("Read CPack config file: {}", options.config_file));
     let specified = !options.config_file.is_empty();
     let config_file = if specified {
@@ -1979,10 +1977,6 @@ pub fn main() -> i32 {
     } else {
         format!("{cwd}/CPackConfig.cmake")
     };
-    if args.iter().any(|a| a == "--help") {
-        print_help();
-        return 0;
-    }
     let root = match crate::configure::find_cmake_root() {
         Some(root) => root,
         None => {
