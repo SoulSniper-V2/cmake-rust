@@ -346,16 +346,15 @@ impl Session<'_> {
     }
 
     fn finish(&mut self, test: &mut Test, result: &mut ResultData, attempt: usize) -> bool {
-        let generated = test.property("GENERATED_RESOURCE_SPEC_FILE");
+        let generated = test.property("GENERATED_RESOURCE_SPEC_FILE").to_owned();
+        let mut generated_error = None;
         if !generated.is_empty() {
-            match Resources::read(Path::new(generated)) {
+            match Resources::read(Path::new(&generated)) {
                 Ok(resources) => {
                     self.resources = resources;
-                    self.log
-                        .verbose(&format!("Using generated resource spec file {generated}\n"));
                 }
                 Err(error) => {
-                    self.log.error(&error);
+                    generated_error = Some(error);
                     if !result.status.not_run() && result.status != Status::Timeout {
                         result.status = if test.enabled("WILL_FAIL") {
                             Status::Passed
@@ -382,6 +381,12 @@ impl Session<'_> {
             self.log,
         );
         report::append_result(self.last_log, self.all_count, test, result);
+        if let Some(error) = generated_error {
+            self.log.error(&error);
+        } else if !generated.is_empty() {
+            self.log
+                .verbose(&format!("Using generated resource spec file {generated}\n"));
+        }
         if result.stop_time_passed && !self.stop_time_passed {
             self.log
                 .error("The stop time has been passed. Stopping all tests.\n");

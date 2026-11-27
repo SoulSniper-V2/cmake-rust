@@ -69,7 +69,21 @@ impl Resources {
         };
         let data = std::fs::read_to_string(path)
             .map_err(|_| error(&format!("File not found: {}", path.display())))?;
-        let root: Value = serde_json::from_str(&data).map_err(|err| error(&err.to_string()))?;
+        let root: Value = serde_json::from_str(&data).map_err(|err| {
+            let detail = if err.line() == 1 && err.column() == 1 && !data.trim().is_empty() {
+                let filename = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_default();
+                let line = data.lines().next().unwrap_or_default();
+                format!(
+                    "{filename}:1: Syntax error: value, object or array expected.\n{line}\n^\n{filename}:1: Extra non-whitespace after JSON value.\n{line}\n ^"
+                )
+            } else {
+                err.to_string()
+            };
+            error(&detail)
+        })?;
         let version = root
             .get("version")
             .and_then(Value::as_object)
