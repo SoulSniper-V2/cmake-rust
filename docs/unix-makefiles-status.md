@@ -1,20 +1,70 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-11`
+Branch: `t3/unix-makefiles-12`
 
-Most recent completed full Unix Makefiles projdiff lane: **170/177**
-(`/tmp/umf11-cuda-gates-projdiff-umf.log`).  The part-10 reference lane was
+Most recent completed full Unix Makefiles projdiff lane: **181/187**
+(`/tmp/umf12-batch-projdiff-umf.log`).  The part-10 reference lane was
 153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
-177.  The full Unix Makefiles RunCMake lane is **5566/5566**
-(`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
+187.  The most recent full Unix Makefiles RunCMake lane is **5562/5562**
+(`/tmp/umf12-runcmake-umf.log`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: Makefile2 dependency ordering and
-one configure diagnostic-order case.
-`link/items`, `export/shared_deps`, `install/namelink`, and both ISPC cases
-are down to Makefile2 direct-dependency ordering; `export/error_order_link_cycle`
-is a configure diagnostic-order difference.  Makefile2 ordering is sensitive to
-upstream's pointer-ordered `cmTargetDependSet`, so individual ordering-only
-cases can appear or disappear between oracle process layouts.
+Known remaining projdiff failure group: Makefile2 direct-dependency ordering.
+`link/items`, `export/shared_deps`, `install/namelink`,
+`languages/asm_mixed_linker_language`, `languages/ispc_header_deps`, and
+`ninja/response_file` can differ only in `CMakeFiles/Makefile2`.  Upstream
+iterates `cmTargetDependSet`, a `std::set` ordered by raw `cmGeneratorTarget`
+pointer; the order is allocator-layout dependent rather than semantic target
+order.  Individual ordering-only cases therefore appear or disappear between
+oracle process layouts and even between otherwise identical full and focused
+runs.  No stable creation/name/link ordering can reproduce all observed oracle
+layouts; these cases remain documented as layout-sensitive rather than being
+hidden by a fixture-specific normalization.
+
+## Part 12 batch 1: generation order, try-compile fidelity, and self-configure parity
+
+Unix Makefiles generation now follows `cmGlobalGenerator::Generate`'s
+per-directory order: each directory writes its target files, then that
+directory's install rules and test files, and build export sets are written
+after the local-generator loop.  This fixed the configure diagnostic ordering
+in `export/error_order_link_cycle` and the Makefile2/progress ordering in
+`cxxmodules/bdb_single`.
+
+The generator now honors `CMAKE_SUPPRESS_REGENERATION` in the same places as
+`cmLocalUnixMakefileGenerator3`: suppressed try-compile trees do not write
+`CMakeFiles/Makefile.cmake`, do not emit the `cmake_check_build_system` or
+`depend` rules, and do not make `all`/target convenience rules depend on the
+build-system check.  Whole-project try-compiles build the real target while
+only source-file try-compiles use `<target>/fast`, so nested dependency
+scanning artifacts are produced as upstream does.  Transient try-compile output
+files are dropped from the regeneration manifest together with transient list
+files.
+
+Makefile target rules now use `MaybeRelativeToTopBinDir` for linked artifacts,
+driver outputs, and symlinks instead of concatenating a directory-relative
+path, eliminating `Source/../bin` spellings.  Link-script object lists use
+upstream's RESPONSE output conversion (including hyphen quoting), and object
+make-variable names use `CreateMakeVariable`'s exact `.`/`_`, `-`/`__`, and
+`+`/`___` substitutions.  Unix Makefiles also implements rule hashing:
+custom-command content is hashed in upstream's format, existing hashes are
+checked and stale outputs removed, and `CMakeFiles/CMakeRuleHashes.txt` is
+written or removed accordingly.
+
+Validation evidence: a fair Kitware CMake 4.1.0 self-configure comparison with
+Unix Makefiles has **0 normalized differences across 1210 files**
+(`/tmp/umf12-kitware-umf-fair4.log`, work `/tmp/umf12-kitware-umf-fair4`).
+The treediff harness now normalizes inherently installation-dependent rule-hash
+digests and wall-clock configure times while still comparing hash rows, order,
+and counts.  At an identical install and build path the candidate's rule hashes
+match the oracle byte-for-byte (`/tmp/umf12-hashsame/oracle.hashes` and
+`/tmp/umf12-hashsame/candidate.hashes`).  Gate evidence: `cargo fmt --check`
+clean, clippy clean, **942/942** Rust tests (`/tmp/umf12-test-batch.log`),
+difftest **1288/1288** (`/tmp/umf12-batch-difftest.log`), clitest
+**540/540** (`/tmp/umf12-batch-clitest.log`), Ninja projdiff **187/187**
+(`/tmp/umf12-batch-projdiff-ninja.log`), Unix Makefiles projdiff **181/187**
+(`/tmp/umf12-batch-projdiff-umf.log`), Ninja RunCMake **5638/5638**
+(`/tmp/umf12-runcmake-ninja.log`), and Unix Makefiles RunCMake **5562/5562**
+(`/tmp/umf12-runcmake-umf.log`).
+
 
 ## Part 11 batch 1: autogen cleaning, ASM dialect rules, and IPO archivers
 
