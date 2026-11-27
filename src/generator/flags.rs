@@ -6,16 +6,20 @@ mod link;
 mod rule;
 pub(in crate::generator) mod standard;
 
-pub use compile::compile_vars_with_source_props;
 #[allow(unused_imports, reason = "consumed by the file API codemodel")]
 pub(crate) use compile::{
     BtFrag, compile_definitions, define_items, flag_fragments, include_directories, include_items,
     include_items_stripped, interface_values, pch_items, standard_option,
 };
 pub(crate) use compile::{FlagCls, classified_flags_for_source};
+pub use compile::{
+    compile_target_vars, compile_vars_with_source_props, source_define_flags, source_include_flags,
+    source_rule_flags,
+};
 pub(super) use compile::{fortran_module_dir, fortran_preprocess, fortran_source_include};
 pub use link::{
     cuda_compile_language_flags, device_link_flag_vars, link_dependency_file, link_flag_vars,
+    link_language_flag_vars, makefile_link_flags,
 };
 pub(super) use rule::expand_placeholders;
 pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
@@ -24,7 +28,9 @@ pub use rule::{compiler_launcher, compiler_launcher_list, expand_rule};
 // kept visible to the oracle replay tests.
 #[cfg(test)]
 pub use compile::{compile_vars, object_dependencies};
-#[cfg(test)]
+pub(crate) use compile::{
+    define_items as compile_define_items, include_items as compile_include_items,
+};
 pub use rule::{RuleStep, expand_rule_for_step};
 
 use super::ctx::GenCtx;

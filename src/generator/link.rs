@@ -2,7 +2,7 @@
 
 mod dependencies;
 mod directories;
-mod information;
+pub(crate) mod information;
 pub(crate) mod target_graph;
 
 pub(super) use directories::DirectoryContents;
@@ -72,9 +72,28 @@ pub(crate) fn base_link_line(
 ) -> LinkLine {
     let query = Query {
         base_computer: true,
+        local_binary: Some(target.makefile),
         ..Query::new(ctx, config, language)
     };
     information::compute(&query, target)
+        .map(|info| information::line(&query, target, &info))
+        .unwrap_or_default()
+}
+
+/// The link line written to a Unix Makefiles `link.txt` shell script.
+pub(crate) fn makefile_link_line(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    language: &str,
+) -> LinkLine {
+    let query = Query {
+        base_computer: true,
+        local_binary: Some(target.makefile),
+        link_script_shell: true,
+        ..Query::new(ctx, config, language)
+    };
+    link_information(ctx, target, config, language)
         .map(|info| information::line(&query, target, &info))
         .unwrap_or_default()
 }
@@ -519,13 +538,18 @@ pub(crate) struct Query<'a, 'i> {
     /// Evaluate for `UseTo::Compile` (usage requirements only).
     compile_usage: bool,
     /// The base `cmLinkLineComputer` (of `cmake --find-package`) in place
-    /// of the Ninja one: link references stay full paths and the shell is
-    /// not Ninja's.
+    /// of the Ninja one: the shell is not Ninja's.
     base_computer: bool,
+    /// Makefile-local output conversion base for the base link-line
+    /// computer (`cmLocalUnixMakefileGenerator3`'s current binary dir).
+    local_binary: Option<usize>,
+    /// `cmOutputConverter::LinkScriptShell`: Unix Makefiles link scripts are
+    /// shell scripts, so their arguments do not use Makefile `$` escaping.
+    link_script_shell: bool,
 }
 
 impl<'a, 'i> Query<'a, 'i> {
-    fn new(ctx: &'a GenCtx<'i>, config: &'a str, language: &'a str) -> Self {
+    pub(crate) fn new(ctx: &'a GenCtx<'i>, config: &'a str, language: &'a str) -> Self {
         Self {
             ctx,
             config,
@@ -533,13 +557,20 @@ impl<'a, 'i> Query<'a, 'i> {
             generator: &Generator,
             compile_usage: false,
             base_computer: false,
+            local_binary: None,
+            link_script_shell: false,
         }
     }
 
     /// `cmLinkLineComputer::ConvertToLinkReference`.
     fn link_reference(&self, path: &str) -> String {
         if self.base_computer {
-            path.to_owned()
+            if let Some(dir) = self.local_binary {
+                let local = self.ctx.interp.makefiles[dir].binary_dir.clone();
+                super::custom::maybe_relative_to(self.ctx, dir, &local, path)
+            } else {
+                path.to_owned()
+            }
         } else {
             self.ninja_path(path)
         }
@@ -560,7 +591,11 @@ impl<'a, 'i> Query<'a, 'i> {
         use crate::outconv::{FLAG_ALLOW_MAKE_VARIABLES, FLAG_IS_UNIX, FLAG_MAKE, NINJA_UNIX};
         let flags = flags
             | if self.base_computer {
-                FLAG_MAKE | FLAG_IS_UNIX
+                if self.link_script_shell {
+                    FLAG_IS_UNIX
+                } else {
+                    FLAG_MAKE | FLAG_IS_UNIX
+                }
             } else {
                 NINJA_UNIX
             };

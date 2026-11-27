@@ -912,6 +912,7 @@ impl Interp {
             "LINK_OPTIONS",
             "LINK_DIRECTORIES",
             "INCLUDE_REGULAR_EXPRESSION",
+            "COMPLAIN_REGULAR_EXPRESSION",
         ] {
             if let Some(value) = self.makefiles[parent].props.get(key).map(str::to_owned) {
                 self.makefiles[index].props.set(key, value);
@@ -953,6 +954,7 @@ impl Interp {
             "LINK_OPTIONS",
             "LINK_DIRECTORIES",
             "INCLUDE_REGULAR_EXPRESSION",
+            "COMPLAIN_REGULAR_EXPRESSION",
         ] {
             if let Some(value) = parent_props.get(key) {
                 self.makefiles[index].props.set(key, value.to_owned());
@@ -3601,6 +3603,7 @@ impl Interp {
             "LINK_OPTIONS",
             "LINK_DIRECTORIES",
             "INCLUDE_REGULAR_EXPRESSION",
+            "COMPLAIN_REGULAR_EXPRESSION",
         ] {
             if let Some(value) = parent_props.get(key) {
                 self.makefiles[index].props.set(key, value.to_owned());

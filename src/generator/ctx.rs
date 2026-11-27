@@ -98,7 +98,7 @@ pub struct GenCtx<'a> {
     /// `cmMakefile::OutputFiles` appended at generation time
     /// (`AddCMakeOutputFile`); recorded for parity though only the Makefile
     /// generators consult them.
-    pub cmake_output_files: Rc<RefCell<Vec<String>>>,
+    pub cmake_output_files: Rc<RefCell<Vec<(usize, String)>>>,
 }
 
 /// The memoized computations of a [`GenCtx`].
@@ -871,20 +871,33 @@ impl<'a> GenCtx<'a> {
             }
         }
         // cmGlobalGenerator::Generate order: each local generator's targets
-        // (link computations and their diagnostics, written into the Ninja
-        // streams), then its install rules and test files; after the loop the
-        // build export sets; then the extra generator.
+        // (link computations and their diagnostics), then its install rules
+        // and test files; after the loop the build export sets; then the
+        // extra generator.
         super::install::warn_skipped_install_rules(self);
-        {
+        let report = |result: std::io::Result<()>| {
+            if let Err(error) = result {
+                self.error(Vec::new(), format!("Unable to write build files: {error}"));
+            }
+        };
+        if self.interp.get_def("CMAKE_GENERATOR") == Some("Unix Makefiles") {
+            // The Makefile generator writes the install rules, test files and
+            // build export sets before its local generators.
+            for dir in 0..self.interp.makefiles.len() {
+                report(super::install::write_install_script(self, dir));
+            }
+            for dir in 0..self.interp.makefiles.len() {
+                report(super::tests::write_test_file(self, dir));
+            }
+            report(super::export::write_build_exports(self));
+            // cmGlobalGenerator::Generate runs every local generator even
+            // after an earlier error (for example from an evaluation file).
+            super::makefile::generate(self);
+        } else {
             // cmGlobalGenerator::Generate runs every local generator and
             // writes TargetDirectories.txt even after an earlier error (for
             // example from an evaluation file); the Ninja generator then
             // leaves its build files unwritten.
-            let report = |result: std::io::Result<()>| {
-                if let Err(error) = result {
-                    self.error(Vec::new(), format!("Unable to write build files: {error}"));
-                }
-            };
             let mut ninja = super::ninja::NinjaGenerator::new(self);
             let result = ninja.generate_with(
                 &mut |dir| {

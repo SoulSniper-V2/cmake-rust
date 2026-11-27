@@ -23,7 +23,7 @@ CMakeFiles/Export/ (install-tree export files), and extra generator project
 files (*.cbp, *.workspace, *.project, .project, .cproject, .kateproject*,
 *.sublime-project, .settings/*).
 
-Usage: scripts/projdiff.py [--candidate PATH] [-j N] [-v] [--keep DIR] [cases...]
+Usage: scripts/projdiff.py [--candidate PATH] [--generator NAME] [-j N] [-v] [--keep DIR] [cases...]
 """
 import argparse
 import json
@@ -81,7 +81,13 @@ def gather(build_dir):
         if (name.endswith(".ninja") or name in ("CMakeCache.txt", "CTestTestfile.cmake", "clean_additional.cmake",
                      "cmake_install.cmake", "compile_commands.json", "FortranDependInfo.json", "CXXDependInfo.json",
                      "AutogenInfo.json", "InstallScripts.json", "TargetDirectories.txt",
-                     "Labels.json", "Labels.txt")
+                     "Labels.json", "Labels.txt",
+                     # Unix Makefiles generator output.
+                     "Makefile", "Makefile2", "Makefile.cmake", "build.make", "flags.make",
+                     "link.txt", "relink.txt", "DependInfo.cmake", "depend.make",
+                     "compiler_depend.make", "compiler_depend.ts", "progress.make",
+                     "progress.marks", "cmake_clean.cmake", "cmake_clean_target.cmake",
+                     "cmake.check_cache", "cmake_directory_clean.cmake", "CMakeDirectoryInformation.cmake")
                 or (name.startswith("AutoRcc_") and name.endswith("_Info.json"))
                 or name.endswith((".mk", ".cps", "_build_database.json.in"))
                 or rel.startswith("CMakeFiles/Export/")
@@ -119,7 +125,8 @@ def run_side(binary, case, work):
         for kind in fileapi_file.read_text().split():
             (query / kind).touch()
     generator_file = case / "generator.txt"
-    generator = generator_file.read_text().strip() if generator_file.exists() else "Ninja"
+    cli_generator = getattr(run_side, "generator", None)
+    generator = generator_file.read_text().strip() if generator_file.exists() else (cli_generator or "Ninja")
     proc = subprocess.run([str(binary), "-S", str(src), "-B", str(build), "-G", generator, *args],
                           cwd=work, env=env, capture_output=True, timeout=600)
     result = {
@@ -145,7 +152,10 @@ def run_side(binary, case, work):
             text = path.read_text()
             result[f"fileapi:{key}"] = re.sub(r'"jsonFile" ?: "[^"]*"', '"jsonFile" : "<HASH>"', text)
     if (case / "build.txt").exists() and proc.returncode == 0:
-        b = subprocess.run(["ninja", "-C", str(build)], cwd=work, env=env, capture_output=True, timeout=1800)
+        if generator in ("Unix Makefiles", "MinGW Makefiles"):
+            b = subprocess.run(["make", "-C", str(build)], cwd=work, env=env, capture_output=True, timeout=1800)
+        else:
+            b = subprocess.run(["ninja", "-C", str(build)], cwd=work, env=env, capture_output=True, timeout=1800)
         result["build.exit"] = str(b.returncode)
         produced = sorted(p.relative_to(build).as_posix() for p in build.rglob("*")
                           if p.is_file() and "CMakeFiles" not in p.parts and not p.name.startswith(".ninja"))
@@ -174,6 +184,8 @@ def run_side(binary, case, work):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, default=ROOT / "target/release/cmake")
+    parser.add_argument("--generator", default=None,
+                        help="generator for cases without generator.txt (default: Ninja)")
     parser.add_argument("-j", type=int, default=4)
     parser.add_argument("-v", action="store_true")
     parser.add_argument("cases", nargs="*")
@@ -190,6 +202,7 @@ def main():
     for sub in ("Modules", "Templates"):
         (share / sub).symlink_to(Path(DATA_ROOT) / sub)
     args.candidate = stage / "cmake"
+    run_side.generator = args.generator
     roots = [Path(c) for c in args.cases] or [ROOT / "tests/projects"]
     cases = []
     for root in roots:

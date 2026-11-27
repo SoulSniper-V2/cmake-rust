@@ -35,6 +35,7 @@ pub mod install;
 mod install_name;
 pub(crate) mod ispc;
 pub mod link;
+pub mod makefile;
 mod module_support;
 pub mod ninja;
 pub mod osx_bundle;
@@ -270,6 +271,78 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
         return -1;
     }
     0
+}
+
+/// `cmGlobalGenerator::CheckTargetProperties`: report variables used in
+/// link libraries or include directories that resolve to `<var>-NOTFOUND`.
+pub(crate) fn check_target_properties(ctx: &ctx::GenCtx<'_>) {
+    use crate::state::TargetKind;
+
+    let interp = ctx.interp;
+    let mut not_found: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for target in ctx.targets_in_order() {
+        if target.kind == TargetKind::InterfaceLibrary {
+            continue;
+        }
+        let dir = &interp.makefiles[target.makefile].source_dir;
+        let mark = |uses: &mut Vec<(String, String)>, item: &str, usage: &str| {
+            if item.len() > 9 && item.ends_with("-NOTFOUND") {
+                let mut var = item[..item.len() - 9].to_owned();
+                if interp
+                    .cache
+                    .entries
+                    .get(&var)
+                    .and_then(|entry| entry.properties.get("ADVANCED"))
+                    .is_some_and(|value| crate::util::is_on(value))
+                {
+                    var.push_str(" (ADVANCED)");
+                }
+                uses.push((var, usage.to_owned()));
+            }
+        };
+        let mut uses: Vec<(String, String)> = Vec::new();
+        if let Some(libs) = target.props.get("LINK_LIBRARIES") {
+            for lib in crate::util::expand_list(libs, false) {
+                let name = target.name.clone();
+                mark(
+                    &mut uses,
+                    &lib,
+                    &format!("    linked by target \"{name}\" in directory {dir}"),
+                );
+            }
+        }
+        if let Some(directories) = target.props.get("INCLUDE_DIRECTORIES") {
+            let stripped =
+                crate::genex::preprocess(directories, crate::genex::PreprocessContext::Strip, "");
+            for dir_item in crate::util::expand_list(&stripped, false) {
+                mark(
+                    &mut uses,
+                    &dir_item,
+                    &format!("   used as include directory in directory {dir}"),
+                );
+            }
+        }
+        for (var, usage) in uses {
+            not_found.entry(var).or_default().push_str(&format!(
+                "
+{usage}"
+            ));
+        }
+    }
+    if !not_found.is_empty() {
+        let mut body = String::new();
+        for (var, uses) in &not_found {
+            body.push_str(var);
+            body.push_str(uses);
+            body.push('\n');
+        }
+        ctx.system_error(format!(
+            "The following variables are used in this project, but they are set to NOTFOUND.
+Please set them or make sure they are set and tested correctly in the CMake files:
+{body}"
+        ));
+    }
 }
 
 /// The end of `cmMakefile::DoGenerate`: list files that no longer exist
@@ -549,6 +622,16 @@ fn check_build_database_targets(interp: &mut Interp) -> bool {
     }
     if !ok {
         return false;
+    }
+
+    // cmGlobalGenerator::SupportsBuildDatabase: only the Ninja generators
+    // implement build-database merging.  Other generators still validate
+    // reserved names but do not create the merge utility targets.
+    if !matches!(
+        interp.get_def("CMAKE_GENERATOR"),
+        Some("Ninja" | "Ninja Multi-Config")
+    ) {
+        return true;
     }
 
     let home_binary = interp.home_binary.clone();

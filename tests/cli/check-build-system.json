@@ -1,0 +1,43 @@
+[
+  {
+    "name": "missing-listfile-argument",
+    "argv": ["--check-build-system"]
+  },
+  {
+    "name": "missing-listfile",
+    "argv": ["-B", "b", "--check-build-system", "CMakeFiles/Makefile.cmake", "0"],
+    "dirs": ["b"]
+  },
+  {
+    "name": "noop-rerun-and-second-noop",
+    "steps": [
+      {"argv": ["-S", "{work}/src", "-B", "{work}/b", "-G", "Unix Makefiles"]},
+      {"argv": ["-S{work}/src", "-B{work}/b", "--check-build-system", "CMakeFiles/Makefile.cmake", "0"], "cwd": "b"},
+      {"argv": ["-E", "sleep", "1"]},
+      {"argv": ["-E", "touch", "{work}/src/CMakeLists.txt"]},
+      {"argv": ["-S{work}/src", "-B{work}/b", "--check-build-system", "CMakeFiles/Makefile.cmake", "0"], "cwd": "b"},
+      {"argv": ["-S{work}/src", "-B{work}/b", "--check-build-system", "CMakeFiles/Makefile.cmake", "0"], "cwd": "b"}
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(checkbuild NONE)\n"
+    }
+  },
+  {
+    "name": "clear-dependencies",
+    "steps": [
+      {"argv": ["-S", "{work}/src", "-B", "{work}/b", "-G", "Unix Makefiles"]},
+      {"argv": ["-S{work}/src", "-B{work}/b", "--check-build-system", "CMakeFiles/Makefile.cmake", "1"], "cwd": "b"}
+    ],
+    "files": {
+      "src/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(checkclear C)\nadd_library(x x.c)\n",
+      "src/x.c": "void x(void) {}\n"
+    },
+    "inspect": [
+      "b/CMakeFiles/x.dir/depend.make",
+      "b/CMakeFiles/x.dir/compiler_depend.make",
+      "b/CMakeFiles/x.dir/depend.internal",
+      "b/CMakeFiles/x.dir/compiler_depend.internal",
+      "b/CMakeFiles/x.dir/compiler_depend.ts"
+    ]
+  }
+]

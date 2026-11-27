@@ -934,7 +934,7 @@ fn actual_configure(
         })
     });
     // cmake::EvaluateDefaultGlobalGenerator.  The default proper is Ninja:
-    // cmake-rust does not implement Kitware's Linux default (Unix Makefiles).
+    // cmake-rust keeps Ninja as its Linux default even though Unix Makefiles is implemented.
     if resolved.is_none()
         && let Some(environment) = options.environment_generator.as_deref()
     {
@@ -954,14 +954,14 @@ fn actual_configure(
             || (resolved.clone().unwrap_or_else(|| "Ninja".to_owned()), None),
             |(extra, global)| (global, Some(extra)),
         );
-    if generator != "Ninja" && generator != "Ninja Multi-Config" {
+    if generator != "Ninja" && generator != "Ninja Multi-Config" && generator != "Unix Makefiles" {
         let name = resolved.as_deref().unwrap_or(&generator);
         let mut message = format!("Could not create named generator {name}");
         if crate::cli::known_generator(name) {
             // The name is a Kitware CMake 4.1.0 generator, but cmake-rust
-            // ports only the Ninja global generators.
+            // does not port this global generator.
             message.push_str(&format!(
-                "\nThe \"{generator}\" generator is not implemented by cmake-rust; use \"Ninja\" or \"Ninja Multi-Config\"."
+                "\nThe \"{generator}\" generator is not implemented by cmake-rust; use a supported generator."
             ));
         }
         system_error(Some(interp), &message);
@@ -1311,14 +1311,7 @@ pub fn try_compile_project(
         binary_dir: bindir.to_owned(),
         in_try_compile: true,
         debug_trycompile: outer.debug_trycompile,
-        generator: Some(
-            if outer.ext.multi_config {
-                "Ninja Multi-Config"
-            } else {
-                "Ninja"
-            }
-            .to_owned(),
-        ),
+        generator: outer.get_def("CMAKE_GENERATOR").map(str::to_owned),
         definitions: cmake_args.map(parse_cache_args).unwrap_or_default(),
         ..ConfigureOptions::default()
     };
@@ -1428,16 +1421,34 @@ pub fn try_compile_project(
     // cmGlobalGenerator::Build
     let mut output = format!("Change Dir: '{bindir}'\n");
     let make = inner.get_safe("CMAKE_MAKE_PROGRAM");
-    let mut command = vec![make, "-v".to_owned()];
-    // cmGlobalNinjaMultiGenerator::AppendNinjaFileArgument
-    let config = outer.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
-    if outer.ext.multi_config && !config.is_empty() {
-        command.push("-f".to_owned());
-        command.push(format!("build-{config}.ninja"));
-    }
-    if !target_name.is_empty() {
-        command.push(target_name.to_owned());
-    }
+    let generator = inner.get_safe("CMAKE_GENERATOR");
+    let command = if generator == "Unix Makefiles" {
+        let mut command = vec![
+            inner.cmake_command.clone(),
+            "-E".to_owned(),
+            "env".to_owned(),
+            "VERBOSE=1".to_owned(),
+            make,
+            "-f".to_owned(),
+            "Makefile".to_owned(),
+        ];
+        if !target_name.is_empty() {
+            command.push(format!("{target_name}/fast"));
+        }
+        command
+    } else {
+        let mut command = vec![make, "-v".to_owned()];
+        // cmGlobalNinjaMultiGenerator::AppendNinjaFileArgument
+        let config = outer.get_safe("CMAKE_TRY_COMPILE_CONFIGURATION");
+        if outer.ext.multi_config && !config.is_empty() {
+            command.push("-f".to_owned());
+            command.push(format!("build-{config}.ninja"));
+        }
+        if !target_name.is_empty() {
+            command.push(target_name.to_owned());
+        }
+        command
+    };
     let printable: Vec<String> = command
         .iter()
         .map(|arg| crate::outconv::escape_for_shell(arg, crate::outconv::FLAG_IS_UNIX))

@@ -1845,7 +1845,7 @@ impl LinkInformation {
 }
 
 /// `cmGeneratorTarget::IsChrpathUsed`.
-fn is_chrpath_used(query: &Query<'_, '_>, head: &Target) -> bool {
+pub(crate) fn is_chrpath_used(query: &Query<'_, '_>, head: &Target) -> bool {
     let on_var = |name: &str| is_on(&query.var(head, name));
     if !matches!(
         head.kind,

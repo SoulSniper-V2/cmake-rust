@@ -32,6 +32,144 @@ pub fn compile_vars(
     compile_vars_with_source_props(ctx, target, config, source, &Props::default())
 }
 
+pub fn compile_target_vars(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> CompileVars {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang,
+    };
+    let dummy = SourceInfo {
+        path: String::new(),
+        language: lang.to_owned(),
+        kind: crate::generator::target::SourceKind::ObjectSource,
+        object_name: String::new(),
+        generated: false,
+        object_library: None,
+        backtrace: Vec::new(),
+    };
+    let flags = target_flags(&inputs, "");
+    CompileVars {
+        flags_untrimmed: flags.clone(),
+        flags: flags.trim_matches(cmake_space).to_owned(),
+        defines: defines(&inputs, &Props::default())
+            .trim_matches(cmake_space)
+            .to_owned(),
+        includes: includes(&inputs, &dummy, &Props::default()),
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SourceRuleFlags {
+    pub before_language: String,
+    pub after_language: String,
+    pub custom_flags: Option<String>,
+    pub custom_options: Option<String>,
+    pub pch_options: Option<String>,
+    pub custom_includes: Option<String>,
+    pub custom_defines: Option<String>,
+    pub custom_config_defines: Option<String>,
+}
+
+pub fn source_rule_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> SourceRuleFlags {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let mut result = SourceRuleFlags::default();
+    if let Some(language) = properties.get("LANGUAGE")
+        && inputs.policy(119) == PolicyStatus::New
+    {
+        Flags {
+            lang: language,
+            ..inputs
+        }
+        .append_feature(&mut result.before_language, "EXPLICIT_LANGUAGE");
+    }
+    if inputs.lang == "Fortran" {
+        let format = |value: &str| {
+            value.split(';').rev().find_map(|f| match f {
+                "FIXED" => Some("FORMAT_FIXED_FLAG"),
+                "FREE" => Some("FORMAT_FREE_FLAG"),
+                _ => None,
+            })
+        };
+        if let Some(flag) = properties
+            .get("Fortran_FORMAT")
+            .and_then(format)
+            .or_else(|| target.props.get("Fortran_FORMAT").and_then(format))
+            .and_then(|key| inputs.lang_var(key))
+        {
+            append(&mut result.after_language, &flag);
+        }
+        if fortran_preprocess(target, properties) == Some(false) {
+            append_options(
+                &mut result.after_language,
+                expand_list(
+                    &inputs
+                        .lang_var("COMPILE_OPTIONS_PREPROCESS_OFF")
+                        .unwrap_or_default(),
+                    false,
+                ),
+            );
+        }
+    }
+    if let Some(raw) = properties.get("COMPILE_FLAGS") {
+        let evaluated = inputs.eval(raw);
+        append(&mut result.after_language, &evaluated);
+        result.custom_flags = Some(evaluated);
+    }
+    if let Some(options) = properties.get("COMPILE_OPTIONS") {
+        let evaluated = inputs.eval(options);
+        append_options(&mut result.after_language, expand_list(&evaluated, false));
+        result.custom_options = Some(evaluated);
+    }
+    let mut pch_sources = std::collections::HashMap::new();
+    for arch in crate::generator::pch::pch_archs(ctx, target, config, &source.language) {
+        let pch_source =
+            crate::generator::pch::pch_source(ctx, target, config, &source.language, &arch);
+        if !pch_source.is_empty() {
+            pch_sources.insert(pch_source, arch);
+        }
+    }
+    if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
+        result.custom_includes = Some(inputs.eval(value));
+    }
+    if let Some(value) = properties.get("COMPILE_DEFINITIONS") {
+        result.custom_defines = Some(inputs.eval(value));
+    }
+    let config_define = format!("COMPILE_DEFINITIONS_{}", config.to_ascii_uppercase());
+    if let Some(value) = properties.get(&config_define) {
+        result.custom_config_defines = Some(inputs.eval(value));
+    }
+    if !pch_sources.is_empty() && properties.get("SKIP_PRECOMPILE_HEADERS").is_none() {
+        let options = match pch_sources.get(&source.path) {
+            Some(arch) => crate::generator::pch::pch_create_options(
+                ctx,
+                target,
+                config,
+                &source.language,
+                arch,
+            ),
+            None => {
+                crate::generator::pch::pch_use_options(ctx, target, config, &source.language, "")
+            }
+        };
+        let evaluated = inputs.eval(&options);
+        append_options(&mut result.after_language, expand_list(&evaluated, false));
+        result.pch_options = Some(evaluated);
+    }
+    result
+}
+
 pub fn compile_vars_with_source_props(
     ctx: &GenCtx,
     target: &Target,
@@ -132,6 +270,72 @@ pub fn compile_vars_with_source_props(
     }
 }
 
+pub fn source_include_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let system = system_include_dirs(&inputs);
+    let mut source_dirs = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(value) = properties.get("INCLUDE_DIRECTORIES") {
+        for dir in expand_list(&inputs.eval(value), false) {
+            if !Path::new(&dir).is_absolute() {
+                let name = Path::new(&source.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&source.path);
+                inputs.local_error(format!(
+                    "Found relative path while evaluating include directories of \"{name}\":\n  \"{dir}\"\n"
+                ));
+                break;
+            }
+            let dir = unix_slashes(&dir);
+            if seen.insert(dir.clone()) {
+                source_dirs.push(dir);
+            }
+        }
+    }
+    include_flags(&inputs, &source_dirs, &system)
+}
+
+pub fn source_define_flags(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    source: &SourceInfo,
+    properties: &Props,
+) -> String {
+    let inputs = Flags {
+        ctx,
+        target,
+        config,
+        lang: &source.language,
+    };
+    let mut names: Vec<String> = Vec::new();
+    if inputs.ctx.multi_config {
+        names.push(format!("CMAKE_INTDIR=\"{}\"", inputs.config));
+    }
+    names.extend(
+        [
+            "COMPILE_DEFINITIONS".to_owned(),
+            format!("COMPILE_DEFINITIONS_{}", inputs.config.to_ascii_uppercase()),
+        ]
+        .iter()
+        .filter_map(|name| properties.get(name))
+        .flat_map(|value| expand_list(&inputs.eval(value), false)),
+    );
+    render_defines(&inputs, &[names])
+}
+
 pub(crate) fn fortran_preprocess(target: &Target, source: &Props) -> Option<bool> {
     source
         .get("Fortran_PREPROCESS")
@@ -160,10 +364,10 @@ pub(crate) fn fortran_source_include(ctx: &GenCtx, target: &Target, directory: S
 
 pub(crate) fn fortran_module_dir(ctx: &GenCtx, target: &Target) -> Option<String> {
     let current = &ctx.interp.makefiles[target.makefile].binary_dir;
-    let dir = target
-        .props
-        .get("Fortran_MODULE_DIRECTORY")
-        .or_else(|| (current != &ctx.interp.home_binary).then_some(current.as_str()))?;
+    let ninja_generator = ctx.interp.get_def("CMAKE_GENERATOR") != Some("Unix Makefiles");
+    let dir = target.props.get("Fortran_MODULE_DIRECTORY").or_else(|| {
+        (ninja_generator && current != &ctx.interp.home_binary).then_some(current.as_str())
+    })?;
     if dir.is_empty()
         || ctx
             .var(target.makefile, "CMAKE_Fortran_MODDIR_FLAG")
@@ -1385,6 +1589,7 @@ pub(crate) fn classified_flags_for_source(
             ("TARGET_TYPE", target.kind.type_name().to_owned()),
             ("TARGET_LABELS", target_labels(target)),
             ("LANGUAGE", lang.to_owned()),
+            ("CONFIG", ctx.config.clone()),
             ("DEFINES", PLACEHOLDER_DEFINES.to_owned()),
             ("INCLUDES", PLACEHOLDER_INCLUDES.to_owned()),
             ("FLAGS", PLACEHOLDER_FLAGS.to_owned()),
@@ -1418,7 +1623,7 @@ fn target_labels(target: &Target) -> String {
     target
         .props
         .get("LABELS")
-        .map_or_else(String::new, |v| expand_list(v, false).join(" "))
+        .map_or_else(String::new, |v| v.replace(';', ","))
 }
 
 /// Whether the source's full path is a member of a file set of `kind`.

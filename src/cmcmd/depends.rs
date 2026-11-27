@@ -1173,6 +1173,14 @@ fn read_gcc_depfile(path: &str, prefix: &str, prepend_deps: bool) -> Option<Vec<
     let text = String::from_utf8_lossy(&content);
     let mut rules = depfile::parse(&text)?;
     for rule in &mut rules {
+        for target in &mut rule.targets {
+            if !prepend_deps && !prefix.is_empty() && !util::is_full_path(target) {
+                *target = format!("{prefix}/{target}");
+            }
+            if util::is_full_path(target) {
+                *target = util::collapse_full_path(target, "");
+            }
+        }
         for dep in &mut rule.dependencies {
             if !prefix.is_empty() && !util::is_full_path(dep) {
                 *dep = format!("{prefix}/{dep}");
@@ -1181,7 +1189,6 @@ fn read_gcc_depfile(path: &str, prefix: &str, prepend_deps: bool) -> Option<Vec<
                 *dep = util::collapse_full_path(dep, "");
             }
         }
-        let _ = prepend_deps;
     }
     Some(rules)
 }

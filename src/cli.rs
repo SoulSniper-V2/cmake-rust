@@ -696,6 +696,9 @@ fn system_information(args: &[String], cwd: &str) -> i32 {
 }
 
 fn project_or_script(argv: &[String], cwd: &str) -> i32 {
+    if let Some(pos) = argv.iter().position(|arg| arg == "--check-build-system") {
+        return check_build_system(argv, cwd, pos);
+    }
     cmcmd::enable_message_callback();
     configure_args(argv, cwd).unwrap_or(1)
 }
@@ -1808,6 +1811,147 @@ fn parse_build(args: &[String], cwd: &str) -> Result<BuildOptions, ()> {
     Ok(options)
 }
 
+fn check_build_system_list(path: &Path, name: &str) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let needle = format!("set({name}");
+    let start = text.find(&needle)? + needle.len();
+    let rest = &text[start..];
+    let end = rest.find("\n  )")?;
+    let mut values = Vec::new();
+    for line in rest[..end].lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(inner) = line.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+            values.push(inner.replace("\\\"", "\"").replace("\\\\", "\\"));
+        }
+    }
+    Some(values)
+}
+
+fn check_build_system_path(binary: &str, value: &str) -> std::path::PathBuf {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(binary).join(path)
+    }
+}
+
+fn check_build_system_modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn clear_make_dependencies(binary: &str, listfile: &Path) {
+    let Some(info_files) = check_build_system_list(listfile, "CMAKE_DEPEND_INFO_FILES") else {
+        return;
+    };
+    let empty = "# Empty dependencies file\n# This may be replaced when dependencies are built.\n";
+    for file in info_files {
+        let file = check_build_system_path(binary, &file);
+        let Some(dir) = file.parent() else { continue };
+        // cmLocalUnixMakefileGenerator3::ClearDependencies: empty the
+        // scanner-written make fragments, drop their internal validation
+        // files, and force compiler dependency collection to run again.
+        let languages =
+            check_build_system_list(&file, "CMAKE_DEPENDS_LANGUAGES").unwrap_or_default();
+        if !languages.is_empty() {
+            let _ = crate::fsutil::write_generated(&dir.join("depend.make"), empty);
+            let _ = std::fs::remove_file(dir.join("depend.internal"));
+        }
+        let dependency_files =
+            check_build_system_list(&file, "CMAKE_DEPENDS_DEPENDENCY_FILES").unwrap_or_default();
+        if !dependency_files.is_empty() {
+            let _ = crate::fsutil::write_generated(&dir.join("compiler_depend.make"), empty);
+            let _ = std::fs::remove_file(dir.join("compiler_depend.internal"));
+            let timestamp = dir.join("compiler_depend.ts");
+            if timestamp.exists() {
+                let _ = std::fs::OpenOptions::new().append(true).open(&timestamp);
+            } else {
+                let _ = std::fs::write(&timestamp, "");
+            }
+            for depfile in dependency_files.iter().skip(3).step_by(4) {
+                let _ = std::fs::remove_file(check_build_system_path(binary, depfile));
+            }
+        }
+    }
+}
+
+fn check_build_system(argv: &[String], cwd: &str, pos: usize) -> i32 {
+    if argv.get(pos + 1).is_none() || argv.get(pos + 2).is_none() {
+        cmcmd::error("Invalid value used with --check-build-system");
+        cmcmd::error("Run 'cmake --help' for all supported options.");
+        return 1;
+    }
+    let listfile = &argv[pos + 1];
+    let clear = argv[pos + 2] != "0";
+    let path = Path::new(cwd).join(listfile);
+    let check_file_exists = path.exists();
+    if clear && check_file_exists {
+        clear_make_dependencies(cwd, &path);
+    }
+
+    // cmake::CheckBuildSystem: missing generation products, missing inputs
+    // or outputs, or any dependency newer than the oldest output requires a
+    // configure rerun.  Entries in Makefile.cmake may be relative to the
+    // top-level binary directory.
+    let products = check_build_system_list(&path, "CMAKE_MAKEFILE_PRODUCTS").unwrap_or_default();
+    let depends = check_build_system_list(&path, "CMAKE_MAKEFILE_DEPENDS").unwrap_or_default();
+    let outputs = check_build_system_list(&path, "CMAKE_MAKEFILE_OUTPUTS").unwrap_or_default();
+    let mut rerun = !check_file_exists
+        || products
+            .iter()
+            .any(|product| !check_build_system_path(cwd, product).exists());
+    let mut newest_dep: Option<(std::time::SystemTime, String)> = None;
+    for dep in &depends {
+        let dep_path = check_build_system_path(cwd, dep);
+        let Some(time) = check_build_system_modified(&dep_path) else {
+            rerun = true;
+            continue;
+        };
+        if newest_dep
+            .as_ref()
+            .is_none_or(|(current, _)| time > *current)
+        {
+            newest_dep = Some((time, dep.clone()));
+        }
+    }
+    let mut oldest_out: Option<(std::time::SystemTime, String)> = None;
+    for output in &outputs {
+        let out_path = check_build_system_path(cwd, output);
+        let Some(time) = check_build_system_modified(&out_path) else {
+            rerun = true;
+            continue;
+        };
+        if oldest_out
+            .as_ref()
+            .is_none_or(|(current, _)| time < *current)
+        {
+            oldest_out = Some((time, output.clone()));
+        }
+    }
+    if depends.is_empty() || outputs.is_empty() {
+        rerun = true;
+    }
+    if let (Some((dep_time, _)), Some((out_time, _))) = (newest_dep, oldest_out) {
+        rerun |= out_time < dep_time;
+    }
+    if !rerun {
+        return 0;
+    }
+
+    // Re-enter the normal configure path with the check arguments removed.
+    let mut configure: Vec<String> = Vec::new();
+    for (index, arg) in argv.iter().enumerate() {
+        if index == pos || index == pos + 1 || index == pos + 2 {
+            continue;
+        }
+        configure.push(arg.clone());
+    }
+    configure_args(&configure, cwd).unwrap_or(1)
+}
+
 fn build(argv: &[String], cwd: &str) -> i32 {
     let Ok(mut options) = parse_build(&argv[2..], cwd) else {
         eprint!("{}", include_str!("cmcmd/build-usage.txt"));
@@ -1865,7 +2009,7 @@ fn build(argv: &[String], cwd: &str) -> i32 {
         eprintln!("Error: could not find CMAKE_GENERATOR in Cache");
         return 1;
     };
-    if !matches!(generator, "Ninja" | "Ninja Multi-Config") {
+    if !matches!(generator, "Ninja" | "Ninja Multi-Config" | "Unix Makefiles") {
         eprintln!("Error: could not create CMAKE_GENERATOR \"{generator}\"");
         return 1;
     }
@@ -1912,16 +2056,45 @@ fn run_build(options: BuildOptions, cache: &Cache, generator: &str) -> i32 {
         .value("CMAKE_MAKE_PROGRAM")
         .filter(|program| !util::is_off(program))
         .unwrap_or("");
-    let mut command = vec![make_program.to_owned()];
+    let mut command = Vec::new();
     if verbose {
         println!("Change Dir: '{}'", options.dir);
-        command.push("-v".to_owned());
     }
-    if let Some(jobs) = options.jobs.filter(|jobs| *jobs > 0) {
-        command.extend(["-j".to_owned(), jobs.to_string()]);
-    }
-    if generator == "Ninja Multi-Config" && !options.config.is_empty() {
-        command.extend(["-f".to_owned(), format!("build-{}.ninja", options.config)]);
+    if generator == "Unix Makefiles" {
+        if verbose {
+            let cmake = std::env::current_exe()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "cmake".to_owned());
+            command.extend([
+                cmake,
+                "-E".to_owned(),
+                "env".to_owned(),
+                "VERBOSE=1".to_owned(),
+            ]);
+        }
+        command.extend([
+            make_program.to_owned(),
+            "-f".to_owned(),
+            "Makefile".to_owned(),
+        ]);
+        if let Some(jobs) = options.jobs {
+            if jobs == 0 {
+                command.push("-j".to_owned());
+            } else {
+                command.push(format!("-j{jobs}"));
+            }
+        }
+    } else {
+        command.push(make_program.to_owned());
+        if verbose {
+            command.push("-v".to_owned());
+        }
+        if let Some(jobs) = options.jobs.filter(|jobs| *jobs > 0) {
+            command.extend(["-j".to_owned(), jobs.to_string()]);
+        }
+        if generator == "Ninja Multi-Config" && !options.config.is_empty() {
+            command.extend(["-f".to_owned(), format!("build-{}.ninja", options.config)]);
+        }
     }
     if options.clean_first {
         let mut clean = command.clone();

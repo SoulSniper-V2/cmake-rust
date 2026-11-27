@@ -133,6 +133,10 @@ impl<'c, 'i> ModuleSupport<'c, 'i> {
                 Some(prop) => util::is_on(prop),
                 None => {
                     have_rule
+                        && matches!(
+                            self.ctx.interp.get_def("CMAKE_GENERATOR"),
+                            Some("Ninja" | "Ninja Multi-Config")
+                        )
                         && self
                             .ctx
                             .interp
