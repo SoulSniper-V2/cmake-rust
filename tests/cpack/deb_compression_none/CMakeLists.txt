@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+set(CPACK_PACKAGE_CONTACT "Acme Maintainer <acme@example.com>")
+set(CPACK_DEBIAN_COMPRESSION_TYPE none)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+include(CPack)

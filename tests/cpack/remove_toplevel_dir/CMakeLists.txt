@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/emptydir")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/emptydir" DESTINATION share/probe)
+set(CPACK_REMOVE_TOPLEVEL_DIRECTORY ON)
+include(CPack)

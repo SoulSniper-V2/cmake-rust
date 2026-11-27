@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" "hello\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nested.txt" "nested\n")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/emptydir")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/acme")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/hello.txt" DESTINATION share/probe)
+include(CPack)

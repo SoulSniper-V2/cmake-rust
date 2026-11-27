@@ -351,7 +351,14 @@ fn get_property(interp: &mut Interp, args: &[String]) -> CmdResult {
             Object::Test(test_dir, name)
         }
         Scope::Cache => Object::Cache(name),
-        Scope::Install => Object::Install(name),
+        Scope::Install => {
+            interp
+                .ext
+                .install_properties
+                .entry(name.to_owned())
+                .or_default();
+            Object::Install(name)
+        }
         Scope::Variable => {
             let value = interp.read_definition(property);
             store(interp, output, query, value);

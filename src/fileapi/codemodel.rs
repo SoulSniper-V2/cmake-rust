@@ -1536,7 +1536,20 @@ impl<'a, 'i> Codemodel<'a, 'i> {
             out.push(fragment(graph, value.trim(), bt, Some("flags")));
         }
         if target.kind != TargetKind::StaticLibrary {
-            let line = link::link_line(self.ctx, target, &self.config, language);
+            // `gg->CreateLinkLineComputer(lg, ...)`: the Ninja generators
+            // use cmNinjaLinkLineComputer (paths relative to the top build
+            // directory); every other generator the base cmLinkLineComputer
+            // relative to the target's own directory.
+            let ninja = self
+                .ctx
+                .interp
+                .get_def("CMAKE_GENERATOR")
+                .is_some_and(|generator| generator.starts_with("Ninja"));
+            let line = if ninja {
+                link::link_line(self.ctx, target, &self.config, language)
+            } else {
+                link::base_link_line(self.ctx, target, &self.config, language)
+            };
             let framework_path = line.framework_path.trim();
             if !framework_path.is_empty() {
                 out.push(fragment(graph, framework_path, &[], Some("frameworkPath")));

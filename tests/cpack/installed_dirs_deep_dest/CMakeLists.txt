@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.31)
+project(probe NONE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/d1" "${CMAKE_CURRENT_BINARY_DIR}/d2")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/d1/a.txt" "a\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/d2/b.txt" "b\n")
+set(CPACK_INSTALLED_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/d1;share/a/b/c;${CMAKE_CURRENT_BINARY_DIR}/d2;lib/x")
+include(CPack)

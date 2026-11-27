@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.31)
+project(srcprobe NONE)
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/generated-but-in-source.txt" "generated\n")
+set(CPACK_SOURCE_PACKAGE_FILE_NAME custom-source)
+include(CPack)

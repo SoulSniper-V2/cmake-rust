@@ -1296,7 +1296,6 @@ pub fn try_compile_project(
     fast: bool,
     cmake_args: Option<&[String]>,
 ) -> (i32, String) {
-    let _ = fast;
     let _profiling = crate::profiling::suspend();
     let _ = std::fs::create_dir_all(bindir);
     let previous_cwd = std::env::current_dir().ok();
@@ -1433,7 +1432,11 @@ pub fn try_compile_project(
             "Makefile".to_owned(),
         ];
         if !target_name.is_empty() {
-            command.push(format!("{target_name}/fast"));
+            if fast {
+                command.push(format!("{target_name}/fast"));
+            } else {
+                command.push(target_name.to_owned());
+            }
         }
         command
     } else {

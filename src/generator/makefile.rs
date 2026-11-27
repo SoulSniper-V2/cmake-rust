@@ -71,14 +71,15 @@ fn maybe_relative_cur_preserve_slashes(ctx: &GenCtx<'_>, dir: usize, path: &str)
     }
 }
 
-/// Shell escaping inside a `link.txt` script (`LinkScriptShell` enabled):
-/// no Makefile `$` doubling, while make-variable syntax remains protected
-/// as cmOutputConverter::ConvertToOutputFormat(SHELL) requests.
-fn link_script_shell_path(ctx: &GenCtx<'_>, path: &str) -> String {
+/// `cmOutputConverter::ConvertToOutputFormat(..., RESPONSE)` for object
+/// lists embedded in a link script.  Response-file quoting intentionally
+/// quotes leading or embedded hyphens even though the script is read by a
+/// shell.
+fn response_path(ctx: &GenCtx<'_>, path: &str) -> String {
     let _ = ctx;
     crate::outconv::escape_for_shell(
         &crate::cache::convert_to_unix_slashes(path),
-        crate::outconv::FLAG_IS_UNIX | crate::outconv::FLAG_ALLOW_MAKE_VARIABLES,
+        crate::outconv::FLAG_IS_UNIX | crate::outconv::FLAG_IS_RESPONSE,
     )
 }
 
@@ -365,16 +366,16 @@ fn makefile_object_entries(
                 .as_ref()
                 .is_none_or(|extension| !object.ends_with(extension.as_str()))
         })
-        .map(|object| link_script_shell_path(ctx, object))
+        .map(|object| response_path(ctx, object))
         .chain(
             externals
                 .iter()
-                .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+                .map(|object| response_path(ctx, &maybe_relative_cur(ctx, dir, object))),
         )
         .chain(
             super::ispc::generated_objects(ctx, target, &ctx.config)
                 .iter()
-                .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+                .map(|object| response_path(ctx, &maybe_relative_cur(ctx, dir, object))),
         )
         .collect()
 }
@@ -562,6 +563,7 @@ pub struct MakefileGenerator<'a> {
     commands_visited: HashMap<(usize, String), HashSet<(usize, usize)>>,
     tidy_fixes_dirs: BTreeSet<String>,
     tidy_fixes_files: BTreeSet<String>,
+    rule_hashes: BTreeMap<String, String>,
 }
 
 impl<'a> MakefileGenerator<'a> {
@@ -574,6 +576,7 @@ impl<'a> MakefileGenerator<'a> {
             commands_visited: HashMap::new(),
             tidy_fixes_dirs: BTreeSet::new(),
             tidy_fixes_files: BTreeSet::new(),
+            rule_hashes: BTreeMap::new(),
         }
     }
 
@@ -590,11 +593,32 @@ impl<'a> MakefileGenerator<'a> {
         }
     }
 
-    pub fn generate(mut self) {
+    /// `cmGlobalGenerator::GlobalSettingIsOn("CMAKE_SUPPRESS_REGENERATION")`,
+    /// inverted as the Makefile generators use it.
+    fn regenerate(&self) -> bool {
+        !self
+            .ctx
+            .var(0, "CMAKE_SUPPRESS_REGENERATION")
+            .is_some_and(|value| is_on(&value))
+    }
+
+    /// `cmGlobalGenerator::Generate`'s local-generator loop as driven by
+    /// `cmGlobalUnixMakefileGenerator3::Generate`: `after_local` runs after
+    /// each local generator (its install rules and test files), and
+    /// `after_locals` once the loop is done (the build export sets), before
+    /// the Makefile generator's own trailing files.
+    pub fn generate_with(
+        &mut self,
+        after_local: &mut dyn FnMut(usize),
+        after_locals: &mut dyn FnMut(),
+    ) {
         super::check_target_properties(self.ctx);
         for dir in 0..self.ctx.interp.makefiles.len() {
             self.generate_directory(dir);
+            after_local(dir);
         }
+        after_locals();
+        self.check_rule_hashes();
         if !self.compile_commands.is_empty() {
             let content = format!("[\n{}\n]", self.compile_commands.join(",\n"));
             let path = format!("{}/compile_commands.json", self.ctx.interp.home_binary);
@@ -1188,9 +1212,6 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
     ) {
         let mut depends = vec![format!("{}/flags.make", self.support_rel(target, dir))];
-        if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
-            depends.extend(util::expand_list(&object_deps, false));
-        }
         let target_includes =
             flags::compile_target_vars(self.ctx, target, &self.ctx.config, &source.language)
                 .includes;
@@ -1203,11 +1224,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 include_rsp
             ));
         }
+        // cmMakefileTargetGenerator::WriteObjectDependRules: the source,
+        // then its OBJECT_DEPENDS; PCH and ISPC headers follow.
         depends.push(self.top_rule_path(&source.path));
-        if source.language != "ISPC" {
-            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
-                depends.push(self.top_rule_path(&header));
-            }
+        if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
+            depends.extend(util::expand_list(&object_deps, false));
         }
         let ispc_header = if source.language == "ISPC" {
             ispc_header_for_source(self.ctx, target, &self.ctx.config, &source.object_name)
@@ -1260,6 +1281,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                         depends.push(self.top_rule_path(&file));
                     }
                 }
+            }
+        }
+        if source.language != "ISPC" {
+            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
+                depends.push(self.top_rule_path(&header));
             }
         }
         let depinfo = if source_compiler_depends {
@@ -1858,6 +1884,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 continue;
             }
             let first = self.top_rule_path(&evaluated.outputs[0]);
+            let hash_content = self.custom_command_hash_content(&evaluated, target);
+            let hash = format!(
+                "{:x}",
+                <md5::Md5 as md5::Digest>::digest(hash_content.as_bytes())
+            );
+            self.rule_hashes
+                .insert(maybe_relative_top(self.ctx, &evaluated.outputs[0]), hash);
             write_make_rule(out, None, &first, &depends, &commands, false);
             for output in evaluated.outputs.iter().skip(1) {
                 let extra = self.top_rule_path(output);
@@ -1897,6 +1930,32 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
         }
         (codegen_outputs, custom_clean)
+    }
+
+    /// The rule-content input to `cmGlobalGenerator::AddRuleHash`: the
+    /// working directory followed by each shell-converted command without a
+    /// launcher, before the directory-change wrapper and jobserver prefix.
+    fn custom_command_hash_content(
+        &self,
+        evaluated: &custom::EvaluatedCommand,
+        target: &Target,
+    ) -> String {
+        let makefile = target.makefile;
+        let working_directory = if evaluated.working_directory.is_empty() {
+            self.ctx.interp.makefiles[makefile].binary_dir.clone()
+        } else {
+            evaluated.working_directory.clone()
+        };
+        let mut content = working_directory;
+        for (index, argv) in evaluated.command_lines.iter().enumerate() {
+            if argv.first().is_none_or(|program| program.is_empty()) {
+                continue;
+            }
+            let mut line = shell_path(self.ctx, &argv[0]);
+            evaluated.append_arguments(self.ctx, index, &mut line);
+            content.push_str(&line);
+        }
+        content
     }
 
     fn custom_command_lines(
@@ -2351,7 +2410,9 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         let language = gt::linker_language(self.ctx, target, &config);
         let varname = target
             .name
-            .replace(['+', '-', '*', '/', '(', ')', '$', '@', '~'], "_");
+            .replace('.', "_")
+            .replace('-', "__")
+            .replace('+', "___");
         let pch_extension = self.ctx.var(target.makefile, "CMAKE_PCH_EXTENSION");
         let variable_objects: Vec<&String> = objects
             .iter()
@@ -2434,11 +2495,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         let target_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, true);
         let output_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, false);
         let target_rel_cur = maybe_relative_cur(self.ctx, dir, &target_full);
-        let target_rel_top = format!(
-            "{}{}",
-            home_relative_output_path(self.ctx, dir),
-            target_rel_cur
-        );
+        let target_rel_top = maybe_relative_top(self.ctx, &target_full);
         let mut depends: Vec<String> = objects
             .iter()
             .map(|o| format!("{}{}", home_relative_output_path(self.ctx, dir), o))
@@ -2608,19 +2665,17 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     continue;
                 }
                 let full = format!("{directory}/{artifact}");
-                let rel = format!(
-                    "{}{}",
-                    home_relative_output_path(self.ctx, dir),
-                    maybe_relative_cur(self.ctx, dir, &full)
-                );
+                let rel = maybe_relative_top(self.ctx, &full);
                 write_make_rule(
                     out,
                     None,
                     &rel,
                     std::slice::from_ref(&target_rel_top),
+                    // cmMakefileTargetGenerator::MakeEchoProgress ... WriteMakeRule
+                    // for extra outputs: MaybeRelativeToTopBinDir(output).
                     &[format!(
                         "@$(CMAKE_COMMAND) -E touch_nocreate {}",
-                        shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &full))
+                        shell_path(self.ctx, &rel)
                     )],
                     false,
                 );
@@ -2642,11 +2697,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 "build"
             }
         );
-        let output_driver = format!(
-            "{}{}",
-            home_relative_output_path(self.ctx, dir),
-            maybe_relative_cur(self.ctx, dir, &output_full)
-        );
+        let output_driver = maybe_relative_top(self.ctx, &output_full);
         let mut driver_depends = vec![output_driver];
         let mut extra_files = extra_files.to_vec();
         extra_files.sort();
@@ -3891,6 +3942,45 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         self.write_clean_files(target, &[], &custom_clean, &[]);
     }
 
+    /// `cmGlobalGenerator::CheckRuleHashes` and `WriteRuleHashes`.
+    fn check_rule_hashes(&mut self) {
+        let home = self.ctx.interp.home_binary.clone();
+        let path = format!("{home}/CMakeFiles/CMakeRuleHashes.txt");
+        if let Ok(existing) = std::fs::read_to_string(&path) {
+            for line in existing.lines() {
+                if line.len() < 34 || line.starts_with('#') {
+                    continue;
+                }
+                let (hash, file) = line.split_at(32);
+                let file = &file[1..];
+                if let Some(current) = self.rule_hashes.get(file) {
+                    if current != hash {
+                        let _ = std::fs::remove_file(util::collapse_full_path(file, &home));
+                    }
+                } else {
+                    let full = util::collapse_full_path(file, &home);
+                    if Path::new(&full).exists() {
+                        self.rule_hashes
+                            .entry(file.to_owned())
+                            .or_insert_with(|| hash.to_owned());
+                    }
+                }
+            }
+        }
+        if self.rule_hashes.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
+        let mut out = String::from(
+            "# Hashes of file build rules.
+",
+        );
+        for (file, hash) in &self.rule_hashes {
+            let _ = writeln!(out, "{hash} {file}");
+        }
+        let _ = crate::fsutil::write_generated(Path::new(&path), &out);
+    }
+
     fn write_progress_marks(&mut self) {
         let total: usize = self.progress.iter().map(|(_, p)| p.total).sum();
         let mut ordered: Vec<(String, String, usize)> = self
@@ -4243,12 +4333,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     }
                     names.extend(["edit_cache", "rebuild_cache"]);
                     if install_enabled {
-                        names.extend([
-                            "list_install_components",
-                            "install",
-                            "install/local",
-                            "install/strip",
-                        ]);
+                        names.extend(["list_install_components", "install", "install/local"]);
+                        if install_strip_enabled(self.ctx) {
+                            names.push("install/strip");
+                        }
                     }
                     for name in names {
                         let directory = format!("{}/CMakeFiles/{name}.dir", mf.binary_dir);
@@ -4266,6 +4354,9 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
     }
 
     fn write_main_cmakefile(&self) {
+        if !self.regenerate() {
+            return;
+        }
         let mut out = String::from(
             "# CMAKE generated file: DO NOT EDIT!\n# Generated by \"Unix Makefiles\" Generator, CMake Version 4.1\n\n# The generator used is:\nset(CMAKE_DEPENDS_GENERATOR \"Unix Makefiles\")\n\n# The top level Makefile was generated from the following files:\nset(CMAKE_MAKEFILE_DEPENDS\n  \"CMakeCache.txt\"\n",
         );
@@ -4363,6 +4454,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
     }
 
     fn write_main_makefile2(&self) {
+        let regenerate = self.regenerate();
         let mut out = build_file_header("");
         apply_verbose_default(self.ctx, &mut out);
         out = out
@@ -4555,11 +4647,16 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 &commands,
                 true,
             );
+            let regenerate_dep: Vec<String> = if regenerate {
+                vec!["cmake_check_build_system".into()]
+            } else {
+                Vec::new()
+            };
             write_make_rule(
                 &mut out,
                 Some("Build rule for subdir invocation for target."),
                 &format!("{r}/rule"),
-                &["cmake_check_build_system".into()],
+                &regenerate_dep,
                 &[
                     format!(
                         "$(CMAKE_COMMAND) -E cmake_progress_start {progress_dir} {}",
@@ -4618,13 +4715,17 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 true,
             );
         }
-        let check_commands = check_build_system_commands(self.ctx, "CMakeFiles/Makefile.cmake", 0)
-            .iter()
-            .map(|command| format!("\t{command}\n"))
-            .collect::<String>();
-        out.push_str(&format!(
-            "#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"
-        ));
+        out.push_str("#=============================================================================\n# Special targets to cleanup operation of make.\n\n");
+        if regenerate {
+            let check_commands =
+                check_build_system_commands(self.ctx, "CMakeFiles/Makefile.cmake", 0)
+                    .iter()
+                    .map(|command| format!("\t{command}\n"))
+                    .collect::<String>();
+            out.push_str(&format!(
+                "# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"
+            ));
+        }
         let path = format!("{}/CMakeFiles/Makefile2", self.ctx.interp.home_binary);
         let _ = crate::fsutil::write_generated(Path::new(&path), &out);
     }
@@ -4647,6 +4748,12 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
     }
 
     fn write_local_makefile(&self, dir: usize) {
+        let regenerate = self.regenerate();
+        let regenerate_dep: Vec<String> = if regenerate {
+            vec!["cmake_check_build_system".into()]
+        } else {
+            Vec::new()
+        };
         let mut out = build_file_header("");
         apply_verbose_default(self.ctx, &mut out);
         out = out
@@ -4778,32 +4885,34 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 .var(0, "CMAKE_SKIP_INSTALL_RULES")
                 .is_some_and(|v| crate::util::is_on(&v));
         if install_enabled {
-            let mut components = vec!["Unspecified".to_string()];
-            if let Some(extra) = self.ctx.interp.ext.misc.get("install-components") {
-                components.extend(
-                    crate::util::expand_list(extra, false)
-                        .into_iter()
-                        .filter(|component| component != "Unspecified"),
-                );
-            }
-            let quoted = components
-                .iter()
-                .map(|component| format!("\"{component}\""))
-                .collect::<Vec<_>>()
-                .join(" ");
+            // cmGlobalGenerator::AddGlobalTarget_Install: the sorted
+            // InstallComponents set registered by the install() commands.
+            let components: std::collections::BTreeSet<String> = self
+                .ctx
+                .interp
+                .ext
+                .misc
+                .get("install-components")
+                .map(|value| crate::util::expand_list(value, false).into_iter().collect())
+                .unwrap_or_default();
+            let message = if components.is_empty() {
+                "Only default component available".to_owned()
+            } else {
+                format!(
+                    "Available install components are: {}",
+                    components
+                        .iter()
+                        .map(|component| format!("\"{component}\""))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            };
             write_make_rule(
                 &mut out,
                 Some("Special rule for the target list_install_components"),
                 "list_install_components",
                 &[],
-                &[format!(
-                    "@{}",
-                    self.echo(
-                        &format!("Available install components are: {quoted}"),
-                        "--cyan",
-                        None
-                    )
-                )],
+                &[format!("@{}", self.echo(&message, "--cyan", None))],
                 true,
             );
             write_make_rule(
@@ -4814,10 +4923,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 &[],
                 true,
             );
-            let strip = self
-                .ctx
-                .var(0, "CMAKE_STRIP")
-                .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v));
+            let strip = install_strip_enabled(self.ctx);
             let install_cmake = if self.ctx.var(0, "CMake_BINARY_DIR").is_some()
                 && !self
                     .ctx
@@ -4896,7 +5002,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             &mut out,
             Some("The main all target"),
             "all",
-            &["cmake_check_build_system".into()],
+            &regenerate_dep,
             &[
                 format!(
                     "{cdroot}$(CMAKE_COMMAND) -E cmake_progress_start {progress_dir} {}",
@@ -4921,7 +5027,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 &mut out,
                 Some("The main codegen target"),
                 "codegen",
-                &["cmake_check_build_system".into()],
+                &regenerate_dep,
                 &[
                     format!(
                         "{cdroot}$(CMAKE_COMMAND) -E cmake_progress_start {progress_dir} {}",
@@ -4981,14 +5087,16 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .into_iter()
             .map(|command| format!("{cdroot}{command}"))
             .collect::<Vec<_>>();
-        write_make_rule(
-            &mut out,
-            Some("clear depends"),
-            "depend",
-            &[],
-            &depend_commands,
-            true,
-        );
+        if regenerate {
+            write_make_rule(
+                &mut out,
+                Some("clear depends"),
+                "depend",
+                &[],
+                &depend_commands,
+                true,
+            );
+        }
         let mut objects: BTreeMap<String, (bool, Vec<(String, String)>)> = BTreeMap::new();
         for mf in self.ctx.interp.makefiles.iter() {
             for key in &mf.targets {
@@ -5028,7 +5136,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                                 &mut out,
                                 Some("Build rule for target."),
                                 &t.name,
-                                &["cmake_check_build_system".into()],
+                                &regenerate_dep,
                                 &[format!(
                                     "$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 {}",
                                     t.name
@@ -5222,13 +5330,19 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
         }
         out.push_str("# Help Target\nhelp:\n\t@echo \"The following are some of the valid targets for this Makefile:\"\n\t@echo \"... all (the default if no target is provided)\"\n\t@echo \"... clean\"\n");
-        out.push_str("\t@echo \"... depend\"\n");
+        if regenerate {
+            out.push_str("\t@echo \"... depend\"\n");
+        }
         if codegen_enabled {
             out.push_str("\t@echo \"... codegen\"\n");
         }
         out.push_str("\t@echo \"... edit_cache\"\n");
         if install_enabled {
-            out.push_str("\t@echo \"... install\"\n\t@echo \"... install/local\"\n\t@echo \"... install/strip\"\n\t@echo \"... list_install_components\"\n");
+            out.push_str("\t@echo \"... install\"\n\t@echo \"... install/local\"\n");
+            if install_strip_enabled(self.ctx) {
+                out.push_str("\t@echo \"... install/strip\"\n");
+            }
+            out.push_str("\t@echo \"... list_install_components\"\n");
         }
         if package {
             out.push_str("\t@echo \"... package\"\n");
@@ -5288,7 +5402,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .iter()
             .map(|command| format!("\t{cdroot}{command}\n"))
             .collect::<String>();
-        out.push_str(&format!(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"));
+        out.push_str(".PHONY : help\n\n\n\n#=============================================================================\n# Special targets to cleanup operation of make.\n\n");
+        if regenerate {
+            out.push_str(&format!("# Special rule to run CMake to check the build system integrity.\n# No rule that depends on this can have commands that come from listfiles\n# because they might be regenerated.\ncmake_check_build_system:\n{check_commands}.PHONY : cmake_check_build_system\n\n"));
+        }
         let path = format!("{}/Makefile", self.ctx.interp.makefiles[dir].binary_dir);
         if dir == 0 {
             let _ = crate::fsutil::write_generated(Path::new(&path), &out);
@@ -5373,6 +5490,13 @@ fn escape_cmake(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// cmGlobalGenerator::AddGlobalTarget_InstallStrip: `install/strip` exists
+/// only when the top directory has `CMAKE_STRIP` set (cmMakefile::IsSet).
+fn install_strip_enabled(ctx: &GenCtx<'_>) -> bool {
+    ctx.var(0, "CMAKE_STRIP")
+        .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v))
+}
+
 fn is_in_build_system(target: &Target) -> bool {
     super::ninja::is_in_build_system(target)
 }
@@ -5417,10 +5541,7 @@ pub fn global_targets(ctx: &GenCtx<'_>) -> Vec<super::ninja::GlobalTarget> {
         names.push(("list_install_components", true));
         names.push(("install", true));
         names.push(("install/local", true));
-        if ctx
-            .var(0, "CMAKE_STRIP")
-            .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v))
-        {
+        if install_strip_enabled(ctx) {
             names.push(("install/strip", true));
         }
     }
@@ -5450,8 +5571,4 @@ pub fn global_targets(ctx: &GenCtx<'_>) -> Vec<super::ninja::GlobalTarget> {
         }
     }
     globals
-}
-
-pub fn generate(ctx: &GenCtx<'_>) {
-    MakefileGenerator::new(ctx).generate();
 }
