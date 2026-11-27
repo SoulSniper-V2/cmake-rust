@@ -654,10 +654,18 @@ pub(super) fn test_xml(
     let _ = writeln!(
         xml,
         "<Site BuildName=\"{}\"\n\tBuildStamp=\"{}-{}\"\n\tName=\"{}\"\n\tGenerator=\"ctest-{}\"\n\tCompilerName=\"\"\n\tCompilerVersion=\"\"\n\tOSName=\"{}\"\n\tHostname=\"{}\"\n\tOSRelease=\"{}\"\n\tOSVersion=\"{}\"\n\tOSPlatform=\"{}\"\n\tIs64Bits=\"{}\"\n\tVendorString=\"{}\"\n\tVendorID=\"{}\"\n\tFamilyID=\"{}\"\n\tModelID=\"{}\"\n\tModelName=\"{}\"\n\tProcessorCacheSize=\"{}\"\n\tNumberOfLogicalCPU=\"{}\"\n\tNumberOfPhysicalCPU=\"{}\"\n\tTotalVirtualMemory=\"{}\"\n\tTotalPhysicalMemory=\"{}\"\n\tLogicalProcessorsPerPhysical=\"1\"\n\tProcessorClockFrequency=\"{}\"\n\t>",
-        xml_escape(&options.dashboard_build_name),
+        xml_escape(if options.dashboard_build_name.is_empty() {
+            "(empty)"
+        } else {
+            &options.dashboard_build_name
+        }),
         xml_escape(&options.dashboard_tag),
         xml_escape(&options.dashboard_model),
-        xml_escape(&options.dashboard_site),
+        xml_escape(if options.dashboard_site.is_empty() {
+            "(empty)"
+        } else {
+            &options.dashboard_site
+        }),
         crate::interp::VERSION_STRING,
         value("OSName"),
         value("hostname"),
@@ -691,7 +699,7 @@ pub(super) fn test_xml(
             .filter(|path| !path.as_os_str().is_empty())
             .map_or_else(
                 || ".".to_owned(),
-                |path| path.to_string_lossy().replace('\\', "/"),
+                |path| format!("./{}", path.to_string_lossy().replace('\\', "/")),
             )
     };
     let full_name = |test: &Test| {

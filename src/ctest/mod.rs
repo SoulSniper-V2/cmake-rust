@@ -139,7 +139,11 @@ pub fn main() -> i32 {
     let options = match Options::parse(&args) {
         Ok(options) => options,
         Err(message) => {
-            eprintln!("CMake Error: {message}");
+            if let Some(message) = message.strip_prefix(options::RAW_ERROR) {
+                eprintln!("{message}");
+            } else {
+                eprintln!("CMake Error: {message}");
+            }
             return 1;
         }
     };
@@ -151,6 +155,9 @@ pub fn main() -> i32 {
     }
     if !options.scripts.is_empty() {
         return script::run_scripts(&options);
+    }
+    if !options.dashboard_parts.is_empty() || !options.model.is_empty() {
+        return script::process_steps(&options);
     }
     let mut log = Log::new(&options);
     if !matches!(options.no_tests.as_str(), "" | "error" | "ignore") {

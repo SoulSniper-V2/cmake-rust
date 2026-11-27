@@ -132,6 +132,13 @@ def cases():
         ("configure-build", ["-S", "scriptbuild.cmake", "-V"]),
         ("empty-binary", ["-S", "emptybin.cmake"]),
         ("empty-binary-error", ["-S", "emptybinfail.cmake"]),
+        ("command-test-v", ["-D", "ExperimentalTest", "-V"]),
+        ("command-test", ["-D", "ExperimentalTest"]),
+        ("action-test-v", ["-T", "test", "-V"]),
+        ("command-start-error", ["-D", "ExperimentalStart", "-V"]),
+        ("invalid-type", ["-D", "Bad"]),
+        ("invalid-action", ["-T", "bad"]),
+        ("invalid-model", ["-M", "bad"]),
     ):
         yield "dashboard", name, [flags], {}
     for name, flags in (

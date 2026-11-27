@@ -1,5 +1,6 @@
 //! CTest dashboard script execution (`ctest -S`).
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ pub(crate) struct State {
     tag: String,
     site: String,
     build_name: String,
+    configuration: BTreeMap<String, String>,
     had_error: bool,
 }
 
@@ -34,6 +36,7 @@ impl State {
             tag: String::new(),
             site: hostname(),
             build_name: String::new(),
+            configuration: BTreeMap::new(),
             had_error: false,
         }
     }
@@ -84,6 +87,26 @@ fn handler_error(interp: &Interp, text: &str) {
 fn collapse_input(path: &str) -> String {
     let cwd = std::env::current_dir().unwrap_or_default();
     collapse_full_path(path, &cwd.to_string_lossy())
+}
+
+fn unsupported_command(name: &str) -> CmdResult {
+    err(format!("{name} is not implemented"))
+}
+
+fn ctest_update(_interp: &mut Interp, _args: &[String]) -> CmdResult {
+    unsupported_command("ctest_update")
+}
+
+fn ctest_coverage(_interp: &mut Interp, _args: &[String]) -> CmdResult {
+    unsupported_command("ctest_coverage")
+}
+
+fn ctest_memcheck(_interp: &mut Interp, _args: &[String]) -> CmdResult {
+    unsupported_command("ctest_memcheck")
+}
+
+fn ctest_submit(_interp: &mut Interp, _args: &[String]) -> CmdResult {
+    unsupported_command("ctest_submit")
 }
 
 fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -267,7 +290,7 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
     let _ = std::fs::create_dir_all(&testing);
     let _ = std::fs::write(
         testing.join("TAG"),
-        format!("{tag}\n{model_name}\n{group_name}\n"),
+        format!("{tag}\n{group_name}\n{model_name}\n"),
     );
     handler_output(interp, &format!("   Use {group_name} tag: {tag}\n"), quiet);
     Ok(())
@@ -358,7 +381,11 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
             &format!(
                 "SetCTestConfiguration:BuildDirectory:{}\nSetCTestConfiguration:SourceDirectory:{}\n",
                 binary.display(),
-                state.source_dir
+                if state.source_dir.is_empty() {
+                    binary.display().to_string()
+                } else {
+                    state.source_dir.clone()
+                }
             ),
             false,
         );
@@ -376,7 +403,7 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     let (code, no_tests) = execute_detailed(binary, options, &mut log);
     let _ = std::env::set_current_dir(old_dir);
     if let Some(variable) = return_value {
-        interp.set_def(variable, code.to_string());
+        interp.set_def(variable, if code == 0 { "0" } else { "-1" });
     }
     if no_tests {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
@@ -938,6 +965,358 @@ pub(super) fn run_scripts(options: &Options) -> i32 {
     let mut result = 0;
     for (script, in_process) in &options.scripts {
         result |= run_one(&script.to_string_lossy(), *in_process, options);
+    }
+    result
+}
+
+fn step_error(command: &str, error: crate::interp::CmdErr) {
+    if let crate::interp::CmdErr::Error(message) = error {
+        let frame = crate::messages::Frame {
+            file: ".".into(),
+            line: 0,
+            name: None,
+            deferred: false,
+        };
+        eprintln!(
+            "{}",
+            crate::messages::render(
+                crate::messages::MessageType::FatalError,
+                &format!("{command} {message}"),
+                &[frame],
+                None,
+            )
+        );
+    }
+}
+
+fn set_step_configuration(interp: &mut Interp, key: &str, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    if interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.extra_verbose)
+    {
+        handler_output(
+            interp,
+            &format!("SetCTestConfiguration:{key}:{value}\n"),
+            false,
+        );
+    }
+    interp
+        .ext
+        .ctest_script
+        .as_mut()
+        .unwrap()
+        .configuration
+        .insert(key.into(), value.into());
+}
+
+fn set_cmake_variables(interp: &mut Interp) {
+    let configuration = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .unwrap()
+        .configuration
+        .clone();
+    for (cmake_var, config_key) in [
+        ("CTEST_SITE", "Site"),
+        ("CTEST_BUILD_NAME", "BuildName"),
+        ("CTEST_NIGHTLY_START_TIME", "NightlyStartTime"),
+        ("CTEST_SOURCE_DIRECTORY", "SourceDirectory"),
+        ("CTEST_BINARY_DIRECTORY", "BuildDirectory"),
+        ("CTEST_UPDATE_COMMAND", "UpdateCommand"),
+        ("CTEST_UPDATE_OPTIONS", "UpdateOptions"),
+        ("CTEST_UPDATE_TYPE", "UpdateType"),
+        ("CTEST_CVS_COMMAND", "CVSCommand"),
+        ("CTEST_CVS_UPDATE_OPTIONS", "CVSUpdateOptions"),
+        ("CTEST_SVN_COMMAND", "SVNCommand"),
+        ("CTEST_SVN_UPDATE_OPTIONS", "SVNUpdateOptions"),
+        ("CTEST_SVN_OPTIONS", "SVNOptions"),
+        ("CTEST_BZR_COMMAND", "BZRCommand"),
+        ("CTEST_BZR_UPDATE_OPTIONS", "BZRUpdateOptions"),
+        ("CTEST_GIT_COMMAND", "GITCommand"),
+        ("CTEST_GIT_UPDATE_OPTIONS", "GITUpdateOptions"),
+        ("CTEST_GIT_INIT_SUBMODULES", "GITInitSubmodules"),
+        ("CTEST_GIT_UPDATE_CUSTOM", "GITUpdateCustom"),
+        ("CTEST_UPDATE_VERSION_ONLY", "UpdateVersionOnly"),
+        ("CTEST_UPDATE_VERSION_OVERRIDE", "UpdateVersionOverride"),
+        ("CTEST_HG_COMMAND", "HGCommand"),
+        ("CTEST_HG_UPDATE_OPTIONS", "HGUpdateOptions"),
+        ("CTEST_P4_COMMAND", "P4Command"),
+        ("CTEST_P4_UPDATE_CUSTOM", "P4UpdateCustom"),
+        ("CTEST_P4_UPDATE_OPTIONS", "P4UpdateOptions"),
+        ("CTEST_P4_CLIENT", "P4Client"),
+        ("CTEST_P4_OPTIONS", "P4Options"),
+        ("CTEST_CONFIGURE_COMMAND", "ConfigureCommand"),
+        ("CTEST_LABELS_FOR_SUBPROJECTS", "LabelsForSubprojects"),
+        ("CTEST_BUILD_COMMAND", "MakeCommand"),
+        ("CTEST_USE_LAUNCHERS", "UseLaunchers"),
+        ("CTEST_COVERAGE_COMMAND", "CoverageCommand"),
+        ("CTEST_COVERAGE_EXTRA_FLAGS", "CoverageExtraFlags"),
+        ("CTEST_MEMORYCHECK_TYPE", "MemoryCheckType"),
+        (
+            "CTEST_MEMORYCHECK_SANITIZER_OPTIONS",
+            "MemoryCheckSanitizerOptions",
+        ),
+        ("CTEST_MEMORYCHECK_COMMAND", "MemoryCheckCommand"),
+        (
+            "CTEST_MEMORYCHECK_COMMAND_OPTIONS",
+            "MemoryCheckCommandOptions",
+        ),
+        (
+            "CTEST_MEMORYCHECK_SUPPRESSIONS_FILE",
+            "MemoryCheckSuppressionFile",
+        ),
+        ("CTEST_SUBMIT_URL", "SubmitURL"),
+        ("CTEST_DROP_METHOD", "DropMethod"),
+        ("CTEST_DROP_SITE_USER", "DropSiteUser"),
+        ("CTEST_DROP_SITE_PASSWORD", "DropSitePassword"),
+    ] {
+        if let Some(value) = configuration
+            .get(config_key)
+            .filter(|value| !value.is_empty())
+        {
+            if interp
+                .ext
+                .ctest_script
+                .as_ref()
+                .is_some_and(|state| state.options.extra_verbose)
+            {
+                handler_output(
+                    interp,
+                    &format!("SetCMakeVariable:{cmake_var}:{value}\n"),
+                    false,
+                );
+            }
+            interp.set_def(cmake_var, value);
+        }
+    }
+}
+
+fn update_dashboard_configuration(interp: &mut Interp, binary: &Path) {
+    let ini = binary.join("CTestConfiguration.ini");
+    let tcl = binary.join("DartConfiguration.tcl");
+    let file = if ini.is_file() { ini } else { tcl };
+    if interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.options.extra_verbose)
+    {
+        handler_output(
+            interp,
+            &format!("UpdateCTestConfiguration  from :{}\n", file.display()),
+            false,
+        );
+    }
+    if !file.is_file() {
+        eprintln!("Cannot find file: {}", file.display());
+    } else if file.extension().is_some_and(|extension| extension == "ini") {
+        if let Ok(contents) = std::fs::read_to_string(&file) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    let value = value.trim().to_owned();
+                    set_step_configuration(interp, key, &value);
+                }
+            }
+        }
+    } else {
+        let _ = interp.read_list_file(&file.to_string_lossy());
+        for (key, variable) in [
+            ("Site", "CTEST_SITE"),
+            ("BuildName", "CTEST_BUILD_NAME"),
+            ("NightlyStartTime", "CTEST_NIGHTLY_START_TIME"),
+            ("SourceDirectory", "CTEST_SOURCE_DIRECTORY"),
+            ("BuildDirectory", "CTEST_BINARY_DIRECTORY"),
+        ] {
+            if let Some(value) = interp.get_def(variable) {
+                let value = value.to_owned();
+                set_step_configuration(interp, key, &value);
+            }
+        }
+    }
+    set_cmake_variables(interp);
+}
+
+fn read_step_tag(interp: &mut Interp, binary: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(binary.join("Testing/TAG")) else {
+        return false;
+    };
+    let mut lines = contents.lines();
+    let (Some(tag), Some(group), Some(model)) = (lines.next(), lines.next(), lines.next()) else {
+        return false;
+    };
+    let state = interp.ext.ctest_script.as_mut().unwrap();
+    state.tag = tag.into();
+    state.group = group.into();
+    state.model = model.into();
+    state.binary_dir = binary.to_string_lossy().into_owned();
+    true
+}
+
+fn create_step_tag(interp: &mut Interp, binary: &Path, model: &str, group: &str) -> bool {
+    let tag = report::clock("%Y%m%d-%H%M");
+    let testing = binary.join("Testing");
+    if std::fs::create_dir_all(&testing).is_err() {
+        return false;
+    }
+    if std::fs::write(testing.join("TAG"), format!("{tag}\n{group}\n{model}\n")).is_err() {
+        return false;
+    }
+    let state = interp.ext.ctest_script.as_mut().unwrap();
+    state.tag = tag;
+    state.group = group.into();
+    state.model = model.into();
+    state.binary_dir = binary.to_string_lossy().into_owned();
+    true
+}
+
+fn invoke_dashboard_command(
+    interp: &mut Interp,
+    command: fn(&mut Interp, &[String]) -> CmdResult,
+    name: &str,
+) -> bool {
+    let args = ["RETURN_VALUE".to_owned(), "return_value".to_owned()];
+    match command(interp, &args) {
+        Ok(()) => interp.get_safe("return_value").parse::<i32>().unwrap_or(0) >= 0,
+        Err(error) => {
+            step_error(name, error);
+            false
+        }
+    }
+}
+
+pub(super) fn process_steps(options: &Options) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let binary = options.dir.as_ref().map_or_else(
+        || cwd.clone(),
+        |dir| {
+            PathBuf::from(collapse_full_path(
+                &dir.to_string_lossy(),
+                &cwd.to_string_lossy(),
+            ))
+        },
+    );
+    if let Err(error) = std::env::set_current_dir(&binary) {
+        eprintln!(
+            "Failed to change working directory to \"{}\": {error}",
+            binary.display()
+        );
+        return 1;
+    }
+
+    let mut interp = testfile::interpreter(&binary);
+    register(&mut interp);
+    let mut step_options = options.clone();
+    step_options.extra_verbose = options.verbose;
+    step_options.verbose = true;
+    interp.ext.ctest_script = Some(State::new(&step_options));
+    {
+        let state = interp.ext.ctest_script.as_mut().unwrap();
+        state.binary_dir = binary.to_string_lossy().into_owned();
+        state.site.clear();
+        state.build_name.clear();
+        state.model = options.model.clone();
+        state.group = if options.group.is_empty() {
+            options.model.clone()
+        } else {
+            options.group.clone()
+        };
+    }
+
+    let binary_text = binary.to_string_lossy().into_owned();
+    set_step_configuration(&mut interp, "BuildDirectory", &binary_text);
+    update_dashboard_configuration(&mut interp, &binary);
+
+    let parts = &options.dashboard_parts;
+    if parts.contains("start") {
+        let model = if options.model.is_empty() {
+            "Experimental"
+        } else {
+            options.model.as_str()
+        };
+        let group = if options.group.is_empty() {
+            model
+        } else {
+            &options.group
+        };
+        let args = [model.to_owned(), "GROUP".to_owned(), group.to_owned()];
+        if let Err(error) = ctest_start(&mut interp, &args) {
+            step_error("ctest_start", error);
+            return 12;
+        }
+    } else if !read_step_tag(&mut interp, &binary)
+        && !create_step_tag(
+            &mut interp,
+            &binary,
+            if options.model.is_empty() {
+                "Experimental"
+            } else {
+                &options.model
+            },
+            if options.group.is_empty() {
+                if options.model.is_empty() {
+                    "Experimental"
+                } else {
+                    &options.model
+                }
+            } else {
+                &options.group
+            },
+        )
+    {
+        eprintln!("Problem initializing the dashboard.");
+        return 12;
+    }
+
+    let mut result = 0;
+    if parts.contains("update")
+        && !invoke_dashboard_command(&mut interp, ctest_update, "ctest_update")
+    {
+        result |= 0x01;
+    }
+    if parts.contains("configure")
+        && !invoke_dashboard_command(&mut interp, ctest_configure, "ctest_configure")
+    {
+        result |= 0x02;
+    }
+    if parts.contains("build") {
+        update_dashboard_configuration(&mut interp, &binary);
+        if !invoke_dashboard_command(&mut interp, ctest_build, "ctest_build") {
+            result |= 0x04;
+        }
+    }
+    if parts.contains("test") {
+        update_dashboard_configuration(&mut interp, &binary);
+        if !invoke_dashboard_command(&mut interp, ctest_test, "ctest_test") {
+            result |= 0x08;
+        }
+    }
+    if parts.contains("coverage") {
+        update_dashboard_configuration(&mut interp, &binary);
+        if !invoke_dashboard_command(&mut interp, ctest_coverage, "ctest_coverage") {
+            result |= 0x20;
+        }
+    }
+    if parts.contains("memcheck") {
+        update_dashboard_configuration(&mut interp, &binary);
+        if !invoke_dashboard_command(&mut interp, ctest_memcheck, "ctest_memcheck") {
+            result |= 0x10;
+        }
+    }
+    if parts.contains("submit") {
+        update_dashboard_configuration(&mut interp, &binary);
+        if !invoke_dashboard_command(&mut interp, ctest_submit, "ctest_submit") {
+            result |= 0x40;
+        }
     }
     result
 }

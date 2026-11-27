@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::util::{collapse_full_path, is_on};
@@ -84,12 +85,132 @@ pub(super) struct Options {
     pub dashboard: Vec<String>,
     pub model: String,
     pub actions: Vec<String>,
+    pub dashboard_parts: BTreeSet<String>,
+    pub group: String,
     pub dashboard_tag: String,
     pub dashboard_model: String,
     pub dashboard_site: String,
     pub dashboard_build_name: String,
     pub list_presets: bool,
     pub preset_binary_dir: String,
+}
+
+fn dashboard_type(value: &str) -> Option<(&'static str, Vec<&'static str>)> {
+    for (model, default_parts) in [
+        (
+            "Experimental",
+            vec!["start", "configure", "build", "test", "coverage", "submit"],
+        ),
+        (
+            "Continuous",
+            vec![
+                "start",
+                "update",
+                "configure",
+                "build",
+                "test",
+                "coverage",
+                "submit",
+            ],
+        ),
+        (
+            "Nightly",
+            vec![
+                "start",
+                "update",
+                "configure",
+                "build",
+                "test",
+                "coverage",
+                "submit",
+            ],
+        ),
+    ] {
+        if value == model {
+            return Some((model, default_parts));
+        }
+        for (suffix, part) in [
+            ("Start", "start"),
+            ("Update", "update"),
+            ("Configure", "configure"),
+            ("Build", "build"),
+            ("Test", "test"),
+            ("MemCheck", "memcheck"),
+            ("Purify", "memcheck"),
+            ("Coverage", "coverage"),
+            ("Submit", "submit"),
+        ] {
+            if value == format!("{model}{suffix}") {
+                return Some((model, vec![part]));
+            }
+        }
+    }
+    if value == "MemoryCheck" {
+        return Some((
+            "Experimental",
+            vec![
+                "start",
+                "configure",
+                "build",
+                "memcheck",
+                "coverage",
+                "submit",
+            ],
+        ));
+    }
+    if value == "NightlyMemoryCheck" {
+        return Some((
+            "Nightly",
+            vec![
+                "start",
+                "update",
+                "configure",
+                "build",
+                "memcheck",
+                "coverage",
+                "submit",
+            ],
+        ));
+    }
+    None
+}
+
+pub(super) const RAW_ERROR: &str = "\u{1f}";
+
+fn dashboard_error(value: &str) -> String {
+    format!(
+        "{RAW_ERROR}CTest -D called with incorrect option: {value}\nAvailable options are:\n  ctest -D Continuous\n  ctest -D Continuous(Start|Update|Configure|Build)\n  ctest -D Continuous(Test|Coverage|MemCheck|Submit)\n  ctest -D Experimental\n  ctest -D Experimental(Start|Update|Configure|Build)\n  ctest -D Experimental(Test|Coverage|MemCheck|Submit)\n  ctest -D Nightly\n  ctest -D Nightly(Start|Update|Configure|Build)\n  ctest -D Nightly(Test|Coverage|MemCheck|Submit)\n  ctest -D NightlyMemoryCheck"
+    )
+}
+
+fn valid_dashboard_part(value: &str) -> Option<&'static str> {
+    match value.to_ascii_lowercase().as_str() {
+        "start" => Some("start"),
+        "update" => Some("update"),
+        "configure" => Some("configure"),
+        "build" => Some("build"),
+        "test" => Some("test"),
+        "coverage" => Some("coverage"),
+        "memcheck" => Some("memcheck"),
+        "notes" => Some("notes"),
+        "submit" => Some("submit"),
+        "extrafiles" => Some("extrafiles"),
+        "upload" => Some("upload"),
+        "done" => Some("done"),
+        _ => None,
+    }
+}
+
+fn action_error(value: &str) -> String {
+    format!(
+        "{RAW_ERROR}CTest -T called with incorrect option: {value}\nAvailable options are:\n  ctest -T all\n  ctest -T start\n  ctest -T update\n  ctest -T configure\n  ctest -T build\n  ctest -T test\n  ctest -T coverage\n  ctest -T memcheck\n  ctest -T notes\n  ctest -T submit"
+    )
+}
+
+fn model_error(value: &str) -> String {
+    format!(
+        "{RAW_ERROR}CTest -M called with incorrect option: {value}\nAvailable options are:\n  ctest -M Continuous\n  ctest -M Experimental\n  ctest -M Nightly"
+    )
 }
 
 fn apply_test_preset(
@@ -439,8 +560,11 @@ impl Options {
                     if let Some((name, value)) = raw.split_once('=') {
                         let name = name.split_once(':').map_or(name, |(name, _)| name);
                         options.definitions.insert(name.into(), value.into());
+                    } else {
+                        options.dashboard.push(raw.into());
                     }
                 }
+                "--group" => options.group = value()?.into(),
                 "-M" | "--test-model" => options.model = value()?.into(),
                 "-T" | "--test-action" => options.actions.push(value()?.into()),
                 "--list-presets" => {}
@@ -595,6 +719,51 @@ impl Options {
                 }
                 _ => {}
             }
+        }
+        for value in &options.dashboard {
+            let Some((model, parts)) = dashboard_type(value) else {
+                return Err(dashboard_error(value));
+            };
+            if options.model.is_empty() {
+                options.model = model.into();
+            }
+            options
+                .dashboard_parts
+                .extend(parts.into_iter().map(str::to_owned));
+        }
+        for action in &options.actions {
+            if action.eq_ignore_ascii_case("all") {
+                for part in [
+                    "start",
+                    "update",
+                    "configure",
+                    "build",
+                    "test",
+                    "coverage",
+                    "memcheck",
+                    "submit",
+                    "notes",
+                    "extrafiles",
+                    "upload",
+                    "done",
+                ] {
+                    options.dashboard_parts.insert(part.into());
+                }
+            } else if let Some(part) = valid_dashboard_part(action) {
+                options.dashboard_parts.insert(part.into());
+            } else {
+                return Err(action_error(action));
+            }
+        }
+        if !options.model.is_empty() {
+            options.model = match options.model.to_ascii_lowercase().as_str() {
+                "experimental" => "Experimental".into(),
+                "continuous" => "Continuous".into(),
+                "nightly" => "Nightly".into(),
+                _ => return Err(model_error(&options.model)),
+            };
+        } else if !options.dashboard_parts.is_empty() {
+            options.model = "Experimental".into();
         }
         if !parallel_set {
             options.parallel = match std::env::var("CTEST_PARALLEL_LEVEL") {
