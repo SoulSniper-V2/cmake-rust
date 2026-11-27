@@ -1232,9 +1232,18 @@ impl Generator {
             if configs.is_empty() {
                 configs.push(String::new());
             }
+            let cmake_generator = option(interp, "CPACK_CMAKE_GENERATOR").unwrap_or_default();
             for config in configs {
-                // Ninja has no preinstall target. Unix Makefiles does; running it
-                // is part of the generated build system rather than CPack itself.
+                if !self.run_preinstall_target(
+                    interp,
+                    log,
+                    &project.project_name,
+                    &project.directory,
+                    &cmake_generator,
+                    &config,
+                ) {
+                    return false;
+                }
                 log.output(&format!(
                     "- Install project: {} [{config}]",
                     project.project_name
@@ -1261,6 +1270,67 @@ impl Generator {
         }
         set_option(interp, "CPACK_ABSOLUTE_DESTINATION_FILES", &absolute_files);
         true
+    }
+
+    fn run_preinstall_target(
+        &self,
+        interp: &Interp,
+        log: &mut Logger,
+        project_name: &str,
+        install_directory: &str,
+        cmake_generator: &str,
+        build_config: &str,
+    ) -> bool {
+        if cmake_generator != "Unix Makefiles" {
+            return true;
+        }
+        let cmake = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| format!("{}/cmake", dir.display())))
+            .unwrap_or_else(|| "cmake".to_owned());
+        let mut args = vec!["--build".to_owned(), ".".to_owned()];
+        let mut display = format!("{cmake} --build .");
+        if !build_config.is_empty() {
+            args.push("--config".to_owned());
+            args.push(build_config.to_owned());
+            display.push_str(&format!(" --config \"{build_config}\""));
+        }
+        args.push("--target".to_owned());
+        args.push("preinstall".to_owned());
+        display.push_str(" --target \"preinstall\"");
+        log.debug(&format!("- Install command: {display}"));
+        log.output(&format!("- Run preinstall target for: {project_name}"));
+        let output = Command::new(&cmake)
+            .args(&args)
+            .current_dir(install_directory)
+            .output();
+        let (success, text) = match output {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout).into_owned()
+                    + &String::from_utf8_lossy(&output.stderr);
+                if log.verbose && !text.is_empty() {
+                    print!("{text}");
+                }
+                (output.status.success(), text)
+            }
+            Err(error) => (false, error.to_string()),
+        };
+        if success {
+            return true;
+        }
+        let top =
+            option(interp, "CPACK_TOPLEVEL_DIRECTORY").unwrap_or_else(|| self.toplevel.clone());
+        let tmp = format!("{top}/PreinstallOutput.log");
+        let _ = fs::write(
+            &tmp,
+            format!(
+                "# Run command: {display}\n# Directory: {install_directory}\n# Output:\n{text}\n"
+            ),
+        );
+        log.error(&format!(
+            "Problem running install command: {display}\nPlease check {tmp} for errors"
+        ));
+        false
     }
 
     #[allow(clippy::too_many_arguments)]

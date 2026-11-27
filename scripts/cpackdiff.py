@@ -15,6 +15,7 @@ Fixture files:
   args.txt        extra cpack arguments, one shell-style line per line
   build.txt       if present, build the fixture before packaging
   source.txt      if present, use CPackSourceConfig.cmake instead
+  cmake_generator.txt  configure generator (default Ninja)
 """
 import argparse
 import bz2
@@ -283,7 +284,8 @@ def configure_fixture(case, seed):
     shutil.copytree(case, src, symlinks=True)
     build = seed / "build"
     env = {"PATH": "/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin", "HOME": str(seed), "LANG": "C", "LC_ALL": "C", "CMAKE_RUST_DATA_ROOT": DATA_ROOT_TMP}
-    proc = run([ORACLE_CMAKE, "-S", src, "-B", build, "-G", "Ninja"], cwd=seed, env=env, timeout=300)
+    generator = (case / "cmake_generator.txt").read_text().strip() if (case / "cmake_generator.txt").exists() else "Ninja"
+    proc = run([ORACLE_CMAKE, "-S", src, "-B", build, "-G", generator], cwd=seed, env=env, timeout=300)
     if proc.returncode != 0:
         return False, "oracle configure failed\n" + proc.stdout.decode(errors="replace") + proc.stderr.decode(errors="replace")
     if (case / "build.txt").exists():

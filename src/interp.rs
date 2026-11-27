@@ -1134,7 +1134,7 @@ impl Interp {
         // project uses cmState::ProjectKind::TryCompile, for which
         // SetTopSource receives nullopt, so its diagnostics keep absolute
         // paths even when they live under the outer project's source tree.
-        if self.in_try_compile {
+        if self.in_try_compile || self.role == "CPACK" {
             return None;
         }
         self.top_source_root.as_deref().or(Some(&self.home_source))
