@@ -593,6 +593,8 @@ fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> u
     }
     let total = names.len();
     let mut defects = 0;
+    let mut categories: Vec<(String, usize)> = Vec::new();
+    handler_output(interp, "-- Processing memory checking output:\n", quiet);
     for (index, name) in &names {
         let path = temporary.join(format!("MemoryChecker.{index}.log"));
         if !path.is_file() {
@@ -600,23 +602,45 @@ fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> u
             continue;
         }
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
-        let count = contents
-            .lines()
-            .filter(|line| {
-                line.starts_with("========")
-                    && (line.contains("Invalid ")
-                        || line.contains("definitely lost")
-                        || line.contains("possibly lost")
-                        || line.contains("Fatal UVM")
-                        || line.contains("hazard detected")
-                        || line.contains("Race reported")
-                        || line.contains("Barrier error")
-                        || line.contains("Uninitialized ")
-                        || line.contains("Unused memory")
-                        || line.contains("Host API memory access error")
-                        || line.contains("Leaked "))
-            })
-            .count();
+        let mut count = 0;
+        for line in contents.lines().filter(|line| line.starts_with("========")) {
+            let category = if line.contains("Leaked ") {
+                Some("Memory leak".to_owned())
+            } else if line.contains("cudaErrorLaunchFailure") {
+                Some("cudaErrorLaunchFailure".to_owned())
+            } else if line.contains("Fatal UVM GPU fault") {
+                Some("Fatal UVM GPU fault".to_owned())
+            } else if line.contains("Fatal UVM CPU fault") {
+                Some("Fatal UVM CPU fault".to_owned())
+            } else if line.contains("Potential WAR hazard detected") {
+                Some("Potential WAR hazard detected".to_owned())
+            } else if line.contains("Potential RAW hazard detected") {
+                Some("Potential RAW hazard detected".to_owned())
+            } else if line.contains("Race reported") {
+                Some("Race reported".to_owned())
+            } else if line.contains("Barrier error") {
+                Some("Barrier error".to_owned())
+            } else if line.contains("Uninitialized ") && line.contains(" memory read") {
+                Some("Uninitialized __global__ memory read".to_owned())
+            } else if line.contains("Unused memory") {
+                Some("Unused memory".to_owned())
+            } else if line.contains("Host API memory access error") {
+                Some("Host API memory access error".to_owned())
+            } else if line.contains("Invalid __global__ read") {
+                Some("Invalid __global__ read".to_owned())
+            } else {
+                None
+            };
+            if let Some(category) = category {
+                count += 1;
+                if let Some((_, total)) = categories.iter_mut().find(|(name, _)| *name == category)
+                {
+                    *total += 1;
+                } else {
+                    categories.push((category, 1));
+                }
+            }
+        }
         defects += count;
         if count > 0 {
             handler_output(
@@ -628,7 +652,6 @@ fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> u
             );
         }
     }
-    handler_output(interp, "-- Processing memory checking output:\n", quiet);
     handler_output(
         interp,
         "MemCheck log files can be found here: (<#> corresponds to test number)\n",
@@ -640,6 +663,9 @@ fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> u
         quiet,
     );
     handler_output(interp, "Memory checking results:\n", quiet);
+    for (category, count) in categories {
+        handler_output(interp, &format!("{category} - {count}\n"), quiet);
+    }
     defects
 }
 
@@ -845,6 +871,7 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     options.memcheck_dynamic_options = dynamic_options;
     options.memcheck_ignore =
         crate::util::expand_list(&interp.get_safe("CTEST_CUSTOM_MEMCHECK_IGNORE"), false);
+    options.script_quiet = quiet;
     if !run_memcheck_commands(interp, &interp.get_safe("CTEST_CUSTOM_PRE_MEMCHECK"), "pre") {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         if let Some(variable) = values.get("RETURN_VALUE") {
@@ -870,6 +897,28 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     } else {
         postprocess_checker_logs(interp, &temporary, quiet)
     };
+    let mut bc_invalid = false;
+    if checker_type == "BoundsChecker" {
+        let mut logs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&temporary) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("MemoryChecker.") && name.ends_with(".log") {
+                    logs.push(entry.path());
+                }
+            }
+        }
+        bc_invalid = logs.is_empty()
+            || logs.iter().any(|path| {
+                std::fs::read_to_string(path)
+                    .map(|contents| !contents.trim_start().starts_with('<'))
+                    .unwrap_or(true)
+            });
+        if bc_invalid {
+            eprintln!("Error parsing XML in stream at line 1: no element found");
+            interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        }
+    }
     let post_ok = run_memcheck_commands(
         interp,
         &interp.get_safe("CTEST_CUSTOM_POST_MEMCHECK"),
@@ -879,7 +928,11 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
     }
     let result_code = if no_tests && code == 8 { 0 } else { code };
-    let result_code = if post_ok { result_code } else { -1 };
+    let result_code = if post_ok && !bc_invalid {
+        result_code
+    } else {
+        -1
+    };
     if let Some(variable) = values.get("RETURN_VALUE") {
         interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
