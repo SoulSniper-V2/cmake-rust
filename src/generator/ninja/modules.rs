@@ -78,16 +78,11 @@ fn discover_synthetic_targets(
         let Some(target) = ctx.interp.ext.targets.get(key) else {
             return;
         };
-        // DiscoverSyntheticTargets itself does not compute the linker
-        // language; the language is only input to generator expressions in
-        // the link implementation here.  Keep its diagnostics with the
-        // upstream computation that performs it.
-        let diagnostics_before_language = ctx.errors.borrow().len();
-        let language = gt::linker_language(&ctx, target, config);
-        ctx.errors
-            .borrow_mut()
-            .truncate(diagnostics_before_language);
-        let items = link::implementation_targets(&ctx, target, config, &language);
+        // DiscoverSyntheticTargets uses the initial linker language from
+        // the target constructor. Source resolution and language inference
+        // take place during subsequent generation steps.
+        let language = gt::fixed_linker_language(target).unwrap_or_default();
+        let items = link::implementation_targets(&ctx, target, config, language);
         let imported = items
             .into_iter()
             .filter(|dep| dep.imported && gt::have_cxx20_module_sources(dep))
