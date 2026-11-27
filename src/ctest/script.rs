@@ -2318,6 +2318,8 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
         .as_ref()
         .map(|state| state.options.clone())
         .unwrap_or_default();
+    let in_process = start == 0;
+    let recursion_depth = interp.recursion_depth_now();
     for index in start..args.len() {
         if args[index] == "RETURN_VALUE" {
             continue;
@@ -2326,8 +2328,9 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
             continue;
         }
         let script = collapse_input(&args[index]);
-        let result = run_one(&script, true, &options);
+        let result = run_one(&script, in_process, &options, recursion_depth);
         if result.error
+            && !in_process
             && let Some(state) = interp.ext.ctest_script.as_mut()
         {
             state.had_error = true;
@@ -2803,7 +2806,50 @@ struct ScriptOutcome {
     error: bool,
 }
 
-fn run_one(total_script: &str, _in_process: bool, options: &Options) -> ScriptOutcome {
+fn run_new_process(total_script: &str, options: &Options) -> ScriptOutcome {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ctest"));
+    let mut command = std::process::Command::new(exe);
+    command.arg("-SR").arg(total_script);
+    if options.verbose {
+        command.arg("-V");
+    }
+    if options.extra_verbose {
+        command.arg("-VV");
+    }
+    if !options.config.is_empty() {
+        command.arg("-C").arg(&options.config);
+    }
+    let output = command.output();
+    let Ok(output) = output else {
+        return ScriptOutcome {
+            code: -1,
+            error: true,
+        };
+    };
+    let stderr = crate::bytes::decode(&output.stderr);
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+    if options.extra_verbose {
+        print!("{}", crate::bytes::decode(&output.stdout));
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+    ScriptOutcome {
+        code: output.status.code().unwrap_or(-1),
+        error: !stderr.is_empty(),
+    }
+}
+
+fn run_one(
+    total_script: &str,
+    in_process: bool,
+    options: &Options,
+    recursion_depth: usize,
+) -> ScriptOutcome {
+    if !in_process {
+        return run_new_process(total_script, options);
+    }
     let (script, script_arg) = total_script
         .split_once(',')
         .map_or((total_script, ""), |(script, arg)| (script, arg));
@@ -2817,6 +2863,7 @@ fn run_one(total_script: &str, _in_process: bool, options: &Options) -> ScriptOu
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut interp = testfile::interpreter(&cwd);
+    interp.recursion_depth_base = recursion_depth;
     interp.role = "CTEST";
     interp.global_props.set("CMAKE_ROLE", "CTEST".to_owned());
     register(&mut interp);
@@ -2875,7 +2922,7 @@ pub(super) fn run_scripts(options: &Options) -> i32 {
     }
     let mut result = 0;
     for (script, in_process) in &options.scripts {
-        result |= run_one(&script.to_string_lossy(), *in_process, options).code;
+        result |= run_one(&script.to_string_lossy(), *in_process, options, 0).code;
     }
     result
 }
