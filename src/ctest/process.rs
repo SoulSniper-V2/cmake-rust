@@ -637,7 +637,6 @@ impl Invocation {
         let mut expired = false;
         let mut timeout_signal = None;
         let mut alternate_used = false;
-        let mut exited = None;
         let mut eof = false;
         let mut buffer = [0; 8192];
         while !eof || status.is_none() {
@@ -652,11 +651,7 @@ impl Invocation {
                         }
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        if exited.is_some_and(|exited: Instant| exited.elapsed().as_secs() >= 2) {
-                            eof = true;
-                        } else {
-                            std::thread::sleep(Duration::from_millis(2));
-                        }
+                        std::thread::sleep(Duration::from_millis(2));
                     }
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                     Err(_) => eof = true,
@@ -666,13 +661,11 @@ impl Invocation {
             }
             if status.is_none() {
                 status = child.try_wait().ok().flatten();
-                if status.is_some() {
-                    exited = Some(Instant::now());
-                }
             }
-            if status.is_none() && timeout_start.elapsed().as_secs_f64() >= timeout {
+            if timeout_start.elapsed().as_secs_f64() >= timeout {
                 let pid = child.id() as i32;
                 if !expired
+                    && status.is_none()
                     && !self.stop_at_timeout
                     && let Some((name, number, grace)) = &self.signal
                 {
@@ -684,9 +677,15 @@ impl Invocation {
                     timeout_start = Instant::now();
                     timeout = *grace;
                 } else {
-                    // SAFETY: the outstanding child leads its own process group.
-                    unsafe {
-                        libc::kill(-pid, libc::SIGKILL);
+                    if status.is_none() {
+                        // SAFETY: the outstanding child leads its own process group.
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
+                    } else {
+                        // The direct child is gone but a descendant still holds the
+                        // output pipe open.  cmProcess drops the pipe at timeout.
+                        eof = true;
                     }
                     timeout_signal = None;
                     timeout = f64::INFINITY;
@@ -710,10 +709,7 @@ impl Invocation {
             reason,
             completion,
             exit_value,
-            seconds: exited
-                .unwrap_or_else(Instant::now)
-                .duration_since(started)
-                .as_secs_f64(),
+            seconds: started.elapsed().as_secs_f64(),
             actual: self.exe,
             args: self.args,
             start,

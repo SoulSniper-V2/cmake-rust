@@ -1900,11 +1900,11 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         handler_output(interp, &existing_tag_message, quiet);
     }
     if model_name.eq_ignore_ascii_case("nightly") && nightly.is_empty() {
-        handler_output(
+        handler_error(
             interp,
             "WARNING: No nightly start time found please set in CTestConfig.cmake or DartConfig.cmake\n",
-            quiet,
         );
+        ctest_command_error(interp, "ctest_start", "unknown error.");
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         return Ok(());
     }
@@ -2327,7 +2327,12 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
         }
         let script = collapse_input(&args[index]);
         let result = run_one(&script, true, &options);
-        interp.set_def(&return_variable, result.to_string());
+        if result.error
+            && let Some(state) = interp.ext.ctest_script.as_mut()
+        {
+            state.had_error = true;
+        }
+        interp.set_def(&return_variable, result.code.to_string());
     }
     Ok(())
 }
@@ -2365,6 +2370,7 @@ fn dashboard_options(interp: &Interp, binary: &Path) -> Options {
     options.dashboard_model = state.model.clone();
     options.dashboard_site = state.site.clone();
     options.dashboard_build_name = state.build_name.clone();
+    options.change_id = interp.get_safe("CTEST_CHANGE_ID");
     options.dir = Some(binary.into());
     options.labels_for_subprojects =
         crate::util::expand_list(&interp.get_safe("CTEST_LABELS_FOR_SUBPROJECTS"), false);
@@ -2535,7 +2541,7 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
             "   Each . represents 1024 bytes of output\n    {} Size of output: {kib}K\n",
             ".".repeat(dots)
         ),
-        quiet,
+        false,
     );
     if status != 0 {
         handler_error(interp, "Error(s) when configuring the project\n");
@@ -2613,7 +2619,7 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             .get("PARALLEL_LEVEL")
             .filter(|value| !value.is_empty())
         {
-            let _ = write!(command, " --parallel {parallel}");
+            let _ = write!(command, " --parallel \"{parallel}\"");
         }
         let flags = parsed
             .get("FLAGS")
@@ -2671,7 +2677,7 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             });
         }
     }
-    let (errors, warnings) = if use_launchers {
+    let (mut errors, warnings) = if use_launchers {
         let mut errors = 0;
         let mut warnings = 0;
         if let Some(launch_dir) = &launch_dir
@@ -2711,6 +2717,39 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         &format!("    {} Size of output: {kib}K\n", ".".repeat(dots)),
         quiet,
     );
+    if use_launchers && status != 0 {
+        if let Some(launch_dir) = &launch_dir {
+            let has_xml = std::fs::read_dir(launch_dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .any(|entry| entry.file_name().to_string_lossy().ends_with(".xml"));
+            if !has_xml {
+                let real_args = crate::commands::try_compile::parse_arguments(&command);
+                use md5::Digest;
+                let mut hasher = md5::Md5::new();
+                if let Ok(cwd) = std::env::current_dir() {
+                    hasher.update(cwd.to_string_lossy().as_bytes());
+                }
+                for arg in &real_args {
+                    hasher.update(arg.as_bytes());
+                }
+                let hash = format!("{:x}", hasher.finalize());
+                let options = BTreeMap::new();
+                super::launcher_xml(&super::LaunchReport {
+                    log_dir: launch_dir,
+                    hash: &hash,
+                    error: true,
+                    options: &options,
+                    real_args: &real_args,
+                    stdout: &output,
+                    stderr: "",
+                    exit_code: status,
+                });
+                errors += 1;
+            }
+        }
+    }
     let options = dashboard_options(interp, &build_path);
     let _ = report::build_xml(
         &build_path,
@@ -2729,8 +2768,8 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         handler_error(interp, "Error(s) when building project\n");
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
     }
-    handler_output(interp, &format!("   {errors} Compiler errors\n"), quiet);
-    handler_output(interp, &format!("   {warnings} Compiler warnings\n"), quiet);
+    handler_output(interp, &format!("   {errors} Compiler errors\n"), false);
+    handler_output(interp, &format!("   {warnings} Compiler warnings\n"), false);
     if let Some(variable) = parsed.get("RETURN_VALUE") {
         interp.set_def(variable, status.to_string());
     }
@@ -2759,14 +2798,22 @@ fn register(interp: &mut Interp) {
     interp.register("ctest_upload", ctest_upload);
 }
 
-fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
+struct ScriptOutcome {
+    code: i32,
+    error: bool,
+}
+
+fn run_one(total_script: &str, _in_process: bool, options: &Options) -> ScriptOutcome {
     let (script, script_arg) = total_script
         .split_once(',')
         .map_or((total_script, ""), |(script, arg)| (script, arg));
     let script = &collapse_input(script);
     if !Path::new(script).is_file() {
         eprintln!("CMake Error: Cannot find file: {script}");
-        return 1;
+        return ScriptOutcome {
+            code: 1,
+            error: true,
+        };
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut interp = testfile::interpreter(&cwd);
@@ -2817,14 +2864,9 @@ fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
         .ctest_script
         .as_ref()
         .is_some_and(|state| state.had_error);
-    if let Some(code) = interp.exit_code {
-        return code;
-    }
-    if !ok || interp.error || interp.fatal || had_error {
-        -1
-    } else {
-        0
-    }
+    let error = !ok || interp.error || interp.fatal || had_error;
+    let code = interp.exit_code.unwrap_or(if error { -1 } else { 0 });
+    ScriptOutcome { code, error }
 }
 
 pub(super) fn run_scripts(options: &Options) -> i32 {
@@ -2833,7 +2875,7 @@ pub(super) fn run_scripts(options: &Options) -> i32 {
     }
     let mut result = 0;
     for (script, in_process) in &options.scripts {
-        result |= run_one(&script.to_string_lossy(), *in_process, options);
+        result |= run_one(&script.to_string_lossy(), *in_process, options).code;
     }
     result
 }

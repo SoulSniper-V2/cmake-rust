@@ -211,6 +211,13 @@ fn set_tests_properties(interp: &mut Interp, args: &[String]) -> CmdResult {
                     }
                     test.properties.insert(key.clone(), value.clone());
                 }
+                "TIMEOUT_AFTER_MATCH" => {
+                    let count = expand_list(value, false).len();
+                    if count != 2 {
+                        eprintln!("TIMEOUT_AFTER_MATCH expects two arguments, found {count}");
+                    }
+                    test.properties.insert(key.clone(), value.clone());
+                }
                 "RESOURCE_GROUPS" if super::resources::parse_groups(value).is_none() => {
                     return err("unknown error.");
                 }

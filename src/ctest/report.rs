@@ -1095,7 +1095,15 @@ fn write_step_xml(
     body: String,
 ) -> std::io::Result<()> {
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str(&site_xml_header(options));
+    let mut header = site_xml_header(options);
+    if !options.change_id.is_empty() {
+        header = header.replacen(
+            "\n\t>\n",
+            &format!("\n\tChangeId=\"{}\"\n\t>\n", xml_escape(&options.change_id)),
+            1,
+        );
+    }
+    xml.push_str(&header);
     xml.push_str(&subprojects_xml(options));
     xml.push_str(&body);
     xml.push_str("</Site>\n");
