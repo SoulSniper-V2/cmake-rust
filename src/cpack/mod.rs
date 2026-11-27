@@ -1702,8 +1702,9 @@ fn print_generators() {
     eprintln!();
     eprintln!("Generators");
     for (name, desc) in generator_list() {
-        eprintln!("  {name:<30} = {desc}");
+        eprintln!("  {name:<28} = {desc}");
     }
+    eprintln!();
 }
 
 fn print_help() {

@@ -259,7 +259,6 @@ pub(super) fn package_files(
     );
     let mut text = String::new();
     root.write(&mut text, 0);
-    text.push('\n');
     if let Some(parent) = std::path::Path::new(&filename).parent() {
         let _ = fs::create_dir_all(parent);
     }

@@ -212,7 +212,7 @@ fn add_component(
     }
     for file in &component.files {
         let rp = format!("{prefix}{file}");
-        let disk = format!("{local_top}/{file}");
+        let disk = format!("{local_top}/{rp}");
         let mut add = true;
         if let Some(d) = dedup.as_deref_mut() {
             match d.check(&rp, &local_top) {
@@ -227,7 +227,7 @@ fn add_component(
         if add {
             log.debug(&format!("Adding file: {rp}"));
             let skip = local_top.len() + 1;
-            if !archive.add_options(&disk, skip, Some(&prefix), false) {
+            if !archive.add_options(&disk, skip, None, false) {
                 log.error(&format!("ERROR while packaging files: {}", archive.error()));
                 return false;
             }
