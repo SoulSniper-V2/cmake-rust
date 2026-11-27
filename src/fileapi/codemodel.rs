@@ -605,7 +605,12 @@ impl<'a, 'i> Codemodel<'a, 'i> {
                 installer.set("type", jstr("fileSet"));
                 installer.set("destination", jstr(dest()));
                 let dirs = self.eval_file_set_dirs(target, file_set);
-                let files = self.eval_file_set_files(target, file_set, &dirs);
+                let mut files = self.eval_file_set_files(target, file_set, &dirs);
+                // The installer visits the relative directories in map order
+                // and keeps the file-entry order within each directory.
+                files.sort_by(|(left, _), (right, _)| {
+                    crate::bytes::encode(left).cmp(&crate::bytes::encode(right))
+                });
                 let mut out_paths = jarr();
                 for (dir, file) in &files {
                     let d = if dir.is_empty() {
