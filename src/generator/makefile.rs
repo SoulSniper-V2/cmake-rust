@@ -1212,9 +1212,6 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
     ) {
         let mut depends = vec![format!("{}/flags.make", self.support_rel(target, dir))];
-        if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
-            depends.extend(util::expand_list(&object_deps, false));
-        }
         let target_includes =
             flags::compile_target_vars(self.ctx, target, &self.ctx.config, &source.language)
                 .includes;
@@ -1227,11 +1224,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 include_rsp
             ));
         }
+        // cmMakefileTargetGenerator::WriteObjectDependRules: the source,
+        // then its OBJECT_DEPENDS; PCH and ISPC headers follow.
         depends.push(self.top_rule_path(&source.path));
-        if source.language != "ISPC" {
-            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
-                depends.push(self.top_rule_path(&header));
-            }
+        if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
+            depends.extend(util::expand_list(&object_deps, false));
         }
         let ispc_header = if source.language == "ISPC" {
             ispc_header_for_source(self.ctx, target, &self.ctx.config, &source.object_name)
@@ -1284,6 +1281,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                         depends.push(self.top_rule_path(&file));
                     }
                 }
+            }
+        }
+        if source.language != "ISPC" {
+            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
+                depends.push(self.top_rule_path(&header));
             }
         }
         let depinfo = if source_compiler_depends {
@@ -2669,9 +2671,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     None,
                     &rel,
                     std::slice::from_ref(&target_rel_top),
+                    // cmMakefileTargetGenerator::MakeEchoProgress ... WriteMakeRule
+                    // for extra outputs: MaybeRelativeToTopBinDir(output).
                     &[format!(
                         "@$(CMAKE_COMMAND) -E touch_nocreate {}",
-                        shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &full))
+                        shell_path(self.ctx, &rel)
                     )],
                     false,
                 );
@@ -4329,12 +4333,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     }
                     names.extend(["edit_cache", "rebuild_cache"]);
                     if install_enabled {
-                        names.extend([
-                            "list_install_components",
-                            "install",
-                            "install/local",
-                            "install/strip",
-                        ]);
+                        names.extend(["list_install_components", "install", "install/local"]);
+                        if install_strip_enabled(self.ctx) {
+                            names.push("install/strip");
+                        }
                     }
                     for name in names {
                         let directory = format!("{}/CMakeFiles/{name}.dir", mf.binary_dir);
@@ -4883,32 +4885,34 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 .var(0, "CMAKE_SKIP_INSTALL_RULES")
                 .is_some_and(|v| crate::util::is_on(&v));
         if install_enabled {
-            let mut components = vec!["Unspecified".to_string()];
-            if let Some(extra) = self.ctx.interp.ext.misc.get("install-components") {
-                components.extend(
-                    crate::util::expand_list(extra, false)
-                        .into_iter()
-                        .filter(|component| component != "Unspecified"),
-                );
-            }
-            let quoted = components
-                .iter()
-                .map(|component| format!("\"{component}\""))
-                .collect::<Vec<_>>()
-                .join(" ");
+            // cmGlobalGenerator::AddGlobalTarget_Install: the sorted
+            // InstallComponents set registered by the install() commands.
+            let components: std::collections::BTreeSet<String> = self
+                .ctx
+                .interp
+                .ext
+                .misc
+                .get("install-components")
+                .map(|value| crate::util::expand_list(value, false).into_iter().collect())
+                .unwrap_or_default();
+            let message = if components.is_empty() {
+                "Only default component available".to_owned()
+            } else {
+                format!(
+                    "Available install components are: {}",
+                    components
+                        .iter()
+                        .map(|component| format!("\"{component}\""))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            };
             write_make_rule(
                 &mut out,
                 Some("Special rule for the target list_install_components"),
                 "list_install_components",
                 &[],
-                &[format!(
-                    "@{}",
-                    self.echo(
-                        &format!("Available install components are: {quoted}"),
-                        "--cyan",
-                        None
-                    )
-                )],
+                &[format!("@{}", self.echo(&message, "--cyan", None))],
                 true,
             );
             write_make_rule(
@@ -4919,10 +4923,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 &[],
                 true,
             );
-            let strip = self
-                .ctx
-                .var(0, "CMAKE_STRIP")
-                .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v));
+            let strip = install_strip_enabled(self.ctx);
             let install_cmake = if self.ctx.var(0, "CMake_BINARY_DIR").is_some()
                 && !self
                     .ctx
@@ -5337,7 +5338,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
         out.push_str("\t@echo \"... edit_cache\"\n");
         if install_enabled {
-            out.push_str("\t@echo \"... install\"\n\t@echo \"... install/local\"\n\t@echo \"... install/strip\"\n\t@echo \"... list_install_components\"\n");
+            out.push_str("\t@echo \"... install\"\n\t@echo \"... install/local\"\n");
+            if install_strip_enabled(self.ctx) {
+                out.push_str("\t@echo \"... install/strip\"\n");
+            }
+            out.push_str("\t@echo \"... list_install_components\"\n");
         }
         if package {
             out.push_str("\t@echo \"... package\"\n");
@@ -5485,6 +5490,13 @@ fn escape_cmake(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// cmGlobalGenerator::AddGlobalTarget_InstallStrip: `install/strip` exists
+/// only when the top directory has `CMAKE_STRIP` set (cmMakefile::IsSet).
+fn install_strip_enabled(ctx: &GenCtx<'_>) -> bool {
+    ctx.var(0, "CMAKE_STRIP")
+        .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v))
+}
+
 fn is_in_build_system(target: &Target) -> bool {
     super::ninja::is_in_build_system(target)
 }
@@ -5529,10 +5541,7 @@ pub fn global_targets(ctx: &GenCtx<'_>) -> Vec<super::ninja::GlobalTarget> {
         names.push(("list_install_components", true));
         names.push(("install", true));
         names.push(("install/local", true));
-        if ctx
-            .var(0, "CMAKE_STRIP")
-            .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v))
-        {
+        if install_strip_enabled(ctx) {
             names.push(("install/strip", true));
         }
     }
