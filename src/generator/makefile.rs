@@ -15,6 +15,7 @@ use super::ctx::GenCtx;
 use super::custom;
 use super::flags;
 use super::module_support::ModuleSupport;
+use super::osx_bundle::{self, SourceFileType};
 use super::target::{self as gt, ArtifactType, SourceKind};
 use crate::policy::PolicyStatus;
 use crate::state::CustomCommandKind;
@@ -47,6 +48,27 @@ fn shell_path_keep_trailing_slash(ctx: &GenCtx<'_>, path: &str) -> String {
         converted.push('/');
     }
     converted
+}
+
+/// Convert backslashes without performing CMake's duplicate-slash collapsing.
+/// A few upstream Makefile paths intentionally concatenate a directory that
+/// already ends in `/` with another `/` and preserve the resulting `//`.
+fn shell_path_preserve_slashes(ctx: &GenCtx<'_>, path: &str) -> String {
+    shell_escape(ctx, &path.replace('\\', "/"), false)
+}
+
+fn top_rule_path_preserve_slashes(ctx: &GenCtx<'_>, path: &str) -> String {
+    let home = format!("{}/", ctx.interp.home_binary);
+    path.strip_prefix(&home).unwrap_or(path).to_owned()
+}
+
+fn maybe_relative_cur_preserve_slashes(ctx: &GenCtx<'_>, dir: usize, path: &str) -> String {
+    let cur = format!("{}/", ctx.interp.makefiles[dir].binary_dir);
+    if let Some(rest) = path.strip_prefix(&cur) {
+        rest.to_owned()
+    } else {
+        maybe_relative_cur(ctx, dir, path)
+    }
 }
 
 /// Shell escaping inside a `link.txt` script (`LinkScriptShell` enabled):
@@ -233,6 +255,11 @@ fn makefile_response_flag(ctx: &GenCtx<'_>, target: &Target, language: &str) -> 
     .unwrap_or_else(|| "@".to_owned())
 }
 
+fn makefile_device_response_flag(ctx: &GenCtx<'_>, target: &Target) -> String {
+    ctx.var(target.makefile, "CMAKE_CUDA_RESPONSE_FILE_DEVICE_LINK_FLAG")
+        .unwrap_or_else(|| "@".to_owned())
+}
+
 fn makefile_cuda_compile_mode(ctx: &GenCtx<'_>, target: &Target) -> String {
     let mut mode = String::new();
     if target
@@ -278,6 +305,51 @@ fn escape_json(text: &str) -> String {
     out
 }
 
+/// `cmMakefileTargetGenerator::WriteObjectRuleFile` ISPC header path logic.
+fn ispc_header_for_source(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    config: &str,
+    object_name: &str,
+) -> String {
+    let suffix = target.props.get("ISPC_HEADER_SUFFIX").unwrap_or_default();
+    let mut directory = gt::object_directory(ctx, target, config);
+    if let Some(prop) = target.props.get("ISPC_HEADER_DIRECTORY") {
+        directory = util::collapse_full_path(
+            &format!("{}/{prop}", ctx.interp.makefiles[0].binary_dir),
+            "",
+        );
+    }
+    format!(
+        "{directory}/{}{suffix}",
+        super::ispc::source_stem(object_name)
+    )
+}
+
+fn makefile_include_response_path(
+    ctx: &GenCtx<'_>,
+    target: &Target,
+    language: &str,
+    includes: &str,
+) -> Option<(String, String)> {
+    if includes.is_empty()
+        || !ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_{language}_USE_RESPONSE_FILE_FOR_INCLUDES"),
+            )
+            .is_some_and(|value| is_on(&value))
+    {
+        return None;
+    }
+    let full = format!(
+        "{}/includes_{language}.rsp",
+        gt::support_directory(ctx, target)
+    );
+    let rel_cur = maybe_relative_cur(ctx, target.makefile, &full);
+    Some((full, rel_cur))
+}
+
 fn makefile_object_entries(
     ctx: &GenCtx<'_>,
     target: &Target,
@@ -296,6 +368,11 @@ fn makefile_object_entries(
         .map(|object| link_script_shell_path(ctx, object))
         .chain(
             externals
+                .iter()
+                .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
+        )
+        .chain(
+            super::ispc::generated_objects(ctx, target, &ctx.config)
                 .iter()
                 .map(|object| link_script_shell_path(ctx, &maybe_relative_cur(ctx, dir, object))),
         )
@@ -824,7 +901,8 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .map(|s| s.path.clone())
             .collect();
         let mut custom_outputs = Vec::new();
-        let codegen_outputs = self.write_custom_commands(
+        let mut object_extra_clean = Vec::new();
+        let (codegen_outputs, custom_clean) = self.write_custom_commands(
             target,
             target_key,
             dir,
@@ -840,6 +918,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .map(|output| self.top_rule_path(output))
             .collect();
         write_make_rule(&mut build, None, &codegen, &codegen_depends, &[], true);
+        let mut mac_content_folders = BTreeSet::new();
+        let (osx_extra_files, osx_clean) = self.write_mac_osx_content_statements(
+            target,
+            &sources,
+            &mut mac_content_folders,
+            &mut build,
+        );
         for source in sources
             .iter()
             .filter(|s| s.kind == SourceKind::ObjectSource)
@@ -871,6 +956,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 progress,
                 compiler_depends,
                 &mut impl_depends,
+                &mut object_extra_clean,
                 &mut build,
             );
         }
@@ -882,6 +968,8 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 target,
                 &object_paths,
                 &external_paths,
+                &osx_extra_files,
+                &mut mac_content_folders,
                 &support_rel_cur,
                 &support_rel_top,
                 compiler_depends,
@@ -901,7 +989,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         self.write_flags(target);
         self.write_depend_info(target, &impl_depends);
         self.write_dependency_placeholders(&support, compiler_depends, &target.name);
-        self.write_clean_files(target, &object_paths);
+        let mut extra_clean = osx_clean;
+        extra_clean.extend(object_extra_clean);
+        extra_clean.extend(
+            super::ispc::generated_objects(self.ctx, target, &self.ctx.config)
+                .iter()
+                .map(|object| maybe_relative_cur(self.ctx, dir, object)),
+        );
+        self.write_clean_files(target, &object_paths, &custom_clean, &extra_clean);
         self.implicit.insert(target.name.clone(), impl_depends);
     }
 
@@ -1089,13 +1184,36 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         progress: usize,
         compiler_depends: bool,
         impl_depends: &mut ImplicitDepends,
+        clean_files: &mut Vec<String>,
         out: &mut String,
     ) {
         let mut depends = vec![format!("{}/flags.make", self.support_rel(target, dir))];
-        depends.push(self.top_rule_path(&source.path));
         if let Some(object_deps) = self.source_prop(target, &source.path, "OBJECT_DEPENDS") {
             depends.extend(util::expand_list(&object_deps, false));
         }
+        let target_includes =
+            flags::compile_target_vars(self.ctx, target, &self.ctx.config, &source.language)
+                .includes;
+        if let Some((_, include_rsp)) =
+            makefile_include_response_path(self.ctx, target, &source.language, &target_includes)
+        {
+            depends.push(format!(
+                "{}{}",
+                home_relative_output_path(self.ctx, dir),
+                include_rsp
+            ));
+        }
+        depends.push(self.top_rule_path(&source.path));
+        if source.language != "ISPC" {
+            for header in super::ispc::generated_headers(self.ctx, target, &self.ctx.config) {
+                depends.push(self.top_rule_path(&header));
+            }
+        }
+        let ispc_header = if source.language == "ISPC" {
+            ispc_header_for_source(self.ctx, target, &self.ctx.config, &source.object_name)
+        } else {
+            String::new()
+        };
         let source_compiler_depends = self.use_compiler_depends(target, &source.language);
         let properties = self.source_props(target, &source.path);
         let pch_archs = super::pch::pch_archs(self.ctx, target, &self.ctx.config, &source.language);
@@ -1211,10 +1329,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        let compile_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &compile_pdb));
-        let target_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
+        let compile_pdb_shell = shell_path_keep_trailing_slash(
+            self.ctx,
+            &maybe_relative_cur(self.ctx, dir, &compile_pdb),
+        );
+        let target_pdb_shell = shell_path(self.ctx, &target_pdb);
         let defines_var = self.object_defines_var(target, source, &properties);
         let includes_var = self.object_includes_var(target, source, &properties);
         let mut flags_var = self.object_flags_var(target, source, &properties);
@@ -1246,6 +1365,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                     .props
                     .get("LABELS")
                     .map_or_else(String::new, |v| v.replace(';', ",")),
+            ),
+            (
+                "ISPC_HEADER",
+                shell_path_preserve_slashes(self.ctx, &ispc_header),
             ),
             ("LANGUAGE", lang.to_owned()),
             ("CONFIG", self.ctx.config.clone()),
@@ -1354,6 +1477,37 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
         commands.push(command);
         write_make_rule(out, None, obj_rel_top, &depends, &commands, false);
+
+        // `WriteMakeRule` multi-output handling: additional object outputs are
+        // driven by the primary object and touched only when they exist.
+        let mut extra_outputs = Vec::new();
+        if let Some(outputs) = properties.get("OBJECT_OUTPUTS") {
+            let evaluated = self.ctx.genex(outputs, None, None);
+            if !evaluated.is_empty() {
+                extra_outputs.extend(util::expand_list(&evaluated, false));
+            }
+        }
+        if !ispc_header.is_empty() {
+            extra_outputs.push(ispc_header.clone());
+        }
+        for output in extra_outputs {
+            let output_rule = top_rule_path_preserve_slashes(self.ctx, &output);
+            clean_files.push(output.clone());
+            write_make_rule(
+                out,
+                None,
+                &output_rule,
+                std::slice::from_ref(&obj_rel_top.to_owned()),
+                &[format!(
+                    "@$(CMAKE_COMMAND) -E touch_nocreate {}",
+                    shell_path_preserve_slashes(self.ctx, &output_rule)
+                )],
+                false,
+            );
+            impl_depends
+                .output_pairs
+                .push((output, obj_rel_top.to_owned()));
+        }
         self.write_preprocess_and_assembly(target, source, dir, obj_rel_cur, obj_rel_top, out);
     }
 
@@ -1373,6 +1527,12 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
     ) {
         let lang = &source.language;
+        if !matches!(
+            lang.as_str(),
+            "C" | "CXX" | "OBJC" | "OBJCXX" | "Fortran" | "CUDA" | "ISPC" | "HIP" | "ASM"
+        ) {
+            return;
+        }
         let preprocess_target = strip_last_extension(obj_rel_top).to_owned() + ".i";
         let asm_target = strip_last_extension(obj_rel_top).to_owned() + ".s";
         let source_shell = shell_path(self.ctx, &source.path);
@@ -1569,7 +1729,16 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         if !rule_flags.before_language.is_empty() {
             parts.push(rule_flags.before_language);
         }
-        parts.push(format!("$({}_FLAGS)", source.language));
+        let mut filter_arch = String::new();
+        for arch in super::pch::pch_archs(self.ctx, target, &self.ctx.config, &source.language) {
+            let pch_source =
+                super::pch::pch_source(self.ctx, target, &self.ctx.config, &source.language, &arch);
+            if pch_source == source.path {
+                filter_arch = arch;
+                break;
+            }
+        }
+        parts.push(format!("$({}_FLAGS{filter_arch})", source.language));
         if !rule_flags.after_language.is_empty() {
             parts.push(rule_flags.after_language);
         }
@@ -1608,9 +1777,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
         custom_outputs: &mut Vec<String>,
         implicit: &mut ImplicitDepends,
-    ) -> Vec<String> {
+    ) -> (Vec<String>, Vec<String>) {
         let _ = support_rel_cur;
         let mut codegen_outputs = Vec::new();
+        let mut custom_clean = Vec::new();
         let sources = gt::sources(self.ctx, target, &self.ctx.config);
         let cmp0113_new = crate::policy::index_of("CMP0113").is_some_and(|index| {
             target.policies.get(index).unwrap_or(PolicyStatus::Warn) == PolicyStatus::New
@@ -1647,6 +1817,15 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             };
             let evaluated =
                 custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+            if !self.ctx.interp.makefiles[target.makefile]
+                .props
+                .get("CLEAN_NO_CUSTOM")
+                .is_some_and(is_on)
+            {
+                for file in evaluated.outputs.iter().chain(evaluated.byproducts.iter()) {
+                    custom_clean.push(maybe_relative_cur(self.ctx, dir, file));
+                }
+            }
             for output in &evaluated.outputs {
                 custom_outputs.push(output.clone());
             }
@@ -1717,7 +1896,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 implicit.add("CUSTOM", &obj, &evaluated.full_depfile, true);
             }
         }
-        codegen_outputs
+        (codegen_outputs, custom_clean)
     }
 
     fn custom_command_lines(
@@ -1796,6 +1975,74 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         lines
     }
 
+    /// `cmOSXBundleGenerator::GenerateMacOSXContentStatements` driven over
+    /// the target's header and extra source kinds, with Makefile copy rules
+    /// from `cmMakefileTargetGenerator::MacOSXContentGeneratorType`.
+    fn write_mac_osx_content_statements(
+        &mut self,
+        target: &Target,
+        sources: &[gt::SourceInfo],
+        mac_content_folders: &mut BTreeSet<String>,
+        out: &mut String,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut extra_files = Vec::new();
+        let mut clean_files = Vec::new();
+        if !matches!(
+            target.kind,
+            TargetKind::StaticLibrary
+                | TargetKind::SharedLibrary
+                | TargetKind::ModuleLibrary
+                | TargetKind::ObjectLibrary
+                | TargetKind::Executable
+        ) {
+            return (extra_files, clean_files);
+        }
+        let config = self.ctx.config.clone();
+        for kind in [SourceKind::Header, SourceKind::Extra] {
+            for source in sources.iter().filter(|source| source.kind == kind) {
+                let flags =
+                    osx_bundle::target_source_file_flags(self.ctx, target, &source.path, None);
+                if flags.kind == SourceFileType::Normal || !target.is_bundle_on_apple() {
+                    continue;
+                }
+                let macdir = osx_bundle::init_mac_osx_content_directory(
+                    self.ctx,
+                    target,
+                    &flags.mac_folder,
+                    &config,
+                    mac_content_folders,
+                );
+                let output_full = format!("{}/{}", macdir, util::filename_name(&source.path));
+                clean_files.push(maybe_relative_cur(self.ctx, target.makefile, &output_full));
+                let output = maybe_relative_top(self.ctx, &output_full);
+                let echo_text = format!("Copying OS X content {output}");
+                let copy = if Path::new(&source.path).is_dir() {
+                    "copy_directory"
+                } else {
+                    "copy"
+                };
+                let command = format!(
+                    "$(CMAKE_COMMAND) -E {copy} {} {}",
+                    shell_path(self.ctx, &source.path),
+                    shell_path(self.ctx, &output)
+                );
+                write_make_rule(
+                    out,
+                    None,
+                    &output,
+                    std::slice::from_ref(&source.path),
+                    &[
+                        format!("@{}", self.echo(&echo_text, "--green", None)),
+                        command,
+                    ],
+                    false,
+                );
+                extra_files.push(output);
+            }
+        }
+        (extra_files, clean_files)
+    }
+
     fn write_object_library_rule(
         &mut self,
         target: &Target,
@@ -1847,17 +2094,261 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
     }
 
+    /// `cmMakefileExecutableTargetGenerator::WriteNvidiaDeviceExecutableRule`
+    /// and `cmMakefileLibraryTargetGenerator::WriteNvidiaDeviceLibraryRules`.
+    /// Returns the current-binary-relative device-link object.
+    #[allow(clippy::too_many_arguments)]
+    fn write_device_link_rule(
+        &mut self,
+        target: &Target,
+        objects: &[String],
+        externals: &[String],
+        language: &str,
+        support_rel_cur: &str,
+        support_rel_top: &str,
+        out: &mut String,
+    ) -> Option<String> {
+        let config = self.ctx.config.clone();
+        let dir = target.makefile;
+        if !super::link::requires_device_linking(self.ctx, target, &config, language) {
+            return None;
+        }
+        // Clang CUDA uses a multi-architecture fatbinary registration pipeline
+        // rather than the NVIDIA driver device-link rule.  The NVIDIA branch
+        // below is the upstream behavior for NVCC and NVIDIA driver-mode
+        // clang toolchains, which are the toolchains represented in the
+        // project corpus.
+        if self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") == "Clang" {
+            return None;
+        }
+        let object_extension = self
+            .ctx
+            .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+        let device_rel_cur = format!("{support_rel_cur}/cmake_device_link{object_extension}");
+        let device_rel_top = format!(
+            "{}{}",
+            home_relative_output_path(self.ctx, dir),
+            device_rel_cur
+        );
+        let support = gt::support_directory(self.ctx, target);
+
+        let mut device_line =
+            super::link::makefile_device_link_line(self.ctx, target, &config, language);
+        for (fragment, _) in &mut device_line.lib_fragments {
+            fragment.push(' ');
+        }
+        let mut depends: Vec<String> = objects
+            .iter()
+            .map(|object| format!("{}{}", home_relative_output_path(self.ctx, dir), object))
+            .collect();
+        depends.extend(
+            externals
+                .iter()
+                .map(|object| maybe_relative_top(self.ctx, object)),
+        );
+        depends.push(format!("{support_rel_top}/build.make"));
+        if flags::link_dependency_file(self.ctx, target, language).is_some() {
+            depends.push(format!("{support_rel_top}/compiler_depend.ts"));
+        }
+        depends.extend(
+            device_line
+                .depends
+                .iter()
+                .map(|path| maybe_relative_top(self.ctx, path)),
+        );
+        if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
+            depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
+        }
+        depends.extend(
+            gt::sources(self.ctx, target, &config)
+                .iter()
+                .filter(|source| source.kind == SourceKind::Manifest)
+                .map(|source| maybe_relative_top(self.ctx, &source.path)),
+        );
+        depends.extend(
+            device_line
+                .link_depends
+                .iter()
+                .map(|path| maybe_relative_top(self.ctx, path)),
+        );
+
+        let response_flag = makefile_device_response_flag(self.ctx, target);
+        let entries = makefile_object_entries(self.ctx, target, objects, externals);
+        let use_response_objects =
+            makefile_use_response_objects(self.ctx, target, "CUDA", &entries);
+        let object_strings = if use_response_objects {
+            makefile_object_strings(&entries, 131000)
+        } else {
+            vec![entries.join(" ")]
+        };
+        let mut object_rsp_depends = Vec::new();
+        let object_list = if use_response_objects {
+            let mut references = Vec::new();
+            for (index, contents) in object_strings.iter().enumerate() {
+                let name = format!("deviceObjects{}.rsp", index + 1);
+                let path = format!("{support}/{name}");
+                let _ =
+                    crate::fsutil::write_if_different(Path::new(&path), &format!("{contents}\n"));
+                object_rsp_depends.push(format!("{support_rel_top}/{name}"));
+                references.push(format!(
+                    "{response_flag}{}",
+                    shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+                ));
+            }
+            references.join(" ")
+        } else {
+            entries.join(" ")
+        };
+
+        let mut libraries = makefile_link_libraries(&device_line);
+        let use_response_libraries = self
+            .ctx
+            .var(
+                target.makefile,
+                "CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES",
+            )
+            .is_some_and(|value| !value.is_empty() && is_on(&value))
+            && !libraries.trim_start().is_empty();
+        if use_response_libraries {
+            let path = format!("{support}/deviceLinkLibs.rsp");
+            let _ = crate::fsutil::write_if_different(Path::new(&path), &format!("{libraries}\n"));
+            depends.push(format!("{support_rel_top}/deviceLinkLibs.rsp"));
+            libraries = format!(
+                "{response_flag}{}",
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &path))
+            );
+        }
+        depends.extend(object_rsp_depends);
+        depends.push(format!("{support_rel_top}/dlink.txt"));
+
+        let dependency_ipo = super::link::link_information(self.ctx, target, &config, language)
+            .map(|info| {
+                info.items.iter().any(|item| {
+                    item.target
+                        .as_deref()
+                        .and_then(|key| self.ctx.interp.ext.targets.get(key))
+                        .is_some_and(|dependency| {
+                            dependency.kind == TargetKind::StaticLibrary
+                                && !dependency
+                                    .props
+                                    .get("CUDA_RESOLVE_DEVICE_SYMBOLS")
+                                    .is_some_and(util::is_on)
+                                && dependency
+                                    .props
+                                    .get("CUDA_SEPARABLE_COMPILATION")
+                                    .is_some_and(util::is_on)
+                                && flags::ipo_enabled(self.ctx, dependency, &config, "CUDA")
+                        })
+                })
+            })
+            .unwrap_or(false);
+        let device_flags = flags::device_link_flag_vars(self.ctx, target, &config, dependency_ipo);
+        let rule_var = if target.kind == TargetKind::Executable {
+            "CMAKE_CUDA_DEVICE_LINK_EXECUTABLE"
+        } else {
+            "CMAKE_CUDA_DEVICE_LINK_LIBRARY"
+        };
+        let template = self.ctx.var_safe(target.makefile, rule_var);
+        if template.is_empty() {
+            self.ctx.system_error(format!(
+                "Error required internal CMake variable not set, cmake may not be built correctly.\nMissing variable is:\n{rule_var}"
+            ));
+        }
+        let device_shell = shell_path(self.ctx, &device_rel_cur);
+        let object_dir = shell_path(self.ctx, support_rel_cur);
+        let compile_pdb = gt::target_compile_pdb(self.ctx, target, &config);
+        let compile_pdb_shell = shell_path_keep_trailing_slash(
+            self.ctx,
+            &maybe_relative_cur(self.ctx, dir, &compile_pdb),
+        );
+        let vars = vec![
+            ("LANGUAGE", "CUDA".to_owned()),
+            ("TARGET_NAME", target.name.clone()),
+            ("TARGET_TYPE", target.kind.type_name().to_owned()),
+            (
+                "CMAKE_CURRENT_BINARY_DIR",
+                shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir),
+            ),
+            ("OBJECTS", object_list),
+            ("TARGET", device_shell.clone()),
+            ("TARGET_FILE", device_shell),
+            ("OBJECT_DIR", object_dir),
+            ("LINK_LIBRARIES", libraries),
+            ("LINK_FLAGS", device_flags.link_flags),
+            (
+                "LANGUAGE_COMPILE_FLAGS",
+                device_flags.language_compile_flags,
+            ),
+            ("TARGET_COMPILE_PDB", compile_pdb_shell),
+            ("CONFIG", config.clone()),
+        ];
+        let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
+        let mut script = String::new();
+        for part in template.split(';').filter(|part| !part.is_empty()) {
+            let expanded = flags::expand_rule_for_step(
+                self.ctx,
+                target,
+                "CUDA",
+                flags::RuleStep::Link,
+                &format!("{launcher}{part}"),
+                &vars,
+            );
+            if !expanded.is_empty() && !expanded.starts_with(':') {
+                script.push_str(&expanded);
+                script.push('\n');
+            }
+        }
+        let script_path = format!("{support}/dlink.txt");
+        let _ = crate::fsutil::write_generated(Path::new(&script_path), &script);
+
+        let progress = self.add_progress_file(target, device_rel_top.clone());
+        let mut commands = vec![format!(
+            "@{}",
+            self.echo(
+                &format!(
+                    "Linking CUDA device code {}",
+                    shell_path(self.ctx, &device_rel_cur)
+                ),
+                "--green --bold",
+                Some(progress),
+            ),
+        )];
+        let mut link_command = format!(
+            "$(CMAKE_COMMAND) -E cmake_link_script {support_rel_cur}/dlink.txt --verbose=$(VERBOSE)"
+        );
+        if dir != 0 {
+            let cur = shell_path(self.ctx, &self.ctx.interp.makefiles[dir].binary_dir);
+            link_command = format!("cd {cur} && {link_command}");
+        }
+        commands.push(link_command);
+        write_make_rule(out, None, &device_rel_top, &depends, &commands, false);
+        write_make_rule(
+            out,
+            Some("Rule to build all files generated by this target."),
+            &format!("{support_rel_top}/build"),
+            std::slice::from_ref(&device_rel_top),
+            &[],
+            true,
+        );
+        Some(device_rel_cur)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn write_link(
         &mut self,
         target: &Target,
         objects: &[String],
         externals: &[String],
+        extra_files: &[String],
+        mac_content_folders: &mut BTreeSet<String>,
         support_rel_cur: &str,
         support_rel_top: &str,
         _compiler_depends: bool,
         out: &mut String,
     ) {
+        let config = self.ctx.config.clone();
+        let dir = target.makefile;
+        let language = gt::linker_language(self.ctx, target, &config);
         let varname = target
             .name
             .replace(['+', '-', '*', '/', '(', ')', '$', '@', '~'], "_");
@@ -1882,6 +2373,31 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             }
             out.push_str("\n\n");
         };
+        let needs_device_link =
+            super::link::requires_device_linking(self.ctx, target, &config, &language)
+                && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang";
+        if needs_device_link {
+            let _ = writeln!(out, "# Object files for target {}", target.name);
+            write_objects_variable(
+                out,
+                "_OBJECTS",
+                &variable_objects
+                    .iter()
+                    .map(|o| (*o).clone())
+                    .collect::<Vec<_>>(),
+            );
+            let _ = writeln!(out, "# External object files for target {}", target.name);
+            write_objects_variable(out, "_EXTERNAL_OBJECTS", externals);
+        }
+        let device_link_object = self.write_device_link_rule(
+            target,
+            objects,
+            externals,
+            &language,
+            support_rel_cur,
+            support_rel_top,
+            out,
+        );
         let _ = writeln!(out, "# Object files for target {}", target.name);
         write_objects_variable(
             out,
@@ -1893,19 +2409,36 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let _ = writeln!(out, "# External object files for target {}", target.name);
         write_objects_variable(out, "_EXTERNAL_OBJECTS", externals);
-        let config = self.ctx.config.clone();
-        let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
         let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let target_full = format!("{directory}/{}", names.real);
-        let output_full = format!("{directory}/{}", names.output);
+        // cmOSXBundleGenerator: create the bundle layout at generate time.
+        if target.is_app_bundle_on_apple() {
+            osx_bundle::create_app_bundle(self.ctx, target, &names.output, &directory, &config);
+        } else if target.is_framework_on_apple() {
+            let mut skip = osx_bundle::SkipParts::default();
+            if gt::has_import_library(self.ctx, target, &config) {
+                skip.text_stubs = false;
+            }
+            osx_bundle::create_framework(
+                self.ctx,
+                target,
+                &names.output,
+                &directory,
+                &config,
+                skip,
+                mac_content_folders,
+            );
+        } else if target.is_cf_bundle_on_apple() {
+            osx_bundle::create_cf_bundle(self.ctx, target, &names.output, &directory, &config);
+        }
+        let target_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, true);
+        let output_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, false);
         let target_rel_cur = maybe_relative_cur(self.ctx, dir, &target_full);
         let target_rel_top = format!(
             "{}{}",
             home_relative_output_path(self.ctx, dir),
             target_rel_cur
         );
-        let language = gt::linker_language(self.ctx, target, &config);
         let mut depends: Vec<String> = objects
             .iter()
             .map(|o| format!("{}{}", home_relative_output_path(self.ctx, dir), o))
@@ -1928,6 +2461,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 depends.push(format!("{support_rel_top}/compiler_depend.ts"));
             }
             depends.extend(line.depends.iter().map(|p| maybe_relative_top(self.ctx, p)));
+        }
+        if let Some(device_object) = &device_link_object {
+            depends.push(format!(
+                "{}{}",
+                home_relative_output_path(self.ctx, dir),
+                device_object
+            ));
         }
         if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config) {
             depends.extend(mdi.sources.iter().map(|source| (*source).to_owned()));
@@ -1964,6 +2504,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::Executable => "executable",
             TargetKind::StaticLibrary => "static library",
             TargetKind::SharedLibrary => "shared library",
+            TargetKind::ModuleLibrary if target.is_cf_bundle_on_apple() => "CFBundle shared module",
             TargetKind::ModuleLibrary => "shared module",
             TargetKind::ObjectLibrary => "object library",
             _ => "target",
@@ -2009,7 +2550,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         commands.push(format!(
             "$(CMAKE_COMMAND) -E cmake_link_script {link_script} --verbose=$(VERBOSE)"
         ));
-        if names.output != names.real {
+        if names.output != names.real && !target.is_framework_on_apple() {
             let symlink_rule = if target.kind == TargetKind::Executable {
                 "cmake_symlink_executable"
             } else {
@@ -2106,14 +2647,51 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             home_relative_output_path(self.ctx, dir),
             maybe_relative_cur(self.ctx, dir, &output_full)
         );
+        let mut driver_depends = vec![output_driver];
+        let mut extra_files = extra_files.to_vec();
+        extra_files.sort();
+        extra_files.dedup();
+        driver_depends.extend(extra_files);
         write_make_rule(
             out,
             Some("Rule to build all files generated by this target."),
             &driver,
-            &[output_driver],
+            &driver_depends,
             &[],
             true,
         );
+    }
+
+    /// `cmCommonTargetGenerator::AppendOSXVerFlag`.
+    fn append_osx_ver_flag(
+        &self,
+        flags_text: &mut String,
+        language: &str,
+        name: &str,
+        so: bool,
+        target: &Target,
+    ) {
+        let Some(flag) = self
+            .ctx
+            .var(
+                target.makefile,
+                &format!("CMAKE_{language}_OSX_{name}_VERSION_FLAG"),
+            )
+            .filter(|flag| !flag.is_empty())
+        else {
+            return;
+        };
+        let (major, minor, patch) = gt::target_version_fallback(
+            target,
+            &format!("MACHO_{name}_VERSION"),
+            if so { "SOVERSION" } else { "VERSION" },
+        );
+        if major > 0 || minor > 0 || patch > 0 {
+            if !flags_text.is_empty() {
+                flags_text.push(' ');
+            }
+            flags_text.push_str(&format!("{flag}{major}.{minor}.{patch}"));
+        }
     }
 
     fn write_link_script(
@@ -2128,8 +2706,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let names = gt::names(self.ctx, target, &config);
-        let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-        let target_full = format!("{directory}/{}", names.real);
+        let target_full = gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, true);
         let target_shell = shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_full));
         let entries = makefile_object_entries(self.ctx, target, objects, externals);
         let (mut use_response_objects, object_strings) =
@@ -2139,7 +2716,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
         let response_flag = makefile_response_flag(self.ctx, target, language);
         let support = gt::support_directory(self.ctx, target);
-        let object_list = if use_response_objects {
+        let mut object_list = if use_response_objects {
             let mut references = Vec::new();
             for (index, contents) in object_strings.iter().enumerate() {
                 let name = format!("objects{}.rsp", index + 1);
@@ -2155,7 +2732,21 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         } else {
             entries.join(" ")
         };
-        let create_var = match target.kind {
+        if super::link::requires_device_linking(self.ctx, target, &config, language)
+            && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang"
+        {
+            let object_extension = self
+                .ctx
+                .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+            let support_rel = maybe_relative_cur(self.ctx, dir, &support);
+            let device_object = shell_path(
+                self.ctx,
+                &format!("{support_rel}/cmake_device_link{object_extension}"),
+            );
+            object_list.push(' ');
+            object_list.push_str(&device_object);
+        }
+        let mut create_var = match target.kind {
             TargetKind::Executable => {
                 let with_exports = format!("CMAKE_{language}_LINK_EXECUTABLE_WITH_EXPORTS");
                 if target.is_executable_with_exports()
@@ -2177,6 +2768,19 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
             _ => String::new(),
         };
+        let ipo = flags::ipo_enabled(self.ctx, target, &config, language);
+        let feature_rule = |var: String| {
+            if ipo {
+                let ipo_var = format!("{var}_IPO");
+                if self.ctx.var(target.makefile, &ipo_var).is_some() {
+                    return ipo_var;
+                }
+            }
+            var
+        };
+        if target.kind == TargetKind::StaticLibrary {
+            create_var = feature_rule(create_var);
+        }
         let mut template = self
             .ctx
             .var(target.makefile, &create_var)
@@ -2204,7 +2808,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             flags::append(&mut s, &link_vars.arch_flags);
             s
         };
-        let link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
+        let mut link_flags = flags::makefile_link_flags(self.ctx, target, &config, language);
+        if matches!(
+            target.kind,
+            TargetKind::SharedLibrary | TargetKind::ModuleLibrary
+        ) {
+            self.append_osx_ver_flag(&mut link_flags, language, "COMPATIBILITY", true, target);
+            self.append_osx_ver_flag(&mut link_flags, language, "CURRENT", false, target);
+        }
         let object_dir = shell_path(
             self.ctx,
             &maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target)),
@@ -2254,8 +2865,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         } else {
             String::new()
         };
-        let target_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
+        let target_pdb_shell = shell_path(self.ctx, &target_pdb);
         let (version_major, version_minor) = makefile_target_version(target);
         let mut vars = vec![
             ("LANGUAGE", language.to_owned()),
@@ -2279,7 +2889,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             ("FLAGS", flags),
             (
                 "LANGUAGE_COMPILE_FLAGS",
-                link_vars.language_compile_flags.clone(),
+                if target.kind == TargetKind::Executable {
+                    link_vars.language_compile_flags.clone()
+                } else {
+                    let mut combined = link_vars.language_compile_flags.clone();
+                    flags::append(&mut combined, &link_vars.arch_flags);
+                    combined
+                },
             ),
             ("ARCH_FLAGS", link_vars.arch_flags.clone()),
             ("LINK_FLAGS", link_flags),
@@ -2339,15 +2955,12 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             ));
         }
         let mut text = String::new();
-        let archive_create = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"));
-        let archive_append = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_APPEND"));
-        let archive_finish = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
+        let archive_create_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_CREATE"));
+        let archive_append_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_APPEND"));
+        let archive_finish_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_FINISH"));
+        let archive_create = self.ctx.var_safe(target.makefile, &archive_create_var);
+        let archive_append = self.ctx.var_safe(target.makefile, &archive_append_var);
+        let archive_finish = self.ctx.var_safe(target.makefile, &archive_finish_var);
         let use_archive_rules = target.kind == TargetKind::StaticLibrary
             && self
                 .ctx
@@ -2356,6 +2969,37 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             && !archive_create.is_empty()
             && !archive_append.is_empty();
         let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
+        if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config)
+            && mdi.def_file_generated
+        {
+            let obj_list_file = format!("{}.objs", mdi.def_file);
+            let mut command = format!(
+                "{} -E __create_def {} {}",
+                shell_path(self.ctx, &self.ctx.interp.cmake_command),
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &mdi.def_file)),
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &obj_list_file)),
+            );
+            let nm = self.ctx.var_safe(target.makefile, "CMAKE_NM");
+            if !nm.is_empty() {
+                command.push_str(&format!(" --nm={}", shell_path(self.ctx, &nm)));
+            }
+            text.push_str(&command);
+            text.push('\n');
+            let mut list = String::new();
+            if mdi.windows_export_all_symbols {
+                for object in objects.iter().chain(externals.iter()) {
+                    if object.ends_with(".obj") {
+                        list.push_str(object);
+                        list.push('\n');
+                    }
+                }
+            }
+            for source in &mdi.sources {
+                list.push_str(source);
+                list.push('\n');
+            }
+            let _ = crate::fsutil::write_generated(Path::new(&obj_list_file), &list);
+        }
         if use_archive_rules {
             let limit = (super::ninja::command_line_length_limit() / 2).max(1) as usize;
             let chunks = makefile_object_strings(&entries, limit);
@@ -2522,8 +3166,27 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         for lang in &languages {
             let vars = flags::compile_target_vars(self.ctx, target, &config, lang);
             let _ = writeln!(out, "{lang}_DEFINES = {}\n", vars.defines);
-            let _ = writeln!(out, "{lang}_INCLUDES = {}\n", vars.includes);
-            let _ = writeln!(out, "{lang}_FLAGS = {}\n", vars.flags_untrimmed);
+            let mut includes = vars.includes.clone();
+            if let Some((full, rel_cur)) =
+                makefile_include_response_path(self.ctx, target, lang, &includes)
+            {
+                let _ =
+                    crate::fsutil::write_if_different(Path::new(&full), &format!("{includes}\n"));
+                let response_flag = self
+                    .ctx
+                    .var(target.makefile, &format!("CMAKE_{lang}_RESPONSE_FILE_FLAG"))
+                    .filter(|flag| !flag.is_empty())
+                    .unwrap_or_else(|| "@".to_owned());
+                includes = format!("{response_flag}{rel_cur}");
+            }
+            let _ = writeln!(out, "{lang}_INCLUDES = {}\n", includes);
+            let mut architectures = flags::apple_archs(self.ctx, target, &config, lang);
+            architectures.push(String::new());
+            for arch in architectures {
+                let vars =
+                    flags::compile_target_vars_for_arch(self.ctx, target, &config, lang, &arch);
+                let _ = writeln!(out, "{lang}_FLAGS{arch} = {}\n", vars.flags_untrimmed);
+            }
         }
         let dir = target.makefile;
         let rel_home = home_relative_output_path(self.ctx, dir);
@@ -2752,9 +3415,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 format!("{}/{depfile}", self.ctx.interp.makefiles[dir].binary_dir)
             };
             let dep_rel = maybe_relative_top(self.ctx, &dep_full);
-            let names = gt::names(self.ctx, target, &config);
-            let directory = gt::directory(self.ctx, target, &config, ArtifactType::Runtime);
-            let output = maybe_relative_top(self.ctx, &format!("{directory}/{}", names.output));
+            let output = maybe_relative_top(
+                self.ctx,
+                &gt::full_path(self.ctx, target, &config, ArtifactType::Runtime, false),
+            );
             let format = self.ctx.var_safe(
                 target.makefile,
                 &format!("CMAKE_{language}_LINKER_DEPFILE_FORMAT"),
@@ -2902,7 +3566,13 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
     }
 
-    fn write_clean_files(&self, target: &Target, objects: &[String]) {
+    fn write_clean_files(
+        &self,
+        target: &Target,
+        objects: &[String],
+        custom_clean: &[String],
+        extra_clean: &[String],
+    ) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let mf = &self.ctx.interp.makefiles[dir];
@@ -2945,6 +3615,17 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 gt::support_directory(self.ctx, target)
             ));
         }
+        if super::link::requires_device_linking(self.ctx, target, &config, &language)
+            && self.ctx.var_safe(target.makefile, "CMAKE_CUDA_COMPILER_ID") != "Clang"
+        {
+            let object_extension = self
+                .ctx
+                .var_safe(target.makefile, "CMAKE_CUDA_OUTPUT_EXTENSION");
+            clean_set.insert(format!(
+                "{}/cmake_device_link{object_extension}",
+                maybe_relative_cur(self.ctx, dir, &gt::support_directory(self.ctx, target))
+            ));
+        }
         let clean_sources = gt::sources(self.ctx, target, &config);
         let object_sources: Vec<&gt::SourceInfo> = clean_sources
             .iter()
@@ -2962,32 +3643,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
 
         // Custom command outputs and byproducts are cleaned unless the directory
         // opts out with CLEAN_NO_CUSTOM.
+        for file in custom_clean {
+            clean_set.insert(file.clone());
+        }
+        for file in extra_clean {
+            clean_set.insert(file.clone());
+        }
+
         if !mf.props.get("CLEAN_NO_CUSTOM").is_some_and(is_on) {
-            let mut visited = std::collections::HashSet::new();
-            for source in gt::sources(self.ctx, target, &config)
-                .iter()
-                .filter(|source| source.kind == SourceKind::CustomCommandOutput)
-            {
-                if let Some((cc_dir, cc_index)) =
-                    self.attached_command(target.makefile, &source.path)
-                    && visited.insert((cc_dir, cc_index))
-                {
-                    let command = self.ctx.interp.ext.sources[&cc_dir][cc_index]
-                        .custom_command
-                        .as_ref()
-                        .expect("attached custom command");
-                    let spec = custom::spec_from_command(self.ctx, command);
-                    let evaluated = custom::evaluate_spec_cfg(
-                        self.ctx,
-                        &spec,
-                        &self.ctx.config,
-                        &self.ctx.config,
-                    );
-                    for file in evaluated.outputs.iter().chain(evaluated.byproducts.iter()) {
-                        clean_set.insert(maybe_relative_cur(self.ctx, dir, file));
-                    }
-                }
-            }
             for command in target.custom_commands.iter().filter(|command| {
                 matches!(
                     command.kind,
@@ -3019,15 +3682,27 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::ObjectLibrary | TargetKind::InterfaceLibrary
         ) {
             artifacts.push(format!("{directory}/{}", names.pdb));
-            for name in [
-                &names.output,
-                &names.shared_object,
-                &names.real,
-                &names.import_library,
-            ] {
-                if !name.is_empty() {
-                    artifacts.push(format!("{directory}/{name}"));
-                }
+            artifacts.push(gt::full_path(
+                self.ctx,
+                target,
+                &config,
+                ArtifactType::Runtime,
+                false,
+            ));
+            if !names.shared_object.is_empty() {
+                artifacts.push(format!("{directory}/{}", names.shared_object));
+            }
+            artifacts.push(gt::full_path(
+                self.ctx,
+                target,
+                &config,
+                ArtifactType::Runtime,
+                true,
+            ));
+            if !names.import_library.is_empty() {
+                let import_directory =
+                    gt::directory(self.ctx, target, &config, ArtifactType::Import);
+                artifacts.push(format!("{import_directory}/{}", names.import_library));
             }
         }
         for artifact in artifacts {
@@ -3039,14 +3714,14 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             files.push_str("file(REMOVE_RECURSE\n");
             for file in clean_set {
                 let converted = if util::is_full_path(&file) {
-                    maybe_relative_cur(self.ctx, dir, &file)
+                    maybe_relative_cur_preserve_slashes(self.ctx, dir, &file)
                 } else {
                     file
                 };
                 let _ = writeln!(
                     files,
                     "  \"{}\"",
-                    escape_cmake(&crate::cache::convert_to_unix_slashes(&converted))
+                    escape_cmake(&converted.replace('\\', "/"))
                 );
             }
             files.push_str(")\n");
@@ -3113,7 +3788,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let mut custom_outputs = Vec::new();
         let mut implicit = ImplicitDepends::default();
-        let codegen_outputs = self.write_custom_commands(
+        let (codegen_outputs, custom_clean) = self.write_custom_commands(
             target,
             target_key,
             dir,
@@ -3213,7 +3888,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let _ =
             crate::fsutil::write_if_different(Path::new(&format!("{support}/progress.make")), "\n");
-        self.write_clean_files(target, &[]);
+        self.write_clean_files(target, &[], &custom_clean, &[]);
     }
 
     fn write_progress_marks(&mut self) {
@@ -3959,7 +4634,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         if properties.get("KEEP_EXTENSION").is_some_and(is_on) {
             return true;
         }
-        if properties.get("PCH_EXTENSION").is_some() || source.object_name.contains("cmake_pch") {
+        if properties.get("PCH_EXTENSION").is_some() {
             return false;
         }
         !self
@@ -4691,7 +5366,7 @@ fn makefile_link_libraries(line: &super::link::LinkLine) -> String {
     let mut result = line.framework_path.clone();
     result.push_str(&append_values(&line.path_fragments));
     result.push_str(&append_values(&line.lib_fragments));
-    result.trim_end().to_owned()
+    result
 }
 
 fn escape_cmake(text: &str) -> String {

@@ -1,16 +1,170 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-10`
+Branch: `t3/unix-makefiles-11`
 
-Most recent completed full Unix Makefiles projdiff lane after the link-information correction: **153/174** (`/tmp/umf10-projdiff-umf-final.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
+Most recent completed full Unix Makefiles projdiff lane: **170/177**
+(`/tmp/umf11-cuda-gates-projdiff-umf.log`).  The part-10 reference lane was
+153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
+177.  The full Unix Makefiles RunCMake lane is **5566/5566**
+(`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: autogen clean lists, CUDA,
-install/platform variants (Darwin, MSVC, and clang-cl), ASM linker-language
-details, ISPC, Makefile2/progress/DependInfo ordering, response-file/PCH
-corners, and try-compile LTO probe link scripts.  `link/items` and
-`export/shared_deps` are down to Makefile2 direct-dependency ordering.
+Known remaining projdiff failure groups: Makefile2 dependency ordering and
+one configure diagnostic-order case.
+`link/items`, `export/shared_deps`, `install/namelink`, and both ISPC cases
+are down to Makefile2 direct-dependency ordering; `export/error_order_link_cycle`
+is a configure diagnostic-order difference.  Makefile2 ordering is sensitive to
+upstream's pointer-ordered `cmTargetDependSet`, so individual ordering-only
+cases can appear or disappear between oracle process layouts.
+
+## Part 11 batch 1: autogen cleaning, ASM dialect rules, and IPO archivers
+
+Part 11 began at the merged part-10 head `0266eee`.  Makefile target clean
+files now collect custom-command outputs only for custom rules actually
+emitted in that target, matching the CMP0113 de-duplication behavior in
+`cmMakefileTargetGenerator::WriteTargetBuildRules`; autogen timestamp and
+mocs compilation artifacts owned by autogen helper targets no longer leak into
+the consuming target's clean scripts.  Preprocess/assembly convenience rules
+are restricted to upstream's exact language set, so ASM-ATT dialect sources do
+not gain impossible `CMAKE_ASM-ATT_CREATE_*` rules.  Static-library link
+scripts now select `_IPO` variants of the create/archive rules when IPO is
+enabled, producing the gcc-ar/gcc-ranlib try-compile probes upstream writes.
+
+Focused Unix Makefiles evidence: **4/4** representative cases pass
+(`autogen/ninja`, `languages/asm_extension_precedence`,
+`languages/asm_mixed_linker_language`, and `targets/kitchen_sink`;
+`/tmp/umf11-batch1-focus.log`).  Gate evidence: `cargo fmt --check` clean,
+clippy clean, **941/941** Rust tests (`/tmp/umf11-batch1-rust-gates.log`),
+difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
+**538/538** (`/tmp/umf11-batch1-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-batch1-projdiff-ninja.log`), and Unix Makefiles projdiff
+**156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
+
+## Part 11 batch 5: CUDA device linking
+
+Unix Makefiles now implements the NVIDIA driver-mode CUDA device-link step for
+executables and static/shared/module libraries.  Targets requiring resolution
+of separable-CUDA static archives emit `cmake_device_link` object rules before
+their final link rules, write `dlink.txt` link scripts, use CUDA
+`--options-file` response files for device objects and device libraries,
+include the device object in final link object lists and clean scripts, and
+allocate the additional progress mark in upstream order.  Device-link flags
+use the CMP0105-aware `<DEVICE_LINK>` link-option evaluation and IPO device
+link options.  As upstream does through repeated `CreateObjectLists` calls,
+object variable blocks are emitted once before the device-link rule and again
+before the final link rule.
+
+Focused evidence: **4/4** Unix Makefiles CUDA cases pass
+(`cuda/device_link_options`, `cuda/device_link_policy`, `cuda/resolve_shared`,
+and `cuda/separable_static`; `/tmp/umf11-cuda-focus6.log`), and the five
+corresponding Ninja CUDA cases including `cuda/multi_config` remain green
+(`/tmp/umf11-cuda-ninjafocus.log`).  Gate evidence: `cargo fmt --check` clean,
+clippy clean, **941/941** Rust tests (`/tmp/umf11-cuda-gates-test.log`),
+difftest **1283/1283** (`/tmp/umf11-cuda-gates-difftest.log`), clitest
+**538/538** (`/tmp/umf11-cuda-gates-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-cuda-gates-projdiff-ninja.log`), and Unix Makefiles projdiff
+**170/177** (`/tmp/umf11-cuda-gates-projdiff-umf.log`).  Six of the seven
+remaining cases differ only in `CMakeFiles/Makefile2` ordering; the seventh is
+`export/error_order_link_cycle`'s configure diagnostic order.
+
+## Part 11 batch 4: MSVC/clang-cl link scripts and PCH object aliases
+
+Unix Makefiles link scripts now keep target PDB paths absolute for MSVC-style
+toolchains, matching upstream's direct `ConvertToOutputFormat` use rather than
+the usual current-binary-relative conversion.  Compile PDB directories retain
+their trailing slash when shell-converted, producing `/FdCMakeFiles/<target>.dir/`.
+Generated module-definition exports now emit the preceding `cmake -E __create_def`
+link-script command and `.objs` response input, including the optional `--nm`
+argument.  Link-library text preserves its trailing item separator so rule
+expansion's single trailing-space trim leaves the same final whitespace as
+upstream; static-library `LINK_FLAGS` likewise preserve meaningful leading
+whitespace from PCH object injection.  PCH objects again keep their source
+extension for Makefile convenience aliases, so `cmake_pch.obj`, `cmake_pch.i`,
+and `cmake_pch.s` aliases are generated alongside `cmake_pch.cxx.*` object
+rules.
+
+Focused Unix Makefiles evidence: **3/3** cases pass
+(`platform/msvc_flags`, `platform/clangcl_flags`, and
+`platform/msvc_pch_reuse`; `/tmp/umf11-msvc-focus3.log`).  Gate evidence:
+`cargo fmt --check` clean, clippy clean, **941/941** Rust tests
+(`/tmp/umf11-msvc-gates-test.log`), difftest **1283/1283**
+(`/tmp/umf11-msvc-gates-difftest.log`), clitest **538/538**
+(`/tmp/umf11-msvc-gates-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-msvc-gates-projdiff-ninja.log`), and Unix Makefiles projdiff
+**168/177** (`/tmp/umf11-msvc-gates-projdiff-umf.log`).  The nine remaining
+cases are the four CUDA cases, `export/error_order_link_cycle`, and four
+Makefile2-ordering-only cases (`cxxmodules/bdb_single`, `export/shared_deps`,
+`install/namelink`, and `link/items`); the ISPC cases happened not to expose
+the pointer-ordering edge in this run.
+
+## Part 11 batch 3: ISPC outputs and include response files
+
+Unix Makefiles object rules now implement the ISPC header contract: the
+`<ISPC_HEADER>` placeholder expands to the generated header path, the header
+is a multi-output of the object compilation with upstream's touch-nocreate
+companion rule and `CMAKE_MULTIPLE_OUTPUT_PAIRS` entry, non-ISPC objects in
+the target depend on generated ISPC headers, and multi-instruction-set ISPC
+objects are appended to link object strings and clean scripts.  Object
+`OBJECT_OUTPUTS` use the same multi-output rule shape.  The implementation
+preserves upstream's intentional `CMakeFiles/<target>.dir//<header>` spelling
+in rule, command, clean, and dependency-info text.
+
+Makefile compile flags now honor `CMAKE_<LANG>_USE_RESPONSE_FILE_FOR_INCLUDES`:
+per-target `includes_<LANG>.rsp` files are written beside `flags.make`, the
+`<LANG>_INCLUDES` make variable references them with
+`CMAKE_<LANG>_RESPONSE_FILE_FLAG` (default `@`), and object rules depend on
+the response file before the source, matching upstream's dependency order.
+
+Focused Unix Makefiles evidence: **2/2** ISPC cases pass all generated-file,
+build, and output comparisons in isolation (`/tmp/umf11-ispc-focus5.log`).
+In the full lane both ISPC cases are reduced to the known Makefile2
+pointer-ordering edge.  Gate evidence: `cargo fmt --check` clean, clippy clean,
+**941/941** Rust tests (`/tmp/umf11-ispc-test.log`), difftest **1283/1283**
+(`/tmp/umf11-ispc-difftest.log`), clitest **538/538**
+(`/tmp/umf11-ispc-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-ispc-projdiff-ninja.log`), and Unix Makefiles projdiff **164/177**
+(`/tmp/umf11-ispc-projdiff-umf.log`; MSVC/clang-cl differing-file counts also
+decreased because include response files and object outputs are now emitted).
+
+## Part 11 batch 2: Apple bundle and Mach-O generation
+
+Unix Makefiles now wires the existing `cmOSXBundleGenerator` port into target
+build-rule generation.  Bundle and framework content copies are emitted as
+make rules, their outputs are accumulated in upstream's sorted `ExtraFiles`
+set for the target build driver, copied content is added to clean scripts, and
+framework folder symlinks are created at generate time.  Bundle executables,
+CFBundles, and frameworks now use the bundle-content binary path for link
+outputs, dependency-file link rows, and clean artifacts.  CFBundle link echo
+text uses upstream's `CFBundle shared module` spelling.
+
+Apple universal/PCH compile rules now select per-architecture flag variables
+such as `C_FLAGSarm64`; the compile-flag helper exposes upstream's filtered
+architecture form without changing its unfiltered callers.  Link rule variable
+expansion now supplies architecture flags through `LANGUAGE_COMPILE_FLAGS` in
+the same shape as the upstream Makefile templates.  Versioned shared libraries
+and frameworks append Mach-O `-compatibility_version` and `-current_version`
+flags using the `MACHO_*_VERSION`/`SOVERSION`/`VERSION` fallback chain.  The
+import-artifact clean entry intentionally uses the computed import name even
+when no import library is needed on Apple, preserving upstream's unusual `.3`
+entry for versioned non-import-library Mach-O targets.
+
+Custom-command outputs remain on the target `depend` rule rather than the
+target `build` driver for executables and libraries, matching the
+`OnDepends` setting in `cmMakefileExecutableTargetGenerator` and
+`cmMakefileLibraryTargetGenerator`; only bundle extra files are driven by the
+build rule.
+
+Focused Unix Makefiles evidence: **10/10** representative cases pass
+(`autogen/imported`, `autogen/warn`, `targets/custom_command_imported_scope`,
+`targets/wrap_commands`, all five `platform/darwin_*` cases, and
+`install/apple`; `/tmp/umf11-osx-focus-fixed.log`).  Gate evidence:
+`cargo fmt --check` clean, clippy clean, **941/941** Rust tests
+(`/tmp/umf11-osx-test.log`), difftest **1283/1283**
+(`/tmp/umf11-osx-difftest.log`), clitest **538/538**
+(`/tmp/umf11-osx-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-osx-projdiff-ninja.log`), and Unix Makefiles projdiff **164/177**
+(`/tmp/umf11-osx-projdiff-umf.log`).
 
 ## Part 10 inherited Batch 9 validation
 

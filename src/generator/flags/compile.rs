@@ -34,6 +34,18 @@ pub fn compile_vars(
 }
 
 pub fn compile_target_vars(ctx: &GenCtx, target: &Target, config: &str, lang: &str) -> CompileVars {
+    compile_target_vars_for_arch(ctx, target, config, lang, "")
+}
+
+/// `cmCommonTargetGenerator::GetFlags` for a target language, with the
+/// per-architecture filter used for Apple universal PCH compilation.
+pub fn compile_target_vars_for_arch(
+    ctx: &GenCtx,
+    target: &Target,
+    config: &str,
+    lang: &str,
+    filter_arch: &str,
+) -> CompileVars {
     let inputs = Flags {
         ctx,
         target,
@@ -49,7 +61,7 @@ pub fn compile_target_vars(ctx: &GenCtx, target: &Target, config: &str, lang: &s
         object_library: None,
         backtrace: Vec::new(),
     };
-    let flags = target_flags(&inputs, "");
+    let flags = target_flags(&inputs, filter_arch);
     CompileVars {
         flags_untrimmed: flags.clone(),
         flags: flags.trim_matches(cmake_space).to_owned(),

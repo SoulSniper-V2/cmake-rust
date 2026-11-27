@@ -110,7 +110,7 @@ The candidate is staged as an installed CMake: `bin/cmake`, plus `share/cmake-4.
 Each of these fails with an explicit error, never silently:
 
 - The Watcom WMake and Green Hills MULTI generators. Ninja is the default when no `-G` is given. `cmake --help` still lists every 4.1.0 generator, and picking an unimplemented one fails with a clear message.
-- Unix Makefiles works (see the table above) but its generated files are not yet byte-identical everywhere: 153 of 174 `tests/projects` cases match exactly in that lane, and Kitware's own configured tree has 21 differing files. [`docs/unix-makefiles-status.md`](docs/unix-makefiles-status.md) lists what remains.
+- Unix Makefiles works (see the table above) but its generated files are not yet byte-identical everywhere: 170 of 177 `tests/projects` cases match exactly in that lane, and Kitware's own configured tree has 21 differing files. [`docs/unix-makefiles-status.md`](docs/unix-makefiles-status.md) lists what remains.
 - XCFramework linking, which needs macOS `plutil`.
 - Swift sources in the Ninja generator (ISPC is supported: headers, per-instruction-set objects, and their `$<TARGET_OBJECTS>` and install entries).
 
