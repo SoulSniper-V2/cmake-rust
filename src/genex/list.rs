@@ -479,9 +479,13 @@ impl<'a> Replacement<'a> {
                 'n' => ReplacePart::Literal("\n"),
                 '\\' => ReplacePart::Literal("\\"),
                 _ => {
-                    return Err(error(&format!(
-                        "Unknown escape \"\\{escape}\" in replace-expression"
-                    )));
+                    // cmStringReplaceHelper names the single byte after the
+                    // backslash, even when it starts a multi-byte character.
+                    let raw = crate::bytes::encode(&rest[at..]);
+                    let mut text = b"Unknown escape \"".to_vec();
+                    text.extend_from_slice(&raw[..2]);
+                    text.extend_from_slice(b"\" in replace-expression");
+                    return Err(error(&crate::bytes::decode(&text)));
                 }
             });
             rest = &rest[at + 1 + escape.len_utf8()..];

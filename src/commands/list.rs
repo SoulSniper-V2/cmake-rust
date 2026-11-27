@@ -351,43 +351,26 @@ impl ReplaceHelper {
         Ok(helper)
     }
 
+    /// `cmStringReplaceHelper::ParseReplaceExpression`, over CMake's raw
+    /// bytes (a non-ASCII escape names the single byte after the backslash).
     fn parse_replace_expression(&mut self) {
-        let expr = self.replace_expression.as_bytes();
-        let mut l = 0usize;
-        while l < expr.len() {
-            let r = expr[l..].iter().position(|&b| b == b'\\').map(|p| l + p);
-            match r {
-                None => {
-                    self.replacements
-                        .push(Replacement::Text(self.replace_expression[l..].to_owned()));
-                    break;
-                }
-                Some(r) => {
-                    if r > l {
-                        self.replacements
-                            .push(Replacement::Text(self.replace_expression[l..r].to_owned()));
-                    }
-                    if r == expr.len() - 1 {
-                        self.error = Some("replace-expression ends in a backslash".to_owned());
-                        return;
-                    }
-                    match expr[r + 1] {
-                        b'0'..=b'9' => self
-                            .replacements
-                            .push(Replacement::Group((expr[r + 1] - b'0') as usize)),
-                        b'n' => self.replacements.push(Replacement::Text("\n".to_owned())),
-                        b'\\' => self.replacements.push(Replacement::Text("\\".to_owned())),
-                        other => {
-                            self.error = Some(format!(
-                                "Unknown escape \"\\{}\" in replace-expression",
-                                other as char
-                            ));
-                            return;
+        match crate::commands::string::regex_replace::parse_replace_expression(
+            &self.replace_expression,
+        ) {
+            Ok(segments) => {
+                self.replacements = segments
+                    .into_iter()
+                    .map(|segment| match segment {
+                        crate::commands::string::regex_replace::Segment::Literal(text) => {
+                            Replacement::Text(text)
                         }
-                    }
-                    l = r + 2;
-                }
+                        crate::commands::string::regex_replace::Segment::Group(n) => {
+                            Replacement::Group(n)
+                        }
+                    })
+                    .collect();
             }
+            Err(error) => self.error = Some(error),
         }
     }
 
