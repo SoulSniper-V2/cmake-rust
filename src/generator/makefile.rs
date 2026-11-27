@@ -4702,6 +4702,81 @@ fn is_in_build_system(target: &Target) -> bool {
     super::ninja::is_in_build_system(target)
 }
 
+/// Global targets created by `cmGlobalUnixMakefileGenerator3` via
+/// `cmGlobalGenerator::CreateDefaultGlobalTargets`, exposed for extra
+/// generators.
+pub fn global_targets(ctx: &GenCtx<'_>) -> Vec<super::ninja::GlobalTarget> {
+    let interp = ctx.interp;
+    let is_reserved = |names: &[&str]| {
+        names.iter().any(|name| {
+            crate::state::find_global_target_key(interp, name).is_some()
+                || interp
+                    .ext
+                    .alias_backtraces
+                    .iter()
+                    .any(|(_, alias, _)| alias == name)
+        })
+    };
+    let mut names: Vec<(&str, bool)> = Vec::new();
+    let (package, package_source) = package_configs(ctx);
+    if package && !is_reserved(&["package", "PACKAGE"]) {
+        names.push(("package", true));
+    }
+    if package_source && !is_reserved(&["package_source"]) {
+        names.push(("package_source", true));
+    }
+    if ctx
+        .var(0, "CMAKE_TESTING_ENABLED")
+        .is_some_and(|v| is_on(&v))
+        && !is_reserved(&["test", "RUN_TESTS"])
+    {
+        names.push(("test", true));
+    }
+    names.push(("edit_cache", false));
+    names.push(("rebuild_cache", false));
+    let install_enabled = interp.ext.misc.contains_key("install-target-enabled")
+        && !ctx
+            .var(0, "CMAKE_SKIP_INSTALL_RULES")
+            .is_some_and(|v| is_on(&v));
+    if install_enabled {
+        names.push(("list_install_components", true));
+        names.push(("install", true));
+        names.push(("install/local", true));
+        if ctx
+            .var(0, "CMAKE_STRIP")
+            .is_some_and(|v| !v.is_empty() && !crate::util::is_notfound(&v))
+        {
+            names.push(("install/strip", true));
+        }
+    }
+    let mut globals = Vec::new();
+    for makefile in 0..interp.makefiles.len() {
+        for &(name, per_config) in &names {
+            let exists = interp.makefiles[makefile].targets.iter().any(|key| {
+                interp
+                    .ext
+                    .targets
+                    .get(key)
+                    .is_some_and(|target| target.name == name)
+            });
+            if exists {
+                continue;
+            }
+            globals.push(super::ninja::GlobalTarget {
+                name: name.to_owned(),
+                message: String::new(),
+                command_lines: Vec::new(),
+                depends: Vec::new(),
+                uses_terminal: false,
+                makefile,
+                working_dir: None,
+                per_config,
+            });
+        }
+    }
+    globals
+}
+
 pub fn generate(ctx: &GenCtx<'_>) {
     MakefileGenerator::new(ctx).generate();
 }

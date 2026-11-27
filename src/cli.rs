@@ -176,10 +176,16 @@ fn load_environment_presets(options: &mut ConfigureOptions) {
 }
 
 pub(crate) fn known_generator(name: &str) -> bool {
+    if crate::generator::extra::split_generator_name(name).is_some() {
+        return true;
+    }
     GENERATORS.lines().any(|line| {
-        line.get(2..)
-            .and_then(|tail| tail.split_once(" = "))
-            .is_some_and(|(generator, _)| generator.trim_end() == name)
+        if !(line.starts_with("  ") || line.starts_with("* ")) || line.starts_with("   ") {
+            return false;
+        }
+        let tail = &line[2..];
+        let generator = tail.split_once('=').map_or(tail, |(head, _)| head);
+        generator.trim_end() == name
     })
 }
 
@@ -2355,4 +2361,26 @@ fn directory_permissions(value: &str) -> Option<String> {
 /// Whether a `-U` glob matches a cache variable name.
 fn glob_to_regex_match(pattern: &str, name: &str) -> bool {
     configure::glob_to_regex(pattern).find(name).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::known_generator;
+
+    #[test]
+    fn accepts_extra_unix_makefiles_generators() {
+        for generator in [
+            "CodeBlocks - Unix Makefiles",
+            "CodeLite - Unix Makefiles",
+            "Eclipse CDT4 - Unix Makefiles",
+            "Kate - Unix Makefiles",
+            "Sublime Text 2 - Unix Makefiles",
+        ] {
+            assert!(known_generator(generator), "{generator} should be accepted");
+        }
+        assert!(!known_generator(
+            "   Generates Sublime Text 2 project files."
+        ));
+        assert!(!known_generator("Unknown - Unix Makefiles"));
+    }
 }

@@ -13,7 +13,7 @@ It is good enough to configure and build **LLVM + Clang 20**. Clang's own test s
 | **Kitware CMake 4.1.0** (CMake building itself) | configured tree, build, then the upstream CTest suite | **312 / 312** files identical; 1,198 / 1,198 build steps; **683 / 683** tests pass |
 | **zlib 1.3.1** | configure, generate, build, install, tests | all match |
 | **Upstream RunCMake suite** | Ninja, Ninja Multi-Config and extra-generator cases | **5,866 / 5,866** eligible cases pass |
-| **Unix Makefiles** generator | RunCMake with the Makefiles-configured reference; Kitware self-build; zlib | **5,562 / 5,566** RunCMake cases pass (the other 4 pass too, but the audit cannot confirm independence because the reference `ctest --build-and-test` runs its own cmake from the generated clean rules); CMake builds itself with `make -j6` and passes **684 / 684** tests; zlib matches |
+| **Unix Makefiles** generator | RunCMake with the Makefiles-configured reference; Kitware self-build; zlib | **5,567 / 5,571** RunCMake cases pass, including the `<IDE> - Unix Makefiles` extra generators (the other 4 pass too, but the audit cannot confirm independence because the reference `ctest --build-and-test` runs its own cmake from the generated clean rules); CMake builds itself with `make -j6` and passes **684 / 684** tests; zlib matches |
 
 All of these were measured at commit `4ca7cce`: the LLVM tree with `scripts/treediff.py`, the Kitware tree by comparing `scripts/kitware-configure.sh oracle` and `rust` trees. The reference is Kitware CMake 4.1.0 (`2a2c2e0b`) built from source with the same flags and the same Ninja.
 

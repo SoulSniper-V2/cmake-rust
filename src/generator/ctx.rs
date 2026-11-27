@@ -897,6 +897,10 @@ impl<'a> GenCtx<'a> {
             // cmGlobalGenerator::Generate runs every local generator even
             // after an earlier error (for example from an evaluation file).
             super::makefile::generate(self);
+            // cmGlobalGenerator::Generate finishes by invoking the extra
+            // (IDE project file) generator, if one was selected.
+            let globals = super::makefile::global_targets(self);
+            super::extra::generate(self, &globals);
         } else {
             // cmGlobalGenerator::Generate runs every local generator and
             // writes TargetDirectories.txt even after an earlier error (for
