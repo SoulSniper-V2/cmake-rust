@@ -22,6 +22,7 @@ pub(crate) struct State {
     site: String,
     build_name: String,
     configuration: BTreeMap<String, String>,
+    process_steps: bool,
     had_error: bool,
 }
 
@@ -37,6 +38,7 @@ impl State {
             site: hostname(),
             build_name: String::new(),
             configuration: BTreeMap::new(),
+            process_steps: false,
             had_error: false,
         }
     }
@@ -182,10 +184,32 @@ fn parse_return_build(
 }
 
 fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
-    interp.issue_at_unsuppressed_no_top(
-        crate::messages::MessageType::FatalError,
-        &format!("{command} {message}"),
-    );
+    let text = format!("{command} {message}");
+    if interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.process_steps)
+    {
+        let frame = crate::messages::Frame {
+            file: ".".into(),
+            line: 0,
+            name: None,
+            deferred: false,
+        };
+        eprintln!(
+            "{}",
+            crate::messages::render(
+                crate::messages::MessageType::FatalError,
+                &text,
+                &[frame],
+                None,
+            )
+        );
+        interp.error = true;
+    } else {
+        interp.issue_at_unsuppressed_no_top(crate::messages::MessageType::FatalError, &text);
+    }
 }
 
 fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
@@ -388,7 +412,7 @@ fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
     }
     // Recursive globbing is intentionally conservative here; the common empty
     // dashboard case must not mistake compiler notes for coverage results.
-    if !has_coverage {
+    if !has_coverage && !quiet {
         handler_error(
             interp,
             " Cannot find any coverage files. Ignoring Coverage request.\n",
@@ -1909,6 +1933,7 @@ pub(super) fn process_steps(options: &Options) -> i32 {
     interp.ext.ctest_script = Some(State::new(&step_options));
     {
         let state = interp.ext.ctest_script.as_mut().unwrap();
+        state.process_steps = true;
         state.binary_dir = binary.to_string_lossy().into_owned();
         state.site.clear();
         state.build_name.clear();
@@ -1970,6 +1995,11 @@ pub(super) fn process_steps(options: &Options) -> i32 {
         && !invoke_dashboard_command(&mut interp, ctest_update, "ctest_update")
     {
         result |= 0x01;
+    }
+    if options.model.eq_ignore_ascii_case("continuous")
+        && !crate::util::is_on(&interp.get_safe("return_value"))
+    {
+        return 0;
     }
     if parts.contains("configure")
         && !invoke_dashboard_command(&mut interp, ctest_configure, "ctest_configure")

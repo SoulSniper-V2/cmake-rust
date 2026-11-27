@@ -139,6 +139,8 @@ def cases():
         ("invalid-type", ["-D", "Bad"]),
         ("invalid-action", ["-T", "bad"]),
         ("invalid-model", ["-M", "bad"]),
+        ("continuous-update", ["-D", "ContinuousUpdate", "-V"]),
+        ("no-compress", ["-D", "ExperimentalTest", "--no-compress-output"]),
         ("commands", ["-S", "commands.cmake", "-V"]),
         ("update-unknown", ["-S", "updateunknown.cmake", "-V"]),
         ("update-none", ["-S", "updatenone.cmake", "-V"]),

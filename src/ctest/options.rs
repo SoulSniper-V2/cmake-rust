@@ -681,6 +681,7 @@ impl Options {
                         options.repeat = Some(repeat);
                     }
                 }
+                "--no-compress-output" => {}
                 "--schedule-random" => options.random = true,
                 "--schedule-random-seed" => {
                     let seed = value()?;
