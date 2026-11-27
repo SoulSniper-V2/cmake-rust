@@ -1784,10 +1784,27 @@ fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(value) = values.get("TEST_LOAD") {
         match value.parse::<u64>() {
             Ok(load) => options.test_load = Some(load),
-            Err(_) => handler_error(
-                interp,
-                &format!("Invalid value for 'TEST_LOAD' : {value}\n"),
-            ),
+            Err(_) => {
+                options.test_load = Some(0);
+                handler_error(
+                    interp,
+                    &format!("Invalid value for 'TEST_LOAD' : {value}\n"),
+                );
+            }
+        }
+    } else if let Some(value) = interp
+        .get_def("CTEST_TEST_LOAD")
+        .filter(|value| !value.is_empty())
+    {
+        match value.parse::<u64>() {
+            Ok(load) => options.test_load = Some(load),
+            Err(_) => {
+                options.test_load = Some(0);
+                handler_error(
+                    interp,
+                    &format!("Invalid value for 'CTEST_TEST_LOAD' : {value}\n"),
+                );
+            }
         }
     }
     if let Some(value) = values.get("RESOURCE_SPEC_FILE") {
