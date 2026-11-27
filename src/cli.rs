@@ -176,10 +176,16 @@ fn load_environment_presets(options: &mut ConfigureOptions) {
 }
 
 pub(crate) fn known_generator(name: &str) -> bool {
+    if crate::generator::extra::split_generator_name(name).is_some() {
+        return true;
+    }
     GENERATORS.lines().any(|line| {
-        line.get(2..)
-            .and_then(|tail| tail.split_once(" = "))
-            .is_some_and(|(generator, _)| generator.trim_end() == name)
+        if !(line.starts_with("  ") || line.starts_with("* ")) || line.starts_with("   ") {
+            return false;
+        }
+        let tail = &line[2..];
+        let generator = tail.split_once('=').map_or(tail, |(head, _)| head);
+        generator.trim_end() == name
     })
 }
 

@@ -464,6 +464,13 @@ pub(crate) fn physical_cores() -> usize {
     HostInformation::read().physical
 }
 
+/// `cmExtraCodeLiteGenerator::CreateProjectSourceEntries`:
+/// `info.GetNumberOfLogicalCPU() * info.GetNumberOfPhysicalCPU()`.
+pub(crate) fn codelite_cpu_count() -> usize {
+    let info = HostInformation::read();
+    info.logical * info.physical
+}
+
 pub(crate) fn instrumentation_static_info() -> serde_json::Value {
     let info = HostInformation::read();
     let os = |name| info.os.get(name).map_or("", String::as_str);

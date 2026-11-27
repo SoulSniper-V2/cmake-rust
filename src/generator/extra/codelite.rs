@@ -144,13 +144,16 @@ where
     }
 }
 
-/// `cmExtraCodeLiteGenerator::GetBuildCommand` (Ninja: just `make`).
-fn build_command(s: &Shared, dir: usize, target_name: &str) -> String {
+/// `cmExtraCodeLiteGenerator::GetBuildCommand`.
+fn build_command(s: &Shared, dir: usize, target_name: &str, cpu_count: usize) -> String {
     let generator = s.var_safe(dir, "CMAKE_GENERATOR");
     let make = s.var_safe(dir, "CMAKE_MAKE_PROGRAM");
     let mut cmd = make;
     if generator == "MinGW Makefiles" || generator == "Unix Makefiles" {
         cmd.push_str(" -f$(ProjectPath)/Makefile");
+        if cpu_count > 0 {
+            cmd.push_str(&format!(" -j {cpu_count}"));
+        }
     }
     if !target_name.is_empty() {
         cmd.push(' ');
@@ -160,9 +163,9 @@ fn build_command(s: &Shared, dir: usize, target_name: &str) -> String {
 }
 
 /// `cmExtraCodeLiteGenerator::GetCleanCommand`.
-fn clean_command(s: &Shared, dir: usize, target_name: &str) -> String {
+fn clean_command(s: &Shared, dir: usize, target_name: &str, cpu_count: usize) -> String {
     let generator = s.var_safe(dir, "CMAKE_GENERATOR");
-    let base = build_command(s, dir, "");
+    let base = build_command(s, dir, "", cpu_count);
     if !target_name.is_empty() && generator == "Ninja" {
         format!("{base} -t clean {target_name}")
     } else {
@@ -171,12 +174,23 @@ fn clean_command(s: &Shared, dir: usize, target_name: &str) -> String {
 }
 
 /// `cmExtraCodeLiteGenerator::GetRebuildCommand`.
-fn rebuild_command(s: &Shared, dir: usize, target_name: &str) -> String {
+fn rebuild_command(s: &Shared, dir: usize, target_name: &str, cpu_count: usize) -> String {
     format!(
         "{} && {}",
-        clean_command(s, dir, target_name),
-        build_command(s, dir, target_name)
+        clean_command(s, dir, target_name, cpu_count),
+        build_command(s, dir, target_name, cpu_count)
     )
+}
+
+/// `cmExtraCodeLiteGenerator::GetSingleFileBuildCommand`.
+fn single_file_build_command(s: &Shared, dir: usize) -> String {
+    let generator = s.var_safe(dir, "CMAKE_GENERATOR");
+    if generator == "Unix Makefiles" || generator == "MinGW Makefiles" {
+        let make = s.var_safe(dir, "CMAKE_MAKE_PROGRAM");
+        format!("{make} -f$(ProjectPath)/Makefile -B $(CurrentFileFullName).o")
+    } else {
+        String::new()
+    }
 }
 
 /// `cmExtraCodeLiteGenerator::CreateProjectSourceEntries`.
@@ -265,12 +279,22 @@ fn create_project_source_entries(
     xml.element("PreBuild");
     xml.element("PostBuild");
 
+    let cpu_count = crate::commands::sysinfo::codelite_cpu_count();
     xml.start_element("CustomBuild");
     xml.attribute("Enabled", "yes");
-    xml.element_value("RebuildCommand", &rebuild_command(s, dir, target_name));
-    xml.element_value("CleanCommand", &clean_command(s, dir, target_name));
-    xml.element_value("BuildCommand", &build_command(s, dir, target_name));
-    xml.element_value("SingleFileCommand", "");
+    xml.element_value(
+        "RebuildCommand",
+        &rebuild_command(s, dir, target_name, cpu_count),
+    );
+    xml.element_value(
+        "CleanCommand",
+        &clean_command(s, dir, target_name, cpu_count),
+    );
+    xml.element_value(
+        "BuildCommand",
+        &build_command(s, dir, target_name, cpu_count),
+    );
+    xml.element_value("SingleFileCommand", &single_file_build_command(s, dir));
     xml.element("PreprocessFileCommand");
     xml.element_value("WorkingDirectory", "$(WorkspacePath)");
     xml.end_element(); // CustomBuild

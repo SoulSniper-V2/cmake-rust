@@ -1552,9 +1552,9 @@ impl<'a, 'b> Eclipse<'a, 'b> {
 
             // insert rules for compiling, preprocessing and assembling
             // individual files: `cmLocalGenerator::GetIndividualFileTargets`
-            // is only overridden by the Unix Makefiles local generator; the
-            // Ninja local generator inherits the empty base implementation,
-            // so this list is always empty here.
+            // is non-virtual in upstream CMake 4.1.0, so calls through
+            // `cmLocalGenerator` always hit the empty base implementation for
+            // both Ninja and Unix Makefiles.
             let object_file_targets: Vec<String> = Vec::new();
             for f in &object_file_targets {
                 let mut prefix = "[obj] ";
