@@ -49,15 +49,19 @@ pub fn finalize_cxx_module_targets(interp: &mut Interp) -> Vec<Diagnostic> {
     for (key, items) in std_items {
         append_link_items(interp, &key, items);
     }
-    // `cmSyntheticTargetCache`: the keys of the targets by name.  Discovery
-    // evaluates every target's link implementation even when no imported
-    // module target exists; that evaluation is observable through its
-    // diagnostics.
-    let mut cache = HashMap::new();
-    let configs = GenCtx::new(interp).configs;
-    for key in &keys {
-        for config in &configs {
-            discover_synthetic_targets(interp, &mut cache, key, config, &mut diagnostics);
+    let imports_modules = interp
+        .ext
+        .targets
+        .values()
+        .any(|target| target.imported && gt::have_cxx20_module_sources(target));
+    if imports_modules {
+        // `cmSyntheticTargetCache`: the keys of the targets by name.
+        let mut cache = HashMap::new();
+        let configs = GenCtx::new(interp).configs;
+        for key in &keys {
+            for config in &configs {
+                discover_synthetic_targets(interp, &mut cache, key, config, &mut diagnostics);
+            }
         }
     }
     diagnostics
@@ -78,23 +82,12 @@ fn discover_synthetic_targets(
         let Some(target) = ctx.interp.ext.targets.get(key) else {
             return;
         };
-        // DiscoverSyntheticTargets itself does not compute the linker
-        // language; the language is only input to generator expressions in
-        // the link implementation here.  Keep its diagnostics with the
-        // upstream computation that performs it.
-        let diagnostics_before_language = ctx.errors.borrow().len();
         let language = gt::linker_language(&ctx, target, config);
-        ctx.errors
-            .borrow_mut()
-            .truncate(diagnostics_before_language);
-        let items = link::implementation_targets(&ctx, target, config, &language);
-        let imported = items
+        link::implementation_targets(&ctx, target, config, &language)
             .into_iter()
             .filter(|dep| dep.imported && gt::have_cxx20_module_sources(dep))
             .map(|dep| ctx.target_key(dep))
-            .collect();
-        diagnostics.extend(ctx.errors.take());
-        imported
+            .collect()
     };
     for imported_key in imported {
         let name = synthetic_target_name(interp, &imported_key);
