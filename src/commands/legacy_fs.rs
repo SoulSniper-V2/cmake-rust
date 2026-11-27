@@ -3,13 +3,13 @@
 use std::ffi::{CStr, CString};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use crate::cache::CacheType;
 use crate::interp::{CmdErr, CmdResult, Interp, Mode, err};
 use crate::messages::MessageType;
-use crate::util::{expand_list, is_full_path, is_notfound, join_list};
+use crate::util::{expand_list, is_full_path, is_notfound, is_subdirectory, join_list};
 
 pub fn register(interp: &mut Interp) {
     interp.register("get_filename_component", get_filename_component);
@@ -38,23 +38,25 @@ pub(super) fn source_path(interp: &Interp, path: &str) -> String {
     }
 }
 
+/// `cmMakefile::CanIWriteThisFile`.
 pub(super) fn can_write(interp: &Interp, path: &str) -> bool {
     if !interp.is_on("CMAKE_DISABLE_SOURCE_CHANGES") {
         return true;
     }
-    let source = Path::new(&interp.home_source);
-    let binary = Path::new(&interp.home_binary);
-    if source == binary
-        || source
-            .canonicalize()
+    let source = &interp.home_source;
+    let binary = &interp.home_binary;
+    let file_id = |path: &str| {
+        let path = path.split_once('\0').map_or(path, |(prefix, _)| prefix);
+        fs::metadata(crate::bytes::path(path))
             .ok()
-            .zip(binary.canonicalize().ok())
-            .is_some_and(|(a, b)| a == b)
-    {
+            .map(|stat| (stat.dev(), stat.ino(), stat.size()))
+    };
+    let binary_id = file_id(binary);
+    let same_as_binary = |path| binary_id.is_some() && file_id(path) == binary_id;
+    if same_as_binary(source) {
         return !interp.is_on("CMAKE_DISABLE_IN_SOURCE_BUILD");
     }
-    let path = Path::new(path);
-    !path.starts_with(source) || path == source || path.starts_with(binary)
+    !is_subdirectory(path, source) || is_subdirectory(path, binary) || same_as_binary(path)
 }
 
 pub(super) fn system_error(error: &io::Error) -> String {

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+project(IsSubdirectory NONE)
+set(CMAKE_DISABLE_SOURCE_CHANGES ON)
+set(ENV{HOME} "${CMAKE_CURRENT_SOURCE_DIR}")
+file(WRITE "~/out.txt" "sentinel\n")
