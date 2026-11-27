@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::Log;
+use super::jobserver::Jobserver;
 use super::options::{Options, Repeat, number};
 use super::process::{
     Event, Invocation, ResultData, Status, command_info, processors_available, property_errors,
@@ -428,7 +429,15 @@ pub(super) fn run(
     } = *context;
     let dependencies = dependencies(tests, log)?;
     let resources = load_resources(tests, options, log)?;
-    let jobs = options.jobs();
+    let mut jobserver = Jobserver::connect();
+    if jobserver.is_some() {
+        log.output("Connected to MAKE jobserver\n");
+    }
+    let jobs = if options.parallel.is_none() && jobserver.is_some() {
+        usize::MAX
+    } else {
+        options.jobs()
+    };
     let cost_path = config
         .get("CostDataFile")
         .filter(|file| !file.is_empty())
@@ -597,6 +606,14 @@ pub(super) fn run(
                 } else {
                     return true;
                 };
+                if let Some(server) = jobserver.as_mut()
+                    && !server.try_acquire()
+                {
+                    if unavailable.is_none() {
+                        session.resources.release(&allocation);
+                    }
+                    return true;
+                }
                 let affinity: Vec<_> = if wants_affinity {
                     session
                         .affinity_free
@@ -675,6 +692,9 @@ pub(super) fn run(
                         session.start(test, &active.allocation, &affinity, None, Some(&result));
                     } else {
                         let finished = running[position].take().unwrap();
+                        if let Some(server) = jobserver.as_mut() {
+                            server.release();
+                        }
                         session.affinity_free.extend(finished.affinity);
                         session.resources.release(&finished.allocation);
                         session.completed += 1;

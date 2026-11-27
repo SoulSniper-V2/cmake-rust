@@ -1,6 +1,7 @@
 //! Standalone CTest driver for generated CTest test files.
 
 mod buildandtest;
+mod jobserver;
 mod options;
 mod process;
 mod report;
