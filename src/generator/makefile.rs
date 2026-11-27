@@ -1324,10 +1324,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        let compile_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &compile_pdb));
-        let target_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
+        let compile_pdb_shell = shell_path_keep_trailing_slash(
+            self.ctx,
+            &maybe_relative_cur(self.ctx, dir, &compile_pdb),
+        );
+        let target_pdb_shell = shell_path(self.ctx, &target_pdb);
         let defines_var = self.object_defines_var(target, source, &properties);
         let includes_var = self.object_includes_var(target, source, &properties);
         let mut flags_var = self.object_flags_var(target, source, &properties);
@@ -2574,8 +2575,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         } else {
             String::new()
         };
-        let target_pdb_shell =
-            shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &target_pdb));
+        let target_pdb_shell = shell_path(self.ctx, &target_pdb);
         let (version_major, version_minor) = makefile_target_version(target);
         let mut vars = vec![
             ("LANGUAGE", language.to_owned()),
@@ -2679,6 +2679,37 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             && !archive_create.is_empty()
             && !archive_append.is_empty();
         let launcher = rule_launcher(self.ctx, target, "RULE_LAUNCH_LINK");
+        if let Some(mdi) = gt::module_definition_info(self.ctx, target, &config)
+            && mdi.def_file_generated
+        {
+            let obj_list_file = format!("{}.objs", mdi.def_file);
+            let mut command = format!(
+                "{} -E __create_def {} {}",
+                shell_path(self.ctx, &self.ctx.interp.cmake_command),
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &mdi.def_file)),
+                shell_path(self.ctx, &maybe_relative_cur(self.ctx, dir, &obj_list_file)),
+            );
+            let nm = self.ctx.var_safe(target.makefile, "CMAKE_NM");
+            if !nm.is_empty() {
+                command.push_str(&format!(" --nm={}", shell_path(self.ctx, &nm)));
+            }
+            text.push_str(&command);
+            text.push('\n');
+            let mut list = String::new();
+            if mdi.windows_export_all_symbols {
+                for object in objects.iter().chain(externals.iter()) {
+                    if object.ends_with(".obj") {
+                        list.push_str(object);
+                        list.push('\n');
+                    }
+                }
+            }
+            for source in &mdi.sources {
+                list.push_str(source);
+                list.push('\n');
+            }
+            let _ = crate::fsutil::write_generated(Path::new(&obj_list_file), &list);
+        }
         if use_archive_rules {
             let limit = (super::ninja::command_line_length_limit() / 2).max(1) as usize;
             let chunks = makefile_object_strings(&entries, limit);
@@ -4302,7 +4333,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         if properties.get("KEEP_EXTENSION").is_some_and(is_on) {
             return true;
         }
-        if properties.get("PCH_EXTENSION").is_some() || source.object_name.contains("cmake_pch") {
+        if properties.get("PCH_EXTENSION").is_some() {
             return false;
         }
         !self
@@ -5034,7 +5065,7 @@ fn makefile_link_libraries(line: &super::link::LinkLine) -> String {
     let mut result = line.framework_path.clone();
     result.push_str(&append_values(&line.path_fragments));
     result.push_str(&append_values(&line.lib_fragments));
-    result.trim_end().to_owned()
+    result
 }
 
 fn escape_cmake(text: &str) -> String {

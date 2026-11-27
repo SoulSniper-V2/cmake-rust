@@ -2,14 +2,14 @@
 
 Branch: `t3/unix-makefiles-11`
 
-Most recent completed full Unix Makefiles projdiff lane: **164/177**
-(`/tmp/umf11-ispc-projdiff-umf.log`).  The part-10 reference lane was
+Most recent completed full Unix Makefiles projdiff lane: **168/177**
+(`/tmp/umf11-msvc-gates-projdiff-umf.log`).  The part-10 reference lane was
 153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
 177.  The full Unix Makefiles RunCMake lane is **5566/5566**
 (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: CUDA, MSVC/clang-cl platform variants,
-ISPC, Makefile2/progress/DependInfo ordering, and response-file/PCH corners.
+Known remaining projdiff failure groups: CUDA device-link rules and
+Makefile2/progress/DependInfo ordering.
 `link/items`, `export/shared_deps`, `install/namelink`, and both ISPC cases
 are down to Makefile2 direct-dependency ordering; `export/error_order_link_cycle`
 is a configure diagnostic-order difference.  Makefile2 ordering is sensitive to
@@ -40,6 +40,36 @@ difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
 **156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
+
+## Part 11 batch 4: MSVC/clang-cl link scripts and PCH object aliases
+
+Unix Makefiles link scripts now keep target PDB paths absolute for MSVC-style
+toolchains, matching upstream's direct `ConvertToOutputFormat` use rather than
+the usual current-binary-relative conversion.  Compile PDB directories retain
+their trailing slash when shell-converted, producing `/FdCMakeFiles/<target>.dir/`.
+Generated module-definition exports now emit the preceding `cmake -E __create_def`
+link-script command and `.objs` response input, including the optional `--nm`
+argument.  Link-library text preserves its trailing item separator so rule
+expansion's single trailing-space trim leaves the same final whitespace as
+upstream; static-library `LINK_FLAGS` likewise preserve meaningful leading
+whitespace from PCH object injection.  PCH objects again keep their source
+extension for Makefile convenience aliases, so `cmake_pch.obj`, `cmake_pch.i`,
+and `cmake_pch.s` aliases are generated alongside `cmake_pch.cxx.*` object
+rules.
+
+Focused Unix Makefiles evidence: **3/3** cases pass
+(`platform/msvc_flags`, `platform/clangcl_flags`, and
+`platform/msvc_pch_reuse`; `/tmp/umf11-msvc-focus3.log`).  Gate evidence:
+`cargo fmt --check` clean, clippy clean, **941/941** Rust tests
+(`/tmp/umf11-msvc-gates-test.log`), difftest **1283/1283**
+(`/tmp/umf11-msvc-gates-difftest.log`), clitest **538/538**
+(`/tmp/umf11-msvc-gates-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-msvc-gates-projdiff-ninja.log`), and Unix Makefiles projdiff
+**168/177** (`/tmp/umf11-msvc-gates-projdiff-umf.log`).  The nine remaining
+cases are the four CUDA cases, `export/error_order_link_cycle`, and four
+Makefile2-ordering-only cases (`cxxmodules/bdb_single`, `export/shared_deps`,
+`install/namelink`, and `link/items`); the ISPC cases happened not to expose
+the pointer-ordering edge in this run.
 
 ## Part 11 batch 3: ISPC outputs and include response files
 
