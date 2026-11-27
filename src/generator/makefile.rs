@@ -824,7 +824,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             .map(|s| s.path.clone())
             .collect();
         let mut custom_outputs = Vec::new();
-        let codegen_outputs = self.write_custom_commands(
+        let (codegen_outputs, custom_clean) = self.write_custom_commands(
             target,
             target_key,
             dir,
@@ -901,7 +901,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         self.write_flags(target);
         self.write_depend_info(target, &impl_depends);
         self.write_dependency_placeholders(&support, compiler_depends, &target.name);
-        self.write_clean_files(target, &object_paths);
+        self.write_clean_files(target, &object_paths, &custom_clean);
         self.implicit.insert(target.name.clone(), impl_depends);
     }
 
@@ -1373,6 +1373,12 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
     ) {
         let lang = &source.language;
+        if !matches!(
+            lang.as_str(),
+            "C" | "CXX" | "OBJC" | "OBJCXX" | "Fortran" | "CUDA" | "ISPC" | "HIP" | "ASM"
+        ) {
+            return;
+        }
         let preprocess_target = strip_last_extension(obj_rel_top).to_owned() + ".i";
         let asm_target = strip_last_extension(obj_rel_top).to_owned() + ".s";
         let source_shell = shell_path(self.ctx, &source.path);
@@ -1608,9 +1614,10 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         out: &mut String,
         custom_outputs: &mut Vec<String>,
         implicit: &mut ImplicitDepends,
-    ) -> Vec<String> {
+    ) -> (Vec<String>, Vec<String>) {
         let _ = support_rel_cur;
         let mut codegen_outputs = Vec::new();
+        let mut custom_clean = Vec::new();
         let sources = gt::sources(self.ctx, target, &self.ctx.config);
         let cmp0113_new = crate::policy::index_of("CMP0113").is_some_and(|index| {
             target.policies.get(index).unwrap_or(PolicyStatus::Warn) == PolicyStatus::New
@@ -1647,6 +1654,15 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             };
             let evaluated =
                 custom::evaluate_spec_cfg(self.ctx, &spec, &self.ctx.config, &self.ctx.config);
+            if !self.ctx.interp.makefiles[target.makefile]
+                .props
+                .get("CLEAN_NO_CUSTOM")
+                .is_some_and(is_on)
+            {
+                for file in evaluated.outputs.iter().chain(evaluated.byproducts.iter()) {
+                    custom_clean.push(maybe_relative_cur(self.ctx, dir, file));
+                }
+            }
             for output in &evaluated.outputs {
                 custom_outputs.push(output.clone());
             }
@@ -1717,7 +1733,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
                 implicit.add("CUSTOM", &obj, &evaluated.full_depfile, true);
             }
         }
-        codegen_outputs
+        (codegen_outputs, custom_clean)
     }
 
     fn custom_command_lines(
@@ -2155,7 +2171,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         } else {
             entries.join(" ")
         };
-        let create_var = match target.kind {
+        let mut create_var = match target.kind {
             TargetKind::Executable => {
                 let with_exports = format!("CMAKE_{language}_LINK_EXECUTABLE_WITH_EXPORTS");
                 if target.is_executable_with_exports()
@@ -2177,6 +2193,19 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             TargetKind::ModuleLibrary => format!("CMAKE_{language}_CREATE_SHARED_MODULE"),
             _ => String::new(),
         };
+        let ipo = flags::ipo_enabled(self.ctx, target, &config, language);
+        let feature_rule = |var: String| {
+            if ipo {
+                let ipo_var = format!("{var}_IPO");
+                if self.ctx.var(target.makefile, &ipo_var).is_some() {
+                    return ipo_var;
+                }
+            }
+            var
+        };
+        if target.kind == TargetKind::StaticLibrary {
+            create_var = feature_rule(create_var);
+        }
         let mut template = self
             .ctx
             .var(target.makefile, &create_var)
@@ -2339,15 +2368,12 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             ));
         }
         let mut text = String::new();
-        let archive_create = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_CREATE"));
-        let archive_append = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_APPEND"));
-        let archive_finish = self
-            .ctx
-            .var_safe(target.makefile, &format!("CMAKE_{language}_ARCHIVE_FINISH"));
+        let archive_create_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_CREATE"));
+        let archive_append_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_APPEND"));
+        let archive_finish_var = feature_rule(format!("CMAKE_{language}_ARCHIVE_FINISH"));
+        let archive_create = self.ctx.var_safe(target.makefile, &archive_create_var);
+        let archive_append = self.ctx.var_safe(target.makefile, &archive_append_var);
+        let archive_finish = self.ctx.var_safe(target.makefile, &archive_finish_var);
         let use_archive_rules = target.kind == TargetKind::StaticLibrary
             && self
                 .ctx
@@ -2902,7 +2928,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         }
     }
 
-    fn write_clean_files(&self, target: &Target, objects: &[String]) {
+    fn write_clean_files(&self, target: &Target, objects: &[String], custom_clean: &[String]) {
         let config = self.ctx.config.clone();
         let dir = target.makefile;
         let mf = &self.ctx.interp.makefiles[dir];
@@ -2962,32 +2988,11 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
 
         // Custom command outputs and byproducts are cleaned unless the directory
         // opts out with CLEAN_NO_CUSTOM.
+        for file in custom_clean {
+            clean_set.insert(file.clone());
+        }
+
         if !mf.props.get("CLEAN_NO_CUSTOM").is_some_and(is_on) {
-            let mut visited = std::collections::HashSet::new();
-            for source in gt::sources(self.ctx, target, &config)
-                .iter()
-                .filter(|source| source.kind == SourceKind::CustomCommandOutput)
-            {
-                if let Some((cc_dir, cc_index)) =
-                    self.attached_command(target.makefile, &source.path)
-                    && visited.insert((cc_dir, cc_index))
-                {
-                    let command = self.ctx.interp.ext.sources[&cc_dir][cc_index]
-                        .custom_command
-                        .as_ref()
-                        .expect("attached custom command");
-                    let spec = custom::spec_from_command(self.ctx, command);
-                    let evaluated = custom::evaluate_spec_cfg(
-                        self.ctx,
-                        &spec,
-                        &self.ctx.config,
-                        &self.ctx.config,
-                    );
-                    for file in evaluated.outputs.iter().chain(evaluated.byproducts.iter()) {
-                        clean_set.insert(maybe_relative_cur(self.ctx, dir, file));
-                    }
-                }
-            }
             for command in target.custom_commands.iter().filter(|command| {
                 matches!(
                     command.kind,
@@ -3113,7 +3118,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let mut custom_outputs = Vec::new();
         let mut implicit = ImplicitDepends::default();
-        let codegen_outputs = self.write_custom_commands(
+        let (codegen_outputs, custom_clean) = self.write_custom_commands(
             target,
             target_key,
             dir,
@@ -3213,7 +3218,7 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
         );
         let _ =
             crate::fsutil::write_if_different(Path::new(&format!("{support}/progress.make")), "\n");
-        self.write_clean_files(target, &[]);
+        self.write_clean_files(target, &[], &custom_clean);
     }
 
     fn write_progress_marks(&mut self) {

@@ -1,14 +1,42 @@
 # Unix Makefiles port status
 
-Branch: `t3/unix-makefiles-10`
+Branch: `t3/unix-makefiles-11`
 
-Most recent completed full Unix Makefiles projdiff lane after the link-information correction: **153/174** (`/tmp/umf10-projdiff-umf-final.log`).  The pre-correction part-10 lane was 133/174, and the part-7 historical baseline was 136/163 before the case count grew.  The full Unix Makefiles RunCMake lane is **5566/5566** (`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
+Most recent completed full Unix Makefiles projdiff lane: **156/177**
+(`/tmp/umf11-batch1-projdiff-umf.log`).  The part-10 reference lane was
+153/174 (`/tmp/umf10-projdiff-umf-final.log`); the case set has since grown to
+177.  The full Unix Makefiles RunCMake lane is **5566/5566**
+(`/tmp/umf10-runcmake-final/report.json`).  Ninja lane must remain green.
 
-Known remaining projdiff failure groups: autogen clean lists, CUDA,
-install/platform variants (Darwin, MSVC, and clang-cl), ASM linker-language
-details, ISPC, Makefile2/progress/DependInfo ordering, response-file/PCH
-corners, and try-compile LTO probe link scripts.  `link/items` and
-`export/shared_deps` are down to Makefile2 direct-dependency ordering.
+Known remaining projdiff failure groups: CUDA, install/platform variants
+(Darwin, MSVC, and clang-cl), ISPC, Makefile2/progress/DependInfo ordering,
+and response-file/PCH corners.  `link/items`, `export/shared_deps`,
+`install/namelink`, `languages/asm_mixed_linker_language`, and
+`autogen/ninja` are down to Makefile2 direct-dependency ordering;
+`export/error_order_link_cycle` is a configure diagnostic-order difference.
+
+## Part 11 batch 1: autogen cleaning, ASM dialect rules, and IPO archivers
+
+Part 11 began at the merged part-10 head `0266eee`.  Makefile target clean
+files now collect custom-command outputs only for custom rules actually
+emitted in that target, matching the CMP0113 de-duplication behavior in
+`cmMakefileTargetGenerator::WriteTargetBuildRules`; autogen timestamp and
+mocs compilation artifacts owned by autogen helper targets no longer leak into
+the consuming target's clean scripts.  Preprocess/assembly convenience rules
+are restricted to upstream's exact language set, so ASM-ATT dialect sources do
+not gain impossible `CMAKE_ASM-ATT_CREATE_*` rules.  Static-library link
+scripts now select `_IPO` variants of the create/archive rules when IPO is
+enabled, producing the gcc-ar/gcc-ranlib try-compile probes upstream writes.
+
+Focused Unix Makefiles evidence: **4/4** representative cases pass
+(`autogen/ninja`, `languages/asm_extension_precedence`,
+`languages/asm_mixed_linker_language`, and `targets/kitchen_sink`;
+`/tmp/umf11-batch1-focus.log`).  Gate evidence: `cargo fmt --check` clean,
+clippy clean, **941/941** Rust tests (`/tmp/umf11-batch1-rust-gates.log`),
+difftest **1283/1283** (`/tmp/umf11-batch1-difftest.log`), clitest
+**538/538** (`/tmp/umf11-batch1-clitest.log`), Ninja projdiff **177/177**
+(`/tmp/umf11-batch1-projdiff-ninja.log`), and Unix Makefiles projdiff
+**156/177** (`/tmp/umf11-batch1-projdiff-umf.log`).
 
 Kitware self-configure, self-build, and self-built CTest evidence is below.
 
