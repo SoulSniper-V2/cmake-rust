@@ -82,6 +82,9 @@ fn discover_synthetic_targets(
         // the target constructor. Source resolution and language inference
         // take place during subsequent generation steps.
         let language = gt::fixed_linker_language(target).unwrap_or_default();
+        // A local cmOptionalLinkImplementation: never memoized, so never
+        // verified by CheckLinkLibraries.
+        ctx.skip_link_checks.set(true);
         let items = link::implementation_targets(&ctx, target, config, language);
         let imported = items
             .into_iter()

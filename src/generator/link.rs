@@ -907,6 +907,9 @@ fn plain_items_bt<'i>(
 
 fn validate_items(query: &Query<'_, '_>, owner: &Target, items: &[Item<'_>], interface: bool) {
     const REASONS: &str = "Possible reasons include:\n  * There is a typo in the target name.\n  * A find_package call is missing for an IMPORTED target.\n  * An ALIAS target is missing.\n";
+    if query.ctx.skip_link_checks.get() {
+        return;
+    }
     let only_targets = on(owner, "LINK_LIBRARIES_ONLY_TARGETS");
     for item in items.iter().filter(|item| item.target.is_none()) {
         let name = &item.text;

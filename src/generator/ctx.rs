@@ -70,6 +70,11 @@ pub struct GenCtx<'a> {
     /// Link-information diagnostics already issued, per configuration:
     /// cmComputeLinkInformation runs once per target and configuration.
     pub link_diagnostics: Rc<RefCell<std::collections::HashSet<String>>>,
+    /// Set while evaluating a link implementation that is not memoized
+    /// (`DiscoverSyntheticTargets`): `cmGeneratorTarget::CheckLinkLibraries`
+    /// only verifies the memoized link structures, so such an evaluation
+    /// never reports link-item verification errors.
+    pub skip_link_checks: Rc<std::cell::Cell<bool>>,
     /// Free-form memo for expensive per-target computations.
     pub memo: Rc<RefCell<HashMap<String, String>>>,
     /// Backtrace table referenced by generator-expression provenance ids.
@@ -146,6 +151,7 @@ impl<'a> GenCtx<'a> {
             default_configs: interp.ext.gen_default_configs.clone(),
             errors: Rc::new(RefCell::new(Vec::new())),
             link_diagnostics: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            skip_link_checks: Rc::default(),
             memo: Rc::new(RefCell::new(HashMap::new())),
             backtraces: Rc::new(RefCell::new(Vec::new())),
             target_objects: Rc::new(RefCell::new(HashMap::new())),

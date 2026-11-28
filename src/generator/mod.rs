@@ -210,6 +210,10 @@ pub fn generate(interp: &mut Interp, options: &ConfigureOptions) -> i32 {
     let mut module_diagnostics = ninja::modules::finalize_cxx_module_targets(interp);
     // cmGlobalGenerator::AddAutomaticSources: unity builds and PCH.
     automatic::add_automatic_sources(interp);
+    // AddAutomaticSources ends with ClearSourcesCache on every target, so
+    // the sources computed by synthetic-target discovery are evaluated (and
+    // diagnosed) afresh by generation.
+    interp.ext.computed_sources.borrow_mut().clear();
     // cmMakefile::GenerateAfterGeneratorTargets: the build-database merge
     // commands attach once every generator target has registered its
     // database path, and before TraceDependencies resolves their produced
