@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.1)
+project(CTestArguments NONE)
+set(CMAKE_CTEST_ARGUMENTS "--quiet;--output-log;out log.txt;$x;a\"b")
+enable_testing()
+add_test(NAME t COMMAND ${CMAKE_COMMAND} -E echo t)

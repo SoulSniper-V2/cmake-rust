@@ -4880,11 +4880,23 @@ Since the policy is not set, legacy libraries de-duplication strategy will be ap
             } else {
                 Vec::new()
             };
+            // cmGlobalGenerator::AddGlobalTarget_Test: CMAKE_CTEST_ARGUMENTS
+            // precede the make-time $(ARGS).
+            let mut line = vec![shell_path(self.ctx, &ctest)];
+            if let Some(args) = self.ctx.var(0, "CMAKE_CTEST_ARGUMENTS") {
+                line.extend(
+                    crate::util::expand_list(&args, false)
+                        .iter()
+                        // Global targets use EscapeForShellOldStyle.
+                        .map(|arg| arg.replace(' ', "\\ ")),
+                );
+            }
+            line.push("$(ARGS)".to_owned());
             special(
                 &mut out,
                 "test",
                 "Running tests...",
-                &[format!("{} $(ARGS)", shell_path(self.ctx, &ctest))],
+                &[line.join(" ")],
                 &test_depends,
             );
         }
