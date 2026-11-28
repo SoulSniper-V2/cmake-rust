@@ -467,7 +467,7 @@ pub fn parse_bytes(path: &str, bytes: &[u8]) -> (Option<Vec<Command>>, Vec<Parse
                     message: format!(
                         "Parse error.  Expected a newline, got {} with text \"{}\".",
                         token.kind.describe(),
-                        token.text
+                        c_text(&token.text)
                     ),
                     warning: false,
                     fatal: true,
@@ -481,7 +481,7 @@ pub fn parse_bytes(path: &str, bytes: &[u8]) -> (Option<Vec<Command>>, Vec<Parse
                     message: format!(
                         "Parse error.  Expected a command name, got {} with text \"{}\".",
                         other.describe(),
-                        token.text
+                        c_text(&token.text)
                     ),
                     warning: false,
                     fatal: true,
@@ -540,7 +540,7 @@ fn parse_function(
             message: format!(
                 "Parse error.  Expected \"(\", got {} with text \"{}\".",
                 token.kind.describe(),
-                token.text
+                c_text(&token.text)
             ),
             warning: false,
             fatal: true,
@@ -634,7 +634,7 @@ fn parse_function(
                     message: format!(
                         "Parse error.  Function missing ending \")\".  Instead found {} with text \"{}\".",
                         other.describe(),
-                        token.text
+                        c_text(&token.text)
                     ),
                     warning: false,
                     fatal: true,
@@ -725,6 +725,11 @@ fn check_nesting(commands: &[Command]) -> Option<(usize, String)> {
     stack.last().and_then(|(_, command)| here(command))
 }
 
+/// `token->text` streamed as a C string: the text up to its first NUL.
+fn c_text(text: &str) -> &str {
+    text.split_once('\0').map_or(text, |(prefix, _)| prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,6 +757,16 @@ mod tests {
                 ("[".into(), Delim::Unquoted),
                 ("a[[b]]".into(), Delim::Unquoted),
             ]
+        );
+    }
+
+    #[test]
+    fn parse_error_text_stops_at_nul() {
+        // cmListFileParser streams token->text as a C string.
+        let (_, diags) = parse("t", "message(a\0b)\n");
+        assert_eq!(
+            diags[0].message,
+            "Parse error.  Function missing ending \")\".  Instead found bad character with text \"\"."
         );
     }
 
