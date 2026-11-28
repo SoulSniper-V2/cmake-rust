@@ -570,6 +570,13 @@ def prepare(args):
     candidate_ctest = tool(args.candidate_ctest, None, "candidate CTest") if args.candidate_ctest else None
     if candidate_ctest and (candidate_ctest.samefile(ctest) or sha256(candidate_ctest) == sha256(ctest)):
         raise SystemExit("--candidate-ctest must be an independent CTest executable")
+    if candidate_ctest:
+        # The candidate CMake names its sibling <prefix>/bin/ctest in the
+        # launcher and test rules it generates (CMAKE_CTEST_COMMAND), so any
+        # other spelling lets the reference CTest run instead of the candidate.
+        canonical = args.candidate.absolute().parent / "ctest"
+        if not canonical.is_file() or not canonical.resolve().samefile(candidate_ctest):
+            raise SystemExit(f"--candidate-ctest must be the candidate's canonical sibling {canonical}")
     independent_cpack = tool(args.cpack, build / "bin/cpack", "cpack")
     cpack = independent_cpack
     if args.candidate_cpack:
