@@ -210,19 +210,30 @@ impl Impl {
     }
 }
 
-/// `cmSystemTools::GetLogicalWorkingDirectory`: PWD when it names the
-/// current directory (preserving symlinks), else the physical directory.
+/// `cmSystemTools::GetLogicalWorkingDirectory` (`InitLogicalWorkingDirectory`):
+/// PWD normalized on disk when it names the current directory (preserving
+/// symlinks), else the physical directory.
 pub fn logical_working_directory() -> String {
     let Ok(current) = std::env::current_dir() else {
         return String::new();
     };
-    std::env::var("PWD")
-        .ok()
-        .filter(|pwd| {
-            std::path::Path::new(pwd).is_absolute()
-                && std::fs::canonicalize(pwd).ok().as_ref() == Some(&current)
-        })
-        .unwrap_or_else(|| current.to_string_lossy().into_owned())
+    logical_from_pwd(
+        std::env::var_os("PWD").map(|value| crate::bytes::decode_os(&value)),
+        &current,
+    )
+}
+
+/// `InitLogicalWorkingDirectory` given PWD and the physical directory.
+pub fn logical_from_pwd(pwd: Option<String>, current: &std::path::Path) -> String {
+    match pwd {
+        Some(pwd)
+            if std::path::Path::new(&pwd).is_absolute()
+                && std::fs::canonicalize(&pwd).ok().as_deref() == Some(current) =>
+        {
+            to_normalized_path_on_disk(&pwd)
+        }
+        _ => current.to_string_lossy().into_owned(),
+    }
 }
 
 /// `Resolver<Policy>::Resolve`: the resolved path, or the partial path and
@@ -291,6 +302,18 @@ pub fn to_normalized_path_on_disk(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logical_working_directory_normalizes_pwd() {
+        // InitLogicalWorkingDirectory: ToNormalizedPathOnDisk(PWD).
+        let dir = std::env::temp_dir().canonicalize().unwrap();
+        let spelled = format!("{}//.", dir.display());
+        assert_eq!(logical_from_pwd(Some(spelled), &dir), dir.to_string_lossy());
+        assert_eq!(
+            logical_from_pwd(Some("rel".into()), &dir),
+            dir.to_string_lossy()
+        );
+    }
 
     #[test]
     fn logical_path_normalizes_lexically_without_symlinks() {

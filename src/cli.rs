@@ -22,13 +22,10 @@ pub fn main() -> i32 {
         eprintln!("Current working directory cannot be established.");
         return 1;
     };
-    let cwd = std::env::var_os("PWD")
-        .map(|value| crate::bytes::decode_os(&value))
-        .filter(|pwd| {
-            Path::new(pwd).is_absolute()
-                && std::fs::canonicalize(pwd).ok().as_ref() == Some(&current_dir)
-        })
-        .unwrap_or_else(|| current_dir.to_string_lossy().into_owned());
+    let cwd = crate::pathresolver::logical_from_pwd(
+        std::env::var_os("PWD").map(|value| crate::bytes::decode_os(&value)),
+        &current_dir,
+    );
     let args = &argv[1..];
     match args.first().map(String::as_str) {
         Some("-E") => cmcmd::dispatch(&argv[0], &args[1..]),
