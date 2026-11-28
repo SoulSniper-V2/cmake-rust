@@ -439,6 +439,7 @@ impl Interp {
             )],
         });
         interp.mf_stack.push(0);
+        interp.global_props.set("CMAKE_ROLE", role.to_owned());
         crate::commands::register_all(&mut interp);
         interp
     }

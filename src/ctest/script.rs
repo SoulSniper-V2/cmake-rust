@@ -185,6 +185,70 @@ fn parse_return_build(
     Ok((values, quiet))
 }
 
+fn split_capture_cmake_error(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut variable = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "CAPTURE_CMAKE_ERROR" {
+            if variable.is_some() {
+                return Err("called with more than one value for CAPTURE_CMAKE_ERROR".into());
+            }
+            if index + 1 >= args.len() {
+                return Err("CAPTURE_CMAKE_ERROR argument missing value".into());
+            }
+            variable = Some(args[index + 1].clone());
+            index += 2;
+        } else {
+            stripped.push(args[index].clone());
+            index += 1;
+        }
+    }
+    Ok((stripped, variable))
+}
+
+fn invoke_capture_cmake_error(
+    interp: &mut Interp,
+    args: &[String],
+    command: &str,
+    body: fn(&mut Interp, &[String]) -> CmdResult,
+) -> CmdResult {
+    let (stripped, variable) = match split_capture_cmake_error(args) {
+        Ok(parsed) => parsed,
+        Err(error) => return err(error),
+    };
+    let Some(variable) = variable else {
+        return body(interp, &stripped);
+    };
+
+    let initial_error = interp.error;
+    let initial_fatal = interp.fatal;
+    let initial_had_error = interp
+        .ext
+        .ctest_script
+        .as_ref()
+        .is_some_and(|state| state.had_error);
+    let result = body(interp, &stripped);
+    let handler_failed = result.is_err()
+        || interp.error != initial_error
+        || interp
+            .ext
+            .ctest_script
+            .as_ref()
+            .is_some_and(|state| state.had_error != initial_had_error);
+
+    if let Err(crate::interp::CmdErr::Error(message)) = result {
+        handler_error(interp, &format!("{command} {message}\n"));
+    }
+    interp.error = initial_error;
+    interp.fatal = initial_fatal;
+    if let Some(state) = interp.ext.ctest_script.as_mut() {
+        state.had_error = initial_had_error;
+    }
+    interp.set_def(&variable, if handler_failed { "-1" } else { "0" });
+    Ok(())
+}
+
 fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
     let text = format!("{command} {message}");
     if interp
@@ -210,6 +274,9 @@ fn ctest_command_error(interp: &mut Interp, command: &str, message: &str) {
 }
 
 fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_update", ctest_update);
+    }
     let (values, quiet) = match parse_return_build(args, &[]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -379,6 +446,9 @@ fn ctest_update(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 fn ctest_coverage(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_coverage", ctest_coverage);
+    }
     let (values, quiet) = match parse_return_build(args, &["LABELS"]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -571,6 +641,104 @@ fn postprocess_sanitizer_logs(
     total
 }
 
+fn postprocess_checker_logs(interp: &Interp, temporary: &Path, quiet: bool) -> usize {
+    let mut names = BTreeMap::new();
+    if let Ok(entries) = std::fs::read_dir(temporary) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("LastTest")
+                && name.ends_with(".log")
+                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            {
+                for line in contents.lines() {
+                    if let Some((prefix, test)) = line.split_once(" Test: ")
+                        && let Some((index, _)) = prefix.split_once('/')
+                        && let Ok(index) = index.parse::<usize>()
+                    {
+                        names.insert(index, test.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    let total = names.len();
+    let mut defects = 0;
+    let mut categories: Vec<(String, usize)> = Vec::new();
+    handler_output(interp, "-- Processing memory checking output:\n", quiet);
+    for (index, name) in &names {
+        let path = temporary.join(format!("MemoryChecker.{index}.log"));
+        if !path.is_file() {
+            eprintln!("Cannot find memory tester output file: {}", path.display());
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut count = 0;
+        for line in contents.lines().filter(|line| line.starts_with("========")) {
+            let category = if line.contains("Leaked ") {
+                Some("Memory leak".to_owned())
+            } else if line.contains("cudaErrorLaunchFailure") {
+                Some("cudaErrorLaunchFailure".to_owned())
+            } else if line.contains("Fatal UVM GPU fault") {
+                Some("Fatal UVM GPU fault".to_owned())
+            } else if line.contains("Fatal UVM CPU fault") {
+                Some("Fatal UVM CPU fault".to_owned())
+            } else if line.contains("Potential WAR hazard detected") {
+                Some("Potential WAR hazard detected".to_owned())
+            } else if line.contains("Potential RAW hazard detected") {
+                Some("Potential RAW hazard detected".to_owned())
+            } else if line.contains("Race reported") {
+                Some("Race reported".to_owned())
+            } else if line.contains("Barrier error") {
+                Some("Barrier error".to_owned())
+            } else if line.contains("Uninitialized ") && line.contains(" memory read") {
+                Some("Uninitialized __global__ memory read".to_owned())
+            } else if line.contains("Unused memory") {
+                Some("Unused memory".to_owned())
+            } else if line.contains("Host API memory access error") {
+                Some("Host API memory access error".to_owned())
+            } else if line.contains("Invalid __global__ read") {
+                Some("Invalid __global__ read".to_owned())
+            } else {
+                None
+            };
+            if let Some(category) = category {
+                count += 1;
+                if let Some((_, total)) = categories.iter_mut().find(|(name, _)| *name == category)
+                {
+                    *total += 1;
+                } else {
+                    categories.push((category, 1));
+                }
+            }
+        }
+        defects += count;
+        if count > 0 {
+            handler_output(
+                interp,
+                &format!(
+                    "{index}/{total} MemCheck: #{index}: {name} ..........................   Defects: {count}\n"
+                ),
+                quiet,
+            );
+        }
+    }
+    handler_output(
+        interp,
+        "MemCheck log files can be found here: (<#> corresponds to test number)\n",
+        quiet,
+    );
+    handler_output(
+        interp,
+        &format!("{}/MemoryChecker.<#>.log\n", temporary.display()),
+        quiet,
+    );
+    handler_output(interp, "Memory checking results:\n", quiet);
+    for (category, count) in categories {
+        handler_output(interp, &format!("{category} - {count}\n"), quiet);
+    }
+    defects
+}
+
 fn run_memcheck_commands(interp: &Interp, commands: &str, kind: &str) -> bool {
     for command in crate::util::expand_list(commands, false) {
         let args = crate::commands::try_compile::parse_arguments(&command);
@@ -593,6 +761,9 @@ fn run_memcheck_commands(interp: &Interp, commands: &str, kind: &str) -> bool {
 }
 
 fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_memcheck", ctest_memcheck);
+    }
     let (values, quiet) = match parse_return_build(args, &["DEFECT_COUNT"]) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -771,6 +942,9 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
     };
     options.memcheck_options = memcheck_options;
     options.memcheck_dynamic_options = dynamic_options;
+    options.memcheck_ignore =
+        crate::util::expand_list(&interp.get_safe("CTEST_CUSTOM_MEMCHECK_IGNORE"), false);
+    options.script_quiet = quiet;
     if !run_memcheck_commands(interp, &interp.get_safe("CTEST_CUSTOM_PRE_MEMCHECK"), "pre") {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         if let Some(variable) = values.get("RETURN_VALUE") {
@@ -787,11 +961,37 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         .as_ref()
         .is_some_and(|state| state.options.verbose);
     let mut log = Log::new(&options);
-    log.suppress_output = !handler_verbose || quiet;
+    log.suppress_output = !handler_verbose;
     let old_dir = std::env::current_dir().unwrap_or_default();
     let (code, no_tests) = execute_detailed(binary.clone(), options, &mut log);
     let _ = std::env::set_current_dir(old_dir);
-    let defects = postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet);
+    let defects = if sanitizer {
+        postprocess_sanitizer_logs(interp, &temporary, &checker_type, quiet)
+    } else {
+        postprocess_checker_logs(interp, &temporary, quiet)
+    };
+    let mut bc_invalid = false;
+    if checker_type == "BoundsChecker" {
+        let mut logs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&temporary) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with("MemoryChecker.") && name.ends_with(".log") {
+                    logs.push(entry.path());
+                }
+            }
+        }
+        bc_invalid = logs.is_empty()
+            || logs.iter().any(|path| {
+                std::fs::read_to_string(path)
+                    .map(|contents| !contents.trim_start().starts_with('<'))
+                    .unwrap_or(true)
+            });
+        if bc_invalid {
+            eprintln!("Error parsing XML in stream at line 1: no element found");
+            interp.ext.ctest_script.as_mut().unwrap().had_error = true;
+        }
+    }
     let post_ok = run_memcheck_commands(
         interp,
         &interp.get_safe("CTEST_CUSTOM_POST_MEMCHECK"),
@@ -801,7 +1001,11 @@ fn ctest_memcheck(interp: &mut Interp, args: &[String]) -> CmdResult {
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
     }
     let result_code = if no_tests && code == 8 { 0 } else { code };
-    let result_code = if post_ok { result_code } else { -1 };
+    let result_code = if post_ok && !bc_invalid {
+        result_code
+    } else {
+        -1
+    };
     if let Some(variable) = values.get("RETURN_VALUE") {
         interp.set_def(variable, if result_code == 0 { "0" } else { "-1" });
     }
@@ -836,6 +1040,9 @@ fn parse_upload_args(args: &[String]) -> Result<(Vec<String>, bool), String> {
 }
 
 fn ctest_upload(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_upload", ctest_upload);
+    }
     let (files, quiet) = match parse_upload_args(args) {
         Ok(parsed) => parsed,
         Err(error) => return err(error),
@@ -1172,6 +1379,9 @@ fn cdash_submit(interp: &mut Interp, parsed: &SubmitArgs) -> CmdResult {
 }
 
 fn ctest_submit(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_submit", ctest_submit);
+    }
     let mut parsed = match parse_submit_args(args) {
         Ok(parsed) => parsed,
         Err(error) => {
@@ -1690,11 +1900,11 @@ fn ctest_start(interp: &mut Interp, args: &[String]) -> CmdResult {
         handler_output(interp, &existing_tag_message, quiet);
     }
     if model_name.eq_ignore_ascii_case("nightly") && nightly.is_empty() {
-        handler_output(
+        handler_error(
             interp,
             "WARNING: No nightly start time found please set in CTestConfig.cmake or DartConfig.cmake\n",
-            quiet,
         );
+        ctest_command_error(interp, "ctest_start", "unknown error.");
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
         return Ok(());
     }
@@ -1745,6 +1955,9 @@ fn test_options(interp: &Interp, binary: &Path) -> Options {
 }
 
 fn ctest_test(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_test", ctest_test);
+    }
     let keywords = [
         "BUILD",
         "RETURN_VALUE",
@@ -2105,6 +2318,8 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
         .as_ref()
         .map(|state| state.options.clone())
         .unwrap_or_default();
+    let in_process = start == 0;
+    let recursion_depth = interp.recursion_depth_now();
     for index in start..args.len() {
         if args[index] == "RETURN_VALUE" {
             continue;
@@ -2113,8 +2328,14 @@ fn ctest_run_script(interp: &mut Interp, args: &[String]) -> CmdResult {
             continue;
         }
         let script = collapse_input(&args[index]);
-        let result = run_one(&script, true, &options);
-        interp.set_def(&return_variable, result.to_string());
+        let result = run_one(&script, in_process, &options, recursion_depth);
+        if result.error
+            && !in_process
+            && let Some(state) = interp.ext.ctest_script.as_mut()
+        {
+            state.had_error = true;
+        }
+        interp.set_def(&return_variable, result.code.to_string());
     }
     Ok(())
 }
@@ -2152,6 +2373,7 @@ fn dashboard_options(interp: &Interp, binary: &Path) -> Options {
     options.dashboard_model = state.model.clone();
     options.dashboard_site = state.site.clone();
     options.dashboard_build_name = state.build_name.clone();
+    options.change_id = interp.get_safe("CTEST_CHANGE_ID");
     options.dir = Some(binary.into());
     options.labels_for_subprojects =
         crate::util::expand_list(&interp.get_safe("CTEST_LABELS_FOR_SUBPROJECTS"), false);
@@ -2191,9 +2413,6 @@ fn parse_handler_args(
         } else if flags.contains(&arg.as_str()) {
             present.insert(arg.clone());
             index += 1;
-        } else if !map.contains_key("BUILD") && values.contains(&"BUILD") {
-            map.insert("BUILD".into(), arg.clone());
-            index += 1;
         } else {
             return Err(format!("called with unknown argument \"{arg}\"."));
         }
@@ -2217,7 +2436,16 @@ fn required_build_directory(
     }
 }
 
+fn collect_instrumentation_for_xml(build_path: &Path) {
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(build_path);
+    instrumentation.load();
+    instrumentation.collect("prepareForCDash");
+}
+
 fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_configure", ctest_configure);
+    }
     let (parsed, present) = match parse_handler_args(
         args,
         &["BUILD", "SOURCE", "OPTIONS", "RETURN_VALUE", "SUBMIT_INDEX"],
@@ -2322,7 +2550,7 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
             "   Each . represents 1024 bytes of output\n    {} Size of output: {kib}K\n",
             ".".repeat(dots)
         ),
-        quiet,
+        false,
     );
     if status != 0 {
         handler_error(interp, "Error(s) when configuring the project\n");
@@ -2330,6 +2558,7 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
     if let Some(variable) = parsed.get("RETURN_VALUE") {
         interp.set_def(variable, status.to_string());
     }
+    collect_instrumentation_for_xml(&build_path);
     let options = dashboard_options(interp, &build_path);
     let _ = report::configure_xml(&build_path, &options, &command, &output, status, start, end);
     if status != 0 {
@@ -2339,6 +2568,9 @@ fn ctest_configure(interp: &mut Interp, args: &[String]) -> CmdResult {
 }
 
 fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
+    if args.iter().any(|arg| arg == "CAPTURE_CMAKE_ERROR") {
+        return invoke_capture_cmake_error(interp, args, "ctest_build", ctest_build);
+    }
     let (parsed, present) = match parse_handler_args(
         args,
         &[
@@ -2397,7 +2629,7 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             .get("PARALLEL_LEVEL")
             .filter(|value| !value.is_empty())
         {
-            let _ = write!(command, " --parallel {parallel}");
+            let _ = write!(command, " --parallel \"{parallel}\"");
         }
         let flags = parsed
             .get("FLAGS")
@@ -2455,7 +2687,7 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
             });
         }
     }
-    let (errors, warnings) = if use_launchers {
+    let (mut errors, warnings) = if use_launchers {
         let mut errors = 0;
         let mut warnings = 0;
         if let Some(launch_dir) = &launch_dir
@@ -2495,6 +2727,40 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         &format!("    {} Size of output: {kib}K\n", ".".repeat(dots)),
         quiet,
     );
+    if use_launchers && status != 0 {
+        if let Some(launch_dir) = &launch_dir {
+            let has_xml = std::fs::read_dir(launch_dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .any(|entry| entry.file_name().to_string_lossy().ends_with(".xml"));
+            if !has_xml {
+                let real_args = crate::commands::try_compile::parse_arguments(&command);
+                use md5::Digest;
+                let mut hasher = md5::Md5::new();
+                if let Ok(cwd) = std::env::current_dir() {
+                    hasher.update(cwd.to_string_lossy().as_bytes());
+                }
+                for arg in &real_args {
+                    hasher.update(arg.as_bytes());
+                }
+                let hash = format!("{:x}", hasher.finalize());
+                let options = BTreeMap::new();
+                super::launcher_xml(&super::LaunchReport {
+                    log_dir: launch_dir,
+                    hash: &hash,
+                    error: true,
+                    options: &options,
+                    real_args: &real_args,
+                    stdout: &output,
+                    stderr: "",
+                    exit_code: status,
+                });
+                errors += 1;
+            }
+        }
+    }
+    collect_instrumentation_for_xml(&build_path);
     let options = dashboard_options(interp, &build_path);
     let _ = report::build_xml(
         &build_path,
@@ -2513,8 +2779,8 @@ fn ctest_build(interp: &mut Interp, args: &[String]) -> CmdResult {
         handler_error(interp, "Error(s) when building project\n");
         interp.ext.ctest_script.as_mut().unwrap().had_error = true;
     }
-    handler_output(interp, &format!("   {errors} Compiler errors\n"), quiet);
-    handler_output(interp, &format!("   {warnings} Compiler warnings\n"), quiet);
+    handler_output(interp, &format!("   {errors} Compiler errors\n"), false);
+    handler_output(interp, &format!("   {warnings} Compiler warnings\n"), false);
     if let Some(variable) = parsed.get("RETURN_VALUE") {
         interp.set_def(variable, status.to_string());
     }
@@ -2543,17 +2809,71 @@ fn register(interp: &mut Interp) {
     interp.register("ctest_upload", ctest_upload);
 }
 
-fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
+struct ScriptOutcome {
+    code: i32,
+    error: bool,
+}
+
+fn run_new_process(total_script: &str, options: &Options) -> ScriptOutcome {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ctest"));
+    let mut command = std::process::Command::new(exe);
+    command.arg("-SR").arg(total_script);
+    if options.verbose {
+        command.arg("-V");
+    }
+    if options.extra_verbose {
+        command.arg("-VV");
+    }
+    if !options.config.is_empty() {
+        command.arg("-C").arg(&options.config);
+    }
+    let output = command.output();
+    let Ok(output) = output else {
+        return ScriptOutcome {
+            code: -1,
+            error: true,
+        };
+    };
+    let stderr = crate::bytes::decode(&output.stderr);
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
+    if options.extra_verbose {
+        print!("{}", crate::bytes::decode(&output.stdout));
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+    ScriptOutcome {
+        code: output.status.code().unwrap_or(-1),
+        error: !stderr.is_empty(),
+    }
+}
+
+fn run_one(
+    total_script: &str,
+    in_process: bool,
+    options: &Options,
+    recursion_depth: usize,
+) -> ScriptOutcome {
+    if !in_process {
+        return run_new_process(total_script, options);
+    }
     let (script, script_arg) = total_script
         .split_once(',')
         .map_or((total_script, ""), |(script, arg)| (script, arg));
     let script = &collapse_input(script);
     if !Path::new(script).is_file() {
         eprintln!("CMake Error: Cannot find file: {script}");
-        return 1;
+        return ScriptOutcome {
+            code: 1,
+            error: true,
+        };
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let mut interp = testfile::interpreter(&cwd);
+    interp.recursion_depth_base = recursion_depth;
+    interp.role = "CTEST";
+    interp.global_props.set("CMAKE_ROLE", "CTEST".to_owned());
     register(&mut interp);
     interp.ext.ctest_script = Some(State::new(options));
     let path = PathBuf::from(script);
@@ -2599,14 +2919,9 @@ fn run_one(total_script: &str, _in_process: bool, options: &Options) -> i32 {
         .ctest_script
         .as_ref()
         .is_some_and(|state| state.had_error);
-    if let Some(code) = interp.exit_code {
-        return code;
-    }
-    if !ok || interp.error || interp.fatal || had_error {
-        -1
-    } else {
-        0
-    }
+    let error = !ok || interp.error || interp.fatal || had_error;
+    let code = interp.exit_code.unwrap_or(if error { -1 } else { 0 });
+    ScriptOutcome { code, error }
 }
 
 pub(super) fn run_scripts(options: &Options) -> i32 {
@@ -2615,7 +2930,7 @@ pub(super) fn run_scripts(options: &Options) -> i32 {
     }
     let mut result = 0;
     for (script, in_process) in &options.scripts {
-        result |= run_one(&script.to_string_lossy(), *in_process, options);
+        result |= run_one(&script.to_string_lossy(), *in_process, options, 0).code;
     }
     result
 }

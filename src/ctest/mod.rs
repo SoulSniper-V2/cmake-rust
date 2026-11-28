@@ -1,6 +1,7 @@
 //! Standalone CTest driver for generated CTest test files.
 
 mod buildandtest;
+mod jobserver;
 mod options;
 mod process;
 mod report;
@@ -269,7 +270,92 @@ fn launcher_xml(report: &LaunchReport) {
     let _ = std::fs::write(log_dir.join(format!("{kind}-{hash}.xml")), xml);
 }
 
-fn launch(args: &[String]) -> i32 {
+fn instrument_launch(
+    command: &[String],
+    options: &BTreeMap<String, String>,
+    status: i32,
+    clock: crate::instrumentation::Timer,
+    instrumentation: &crate::instrumentation::Instrumentation,
+) {
+    let build_dir = options.get("build-dir").map_or("", String::as_str);
+    if build_dir.is_empty() {
+        return;
+    }
+    let command_type = options.get("command-type").map_or("", String::as_str);
+    let role = options
+        .get("role")
+        .filter(|role| !role.is_empty())
+        .map_or(command_type, String::as_str);
+    let comma_array = |key: &str| {
+        serde_json::Value::Array(
+            options
+                .get(key)
+                .map_or("", String::as_str)
+                .split(',')
+                .filter(|value| !value.is_empty())
+                .map(|value| serde_json::Value::String(value.to_owned()))
+                .collect(),
+        )
+    };
+    let mut fields = serde_json::Map::new();
+    for (option, key) in [
+        ("target-name", "target"),
+        ("source", "source"),
+        ("language", "language"),
+        ("target-type", "targetType"),
+        ("config", "config"),
+    ] {
+        if let Some(value) = options.get(option).filter(|value| !value.is_empty()) {
+            let value = if key == "language" && value == "CXX" {
+                "C++"
+            } else {
+                value
+            };
+            fields.insert(key.into(), serde_json::Value::String(value.to_owned()));
+        }
+    }
+    if options.get("output").is_some_and(|value| !value.is_empty()) {
+        let outputs = comma_array("output");
+        let sizes = outputs
+            .as_array()
+            .map(|outputs| {
+                outputs
+                    .iter()
+                    .filter_map(|output| output.as_str())
+                    .map(|output| {
+                        let path = std::path::PathBuf::from(output);
+                        let path = if path.is_absolute() {
+                            path
+                        } else {
+                            std::path::PathBuf::from(build_dir).join(path)
+                        };
+                        serde_json::Value::from(
+                            path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        fields.insert("outputSizes".into(), serde_json::Value::Array(sizes));
+        fields.insert("outputs".into(), outputs);
+    }
+    if role == "link"
+        && options
+            .get("target-labels")
+            .is_some_and(|value| !value.is_empty())
+    {
+        fields.insert("targetLabels".into(), comma_array("target-labels"));
+    }
+    instrumentation.write_snippet_fields(
+        role,
+        command,
+        clock,
+        status,
+        serde_json::Value::Object(fields),
+    );
+}
+
+fn launch(args: &[String], _instrument: bool) -> i32 {
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
         eprintln!("No launch/command separator ('--') found!");
         return 1;
@@ -292,6 +378,18 @@ fn launch(args: &[String]) -> i32 {
         }
     }
     let real_args: Vec<String> = command.to_vec();
+    let launch_instrumentation = if true {
+        let build_dir = options.get("build-dir").map_or("", String::as_str);
+        let mut instrumentation = crate::instrumentation::Instrumentation::new(build_dir);
+        instrumentation.load();
+        Some(instrumentation)
+    } else {
+        None
+    };
+    let clock = launch_instrumentation.as_ref().map_or_else(
+        || crate::instrumentation::Timer::start(false),
+        |instrumentation| instrumentation.timer(),
+    );
     let log_dir = std::env::var("CTEST_LAUNCH_LOGS")
         .ok()
         .filter(|dir| !dir.is_empty())
@@ -304,10 +402,14 @@ fn launch(args: &[String]) -> i32 {
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .status();
-        return match status {
+        let code = match status {
             Ok(status) => status.code().unwrap_or(1),
             Err(_) => 1,
         };
+        if let Some(instrumentation) = &launch_instrumentation {
+            instrument_launch(&real_args, &options, code, clock, instrumentation);
+        }
+        return code;
     }
     let log_dir = log_dir.unwrap();
     let _ = std::fs::create_dir_all(&log_dir);
@@ -396,6 +498,9 @@ fn launch(args: &[String]) -> i32 {
     }
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-out.txt")));
     let _ = std::fs::remove_file(log_dir.join(format!("{base}-err.txt")));
+    if let Some(instrumentation) = &launch_instrumentation {
+        instrument_launch(&real_args, &options, status, clock, instrumentation);
+    }
     status
 }
 
@@ -405,7 +510,44 @@ pub fn main() -> i32 {
         .map(|arg| crate::bytes::decode(arg.as_encoded_bytes()))
         .collect();
     if args.first().is_some_and(|arg| arg == "--launch") {
-        return launch(&args[1..]);
+        return launch(&args[1..], false);
+    }
+    if args.first().is_some_and(|arg| arg == "--instrument") {
+        return launch(&args[1..], true);
+    }
+    if args.len() == 2 && args[0] == "--collect-instrumentation" {
+        let mut instrumentation = crate::instrumentation::Instrumentation::new(&args[1]);
+        instrumentation.load();
+        instrumentation.collect("manual");
+        return 0;
+    }
+    if args.len() == 2 && args[0] == "--start-instrumentation" {
+        let mut instrumentation = crate::instrumentation::Instrumentation::new(&args[1]);
+        instrumentation.load();
+        instrumentation.collect("preBuild");
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ctest"));
+        let ppid = unsafe { libc::getppid() };
+        let _ = std::process::Command::new(exe)
+            .arg("--wait-and-collect-instrumentation")
+            .arg(&args[1])
+            .arg(ppid.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        return 0;
+    }
+    if args.len() == 3 && args[0] == "--wait-and-collect-instrumentation" {
+        let ppid: i32 = args[2].parse().unwrap_or(0);
+        while ppid > 0 && unsafe { libc::kill(ppid, 0) } == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let mut instrumentation = crate::instrumentation::Instrumentation::new(&args[1]);
+        instrumentation.load();
+        let clock = instrumentation.timer();
+        instrumentation.write_snippet_fields("build", &[], clock, 0, serde_json::json!({}));
+        instrumentation.collect("postBuild");
+        return 0;
     }
     if args
         .iter()
@@ -560,7 +702,8 @@ pub(in crate::ctest) fn execute_detailed(
     if options.dir.is_none() && binary.is_dir() && std::env::set_current_dir(&binary).is_ok() {
         dir = binary.clone();
     }
-    let ignore = read_custom(&binary, log, !options.memcheck_type.is_empty());
+    let mut ignore = read_custom(&binary, log, !options.memcheck_type.is_empty());
+    ignore.extend(options.memcheck_ignore.iter().cloned());
     if !options.script_quiet && options.memcheck_type.is_empty() {
         log.output(&format!("Test project {}\n", dir.display()));
     }
@@ -592,6 +735,12 @@ pub(in crate::ctest) fn execute_detailed(
     };
     let last_path = temporary.join(last_name);
     let mut no_tests = false;
+    let mut instrumentation = crate::instrumentation::Instrumentation::new(&binary);
+    instrumentation.load();
+    let instrument_tests = instrumentation.enabled;
+    let instrument_ctest = instrument_tests && !options.script;
+    let collect_post_test = instrument_ctest;
+    let ctest_clock = instrumentation.timer();
     let result = testfile::discover(&dir, &mut options, ignore, log).and_then(|all| {
         let mut tests = testfile::select(&all, &options, &temporary, log)?;
         let mut last_log = report::start_log();
@@ -635,9 +784,38 @@ pub(in crate::ctest) fn execute_detailed(
                 }
             },
         };
+        if instrument_tests {
+            if let Some(results) = &results {
+                for (test, result) in tests
+                    .iter()
+                    .zip(results.iter())
+                    .filter_map(|(test, result)| result.as_ref().map(|result| (test, result)))
+                {
+                    if result.status.not_run() || result.actual.is_empty() {
+                        continue;
+                    }
+                    let mut command = Vec::with_capacity(result.args.len() + 1);
+                    command.push(result.actual.clone());
+                    command.extend(result.args.iter().cloned());
+                    instrumentation.write_snippet_fields(
+                        "test",
+                        &command,
+                        instrumentation.timer(),
+                        result.exit_value,
+                        serde_json::json!({
+                            "testName": test.name,
+                            "config": options.config,
+                        }),
+                    );
+                }
+            }
+        }
         if !options.dashboard_tag.is_empty()
             && let Some(results) = &results
         {
+            if instrument_tests {
+                instrumentation.collect("prepareForCDash");
+            }
             let _ = report::test_xml(&binary, &options, &tests, results, start_epoch);
         }
         let _ = writeln!(last_log, "End testing: {}", report::clock("%b %d %H:%M %Z"));
@@ -682,6 +860,21 @@ pub(in crate::ctest) fn execute_detailed(
         }
         Ok(success)
     });
+    if instrument_ctest {
+        let command: Vec<String> = std::env::args_os()
+            .map(|arg| crate::bytes::decode(arg.as_encoded_bytes()))
+            .collect();
+        instrumentation.write_snippet_fields(
+            "ctest",
+            &command,
+            ctest_clock,
+            if result == Ok(true) { 0 } else { -1 },
+            serde_json::json!({}),
+        );
+    }
+    if collect_post_test {
+        instrumentation.collect("postTest");
+    }
     if result == Ok(true) {
         (0, no_tests)
     } else {

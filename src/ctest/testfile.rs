@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::cmregex::Regex;
-use crate::configure::{add_default_definitions, find_cmake_root};
+use crate::configure::{add_cmake_paths, add_default_definitions, find_cmake_root};
 use crate::interp::{CmdResult, Interp, Mode, err};
 use crate::util::{expand_list, is_on};
 
@@ -62,7 +62,16 @@ pub(super) fn interpreter(dir: &Path) -> Interp {
     let root = find_cmake_root().unwrap_or_default();
     let mut interp = Interp::new(Mode::Script, &dir, &dir, &root);
     interp.cmake_command = sibling("cmake").to_string_lossy().into_owned();
+    add_cmake_paths(&mut interp);
     add_default_definitions(&mut interp);
+    for (name, value) in [
+        ("CMAKE_SOURCE_DIR", dir.as_ref()),
+        ("CMAKE_BINARY_DIR", dir.as_ref()),
+        ("CMAKE_CURRENT_SOURCE_DIR", dir.as_ref()),
+        ("CMAKE_CURRENT_BINARY_DIR", dir.as_ref()),
+    ] {
+        interp.set_def(name, value);
+    }
     interp
 }
 
@@ -199,6 +208,13 @@ fn set_tests_properties(interp: &mut Interp, args: &[String]) -> CmdResult {
                         test.property_errors.push(format!(
                             "TIMEOUT_SIGNAL_GRACE_PERIOD \"{value}\" is not less than the maximum of \"60\" seconds."
                         ));
+                    }
+                    test.properties.insert(key.clone(), value.clone());
+                }
+                "TIMEOUT_AFTER_MATCH" => {
+                    let count = expand_list(value, false).len();
+                    if count != 2 {
+                        eprintln!("TIMEOUT_AFTER_MATCH expects two arguments, found {count}");
                     }
                     test.properties.insert(key.clone(), value.clone());
                 }

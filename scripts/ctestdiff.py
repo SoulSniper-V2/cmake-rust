@@ -195,8 +195,9 @@ def normalize(data, work, path):
     if path.suffix == ".xml":
         data = re.sub(rb'(?<=timestamp=")[^"]*', b"<DATETIME>", data)
         data = re.sub(rb'(?<=time=")[^"]*', b"<SECONDS>", data)
-    if path.name in ("Test.xml", "Configure.xml", "Build.xml"):
+    if path.name in ("Test.xml", "Configure.xml", "Build.xml", "Done.xml"):
         data = re.sub(rb"(?<=Time>)\d+(?=</)", b"<EPOCH>", data)
+        data = re.sub(rb"(?<=time>)\d+(?=</)", b"<EPOCH>", data)
         data = re.sub(rb"(?<=DateTime>)[^<]+", b"<DATETIME>", data)
         data = re.sub(rb'(?<=ProcessorClockFrequency=")[^"]*', b"<CLOCK>", data)
         data = re.sub(

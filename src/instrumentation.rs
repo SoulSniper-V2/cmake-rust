@@ -261,6 +261,17 @@ impl Instrumentation {
     }
 
     pub fn write_snippet(&self, role: &str, args: &[String], clock: Timer, result: i32) {
+        self.write_snippet_fields(role, args, clock, result, json!({}));
+    }
+
+    pub fn write_snippet_fields(
+        &self,
+        role: &str,
+        args: &[String],
+        clock: Timer,
+        result: i32,
+        fields: Value,
+    ) {
         if !self.enabled {
             return;
         }
@@ -275,6 +286,13 @@ impl Instrumentation {
         });
         if !command.is_empty() {
             snippet["command"] = json!(command);
+        }
+        if let Some(object) = fields.as_object() {
+            for (key, value) in object {
+                if !value.is_null() && value.as_str().is_none_or(|text| !text.is_empty()) {
+                    snippet[key] = value.clone();
+                }
+            }
         }
         if self.queries.contains(&1) {
             let (before_memory, before_load) = clock.dynamic;
